@@ -83,7 +83,7 @@ export function ChangePasswordRow() {
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="text-sm text-blue-300 hover:text-blue-200 underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+            className="text-sm text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
           >
             Change
           </button>
@@ -236,7 +236,7 @@ export function ManageUsersPanel() {
         <button
           type="button"
           onClick={() => setAddOpen((o) => !o)}
-          className="text-sm text-blue-300 hover:text-blue-200 underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+          className="text-sm text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
         >
           {addOpen ? 'Cancel' : 'Add user'}
         </button>
@@ -296,7 +296,7 @@ export function ManageUsersPanel() {
                       onClick={() =>
                         setResetOpenFor(resetOpen ? null : u.username)
                       }
-                      className="text-xs text-blue-300 hover:text-blue-200 underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded px-3 py-2 -my-1 lg:px-1 lg:py-0.5 lg:my-0"
+                      className="text-xs text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded px-3 py-2 -my-1 lg:px-1 lg:py-0.5 lg:my-0"
                     >
                       {/* iter-266 (UX-auditor #4): match label to the
                           act ("type a new one, save it"). */}

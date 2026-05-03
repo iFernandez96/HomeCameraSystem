@@ -178,7 +178,7 @@ export function EventHeatmap({
             <button
               type="button"
               onClick={() => setView(currentMonth())}
-              className="text-xs text-[var(--color-accent-default)] hover:text-blue-200 underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+              className="text-xs text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
               aria-label="Jump to current month"
             >
               Today
@@ -272,11 +272,11 @@ export function EventHeatmap({
         // More cats? More burglars?". Spell it out.
         <div className="flex items-center gap-2 mt-3 text-xs text-[var(--color-text-secondary)]">
           <span>Fewer detections</span>
-          <span className="w-3 h-3 rounded bg-[var(--color-surface-raised)]" />
-          <span className="w-3 h-3 rounded bg-blue-900" />
+          <span className="w-3 h-3 rounded bg-[var(--color-surface-raised)] border border-[var(--color-border)]" />
+          <span className="w-3 h-3 rounded bg-[var(--color-accent-subtle)]" />
+          <span className="w-3 h-3 rounded bg-amber-300" />
           <span className="w-3 h-3 rounded bg-[var(--color-accent-default)]" />
-          <span className="w-3 h-3 rounded bg-[var(--color-accent-default)]" />
-          <span className="w-3 h-3 rounded bg-emerald-500" />
+          <span className="w-3 h-3 rounded bg-[var(--color-accent-bright)]" />
           <span>More detections</span>
         </div>
       ) : null}
@@ -344,10 +344,10 @@ function cellTier(count: number, max: number): CellTier {
   // — that hue jump reads as "different state" not "more activity"
   // (GitHub's contribution graph stays in one family for the same
   // reason). All four populated tiers now ramp through blue.
-  if (ratio < 0.25) return { bg: 'bg-blue-900', text: 'text-blue-100' }
-  if (ratio < 0.5) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-blue-50' }
-  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-blue-50' }
-  return { bg: 'bg-blue-300', text: 'text-blue-950' }
+  if (ratio < 0.25) return { bg: 'bg-[var(--color-accent-subtle)]', text: 'text-[var(--color-text-primary)]' }
+  if (ratio < 0.5) return { bg: 'bg-amber-300', text: 'text-[var(--color-text-primary)]' }
+  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-white' }
+  return { bg: 'bg-[var(--color-accent-bright)]', text: 'text-white' }
 }
 
 function ChevronLeftIcon() {

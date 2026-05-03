@@ -288,7 +288,7 @@ function DetectionStatusToggle({
           Frank: "PAUSE reads like a button on a 1998 VCR. The state
           label on the left is sentence-case 'Watching for visitors';
           those two voices were fighting on the same row." */}
-      <span className="text-sm font-medium text-[var(--color-text-secondary)]">
+      <span className={`text-sm font-medium ${isPaused ? 'text-[var(--color-accent-default)]' : 'text-[var(--color-text-secondary)]'}`}>
         {actionLabel}
       </span>
     </button>

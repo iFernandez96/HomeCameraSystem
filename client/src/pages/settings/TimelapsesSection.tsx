@@ -176,7 +176,7 @@ export function TimelapsesSection() {
             type="button"
             onClick={() => setTimelapseDate(_yesterdayStr())}
             disabled={timelapseGenerating}
-            className="text-sm bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded-full px-4 py-2.5 border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="text-sm bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] disabled:opacity-50 rounded-full px-4 py-2.5 border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Pick yesterday's date"
           >
             Yesterday
@@ -185,7 +185,7 @@ export function TimelapsesSection() {
             type="button"
             onClick={() => setTimelapseDate(_todayStr())}
             disabled={timelapseGenerating}
-            className="text-sm bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded-full px-4 py-2.5 border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="text-sm bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] disabled:opacity-50 rounded-full px-4 py-2.5 border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Pick today's date"
           >
             Today
@@ -207,7 +207,7 @@ export function TimelapsesSection() {
               onChange={(e) => setTimelapseDate(e.target.value)}
               max={_todayStr()}
               aria-label="Timelapse date"
-              className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-2 text-base focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+              className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               disabled={timelapseGenerating}
             />
           </label>
@@ -215,7 +215,7 @@ export function TimelapsesSection() {
             type="button"
             onClick={onGenerateTimelapse}
             disabled={!_timelapseDateReady || timelapseGenerating}
-            className="text-sm bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-default)] disabled:bg-zinc-700 disabled:text-[var(--color-text-tertiary)] rounded px-4 py-2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="text-sm bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-bright)] text-white disabled:bg-[var(--color-surface-raised)] disabled:text-[var(--color-text-tertiary)] rounded px-4 py-2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Generate timelapse"
           >
             {timelapseGenerating ? 'Building…' : 'Build video'}
@@ -223,7 +223,7 @@ export function TimelapsesSection() {
         </div>
         {!_timelapseDateValid && (
           <p
-            className="text-xs text-red-400"
+            className="text-xs text-[var(--color-danger)]"
             role="alert"
             aria-label="Timelapse date validation error"
           >
@@ -306,7 +306,7 @@ export function TimelapsesSection() {
                 <a
                   href={t.url}
                   download
-                  className="text-[var(--color-accent-default)] hover:text-blue-300 text-sm py-2 px-3 -mx-3 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+                  className="text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] text-sm py-2 px-3 -mx-3 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
                   aria-label={`Download timelapse for ${t.date}`}
                 >
                   Download
@@ -314,7 +314,7 @@ export function TimelapsesSection() {
                 <button
                   type="button"
                   onClick={() => onDeleteTimelapse(t.date)}
-                  className="text-red-400 hover:text-red-300 text-sm py-2 px-3 -mx-3 focus-visible:outline-2 focus-visible:outline-red-500 focus-visible:outline-offset-2 rounded"
+                  className="text-[var(--color-danger)] hover:underline text-sm py-2 px-3 -mx-3 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 rounded"
                   aria-label={`Delete timelapse for ${t.date}`}
                 >
                   Delete

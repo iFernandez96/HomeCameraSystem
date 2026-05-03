@@ -177,7 +177,7 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
           <button
             type="button"
             onClick={() => onPick(d.name)}
-            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2 transition-colors"
+            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
             aria-label={`${_displayName(d.name)}: ${d.count} ${d.count === 1 ? 'photo' : 'photos'}, most recent ${_formatRelative(d.latest_ts)}`}
           >
             {/* iter-355aa (Maya: Iconography Major): emerald is the
@@ -327,7 +327,7 @@ function GalleryView({
       <button
         type="button"
         onClick={onBack}
-        className="inline-flex items-center gap-1 text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] rounded-lg px-3 py-2 min-h-[44px] focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2 transition-colors"
+        className="inline-flex items-center gap-1 text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] rounded-lg px-3 py-2 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
         aria-label="Back to all people"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -439,7 +439,7 @@ function GalleryView({
                           `/events?person=${encodeURIComponent(f.predicted_name ?? name)}`,
                         )
                       }
-                      className="flex-shrink-0 w-8 h-8 inline-flex items-center justify-center text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] rounded focus-visible:outline-2 focus-visible:outline-blue-400 focus-visible:outline-offset-2 transition-colors"
+                      className="flex-shrink-0 w-8 h-8 inline-flex items-center justify-center text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] rounded focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
                       aria-label={`View events from ${f.predicted_name ?? name}`}
                       title={`View events from ${f.predicted_name ?? name}`}
                     >
@@ -483,7 +483,7 @@ function GalleryView({
                         setShowNewPersonInput(false)
                       }}
                       aria-label={`Move or delete photo ${idx + 1} of ${files.length}, from ${_formatRelative(f.ts_ms / 1000)}`}
-                      className="w-full px-2 py-2 min-h-[44px] text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-raised)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] rounded-lg focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2 transition-colors"
+                      className="w-full px-2 py-2 min-h-[44px] text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-raised)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] rounded-lg focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
                     >
                       Move or delete
                     </button>
@@ -536,7 +536,7 @@ function ActionPanel({
                 type="button"
                 disabled={actionInflight}
                 onClick={() => onMoveChip(d.name)}
-                className="px-2 py-1 min-h-[36px] text-xs font-medium bg-[var(--color-surface-raised)] hover:bg-neutral-700 disabled:bg-[var(--color-surface)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-blue-400 focus-visible:outline-offset-2 transition-colors"
+                className="px-2 py-1 min-h-[36px] text-xs font-medium bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] disabled:bg-[var(--color-surface)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
               >
                 {_displayName(d.name)}
               </button>
@@ -552,7 +552,7 @@ function ActionPanel({
                 type="button"
                 disabled={actionInflight}
                 onClick={() => setShowNewPersonInput(true)}
-                className="px-2 py-1 min-h-[36px] text-xs font-medium border border-dashed border-[var(--color-border-strong)] hover:border-neutral-500 hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-blue-400 focus-visible:outline-offset-2 transition-colors"
+                className="px-2 py-1 min-h-[36px] text-xs font-medium border border-dashed border-[var(--color-border-strong)] hover:border-neutral-500 hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
               >
                 + New person
               </button>
@@ -571,7 +571,7 @@ function ActionPanel({
               onChange={(e) => setMoveTarget(e.target.value)}
               placeholder="Add a name"
               autoComplete="off"
-              className="mt-1 w-full px-2 py-2 min-h-[44px] bg-[var(--color-bg)] border border-[var(--color-border-strong)] rounded text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2"
+              className="mt-1 w-full px-2 py-2 min-h-[44px] bg-[var(--color-bg)] border border-[var(--color-border-strong)] rounded text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             />
           </label>
           {/* iter-356.3c: Move via Button primitive (size=sm fits the

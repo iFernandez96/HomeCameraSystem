@@ -87,7 +87,7 @@ export function DetectionSection() {
               maxLength={32}
               placeholder="Front Door"
               aria-label="Camera display name"
-              className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-2 text-base focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+              className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               disabled={config === null}
             />
           </label>
@@ -291,7 +291,7 @@ export function DetectionSection() {
                   aria-pressed={selected}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors capitalize focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                     selected
-                      ? 'bg-[var(--color-accent-default)]/20 border-[var(--color-accent-default)]/60 text-blue-200'
+                      ? 'bg-[var(--color-accent-default)]/20 border-[var(--color-accent-default)]/60 text-[var(--color-accent-default)]'
                       : 'bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]'
                   }`}
                 >

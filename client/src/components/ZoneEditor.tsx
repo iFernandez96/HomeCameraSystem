@@ -273,7 +273,7 @@ export function ZoneEditor({
               : 'Tap a polygon to edit it, or tap empty space to start a new one.'}
       </p>
 
-      <div className="relative w-full aspect-video bg-zinc-800 rounded overflow-hidden touch-none">
+      <div className="relative w-full aspect-video bg-[var(--color-surface-raised)] rounded overflow-hidden touch-none">
         <img
           src={snapshotUrl}
           alt="Latest camera frame"
@@ -466,21 +466,21 @@ export function ZoneEditor({
             type="button"
             onClick={finishPolygon}
             disabled={!canFinish}
-            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed rounded px-3 py-2 font-medium"
+            className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-white disabled:opacity-40 disabled:cursor-not-allowed rounded px-3 py-2 font-medium"
           >
             {finishLabel}
           </button>
           <button
             type="button"
             onClick={undoLastVertex}
-            className="bg-zinc-800 hover:bg-zinc-700 rounded px-3 py-2"
+            className="bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-3 py-2"
           >
             Undo last point
           </button>
           <button
             type="button"
             onClick={cancelInProgress}
-            className="bg-zinc-800 hover:bg-zinc-700 rounded px-3 py-2"
+            className="bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-3 py-2"
           >
             Cancel
           </button>
@@ -491,7 +491,7 @@ export function ZoneEditor({
           <button
             type="button"
             onClick={() => deleteZone(selectedZone)}
-            className="bg-red-600 hover:bg-red-500 rounded px-3 py-2 font-medium"
+            className="bg-[var(--color-danger)] hover:bg-[var(--color-danger)]/90 text-white rounded px-3 py-2 font-medium"
             // iter-295: aria-label matches the visible text so it
             // doesn't collide with the per-row ✕ button below
             // (which uses `Delete zone N` for direct addressing).
@@ -502,7 +502,7 @@ export function ZoneEditor({
           <button
             type="button"
             onClick={() => setSelectedZone(null)}
-            className="bg-zinc-800 hover:bg-zinc-700 rounded px-3 py-2"
+            className="bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-3 py-2"
           >
             Done editing
           </button>
@@ -515,16 +515,16 @@ export function ZoneEditor({
           keyboard-only user can still author a polygon vertex by
           vertex via X% / Y% inputs. Collapsed visually below the
           primary controls so it doesn't compete with the drag UX. */}
-      <details className="text-sm border border-zinc-800 rounded">
-        <summary className="px-3 py-2 cursor-pointer text-zinc-300 hover:text-zinc-100 select-none">
+      <details className="text-sm border border-[var(--color-border)] rounded">
+        <summary className="px-3 py-2 cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] select-none">
           Add vertex by typing coordinates
         </summary>
         <fieldset
-          className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 border-t border-zinc-800"
+          className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 border-t border-[var(--color-border)]"
           aria-label="Add vertex by coordinate"
         >
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-400">X (0-100%)</span>
+            <span className="text-xs text-[var(--color-text-secondary)]">X (0-100%)</span>
             <input
               type="number"
               min={0}
@@ -533,11 +533,11 @@ export function ZoneEditor({
               value={inputX}
               onChange={(e) => setInputX(e.target.value)}
               aria-label="Vertex X coordinate as percent"
-              className="w-20 bg-zinc-800 rounded px-2 py-2 text-base text-zinc-100 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-20 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] outline-none focus:ring-2 focus:ring-[var(--color-accent-default)]"
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-400">Y (0-100%)</span>
+            <span className="text-xs text-[var(--color-text-secondary)]">Y (0-100%)</span>
             <input
               type="number"
               min={0}
@@ -546,13 +546,13 @@ export function ZoneEditor({
               value={inputY}
               onChange={(e) => setInputY(e.target.value)}
               aria-label="Vertex Y coordinate as percent"
-              className="w-20 bg-zinc-800 rounded px-2 py-2 text-base text-zinc-100 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-20 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] outline-none focus:ring-2 focus:ring-[var(--color-accent-default)]"
             />
           </label>
           <button
             type="button"
             onClick={handleKeyboardAdd}
-            className="bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-default)] rounded px-3 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-bright)] text-white rounded px-3 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
           >
             Add point
           </button>
@@ -576,7 +576,7 @@ export function ZoneEditor({
                 className={`flex items-center justify-between rounded px-3 py-2 ${
                   isSel
                     ? 'bg-[var(--color-accent-default)]/10 border border-[var(--color-accent-default)]/40'
-                    : 'bg-zinc-900'
+                    : 'bg-[var(--color-surface-raised)] border border-[var(--color-border)]'
                 }`}
               >
                 <button
@@ -594,7 +594,7 @@ export function ZoneEditor({
                     }
                   }}
                   disabled={drawing}
-                  className="flex-1 text-left text-zinc-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex-1 text-left text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                   aria-pressed={isSel}
                 >
                   Zone {i + 1} · {poly.length} pts {isSel ? '· editing' : ''}
@@ -603,7 +603,7 @@ export function ZoneEditor({
                   type="button"
                   onClick={() => deleteZone(i)}
                   aria-label={`Delete zone ${i + 1}`}
-                  className="inline-flex items-center justify-center w-11 h-11 -my-2 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                  className="inline-flex items-center justify-center w-11 h-11 -my-2 rounded text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 >
                   ✕
                 </button>

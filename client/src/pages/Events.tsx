@@ -709,8 +709,8 @@ export function Events() {
               aria-pressed={calendarOpen}
               className={`lg:hidden inline-flex items-center justify-center w-11 h-11 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                 calendarOpen
-                  ? 'bg-[var(--color-accent-default)]/20 text-blue-200 ring-1 ring-blue-500/40'
-                  : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] ring-1 ring-neutral-800 hover:ring-neutral-700'
+                  ? 'bg-[var(--color-accent-default)]/20 text-[var(--color-accent-default)] ring-1 ring-[var(--color-accent-default)]/40'
+                  : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-border-strong)]'
               }`}
             >
               <CalendarIcon />
@@ -774,14 +774,14 @@ export function Events() {
             anchors to the top as the events list scrolls. Toggle
             stays in the title row above. */}
         {selectedDay ? (
-          <div className="px-4 py-2 bg-blue-950/40 border-t border-blue-900/40 space-y-2">
+          <div className="px-4 py-2 bg-[var(--color-accent-subtle)] border-t border-[var(--color-border)] space-y-2">
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs text-[var(--color-accent-default)]">
                 Showing events for {selectedDay}
                 {(dayStartTime || dayEndTime) && (
                   <>
                     {' '}
-                    <span className="text-blue-200">
+                    <span className="text-[var(--color-accent-default)]">
                       {dayStartTime || '00:00'}–{dayEndTime || '24:00'}
                     </span>
                   </>
@@ -860,7 +860,7 @@ export function Events() {
                   onTimeBoundsChange(e.target.value || null, dayEndTime)
                 }
                 aria-label="Filter from time of day"
-                className="bg-zinc-900 border border-blue-900/40 rounded px-2 py-1 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               />
               <span className="text-[var(--color-accent-default)]">to</span>
               <input
@@ -870,13 +870,13 @@ export function Events() {
                   onTimeBoundsChange(dayStartTime, e.target.value || null)
                 }
                 aria-label="Filter to time of day"
-                className="bg-zinc-900 border border-blue-900/40 rounded px-2 py-1 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               />
               {(dayStartTime || dayEndTime) && (
                 <button
                   type="button"
                   onClick={() => onTimeBoundsChange(null, null)}
-                  className="text-blue-200 hover:text-blue-100 underline ml-1 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+                  className="text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline ml-1 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
                   aria-label="Reset time-of-day filter"
                 >
                   Reset
@@ -960,7 +960,7 @@ export function Events() {
                     type="button"
                     onClick={loadMore}
                     disabled={loadingMore}
-                    className="text-sm bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-900 disabled:text-neutral-600 rounded-full px-5 py-2 border border-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                    className="text-sm bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] disabled:bg-[var(--color-surface)] disabled:text-[var(--color-text-tertiary)] rounded-full px-5 py-2 border border-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                     aria-label="Load older events"
                   >
                     {loadingMore ? 'Loading…' : 'Load more'}

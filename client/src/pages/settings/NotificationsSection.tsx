@@ -351,7 +351,7 @@ export function NotificationsSection({
                 }
                 placeholder="HH:MM"
                 aria-label="Schedule window start time"
-                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-2 text-base focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 disabled={!filtersLoaded || filtersSaving}
               />
             </label>
@@ -368,14 +368,14 @@ export function NotificationsSection({
                 }
                 placeholder="HH:MM"
                 aria-label="Schedule window end time"
-                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-2 text-base focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 disabled={!filtersLoaded || filtersSaving}
               />
             </label>
           </div>
           {!scheduleValid && (
             <p
-              className="px-1 text-xs text-red-400"
+              className="px-1 text-xs text-[var(--color-danger)]"
               role="alert"
               aria-label="Schedule window validation error"
             >

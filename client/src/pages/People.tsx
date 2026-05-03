@@ -138,7 +138,7 @@ export function People() {
           type="button"
           onClick={() => navigate('/training')}
           aria-label="Training: review and sort visitor photos to teach the camera"
-          className="flex-shrink-0 inline-flex items-center gap-1.5 px-2 py-2 min-h-[44px] text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] rounded-lg focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2 transition-colors"
+          className="flex-shrink-0 inline-flex items-center gap-1.5 px-2 py-2 min-h-[44px] text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] rounded-lg focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M22 10L12 5 2 10l10 5 10-5z" />
@@ -232,7 +232,7 @@ export function People() {
                   aria-label="Search people by name"
                   autoComplete="off"
                   inputMode="search"
-                  className="w-full pl-10 pr-8 py-2 min-h-[44px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2"
+                  className="w-full pl-10 pr-8 py-2 min-h-[44px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 />
               </div>
             </div>
@@ -351,7 +351,7 @@ function _PersonGrid({
           <button
             type="button"
             onClick={() => onPersonClick(p.name)}
-            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2 transition-colors"
+            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
             aria-label={`${p.name}: ${p.count} ${p.count === 1 ? 'visit' : 'visits'}, last seen ${_formatRelative(p.last_seen_ts)}, first seen ${_formatAbsolute(p.first_seen_ts)}`}
           >
             {p.last_thumb_url ? (

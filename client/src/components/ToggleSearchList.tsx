@@ -96,7 +96,7 @@ export function ToggleSearchList({
             placeholder="Search…"
             aria-label={`Search ${label.toLowerCase()}`}
             disabled={disabled}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-2 text-base focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
+            className="w-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
           />
           {/* Scrollable list. Cap height so 50 names don't push the
               save button off-screen. role=group with aria-label so
@@ -110,7 +110,7 @@ export function ToggleSearchList({
           <div
             role="group"
             aria-label={label}
-            className="max-h-48 lg:max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded divide-y divide-zinc-900"
+            className="max-h-48 lg:max-h-80 overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded divide-y divide-[var(--color-border-subtle)]"
           >
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-xs text-[var(--color-text-tertiary)] italic">
@@ -122,7 +122,7 @@ export function ToggleSearchList({
                 return (
                   <label
                     key={opt}
-                    className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-zinc-900/60 active:bg-zinc-900"
+                    className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-raised)] active:bg-[var(--color-surface-raised)]"
                   >
                     <input
                       type="checkbox"
