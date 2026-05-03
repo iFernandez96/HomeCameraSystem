@@ -1,0 +1,72 @@
+# Opt-in observability stack (iter-199, Feature #11 slice 2).
+#
+# Stand alone OR layer on top of `docker-compose.yml`:
+#
+#   docker compose -f deploy/docker-compose.yml \
+#                  -f deploy/docker-compose.grafana.yml up -d
+#
+# Adds Prometheus (scrapes the homecam-server's /metrics every 15 s)
+# and Grafana (auto-loads two provisioned dashboards: Overview +
+# Detection worker). Operator opens http://jetson:3000 and logs in
+# (anonymous viewer access by default; admin/admin if they need
+# editing power, which they shouldn't since dashboards are
+# provisioned read-only).
+#
+# RAM cost on the Nano 2GB: ~30 MB Prometheus + ~50 MB Grafana
+# (roughly). The mediamtx + detection worker + server already eat
+# 1.4-1.7 GB; the observability stack consumes maybe 4 % more. Run
+# only if the operator wants the dashboards — there's no
+# functional dependency from the rest of the stack on these two
+# containers.
+#
+# Storage: Prometheus retains 14 days by default; on the Jetson
+# eMMC that's a few hundred MB at our scrape rate.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: homecam-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - homecam-prom-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=14d
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    # No public port — Grafana scrapes via the internal compose
+    # network. Expose only if the operator runs an external
+    # Prometheus federation setup.
+    expose:
+      - "9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: homecam-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - homecam-grafana-data:/var/lib/grafana
+    environment:
+      # Anonymous viewer access — anyone on the LAN with the URL
+      # sees dashboards without logging in. Operator-side fronting
+      # (Tailscale, Caddy basic-auth, firewall rule) is the
+      # exposure-control tier — same reasoning as the iter-189
+      # /metrics endpoint and iter-195 /healthz. If the operator
+      # wants per-user auth in Grafana itself, flip
+      # GF_AUTH_ANONYMOUS_ENABLED=false and set a strong admin
+      # password via GF_SECURITY_ADMIN_PASSWORD.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3000:3000"
+
+volumes:
+  homecam-prom-data:
+  homecam-grafana-data:

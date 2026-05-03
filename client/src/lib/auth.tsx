@@ -1,0 +1,159 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react'
+import { getMe, HttpError, login as apiLogin, logout as apiLogout } from './api'
+import { useToast } from './toast'
+import type { User } from './types'
+
+/**
+ * Tri-state auth lifecycle (iter-182, Auth Plan Phase 4).
+ *
+ *  - `loading`: initial mount, /api/auth/me request in flight. Don't
+ *    redirect yet — flashing /login on first paint when the user
+ *    actually has a valid session is the worst-of-both UX.
+ *  - `authed`:  /api/auth/me returned 200; `user` is non-null.
+ *  - `anon`:    /api/auth/me returned 401 (or any other error). User
+ *    must log in. RequireAuth redirects on this state.
+ */
+export type AuthState = 'loading' | 'authed' | 'anon'
+
+type AuthContextValue = {
+  state: AuthState
+  user: User | null
+  login: (username: string, password: string) => Promise<void>
+  logout: () => Promise<void>
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null)
+
+/**
+ * Wrap the app inside this once at the top of the tree. Fires a
+ * single /api/auth/me on mount to determine initial state.
+ *
+ * Phase 5 (iter-183) starts gating /api/* on the cookies set by
+ * /api/auth/login. Today those routes are still ungated, so this
+ * provider is harmless on a server that hasn't rolled out auth —
+ * the /me call returns 401, state flips to `anon`, and the user
+ * is redirected to /login (which the operator must seed at least
+ * one user for before deploying iter-182).
+ */
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<AuthState>('loading')
+  const [user, setUser] = useState<User | null>(null)
+  const { showToast } = useToast()
+
+  useEffect(() => {
+    let cancelled = false
+    getMe()
+      .then((res) => {
+        if (cancelled) return
+        setUser(res.user)
+        setState('authed')
+      })
+      .catch((e) => {
+        if (cancelled) return
+        // 401 → anonymous, expected on first visit. Any other error
+        // (network, 5xx) → also anonymous. The login form covers the
+        // recovery path; tight-looping retries here would race with
+        // the user typing creds.
+        if (e instanceof HttpError && e.status === 401) {
+          setUser(null)
+          setState('anon')
+        } else {
+          setUser(null)
+          setState('anon')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // iter-185 (Auth Plan Phase 6): when the WS handshake fails with
+  // 1008 (auth/origin gate), `lib/ws.ts` dispatches a window-level
+  // `homecam:auth-failed` event. Re-check /api/auth/me — if the
+  // cookie is still valid (e.g., the WS 1008 was an origin issue)
+  // we stay authed; if it 401s we flip to anon, RequireAuth
+  // redirects to /login on the next render. Self-healing.
+  useEffect(() => {
+    function onAuthFailed() {
+      getMe()
+        .then((res) => {
+          setUser(res.user)
+          setState('authed')
+        })
+        .catch((e) => {
+          if (e instanceof HttpError && e.status === 401) {
+            setUser(null)
+            setState('anon')
+          }
+          // Non-401 (network, 5xx) — leave state alone. The next
+          // user action will trigger another check.
+        })
+    }
+    window.addEventListener('homecam:auth-failed', onAuthFailed)
+    return () => window.removeEventListener('homecam:auth-failed', onAuthFailed)
+  }, [])
+
+  // iter-186 (Auth Plan Phase 7): session-expiry UX. `lib/api.ts`
+  // dispatches `homecam:session-expired` when /api/auth/refresh
+  // 401s (the refresh cookie expired or was invalidated). Toast
+  // 'Session expired', flip to anon — RequireAuth redirects to
+  // /login on the next render. Functional setState dedupes:
+  // multiple bursts dispatching simultaneously only show the toast
+  // on the FIRST anon transition (subsequent calls find state
+  // already anon and short-circuit).
+  useEffect(() => {
+    function onSessionExpired() {
+      setState((cur) => {
+        if (cur === 'anon') return cur
+        showToast('Session expired', 'error')
+        return 'anon'
+      })
+      setUser(null)
+    }
+    window.addEventListener('homecam:session-expired', onSessionExpired)
+    return () =>
+      window.removeEventListener('homecam:session-expired', onSessionExpired)
+  }, [showToast])
+
+  const login = useCallback(async (username: string, password: string) => {
+    const res = await apiLogin({ username, password })
+    setUser(res.user)
+    setState('authed')
+  }, [])
+
+  const logout = useCallback(async () => {
+    try {
+      await apiLogout()
+    } catch {
+      // Network failure during logout — the server may still hold a
+      // session record (it doesn't, since there's no server-side
+      // blocklist by Charter anti-rec #21, but cookies on the client
+      // may also still exist). Clear local state regardless so the
+      // UI immediately reflects logged-out, and the cookies' 15-min
+      // TTL expires them server-side soon enough.
+    }
+    setUser(null)
+    setState('anon')
+  }, [])
+
+  return (
+    <AuthContext.Provider value={{ state, user, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  )
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext)
+  if (!ctx) {
+    throw new Error('useAuth must be used within <AuthProvider>')
+  }
+  return ctx
+}

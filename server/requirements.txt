@@ -1,0 +1,29 @@
+fastapi>=0.115.0,<1
+uvicorn[standard]>=0.32.0,<1
+# iter-356.11 (code-scalability D1): upper-bound major version pins.
+# Pre-iter-356.11 these were unbounded — a `docker compose up -d --build`
+# the day Pydantic v3 ships would silently break the BaseModel +
+# ConfigDict usage across server/app/. Same logic for pywebpush 3.x
+# breaking change (iter-244e absorbed the 1→2 break; do not absorb
+# the next one unprepared) and python-multipart's pre-1.0 churn.
+pydantic>=2.7.0,<3
+pywebpush>=2.3.0,<3
+cryptography>=42.0.0,<46
+python-dotenv>=1.0.0,<2
+# iter-178: auth foundation (Auth Plan Phase 1).
+# argon2-cffi: password hashing. Jetson 2-core tuned via the
+# default-low PasswordHasher() params plus per-call settings in
+# app/auth/passwords.py — ~120 ms per verify, fine for human cadence,
+# painful for brute force. Pinned >=23.1.0 (current stable, wheels
+# published for python:3.11-slim-bookworm — no native build cost).
+argon2-cffi>=23.1.0
+# pyjwt: JWT encode/decode. Single dep, stdlib `cryptography` already
+# pulled by pywebpush. HS256 with the secret loaded by jwt_secret.py.
+pyjwt>=2.8.0
+# iter-354 (face-capture-for-retraining, Phase 4 scaffold):
+# python-multipart enables FastAPI's UploadFile + Form parameters
+# for the POST /api/face/bootstrap photo-upload route. Without this,
+# any route declaring `image: UploadFile = File(...)` raises
+# `RuntimeError: Form data requires "python-multipart" to be
+# installed.` Pinned to the current stable, no native build cost.
+python-multipart>=0.0.20,<1

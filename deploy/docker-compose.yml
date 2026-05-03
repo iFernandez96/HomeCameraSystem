@@ -1,0 +1,100 @@
+# Run the FastAPI server in a container on the Jetson.
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml logs -f
+#   docker compose -f deploy/docker-compose.yml down
+#
+# MediaMTX is intentionally NOT in this compose file — it needs host access to
+# /dev/video0 + libargus + the L4T-specific GStreamer plugins (nvarguscamerasrc,
+# nvv4l2h264enc), which are simpler to wire up by running it natively. See
+# deploy/systemd/mediamtx.service.
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    image: homecam-server:latest
+    container_name: homecam-server
+    restart: unless-stopped
+    # Memory caps (iter-167). The Jetson Nano 2GB has ~2 GB total RAM, of
+    # which `nvargus-daemon`, MediaMTX, the detection worker, and TensorRT
+    # already eat ~1.4–1.7 GB in steady state. A leak in this container
+    # (unbounded WebSocket subscribers, a runaway pywebpush retry loop,
+    # etc.) used to compete unbounded with the worker, and the OOM killer
+    # historically reached for `python3 detect.py` first — the worst piece
+    # to lose. Capping at 512 MB gives the FastAPI app three orders of
+    # magnitude more than its steady-state ~80 MB and forces a self-OOM
+    # (then `restart: unless-stopped` recovers it) instead of a system-wide
+    # OOM. `mem_reservation` is the soft floor the kernel honors under
+    # global pressure — 256 MB ensures we don't get evicted before
+    # genuine offenders.
+    mem_limit: 512m
+    mem_reservation: 256m
+    ports:
+      - "8000:8000"
+    volumes:
+      - homecam-secrets:/app/secrets
+      # Bind-mount the snapshots dir so the host-side detection worker can
+      # write thumbnails into the same location the server serves from.
+      # (Docker named volumes can't be written from outside the container.)
+      - ../snapshots:/app/snapshots
+      # iter-247 (Feature #1 slice 2b): same shape for clip recordings.
+      # Worker (host-side) writes `<event_id>.mp4` via ffmpeg subprocess;
+      # server (container) reads via FileResponse on
+      # /api/events/{event_id}/clip. Default container path matches
+      # the iter-201 `recordings_dir` setting.
+      - ../recordings:/app/recordings
+      # iter-263 (systems-engineering-auditor A1): same fix for
+      # backups (iter-210) and timelapses (iter-213). Pre-iter-263
+      # both defaulted to `./backups` and `./timelapses` inside the
+      # container WORKDIR, so every `up -d --build` wiped operator
+      # backups and timelapse outputs. Mirror of the iter-244e
+      # users.db / jwt_secret / events.db relocation.
+      - ../backups:/app/backups
+      - ../timelapses:/app/timelapses
+      # iter-351 (face-capture-for-retraining): host-side detection
+      # worker writes face crops into ./face_captures via
+      # detection/face_recog/capture.py; container server reads via
+      # /api/face/captures (auth-gated, owner role). Mirror of the
+      # iter-263 backups/timelapses bind-mount pattern. The
+      # FACE_CAPTURES_DIR env var defaults to /app/face_captures so
+      # this matches without any extra config.
+      - ../face_captures:/app/face_captures
+      - ../client/dist:/app/client_dist:ro
+    environment:
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
+      # iter-256: 1-month clip retention. Sweep runs daily and
+      # deletes recordings older than N days. Disk math at 720p30
+      # H.264 ~50 KB/s (post-roll up to 180s = ~9 MB/clip): 30 d ×
+      # 50 events/d × 9 MB ≈ 14 GB worst-case — fits the operator's
+      # 64 GB SD with ~30 GB free as of iter-256. Bump only if the
+      # event volume + clip-length math exceeds available disk.
+      - RECORDINGS_RETENTION_DAYS=${RECORDINGS_RETENTION_DAYS:-30}
+      # iter-301 (user report "calendar number of detections look
+      # super off"): server SQLite uses `date(ts, 'unixepoch',
+      # 'localtime')` to bucket events by day for /api/events/
+      # count_by_day. `localtime` resolves to the CONTAINER's TZ.
+      # Without this env var the container runs UTC, but the
+      # client (browser) computes day-bounds in the user's local
+      # TZ — so a 23:30 PDT event lands under the next-day UTC
+      # bucket on the heatmap, but the day-click sends the
+      # ACTUAL May-1 PDT bounds and the server returns no rows
+      # under those bounds. Off-by-one days at TZ boundaries.
+      # Pin to America/Los_Angeles to match the operator's TZ.
+      # Operator can override via environment if relocating.
+      - TZ=${TZ:-America/Los_Angeles}
+    # iter-195: hit /healthz, NOT /api/status. The iter-184 auth
+    # gate covers /api/*, so a cookie-less curl probe would 401
+    # forever and the container would report permanently unhealthy
+    # after the auth-track deploy. /healthz is root-level + ungated
+    # by design (same exposure-tier as /metrics).
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  homecam-secrets:

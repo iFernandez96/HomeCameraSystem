@@ -1,0 +1,447 @@
+import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { ClipModal } from './ClipModal'
+import type { DetectionEvent } from '../lib/types'
+
+
+function makeEvent(over: Partial<DetectionEvent> = {}): DetectionEvent {
+  return {
+    v: 1,
+    type: 'detection',
+    id: 'evt-1',
+    ts: 1700000000,
+    camera_id: 'cam1',
+    label: 'person',
+    score: 0.91,
+    boxes: [],
+    thumb_url: '/snapshots/thumb_1.jpg',
+    ...over,
+  }
+}
+
+
+describe('ClipModal', () => {
+  it('renders a video element pointing at the iter-201 clip route', () => {
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i)
+    expect(video.tagName).toBe('VIDEO')
+    expect(video.getAttribute('src')).toBe('/api/events/evt-1/clip')
+  })
+
+  it('uses the person_name in the video aria-label when present', () => {
+    render(
+      <ClipModal
+        event={makeEvent({ person_name: 'alice' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.getByLabelText(/clip of alice event/i)).toBeInTheDocument()
+  })
+
+  it('falls back to the snapshot when the video errors', () => {
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i)
+    fireEvent.error(video)
+    // Snapshot fallback img + the explanatory amber notice render.
+    expect(
+      screen.getByAltText(/snapshot of person event/i),
+    ).toHaveAttribute('src', '/snapshots/thumb_1.jpg')
+    expect(screen.getByText(/video not ready yet/i)).toBeInTheDocument()
+  })
+
+  it('shows "Clip unavailable" when both video and snapshot error', () => {
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i)
+    fireEvent.error(video)
+    const img = screen.getByAltText(/snapshot of person event/i)
+    fireEvent.error(img)
+    expect(screen.getByText(/clip unavailable/i)).toBeInTheDocument()
+  })
+
+  it('shows "Clip unavailable" immediately when no thumb_url is present', () => {
+    render(
+      <ClipModal
+        event={makeEvent({ thumb_url: null })}
+        onClose={() => {}}
+      />,
+    )
+    const video = screen.getByLabelText(/clip of person event/i)
+    fireEvent.error(video)
+    expect(screen.getByText(/clip unavailable/i)).toBeInTheDocument()
+  })
+
+  it('Close button calls onClose', () => {
+    const onClose = vi.fn()
+    render(<ClipModal event={makeEvent()} onClose={onClose} />)
+    fireEvent.click(screen.getByRole('button', { name: /^close$/i }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('given the backdrop is clicked, when the modal is open, then onClose fires (iter-270)', () => {
+    // arrange
+    const onClose = vi.fn()
+    render(<ClipModal event={makeEvent()} onClose={onClose} />)
+
+    // act: the iter-270 a11y fix replaced the role="button" backdrop
+    // with a div+onClick (aria-hidden so SR/keyboard skip it). Look
+    // up by data-testid since the div has no accessible role.
+    fireEvent.click(screen.getByTestId('clip-backdrop'))
+
+    // assert
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('ESC key calls onClose', () => {
+    const onClose = vi.fn()
+    render(<ClipModal event={makeEvent()} onClose={onClose} />)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('given the backdrop has aria-hidden, when screen-readers query it, then it has no accessible role (iter-270)', () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // act
+    const backdrop = screen.getByTestId('clip-backdrop')
+
+    // assert: aria-hidden hides from AT, no role to land on, no
+    // tabindex so keyboard skips it. Pre-iter-270 it was a
+    // role="button" with aria-label="Dismiss clip" — VoiceOver
+    // landed on it FIRST and intercepted swipes.
+    expect(backdrop.getAttribute('aria-hidden')).toBe('true')
+    expect(backdrop.getAttribute('role')).toBeNull()
+    expect(backdrop.getAttribute('tabindex')).toBeNull()
+  })
+
+  it('clears the errored-clip state when a new event prop is passed', () => {
+    const { rerender } = render(
+      <ClipModal event={makeEvent()} onClose={() => {}} />,
+    )
+    fireEvent.error(screen.getByLabelText(/clip of person event/i))
+    // Snapshot fallback should be visible now.
+    expect(screen.getByText(/video not ready yet/i)).toBeInTheDocument()
+    // New event → fallback clears, video re-renders.
+    rerender(
+      <ClipModal
+        event={makeEvent({ id: 'evt-2', label: 'car' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.queryByText(/video not ready yet/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/clip of car event/i)).toBeInTheDocument()
+  })
+
+  it('when the modal renders, then a Download button is present (iter-330: Event Export ZIP)', () => {
+    // arrange / act
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // assert
+    expect(
+      screen.getByRole('button', { name: /save clip/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('given a clicked Download, when exportEvents resolves, then the browser is handed an object URL via an anchor click (iter-330)', async () => {
+    // arrange
+    const fakeBlob = new Blob(['fake-zip-bytes'], { type: 'application/zip' })
+    const exportSpy = vi
+      .spyOn(await import('../lib/api'), 'exportEvents')
+      .mockResolvedValue(fakeBlob)
+    // jsdom's URL.createObjectURL is undefined by default; stub it.
+    const createObjectURLSpy = vi.fn().mockReturnValue('blob:fake')
+    const revokeSpy = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: createObjectURLSpy,
+      configurable: true,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: revokeSpy,
+      configurable: true,
+    })
+    // Spy on anchor click so we can pin "download was triggered."
+    const anchorClickSpy = vi.fn()
+    const realCreate = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = realCreate(tag)
+      if (tag === 'a') {
+        ;(el as HTMLAnchorElement).click = anchorClickSpy
+      }
+      return el
+    })
+
+    // act
+    render(<ClipModal event={makeEvent({ id: 'evt-export' })} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /save clip/i }))
+
+    // assert — exportEvents called with the single id; anchor click fired.
+    expect(exportSpy).toHaveBeenCalledWith(['evt-export'])
+    expect(createObjectURLSpy).toHaveBeenCalledWith(fakeBlob)
+    expect(anchorClickSpy).toHaveBeenCalled()
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('given the modal renders the video, when the speed-pill row is shown, then 0.5x / 1x / 2x radio buttons are present (iter-331)', () => {
+    // arrange / act
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // assert — radiogroup with 3 radios; "1×" selected by default.
+    const group = screen.getByRole('radiogroup', { name: /playback speed/i })
+    expect(group).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Slow' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Normal' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Fast' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Normal' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+  })
+
+  it('given the user clicks the 2x speed pill, when the click fires, then the video element\'s playbackRate becomes 2 (iter-331)', async () => {
+    // arrange — render and grab the live <video> element so we can
+    // assert against its real `playbackRate` after the user click.
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i) as HTMLVideoElement
+    expect(video.playbackRate).toBe(1)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.click(screen.getByRole('radio', { name: 'Fast' }))
+
+    // assert — useEffect ran; ref.current.playbackRate updated.
+    expect(video.playbackRate).toBe(2)
+    expect(screen.getByRole('radio', { name: 'Fast' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+  })
+
+  it('given the user clicks the Loop button, when the click fires, then the video element receives loop=true (iter-331)', async () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i) as HTMLVideoElement
+    expect(video.loop).toBe(false)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    const loopBtn = screen.getByRole('button', { name: /repeat clip/i })
+    expect(loopBtn).toHaveAttribute('aria-pressed', 'false')
+
+    // act
+    await user.click(loopBtn)
+
+    // assert
+    expect(video.loop).toBe(true)
+    expect(loopBtn).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('given the speed radiogroup, when 1× is the current selection, then ONLY the selected pill has tabIndex=0 (iter-335: roving tabindex)', () => {
+    // arrange / act
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // assert — default is 1×; only that pill in the Tab order.
+    expect(
+      screen.getByRole('radio', { name: 'Normal' }).getAttribute('tabindex'),
+    ).toBe('0')
+    expect(
+      screen.getByRole('radio', { name: 'Slow' }).getAttribute('tabindex'),
+    ).toBe('-1')
+    expect(
+      screen.getByRole('radio', { name: 'Fast' }).getAttribute('tabindex'),
+    ).toBe('-1')
+  })
+
+  it('given focus on the 1× pill, when ArrowRight is pressed, then 2× becomes selected and focused (iter-335)', async () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const oneX = screen.getByRole('radio', { name: 'Normal' }) as HTMLButtonElement
+    oneX.focus()
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.keyboard('{ArrowRight}')
+
+    // assert — selection moved to 2×; tabIndex follows.
+    const twoX = screen.getByRole('radio', { name: 'Fast' })
+    expect(twoX).toHaveAttribute('aria-checked', 'true')
+    expect(twoX.getAttribute('tabindex')).toBe('0')
+    expect(oneX.getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('given focus on the 1× pill, when ArrowLeft is pressed, then 0.5× becomes selected (iter-335)', async () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const oneX = screen.getByRole('radio', { name: 'Normal' }) as HTMLButtonElement
+    oneX.focus()
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.keyboard('{ArrowLeft}')
+
+    // assert
+    const halfX = screen.getByRole('radio', { name: 'Slow' })
+    expect(halfX).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('given focus on the 0.5× pill (leftmost), when ArrowLeft is pressed, then wraps to 2× (iter-335)', async () => {
+    // arrange — click 0.5× first to make it the selection, focus it.
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'Slow' }))
+    const halfX = screen.getByRole('radio', { name: 'Slow' }) as HTMLButtonElement
+    halfX.focus()
+
+    // act
+    await user.keyboard('{ArrowLeft}')
+
+    // assert — wraps from 0.5× back to 2× (last in array).
+    expect(
+      screen.getByRole('radio', { name: 'Fast' }),
+    ).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('given the speed radiogroup, when End is pressed, then 2× (last) becomes selected (iter-335)', async () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const oneX = screen.getByRole('radio', { name: 'Normal' }) as HTMLButtonElement
+    oneX.focus()
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.keyboard('{End}')
+
+    // assert
+    expect(
+      screen.getByRole('radio', { name: 'Fast' }),
+    ).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('given Close button focused (last in DOM), when Tab is pressed, then focus wraps to the first focusable inside the dialog (iter-336: focus trap)', () => {
+    // arrange — pin via direct keydown event so we exercise the
+    // dialog's onKeyDown handler without relying on userEvent's
+    // jsdom-Tab simulation (which shifts focus internally and
+    // makes element-specific assertions fragile).
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const closeBtn = screen.getByRole('button', { name: /^close$/i })
+    closeBtn.focus()
+    // iter-356.17: dialog aria-label is now dynamic eventTitle.
+    const dialog = screen.getByRole('dialog', { name: /at the front door/i })
+
+    // act — fire keydown Tab on the dialog (where the handler
+    // lives). The handler computes focusables = all focusable
+    // descendants in DOM order, sees Close at index N-1 (last),
+    // and wraps to focusables[0] via .focus() + preventDefault.
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+
+    // assert — focus moved off Close (the wrap fired). It landed
+    // on the first focusable in the dialog (video in DOM order;
+    // jsdom may not actually focus <video>, so we just assert
+    // that focus changed and stayed inside the dialog).
+    expect(document.activeElement).not.toBe(closeBtn)
+    expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('given the first focusable focused, when Shift+Tab fires on the dialog, then focus wraps to the last focusable (iter-336)', () => {
+    // arrange — focus the FIRST focusable. Pre-iter-356.17 this was
+    // the 1× speed pill; iter-356.17 added a top-right ✕ ("Close
+    // clip viewer") at the top of the dialog so that's now first.
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const topX = screen.getByRole('button', { name: /close clip viewer/i }) as HTMLButtonElement
+    topX.focus()
+    const dialog = screen.getByRole('dialog', { name: /at the front door/i })
+
+    // act — fire Shift+Tab on the dialog.
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+
+    // assert — wraps to the last focusable (footer Close button).
+    const footerClose = screen.getByRole('button', { name: /^close$/i })
+    expect(document.activeElement).toBe(footerClose)
+  })
+
+  it('given Download focused (mid-DOM), when Tab fires on the dialog, then focus stays inside dialog (iter-336: trap)', () => {
+    // arrange — Download is mid-DOM. Tab from a non-last focusable
+    // should NOT trigger the wrap; my handler only intercepts at
+    // the boundaries. Browser-native Tab handles middle case.
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const downloadBtn = screen.getByRole('button', { name: /save clip/i })
+    downloadBtn.focus()
+    // iter-356.17: dialog aria-label is now dynamic eventTitle.
+    const dialog = screen.getByRole('dialog', { name: /at the front door/i })
+
+    // act
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+
+    // assert — focus did NOT escape (it stayed on Download since
+    // my handler doesn't preventDefault on the mid case, and
+    // jsdom doesn't simulate native Tab focus shift either way).
+    expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('given the speed radiogroup, when Home is pressed, then 0.5× (first) becomes selected (iter-335)', async () => {
+    // arrange — start at 2× via click.
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'Fast' }))
+    const twoX = screen.getByRole('radio', { name: 'Fast' }) as HTMLButtonElement
+    twoX.focus()
+
+    // act
+    await user.keyboard('{Home}')
+
+    // assert
+    expect(
+      screen.getByRole('radio', { name: 'Slow' }),
+    ).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('given the clip errored to the snapshot fallback, when the modal renders, then the speed-pill row is hidden (iter-331: no controls when there is no video)', () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    fireEvent.error(screen.getByLabelText(/clip of person event/i))
+
+    // assert — speed/loop UI absent in the snapshot-fallback state.
+    expect(
+      screen.queryByRole('radiogroup', { name: /playback speed/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /repeat clip/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('given Download is in-flight, when the user clicks again, then a second exportEvents call is suppressed (iter-330: no double-trigger)', async () => {
+    // arrange — return a promise that never resolves so the
+    // in-flight state stays true.
+    const exportSpy = vi
+      .spyOn(await import('../lib/api'), 'exportEvents')
+      .mockReturnValue(new Promise(() => {}))
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn().mockReturnValue('blob:fake'),
+      configurable: true,
+    })
+
+    // act
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    const btn = screen.getByRole('button', { name: /save clip/i })
+    await user.click(btn)
+    // Second click while disabled — should be suppressed (button is
+    // disabled by the in-flight state, AND the onDownload guard
+    // is the second line of defense).
+    await user.click(btn)
+
+    // assert — exportEvents called exactly once.
+    expect(exportSpy).toHaveBeenCalledTimes(1)
+
+    vi.restoreAllMocks()
+  })
+})

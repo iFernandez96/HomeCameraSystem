@@ -1,0 +1,38 @@
+[Unit]
+Description=Home Camera FastAPI server (Docker)
+Requires=docker.service
+After=docker.service mediamtx.service
+Wants=mediamtx.service
+# Restart-storm guard (iter-167). Pre-iter-167 this unit had no recovery
+# policy at all — if `docker compose up` failed (daemon transient, image
+# pull race, name collision after a manual `docker rm`), systemd marked
+# the unit `failed` once and stopped trying. Asymmetric vs the peer
+# units `mediamtx.service` and `homecam-detect.service` which both have
+# StartLimitBurst clamps. Now matches: 3 attempts in 5 minutes, then
+# surface the failure. Tighter than detect.service's 5/60 because
+# `docker compose up` failures are usually structural (image build
+# broken, volume mount missing) — retrying 5× rarely helps and burns
+# time before the operator notices.
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/israel/HomeCameraSystem
+ExecStart=/usr/bin/docker compose -f deploy/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f deploy/docker-compose.yml down
+# Restart on transient failure (image pull hiccup, docker daemon flap).
+# 10 s gap is generous — `docker compose up` itself takes ~3–5 s on the
+# Jetson when the image is already built.
+Restart=on-failure
+RestartSec=10
+# Cap shutdown wait. Default systemd timeout is 90 s; combined with
+# `docker compose down`'s graceful-stop attempt this can stall reboots.
+# 30 s is plenty for a healthy stop and bounds an ungraceful one.
+TimeoutStopSec=30
+User=israel
+Group=israel
+
+[Install]
+WantedBy=multi-user.target

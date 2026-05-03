@@ -1,0 +1,21 @@
+# Provisioned dashboards loader (iter-199).
+#
+# Tells Grafana to scan `/var/lib/grafana/dashboards/` for *.json files
+# at startup and reload every 10 s. The Compose file mounts our
+# `deploy/grafana/dashboards/` into that path read-only — operators
+# don't accidentally overwrite the provisioned versions through the
+# Grafana UI, but their UI edits remain non-persistent (Grafana
+# offers a "Save as" duplicate path if they want to customize).
+
+apiVersion: 1
+
+providers:
+  - name: homecam
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

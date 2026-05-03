@@ -1,0 +1,17 @@
+{
+  "_comment": "Per-photo face labels. The encoder script reads this file, runs face_recognition.face_locations on each photo, sorts faces left-to-right by x coordinate, and assigns labels in order. Edit any entry whose face order is wrong; '_skip' on a face removes it from training. 'unknown' face is allowed but ignored.",
+  "photo_01.jpg": ["israel", "sheenal"],
+  "photo_02.jpg": ["sheenal", "israel"],
+  "photo_03.jpg": ["sheenal", "israel"],
+  "photo_04.jpg": ["israel", "sheenal"],
+  "photo_05.jpg": ["sheenal", "israel"],
+  "photo_06.jpg": ["israel", "_skip", "_skip"],
+  "photo_07.jpg": ["israel", "sheenal"],
+  "photo_08.jpg": ["israel", "sheenal"],
+  "photo_09.jpg": ["sheenal", "israel"],
+  "photo_10.jpg": ["sheenal"],
+  "photo_11.jpg": ["sheenal", "israel"],
+  "photo_12.jpg": ["sheenal", "israel"],
+  "photo_13.jpg": ["sheenal", "israel"],
+  "photo_14.jpg": ["sheenal", "israel"]
+}

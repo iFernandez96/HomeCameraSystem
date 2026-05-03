@@ -1,0 +1,111 @@
+###############################################
+# Home Camera System — MediaMTX config
+#
+# Pulls H.264 from the RPi camera via GStreamer (libargus / nvarguscamerasrc),
+# republishes as WebRTC at http://<jetson>:8889/cam/whep for the PWA.
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+# Protocols we don't use — disable to reduce attack surface.
+rtmp: no
+hls: no
+srt: no
+
+# RTSP is used internally as the ingest transport from GStreamer → MediaMTX.
+rtspAddress: :8554
+
+# WebRTC is what the browser pulls from.
+webrtcAddress: :8889
+# Plain HTTP is fine for LAN. Flip to yes + serverCert/serverKey for TLS,
+# or front MediaMTX with Caddy/Nginx.
+webrtcEncryption: no
+# Allow the PWA's origin to issue WHEP requests. (key was webrtcAllowOrigin
+# pre-v1.18 — current MediaMTX uses webrtcAllowOrigins, plural.)
+webrtcAllowOrigins: ['*']
+# iter-265 (live-cam fix): announce the Jetson's Tailscale IP as an
+# additional ICE host candidate. Without this, MediaMTX only
+# advertises its LAN IP (10.0.0.9) — phones connecting through the
+# Tailscale Funnel at homecam.tail4a6525.ts.net can't reach that
+# IP for the WebRTC media UDP, so every WHEP session times out with
+# "deadline exceeded while waiting connection".
+#
+# `100.85.251.7` is the Jetson's stable Tailscale 100.x.y.z address
+# (`tailscale ip -4`). Adding it lets every browser on the same
+# tailnet hit it directly over the WireGuard tunnel — same physical
+# path that already carries the HTTPS WHEP control plane.
+#
+# `homecam.tail4a6525.ts.net` is the MagicDNS name; some phone OSes
+# resolve it via Tailscale's resolver before the host candidate
+# negotiation, others resolve via system DNS — listing both names
+# costs nothing.
+#
+# When the LAN client (laptop on the same Wi-Fi as the Jetson) hits
+# the PWA at the LAN IP directly, the LAN host candidate is still
+# announced by default — Tailscale entries are additive.
+webrtcAdditionalHosts: ['100.85.251.7', 'homecam.tail4a6525.ts.net']
+
+paths:
+  cam:
+    source: publisher
+
+    # Jetson Nano 2GB + RPi camera v2 (IMX219) via libargus.
+    #
+    # Single producer (`nvarguscamerasrc`) -> hardware H.264 (`nvv4l2h264enc`)
+    # -> RTSP push to localhost. The detection worker reads back from the
+    # same RTSP path (`rtsp://localhost:8554/cam`) using jetson-utils +
+    # NVDEC, which costs <10 % of the hardware decoder. Trying to share the
+    # camera by tee'ing into a `shmsink` for the detection worker is
+    # technically faster but JetPack's apt OpenCV is built WITHOUT
+    # GStreamer support, and jetson-utils' `videoSource` consumes RTSP
+    # natively — RTSP keeps the architecture simpler and still gives sub-frame
+    # latency on the LAN.
+    #
+    # Encoder tuning for low-latency LAN WebRTC:
+    #   - iframeinterval=8  -> ~0.27 s GOP. New viewers get a keyframe ~4
+    #                          times a second; "camera on" first-frame wait
+    #                          is bounded by the keyframe gap. Bandwidth
+    #                          cost vs. iframeinterval=30 is ~5-10 % at this
+    #                          bitrate — cheap on LAN.
+    #   - insert-sps-pps=true -> SPS/PPS in every keyframe so decoders can
+    #                            tune in mid-stream without parameter sets.
+    #   - EnableTwopassCBR=false -> single-pass; saves an encode round-trip.
+    #   - control-rate=1 -> CBR, good fit for Wi-Fi with steady bandwidth.
+    #   - maxperf-enable=true -> pin NVENC to max clocks. Default is
+    #                            "scale clocks under load", which adds
+    #                            ~50-150 ms of encode latency on the first
+    #                            frame after a quiet stretch. Power cost
+    #                            on the Nano is ~0.5 W — negligible for
+    #                            an always-on camera. preset-level
+    #                            already defaults to UltraFastPreset (1)
+    #                            on this version of nvv4l2h264enc, so no
+    #                            need to set it explicitly.
+    #   - vbv-size + peak-bitrate (iter-284, camera-library-usage-auditor C1):
+    #     bound the encode-buffer drain. Pre-iter-284 a high-motion scene
+    #     briefly bursts above the 2.5 Mbps CBR target and NVENC's rate-
+    #     controller spends frames recovering — visible as keyframe-stutter
+    #     + WHEP "deadline exceeded" on tailnet (which the iter-265
+    #     webrtcAdditionalHosts fix paid down on the ICE side). vbv-size
+    #     2500000 bits ≈ 1 s buffer at the target rate; peak-bitrate
+    #     3000000 = 20 % CBR headroom for legitimate motion bursts. No
+    #     measurable bandwidth uplift on idle scenes (CBR average stays
+    #     at 2.5 Mbps).
+    runOnInit: >-
+      gst-launch-1.0 -e
+      nvarguscamerasrc !
+      'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' !
+      nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true !
+      h264parse !
+      rtspclientsink location=rtsp://localhost:$RTSP_PORT/cam
+    runOnInitRestart: yes
+
+    # Alternative (USB / V4L2 camera) — comment the libargus block above and use this:
+    # runOnInit: >-
+    #   gst-launch-1.0 -e
+    #   v4l2src device=/dev/video0 !
+    #   videoconvert !
+    #   x264enc tune=zerolatency bitrate=2000 key-int-max=30 !
+    #   h264parse !
+    #   rtspclientsink location=rtsp://localhost:$RTSP_PORT/cam
+    # runOnInitRestart: yes

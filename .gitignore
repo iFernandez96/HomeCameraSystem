@@ -1,0 +1,67 @@
+# Node
+node_modules/
+dist/
+dev-dist/
+*.log
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+client/dist/
+client/dev-dist/
+server/static/
+
+# Jetson runtime
+mediamtx
+mediamtx.log
+recordings/
+snapshots/
+thumbs/
+
+# Secrets
+vapid_*.pem
+*.key
+*.pem
+
+# Generated face-recognition encodings (rebuild with encode_known_faces.py)
+detection/face_recognition/encodings.pkl
+detection/face_recog/encodings.pkl
+
+# Auth + push runtime state (server-managed; contains password hashes / endpoints)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+push_subs.json
+push_subs*.json
+jwt_secret
+jwt_secret.bin
+
+# Runtime output dirs
+backups/
+timelapses/
+
+# Local scratch
+potentialJetson.txt

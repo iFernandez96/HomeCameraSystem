@@ -1,0 +1,54 @@
+# Server runs on Python 3.11 in a container — the Jetson Nano (JetPack 4.x)
+# only ships Python 3.6, and FastAPI / Pydantic v2 require 3.8+.
+#
+# Build from the repo root:
+#   docker compose -f deploy/docker-compose.yml build
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HOST=0.0.0.0 \
+    PORT=8000 \
+    SNAPSHOTS_DIR=/app/snapshots \
+    RECORDINGS_DIR=/app/recordings \
+    BACKUP_TARGET_DIR=/app/backups \
+    TIMELAPSES_DIR=/app/timelapses \
+    CLIENT_DIST=/app/client_dist \
+    VAPID_PRIVATE_KEY_PATH=/app/secrets/vapid_private.pem \
+    VAPID_PUBLIC_KEY_PATH=/app/secrets/vapid_public.pem \
+    PUSH_SUBS_PATH=/app/secrets/push_subs.json \
+    DETECTION_CONFIG_PATH=/app/secrets/detection_config.json \
+    USERS_DB_PATH=/app/secrets/users.db \
+    JWT_SECRET_PATH=/app/secrets/jwt_secret.bin \
+    EVENTS_DB_PATH=/app/secrets/events.db
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+# iter-306: ffmpeg added for the timelapse builder (Feature #8 slice 2).
+# Lives in-container rather than on the host so the operator doesn't
+# need to NOPASSWD-grant sudo for a host-side helper, and so the
+# concat list + recordings paths stay inside the container's volume
+# bind (no chroot translation needed). Adds ~80 MB to the image but
+# avoids the iter-? sudo carve-out class of bug.
+
+WORKDIR /app
+
+# Install deps first for layer caching.
+COPY server/requirements.txt ./
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+
+COPY server/ ./
+
+# Ensure mount points exist so first-run before-volumes-attach doesn't crash.
+RUN mkdir -p /app/secrets /app/snapshots /app/recordings /app/backups /app/timelapses /app/client_dist
+
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

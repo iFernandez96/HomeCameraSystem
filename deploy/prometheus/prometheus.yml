@@ -1,0 +1,23 @@
+# Prometheus scrape config for the Home Camera System (iter-199).
+#
+# Mounted into the prometheus container by deploy/docker-compose.grafana.yml.
+# Scrapes the homecam-server container's /metrics endpoint (iter-189) every
+# 15 s — fast enough that the heartbeat-derived metrics (FPS, infer ms,
+# thumb ms) reflect within a single scrape window of an actual change.
+#
+# The server's /metrics route is at root (NOT /api/*), unauthenticated by
+# design (Charter sharp edge: scrapers don't speak browser cookies). On the
+# Compose internal network the homecam-server container is reachable as
+# host=`server`, port=8000.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+
+scrape_configs:
+  - job_name: homecam
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['server:8000']
+        labels:
+          deployment: jetson-nano-2gb

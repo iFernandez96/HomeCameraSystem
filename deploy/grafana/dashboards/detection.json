@@ -1,0 +1,78 @@
+{
+  "uid": "homecam-detection",
+  "title": "Home Camera — Detection worker",
+  "tags": ["homecam", "detection"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Worker FPS",
+      "description": "Frames captured per second (active gear ~5 fps, idle gear ~1 fps).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "homecam_worker_fps", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "fps", "min": 0 }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Inference latency (ms)",
+      "description": "infer_ms_recent is the most-recent net.Detect() call. infer_ms_p95 is the 95th-percentile over the worker's last ~20 calls — the cleaner thermal-pressure signal.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "homecam_worker_infer_ms_recent", "refId": "A", "datasource": "Prometheus", "legendFormat": "recent" },
+        { "expr": "homecam_worker_infer_ms_p95", "refId": "B", "datasource": "Prometheus", "legendFormat": "p95" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "min": 0 }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Dropped frames (rate / 5m)",
+      "description": "Cumulative Capture() failures. rate() over a 5-min window — sustained non-zero = RTSP / camera flakiness.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rate(homecam_worker_dropped_total[5m])", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "min": 0 }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "MediaMTX restarts (rate / 5m)",
+      "description": "iter-26 watchdog kicks. Should be zero in healthy operation — rising = the camera pipeline keeps going dark and detect.py is recovering.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rate(homecam_worker_mediamtx_restarts_total[5m])", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "min": 0 }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Thumb encode latency (ms) — iter-187",
+      "description": "Wall-clock for save_thumb() (mkdir + jetson_utils.saveImage + retention sweep). Operator's signal for whether the iter-201 NVENC swap is worth doing.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "homecam_worker_thumb_ms_recent", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "min": 0 }
+      }
+    }
+  ]
+}

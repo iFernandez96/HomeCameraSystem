@@ -1,0 +1,19 @@
+# Provisioned datasource for the homecam Prometheus stack (iter-199).
+#
+# Grafana auto-loads everything under `/etc/grafana/provisioning/` at
+# startup; this file sets up the Prometheus datasource so the dashboards
+# in the sibling `dashboards/` directory work without manual UI clicks.
+#
+# `prometheus` is the Compose service name from
+# deploy/docker-compose.grafana.yml — Docker's internal DNS resolves it
+# to the prometheus container's IP on the shared network.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

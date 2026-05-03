@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <!-- iter-262 (mobile-view-auditor A1): dropped `user-scalable=no` —
+         WCAG 2.1 SC 1.4.4 (Resize Text) requires zoom. Inputs use 16 px
+         font-size to suppress iOS auto-zoom-on-focus instead.
+         iter-348 (mobile-view-auditor F1): interactive-widget=resizes-content
+         tells the browser to SHRINK the layout viewport when the soft
+         keyboard opens (Chrome 108+, iOS Safari 16+ standalone). Without
+         it, <main>'s overflow-y-auto sees the full screen height even
+         when the keyboard covers half of it — the iter-341 People search
+         input could leave results hidden under the keyboard with no
+         scroll path. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Home Camera" />
+    <title>Home Camera</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

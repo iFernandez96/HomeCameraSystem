@@ -1,0 +1,37 @@
+[Unit]
+Description=Home Camera detection worker (jetson-inference)
+Requires=mediamtx.service
+After=mediamtx.service homecam-server.service
+Wants=homecam-server.service
+# Restart-storm guard: if the worker fails 5 times within 60 s (i.e. an
+# unrecoverable bug like a Python syntax error or a missing module),
+# systemd stops auto-restarting and surfaces the failure rather than
+# spinning the cgroup at 100 %. iter-28's `from __future__ import
+# annotations` (Py 3.7+ syntax on the 3.6 host) hit ~42 restarts in
+# seconds before someone noticed; this clamps that.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=israel
+Group=israel
+# `video` is required for jetson-utils' `videoSource` to open NVDEC for
+# H.264 decode of the MediaMTX RTSP stream. Removing this group breaks the
+# capture path with EACCES on /dev/nvhost-* nodes.
+SupplementaryGroups=video
+WorkingDirectory=/home/israel/HomeCameraSystem
+Environment=EVENT_URL=http://127.0.0.1:8000/api/_internal/event
+Environment=DETECT_SOURCE=rtsp://localhost:8554/cam
+Environment=DETECT_THRESHOLD=0.55
+Environment=DETECT_COOLDOWN_S=5.0
+Environment=DETECT_MODEL=ssd-mobilenet-v2
+ExecStart=/home/israel/HomeCameraSystem/detection/run-detect.sh
+Restart=on-failure
+RestartSec=5
+# nvarguscamerasrc/jetson-utils touches /tmp; don't enable PrivateTmp (same
+# trap mediamtx.service hit — see deploy/systemd/mediamtx.service).
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

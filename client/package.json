@@ -1,0 +1,51 @@
+{
+  "name": "homecam-client",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./node_modules/vite/bin/vite.js",
+    "build": "node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
+    "preview": "node ./node_modules/vite/bin/vite.js preview",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -b --noEmit",
+    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "node ./node_modules/vitest/vitest.mjs",
+    "test:coverage": "node ./node_modules/vitest/vitest.mjs run --coverage",
+    "lint": "node ./node_modules/eslint/bin/eslint.js .",
+    "lint:fix": "node ./node_modules/eslint/bin/eslint.js . --fix",
+    "test:e2e": "npm run build && node ./node_modules/@playwright/test/cli.js test --config=playwright.config.ts",
+    "test:e2e:headed": "npm run build && node ./node_modules/@playwright/test/cli.js test --config=playwright.config.ts --headed"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.59.1",
+    "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^3.0.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.5.0",
+    "jsdom": "^25.0.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.59.1",
+    "vite": "^7.0.0",
+    "vite-plugin-pwa": "^1.0.0",
+    "vitest": "^3.0.0",
+    "workbox-core": "^7.3.0",
+    "workbox-precaching": "^7.3.0"
+  }
+}

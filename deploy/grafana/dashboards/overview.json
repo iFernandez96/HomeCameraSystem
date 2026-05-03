@@ -1,0 +1,126 @@
+{
+  "uid": "homecam-overview",
+  "title": "Home Camera — Overview",
+  "tags": ["homecam"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Worker alive",
+      "description": "1 = host detection worker heartbeat'd in the last 30 s. 0 = dead — the detection feed has stopped.",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "homecam_worker_alive", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Dead", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "Alive", "color": "green" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Detection active",
+      "description": "1 = the UI Detect toggle is on AND events are being routed to subscribers.",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "homecam_detection_active", "refId": "A", "datasource": "Prometheus" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Camera FPS",
+      "description": "Server-side camera service measured FPS.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "homecam_camera_fps", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "fps", "decimals": 1 }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Push subscriptions",
+      "description": "Registered Web Push targets.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        { "expr": "homecam_push_subs", "refId": "A", "datasource": "Prometheus" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Thermal — CPU + GPU °C",
+      "description": "GPU usually leads under inference load (Tegra GPU-therm zone). 80 °C is the hot threshold the worker uses to enter idle gear.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "homecam_cpu_temp_celsius", "refId": "A", "datasource": "Prometheus", "legendFormat": "CPU" },
+        { "expr": "homecam_gpu_temp_celsius", "refId": "B", "datasource": "Prometheus", "legendFormat": "GPU" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "min": 30, "max": 95 }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "CPU governor headroom (%)",
+      "description": "100 = no thermal cap; below 100 = kernel pulled the ceiling down (thermal trip or nvpmodel cap).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "homecam_cpu_freq_pct", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100 }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Memory used (MB)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 12 },
+      "targets": [
+        { "expr": "homecam_memory_used_mb", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "mbytes" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Disk free (GB)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 12 },
+      "targets": [
+        { "expr": "homecam_disk_free_gb", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "decgbytes" }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Server uptime",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "expr": "homecam_server_uptime_seconds", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    }
+  ]
+}

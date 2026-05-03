@@ -1,0 +1,31 @@
+[Unit]
+Description=MediaMTX video gateway (Home Camera System)
+After=network-online.target
+Wants=network-online.target
+# Match the homecam-detect storm guard: 5 failures inside 60 s and
+# systemd gives up rather than spinning. A misconfigured mediamtx.yml
+# fails fast and stays failed — better to see "service failed" in the
+# UI's worker_alive=false signal than to flood the journal.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=israel
+Group=israel
+WorkingDirectory=/home/israel/HomeCameraSystem
+ExecStart=/home/israel/HomeCameraSystem/mediamtx /home/israel/HomeCameraSystem/deploy/mediamtx.yml
+Restart=on-failure
+RestartSec=5
+# nvarguscamerasrc opens the libargus IPC socket — grant the user the
+# `video` group so it has permission. This is normally already the case for
+# a desktop user on JetPack, but make it explicit:
+SupplementaryGroups=video
+# nvarguscamerasrc talks to nvargus-daemon over /tmp/argus_socket; PrivateTmp
+# would hide that socket and the GStreamer pipeline would fail with
+# "Connecting to nvargus-daemon failed: No such file or directory". Don't
+# enable PrivateTmp here.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
