@@ -66,12 +66,15 @@ describe('CatLayer', () => {
     })
 
     // assert — three independent cat sprite SVGs are rendered. The layer
-    // root is the first child of the container; each cat sprite is a
-    // descendant <svg>. Mood emojis (when present) are <span>s, not SVGs.
+    // root is the first child of the container. The iter-356.30 habitat
+    // background also renders 6 decorative SVGs (yarn / mouse / feather
+    // / bed / ledge / box) inside the layer; we count CAT sprites only
+    // by filtering on the data-testid="habitat-*" markers.
     const layer = container.firstElementChild
     expect(layer).not.toBeNull()
-    const svgs = layer!.querySelectorAll('svg')
-    expect(svgs.length).toBe(3)
+    const allSvgs = layer!.querySelectorAll('svg')
+    const habitatSvgs = layer!.querySelectorAll('[data-testid^="habitat-"] svg')
+    expect(allSvgs.length - habitatSvgs.length).toBe(3)
   })
 
   it('given prefers-reduced-motion is true, when the layer mounts, then it does not schedule any animation frame', () => {
@@ -113,5 +116,85 @@ describe('CatLayer', () => {
     const layer = container.firstElementChild as HTMLElement | null
     expect(layer).not.toBeNull()
     expect(layer!.className).toMatch(/pointer-events-none/)
+  })
+
+  // iter-356.30 (Pet Habitat slice 1): habitat objects render only when
+  // CatLayer mounts (which happens iff authed && catsEnabled — gated in
+  // App.tsx). The layer itself is the right granularity to pin: when the
+  // gate flips off, App.tsx unmounts CatLayer entirely, which takes the
+  // habitat with it.
+  it('given the layer is mounted, when it renders, then all six habitat objects appear with stable test ids', () => {
+    // arrange
+    stubMatchMedia({ matches: true })
+
+    // act
+    const { container } = render(<CatLayer />)
+
+    // assert — every habitat object has its own data-testid for slice
+    // 2's movement-zone targeting, and all six are present.
+    const ids = [
+      'habitat-yarn',
+      'habitat-mouse',
+      'habitat-feather',
+      'habitat-bed',
+      'habitat-ledge',
+      'habitat-box',
+    ]
+    for (const id of ids) {
+      expect(container.querySelector(`[data-testid="${id}"]`)).not.toBeNull()
+    }
+  })
+
+  it('given habitat objects render, when reduced-motion matches, then no animation classes are applied to them', () => {
+    // arrange — reduced-motion ON: cats freeze; habitat is static art
+    // by design and must not introduce ANY motion in this slice.
+    stubMatchMedia({ matches: true })
+
+    // act
+    const { container } = render(<CatLayer />)
+
+    // assert — no habitat node carries Tailwind's animate-* utility
+    // (slice 4 will add bed-bob and toy-jiggle, gated on
+    // !prefers-reduced-motion). Today: zero motion at all.
+    const nodes = container.querySelectorAll('[data-testid^="habitat-"]')
+    expect(nodes.length).toBe(6)
+    for (const n of nodes) {
+      expect((n as HTMLElement).className).not.toMatch(/animate-/)
+    }
+  })
+
+  it('given habitat objects render, when inspecting their order in the DOM, then they precede the cat sprites so cats stack on top', () => {
+    // arrange
+    stubMatchMedia({ matches: true })
+
+    // act
+    const { container } = render(<CatLayer />)
+
+    // assert — habitat <div>s appear before cat <div>s in DOM order. We
+    // detect cat sprites via the absence of the habitat-* test id +
+    // presence of an inner <svg>. Last habitat node's compareDocument
+    // position vs first cat node should be FOLLOWING (cat is later).
+    const layer = container.firstElementChild as HTMLElement
+    const habitats = Array.from(
+      layer.querySelectorAll('[data-testid^="habitat-"]'),
+    )
+    const directChildren = Array.from(layer.children) as HTMLElement[]
+    // First non-habitat <div> child of the layer is the first cat
+    const firstCat = directChildren.find(
+      (el) => !el.hasAttribute('data-testid') || !el.getAttribute('data-testid')!.startsWith('habitat-'),
+    )
+    // Filter out the inline <style> tag (which is also a child).
+    const firstCatBlock = directChildren.find(
+      (el) => el.tagName !== 'STYLE' && !el.hasAttribute('data-testid'),
+    )
+    expect(habitats.length).toBe(6)
+    expect(firstCatBlock).toBeDefined()
+    // If the order is correct, habitats[5] precedes firstCatBlock
+    const lastHabitat = habitats[habitats.length - 1] as HTMLElement
+    const cmp = lastHabitat.compareDocumentPosition(firstCatBlock as Node)
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4
+    expect(cmp & 4).toBe(4)
+    // unused-but-referenced sanity (silence prettier noise; firstCat may match firstCatBlock):
+    expect(firstCat ?? firstCatBlock).toBeDefined()
   })
 })

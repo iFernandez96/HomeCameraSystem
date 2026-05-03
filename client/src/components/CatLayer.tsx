@@ -1,5 +1,15 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { BombaySprite, CalicoSprite, TuxedoSprite } from './CatIcons'
+import {
+  BombaySprite,
+  CalicoSprite,
+  CardboardBox,
+  FeatherWand,
+  FloatingBed,
+  ToyMouse,
+  TuxedoSprite,
+  WallLedge,
+  YarnBall,
+} from './CatIcons'
 import { CatParticles, type CatParticleType } from './CatParticles'
 
 /**
@@ -644,10 +654,95 @@ export function CatLayer() {
           50%      { transform: scale(1.04, 0.92); }
         }
       `}</style>
+      {/* iter-356.30 (Pet Habitat slice 1): static habitat objects
+          rendered BEHIND the cats so the cats walk on/over them.
+          z-stack order is DOM-order within this fixed layer (no
+          explicit z-index on the cats), so listing habitat first =
+          rendered first = lower stacking. Pure decoration; no
+          animation, no interaction (slice 4 adds bed-bob + toy-jiggle;
+          slice 2 adds movement zones that target the bed / ledge /
+          box positions). All objects are aria-hidden via the parent
+          `<div aria-hidden="true">` so SR users never hear them. */}
+      <HabitatBackground />
       {cats.map((cat) => (
         <CatRender key={cat.id} cat={cat} />
       ))}
     </div>
+  )
+}
+
+// === HABITAT BACKGROUND =====================================================
+//
+// iter-356.30 (Pet Habitat Phase 1, slice 1): six decorative objects
+// pinned to fixed % positions across the layer width. Positions are
+// chosen so:
+//   - Yarn ball, toy mouse, feather wand, cardboard box, floating bed
+//     sit on the FLOOR (bottom-aligned) so cats walking past visually
+//     read as on the same ground plane.
+//   - Wall ledge sits at the TOP of the layer — cats can later perch
+//     up there in slice 2's movement zones.
+//   - Two of the six (yarn / mouse) sit at <20% and <30% so a cat
+//     mid-walk can investigate them in slice 2; the cardboard box
+//     anchors the right edge so it's a natural endpoint for "go nap
+//     in the box."
+//
+// All positions are PERCENTAGES of layer width — auto-recompute on
+// layout via CSS, no JS resize hook needed.
+function HabitatBackground() {
+  // Tuck the ledge near the top of the layer rather than the bottom.
+  // Layer is `SPRITE_HEIGHT + 56` tall; ledge needs ~14 px and a
+  // visual gap from the cats below it.
+  const ledgeBottom = SPRITE_HEIGHT + 30
+  return (
+    <>
+      {/* Wall ledge (top-of-layer, decorative; slice 2 makes it perchable) */}
+      <div
+        data-testid="habitat-ledge"
+        style={{
+          position: 'absolute',
+          left: '6%',
+          bottom: ledgeBottom,
+          opacity: 0.92,
+        }}
+      >
+        <WallLedge size={Math.max(56, Math.round(SPRITE_WIDTH * 2.2))} />
+      </div>
+      {/* Yarn ball — left third of floor */}
+      <div
+        data-testid="habitat-yarn"
+        style={{ position: 'absolute', left: '14%', bottom: 0 }}
+      >
+        <YarnBall size={Math.max(20, Math.round(SPRITE_WIDTH * 0.6))} />
+      </div>
+      {/* Toy mouse — slightly right of yarn ball */}
+      <div
+        data-testid="habitat-mouse"
+        style={{ position: 'absolute', left: '28%', bottom: 0 }}
+      >
+        <ToyMouse size={Math.max(18, Math.round(SPRITE_WIDTH * 0.55))} />
+      </div>
+      {/* Floating bed — center, low oval so cats can be drawn on top later */}
+      <div
+        data-testid="habitat-bed"
+        style={{ position: 'absolute', left: '46%', bottom: 0 }}
+      >
+        <FloatingBed size={Math.max(34, Math.round(SPRITE_WIDTH * 1.05))} />
+      </div>
+      {/* Feather wand — leans against an imaginary wall */}
+      <div
+        data-testid="habitat-feather"
+        style={{ position: 'absolute', left: '68%', bottom: 0 }}
+      >
+        <FeatherWand size={Math.max(24, Math.round(SPRITE_WIDTH * 0.75))} />
+      </div>
+      {/* Cardboard box — right edge anchor */}
+      <div
+        data-testid="habitat-box"
+        style={{ position: 'absolute', right: '6%', bottom: 0 }}
+      >
+        <CardboardBox size={Math.max(28, Math.round(SPRITE_WIDTH * 0.85))} />
+      </div>
+    </>
   )
 }
 

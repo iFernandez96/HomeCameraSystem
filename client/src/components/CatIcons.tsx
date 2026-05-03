@@ -1015,3 +1015,330 @@ export function SleepingCatIllustration({
     </svg>
   )
 }
+
+// === HABITAT OBJECTS ======================================================
+//
+// iter-356.30 (Pet Habitat Phase 1, slice 1) — decorative non-interactive
+// objects rendered on the ambient CatLayer's "floor" so the strip reads
+// like a small cat habitat instead of a flat walking band. All shapes are
+// original SVG primitives (no third-party / Nintendo / Animal-Crossing
+// art); the warm calico palette ties them to the rest of the brand.
+//
+// Convention:
+//   - viewBox in pixels, width/height = passed `size`. Objects are drawn
+//     bottom-aligned within their viewBox so callers can stack them on
+//     the floor with a single `bottom: 0` rule.
+//   - All decorative — `aria-hidden="true"` on every root <svg>.
+//   - No animation here. Slice 4 adds bed-bob + toy-jiggle.
+
+type HabitatProps = { size?: number; className?: string }
+
+const HABITAT_PALETTE = {
+  yarnA: '#d97706', // calico-orange
+  yarnB: '#b45309', // amber-700 (yarn shadow / contour line)
+  mouseGrey: '#a3a3a3',
+  mousePink: '#fda4af',
+  woodLight: '#c08552', // warm wood
+  woodDark: '#7a4f2c',
+  feather: '#f59e0b',
+  featherTip: '#fde047',
+  cushion: '#fef3c7', // accent-subtle
+  cushionDeep: '#f5deb3', // tan
+  blanketStripe: '#d97706',
+  cardboard: '#d4a373',
+  cardboardShadow: '#b08968',
+} as const
+
+/**
+ * Yarn ball — round wound-yarn shape with two crossing arc lines for
+ * the wound look + a short dangling thread. Sits on the floor.
+ */
+export function YarnBall({ size = 22, className }: HabitatProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 22 22"
+      aria-hidden="true"
+      className={className}
+    >
+      {/* shadow */}
+      <ellipse cx="11" cy="20" rx="7" ry="1.2" fill="rgba(60,40,20,0.18)" />
+      {/* ball body */}
+      <circle cx="11" cy="13" r="7" fill={HABITAT_PALETTE.yarnA} />
+      {/* wound contours */}
+      <path
+        d="M5 13 Q11 6 17 13"
+        stroke={HABITAT_PALETTE.yarnB}
+        strokeWidth="0.8"
+        fill="none"
+        opacity="0.65"
+      />
+      <path
+        d="M5 13 Q11 20 17 13"
+        stroke={HABITAT_PALETTE.yarnB}
+        strokeWidth="0.8"
+        fill="none"
+        opacity="0.65"
+      />
+      <path
+        d="M11 6 Q15 13 11 20"
+        stroke={HABITAT_PALETTE.yarnB}
+        strokeWidth="0.6"
+        fill="none"
+        opacity="0.45"
+      />
+      {/* dangling thread */}
+      <path
+        d="M16.5 14 Q19 16 18 19"
+        stroke={HABITAT_PALETTE.yarnA}
+        strokeWidth="0.7"
+        fill="none"
+      />
+    </svg>
+  )
+}
+
+/**
+ * Toy mouse — small grey mouse silhouette with pink tail-tip + nose,
+ * two round ears, eye dot. Side-profile, faces right.
+ */
+export function ToyMouse({ size = 20, className }: HabitatProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 22 14"
+      aria-hidden="true"
+      className={className}
+    >
+      <ellipse cx="11" cy="13" rx="6" ry="0.8" fill="rgba(60,40,20,0.18)" />
+      {/* tail */}
+      <path
+        d="M5 11 Q1 11 2 8"
+        stroke={HABITAT_PALETTE.mousePink}
+        strokeWidth="1.1"
+        fill="none"
+        strokeLinecap="round"
+      />
+      {/* body */}
+      <ellipse cx="11" cy="9" rx="6" ry="3.5" fill={HABITAT_PALETTE.mouseGrey} />
+      {/* head */}
+      <circle cx="16" cy="8.5" r="2.6" fill={HABITAT_PALETTE.mouseGrey} />
+      {/* ears */}
+      <circle cx="14.7" cy="6" r="1.3" fill={HABITAT_PALETTE.mouseGrey} />
+      <circle cx="14.7" cy="6" r="0.6" fill={HABITAT_PALETTE.mousePink} />
+      {/* eye + nose */}
+      <circle cx="16.6" cy="8.2" r="0.4" fill="#1a1410" />
+      <circle cx="18.2" cy="9.2" r="0.4" fill={HABITAT_PALETTE.mousePink} />
+    </svg>
+  )
+}
+
+/**
+ * Feather wand — short wooden stick leaning right with a feather plume.
+ */
+export function FeatherWand({ size = 28, className }: HabitatProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 22 22"
+      aria-hidden="true"
+      className={className}
+    >
+      <ellipse cx="11" cy="21" rx="5" ry="0.8" fill="rgba(60,40,20,0.18)" />
+      {/* stick (leaning) */}
+      <line
+        x1="6"
+        y1="20"
+        x2="14"
+        y2="6"
+        stroke={HABITAT_PALETTE.woodDark}
+        strokeWidth="1.1"
+        strokeLinecap="round"
+      />
+      <line
+        x1="6.4"
+        y1="20"
+        x2="14.4"
+        y2="6"
+        stroke={HABITAT_PALETTE.woodLight}
+        strokeWidth="0.5"
+        strokeLinecap="round"
+      />
+      {/* feather plume */}
+      <path
+        d="M14 6 Q19 4 18 1 Q15 2 14 6 Z"
+        fill={HABITAT_PALETTE.feather}
+      />
+      <path
+        d="M14 6 Q11 3 12 1 Q14 3 14 6 Z"
+        fill={HABITAT_PALETTE.featherTip}
+        opacity="0.85"
+      />
+      <line
+        x1="14"
+        y1="6"
+        x2="16"
+        y2="2"
+        stroke={HABITAT_PALETTE.woodDark}
+        strokeWidth="0.4"
+      />
+    </svg>
+  )
+}
+
+/**
+ * Floating cat bed — round basket / bean-bag shape with a striped
+ * cushion. Sits on the floor; mid-elevated profile so a cat can later
+ * climb onto it.
+ */
+export function FloatingBed({ size = 38, className }: HabitatProps) {
+  return (
+    <svg
+      width={size}
+      height={(size * 22) / 38}
+      viewBox="0 0 38 22"
+      aria-hidden="true"
+      className={className}
+    >
+      <ellipse cx="19" cy="20" rx="14" ry="1.2" fill="rgba(60,40,20,0.18)" />
+      {/* basket outer */}
+      <ellipse
+        cx="19"
+        cy="14"
+        rx="14"
+        ry="6"
+        fill={HABITAT_PALETTE.cardboard}
+      />
+      {/* basket inner cushion well */}
+      <ellipse
+        cx="19"
+        cy="11"
+        rx="11"
+        ry="3.5"
+        fill={HABITAT_PALETTE.cardboardShadow}
+      />
+      {/* cushion */}
+      <ellipse
+        cx="19"
+        cy="10.5"
+        rx="10"
+        ry="2.6"
+        fill={HABITAT_PALETTE.cushion}
+      />
+      {/* cushion stripe */}
+      <path
+        d="M11 10 Q19 12 27 10"
+        stroke={HABITAT_PALETTE.blanketStripe}
+        strokeWidth="0.7"
+        fill="none"
+        opacity="0.65"
+      />
+      {/* basket weave hint */}
+      <path
+        d="M5 14 Q19 17 33 14"
+        stroke={HABITAT_PALETTE.woodDark}
+        strokeWidth="0.4"
+        fill="none"
+        opacity="0.4"
+      />
+    </svg>
+  )
+}
+
+/**
+ * Wall ledge / perch — horizontal plank with two small brackets. For
+ * slice 2 the cats can climb up; for slice 1 it's pure decor.
+ */
+export function WallLedge({ size = 60, className }: HabitatProps) {
+  return (
+    <svg
+      width={size}
+      height={(size * 14) / 60}
+      viewBox="0 0 60 14"
+      aria-hidden="true"
+      className={className}
+    >
+      {/* plank */}
+      <rect
+        x="0"
+        y="3"
+        width="60"
+        height="4"
+        rx="1"
+        fill={HABITAT_PALETTE.woodLight}
+      />
+      <rect
+        x="0"
+        y="3"
+        width="60"
+        height="1"
+        fill={HABITAT_PALETTE.cushion}
+        opacity="0.6"
+      />
+      <rect
+        x="0"
+        y="6"
+        width="60"
+        height="1"
+        fill={HABITAT_PALETTE.woodDark}
+        opacity="0.55"
+      />
+      {/* brackets (under plank) */}
+      <path d="M6 7 L4 13 L10 7 Z" fill={HABITAT_PALETTE.woodDark} />
+      <path d="M50 7 L48 13 L54 7 Z" fill={HABITAT_PALETTE.woodDark} />
+      {/* wood grain */}
+      <line x1="8" y1="5" x2="20" y2="5" stroke={HABITAT_PALETTE.woodDark} strokeWidth="0.3" opacity="0.4" />
+      <line x1="30" y1="5" x2="48" y2="5" stroke={HABITAT_PALETTE.woodDark} strokeWidth="0.3" opacity="0.4" />
+    </svg>
+  )
+}
+
+/**
+ * Cardboard box — open-top corrugated box with a small folded flap +
+ * faint stripes. Cat-bait staple. Sits on the floor.
+ */
+export function CardboardBox({ size = 30, className }: HabitatProps) {
+  return (
+    <svg
+      width={size}
+      height={(size * 22) / 30}
+      viewBox="0 0 30 22"
+      aria-hidden="true"
+      className={className}
+    >
+      <ellipse cx="15" cy="21" rx="13" ry="0.9" fill="rgba(60,40,20,0.20)" />
+      {/* back wall (slightly darker) */}
+      <rect x="3" y="6" width="24" height="14" fill={HABITAT_PALETTE.cardboardShadow} />
+      {/* front wall */}
+      <path
+        d="M3 8 L27 8 L26 20 L4 20 Z"
+        fill={HABITAT_PALETTE.cardboard}
+      />
+      {/* top rim (open box) */}
+      <path
+        d="M3 8 L8 4 L24 4 L27 8 Z"
+        fill={HABITAT_PALETTE.cardboardShadow}
+      />
+      {/* folded flap */}
+      <path
+        d="M8 4 L11 1 L17 1 L15 4 Z"
+        fill={HABITAT_PALETTE.cardboard}
+      />
+      {/* tape */}
+      <line
+        x1="13"
+        y1="8"
+        x2="13"
+        y2="20"
+        stroke={HABITAT_PALETTE.woodLight}
+        strokeWidth="0.6"
+        opacity="0.6"
+      />
+      {/* corrugation hint */}
+      <line x1="5" y1="14" x2="25" y2="14" stroke={HABITAT_PALETTE.woodDark} strokeWidth="0.3" opacity="0.35" />
+    </svg>
+  )
+}
