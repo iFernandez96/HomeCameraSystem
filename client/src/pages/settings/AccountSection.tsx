@@ -74,7 +74,11 @@ export function AccountSection() {
       {/* iter-234 (Feature #12 slice 3b): server version. Em-dash
           while loading or on error; informational only. */}
       <Row
-        label="Server version"
+        // iter-356.56 (Settings redesign brief): "Server version" is
+        // developer vocabulary. The user installed "the app"; the
+        // version they see IS the running server build, but mapping
+        // it to "App version" is closer to what they expect.
+        label="App version"
         right={<Mono>{serverVersion ?? '—'}</Mono>}
       />
       <ChangePasswordRow />
@@ -101,15 +105,16 @@ export function AccountSection() {
           roles never see this. */}
       {isOwner ? <ManageUsersPanel /> : null}
       {/* iter-355ac (Maya Major): Sign out from someone else's
-          session is destructive-adjacent on a shared device. Was
-          neutral zinc-800 fill — visually equal to "Show
-          advanced." Red ghost (border-only + red text) is softer
-          than the DangerZone red-fill but signals "you're
-          logging out." */}
+          session is destructive-adjacent on a shared device.
+          iter-356.56 (Frank S4 + light-theme contrast): swept from
+          dark-theme red-300/red-900 (illegible on cream) to the
+          token-driven danger surface that the destructive Button
+          variant uses. Same tinted surface family used by
+          confirm-dialog destructive button. */}
       <button
         type="button"
         onClick={handleSignOut}
-        className="w-full text-sm border border-red-900/60 text-red-300 hover:bg-red-900/20 hover:border-red-800 rounded px-3 py-2 min-h-[44px] focus-visible:outline-2 focus-visible:outline-red-500 focus-visible:outline-offset-2 transition-colors"
+        className="w-full text-sm border border-[var(--color-danger-muted)] text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] hover:border-[var(--color-danger-border)] rounded-lg px-3 py-2 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 transition-colors font-medium"
       >
         Sign out
       </button>

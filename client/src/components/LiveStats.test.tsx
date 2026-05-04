@@ -34,7 +34,8 @@ describe('LiveStats System Health card (iter-356.15)', () => {
     render(<LiveStats status={null} />)
 
     // assert
-    expect(screen.getByText(/loading status/i)).toBeInTheDocument()
+    // iter-356.56: copy upgrade — "Loading status…" → "Connecting to camera…"
+    expect(screen.getByText(/connecting to camera/i)).toBeInTheDocument()
   })
 
   describe('summary line', () => {
@@ -43,7 +44,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       render(<LiveStats status={status()} />)
 
       // assert
-      expect(screen.getByText('All systems normal')).toBeInTheDocument()
+      expect(screen.getByText('Home is calm')).toBeInTheDocument()
     })
 
     it('given worker_alive=false with last-seen, when rendered, then summary is Camera offline + reconnect hint', () => {
@@ -156,8 +157,12 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // assert
-      expect(screen.getByText('Detection paused')).toBeInTheDocument()
-      expect(screen.getByText(/tap detect on the action panel/i)).toBeInTheDocument()
+      expect(screen.getByText("Panther's off duty")).toBeInTheDocument()
+      // iter-356.57: hint copy now points to "Resume on the action
+      // panel to bring her back on watch" — names Panther's role.
+      expect(
+        screen.getByText(/tap resume on the action panel/i),
+      ).toBeInTheDocument()
     })
 
     it('given gear=scheduled-off, when rendered, then summary is "Detection paused on schedule"', () => {
@@ -178,9 +183,12 @@ describe('LiveStats System Health card (iter-356.15)', () => {
         />,
       )
 
-      // assert
+      // assert — iter-356.57 (cat-brand brief): scheduled-off
+      // resolves to "Coco's hours" — Coco is the Peacekeeper, her
+      // dominant activity IS sleep, mapping cleanly to a quiet
+      // window.
       expect(
-        screen.getByText('Detection paused on schedule'),
+        screen.getByText("Coco's hours"),
       ).toBeInTheDocument()
     })
 
@@ -204,7 +212,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
 
       // assert — disclosure starts collapsed; aria-expanded=false; the
       // CPU temperature is NOT in the document.
-      const toggle = screen.getByRole('button', { name: /system details/i })
+      const toggle = screen.getByRole('button', { name: /camera box details/i })
       expect(toggle).toHaveAttribute('aria-expanded', 'false')
       expect(screen.queryByText('50°C')).not.toBeInTheDocument()
     })
@@ -212,31 +220,36 @@ describe('LiveStats System Health card (iter-356.15)', () => {
     it('given user clicks the disclosure, when it opens, then aria-expanded flips and details render', () => {
       // arrange
       render(<LiveStats status={status()} />)
-      const toggle = screen.getByRole('button', { name: /system details/i })
+      const toggle = screen.getByRole('button', { name: /camera box details/i })
 
       // act
       fireEvent.click(toggle)
 
       // assert — aria-expanded true + the existing stat grid renders.
+      // iter-356.56: "28 GB free" now appears in BOTH the always-visible
+      // StatStrip and the disclosure's SystemDetails grid; use
+      // getAllByText for that label specifically. Other values
+      // (CPU temp, GPU temp, load) only live in SystemDetails so they
+      // remain unique.
       expect(toggle).toHaveAttribute('aria-expanded', 'true')
       expect(screen.getByText('50°C')).toBeInTheDocument()
       expect(screen.getByText('47°C')).toBeInTheDocument()
       expect(screen.getByText('1.4/1.9 GB')).toBeInTheDocument()
       expect(screen.getByText('10m')).toBeInTheDocument()
       expect(screen.getByText('0.50')).toBeInTheDocument()
-      expect(screen.getByText('28 GB free')).toBeInTheDocument()
+      expect(screen.getAllByText('28 GB free').length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText('Camera online')).toBeInTheDocument()
     })
 
     it('given the disclosure is open, when user clicks the toggle again, then details collapse', () => {
       // arrange
       render(<LiveStats status={status()} />)
-      const toggle = screen.getByRole('button', { name: /system details/i })
+      const toggle = screen.getByRole('button', { name: /camera box details/i })
       fireEvent.click(toggle)
       expect(screen.getByText('50°C')).toBeInTheDocument()
 
       // act
-      fireEvent.click(screen.getByRole('button', { name: /hide system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /hide camera box details/i }))
 
       // assert
       expect(screen.queryByText('50°C')).not.toBeInTheDocument()
@@ -247,7 +260,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       render(<LiveStats status={status({ cpu_temp_c: 90 })} />)
 
       // act — open the details
-      fireEvent.click(screen.getByRole('button', { name: /system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert
       expect(screen.getByText('90°C')).toHaveClass('text-red-400')
@@ -258,7 +271,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       render(<LiveStats status={status({ cpu_freq_pct: 80 })} />)
 
       // act
-      fireEvent.click(screen.getByRole('button', { name: /system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert — the throttled aria-label sigil is present.
       expect(screen.getByLabelText('throttled')).toBeInTheDocument()
@@ -273,7 +286,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // act
-      fireEvent.click(screen.getByRole('button', { name: /system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert
       expect(screen.getByText('1.8/1.9 GB')).toHaveClass('text-red-400')
@@ -286,7 +299,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // act
-      fireEvent.click(screen.getByRole('button', { name: /system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert
       expect(screen.getByText('2.50')).toHaveClass('text-yellow-400')
@@ -304,7 +317,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // act
-      fireEvent.click(screen.getByRole('button', { name: /system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert — in the disclosed details panel only, not the summary.
       expect(screen.getByText('Watching: active')).toBeInTheDocument()
@@ -324,7 +337,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // act
-      fireEvent.click(screen.getByRole('button', { name: /system details/i }))
+      fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert — multiple em-dashes from null fields.
       const dashes = screen.getAllByText('—')

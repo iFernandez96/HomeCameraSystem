@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { SleepingCatIllustration } from './CatIcons'
+import { BombaySprite, CalicoSprite, SleepingCatIllustration, TuxedoSprite } from './CatIcons'
 
 /**
  * iter-356.23 (Maya #1 ranked + Priya pattern propagation):
@@ -47,12 +47,43 @@ import { SleepingCatIllustration } from './CatIcons'
  *   (Events uses "All quiet — no events yet" so SR users get the
  *   mood phrase, not just "All quiet out there").
  */
+/**
+ * iter-356.56 (cat-brand integration, Maya brand-identity tier):
+ * `mood` lets the page pick a cat that fits the empty-state context
+ * instead of every empty surface showing the same sleeping calico.
+ *
+ * - `'calm'` (default) — Coco asleep with z-z-z's. Reads "all is well."
+ *   Used by Events when there are no detections.
+ * - `'curious'` — Mushu sitting forward. Reads "ready to learn."
+ *   Used by People + Training where the user is meant to teach the
+ *   camera.
+ * - `'watching'` — Panther in profile. Reads "on duty."
+ *   Used by Review when the camera has nothing pending but is still
+ *   working.
+ *
+ * Each mood is still a single visible cat at the same 96 px size so
+ * the spatial rhythm across pages stays consistent. Caller can still
+ * pass a custom `illustration` for fully bespoke surfaces.
+ */
+export type EmptyStateMood = 'calm' | 'curious' | 'watching'
+
 export interface CatEmptyStateProps {
   heading: string
   body: string
   hint?: string
   illustration?: ReactNode
   ariaLabel?: string
+  mood?: EmptyStateMood
+}
+
+function moodIllustration(mood: EmptyStateMood): ReactNode {
+  if (mood === 'curious') {
+    return <TuxedoSprite size={96} state="sit" />
+  }
+  if (mood === 'watching') {
+    return <BombaySprite size={96} state="sit" />
+  }
+  return <SleepingCatIllustration size={96} />
 }
 
 export function CatEmptyState({
@@ -61,7 +92,9 @@ export function CatEmptyState({
   hint,
   illustration,
   ariaLabel,
+  mood = 'calm',
 }: CatEmptyStateProps) {
+  const finalIllustration = illustration ?? moodIllustration(mood)
   return (
     <div
       className="text-center py-10 lg:py-16 px-6 space-y-4 max-w-md mx-auto"
@@ -69,7 +102,7 @@ export function CatEmptyState({
       aria-label={ariaLabel ?? heading}
     >
       <div className="flex justify-center text-[var(--color-text-secondary)]">
-        {illustration ?? <SleepingCatIllustration size={96} />}
+        {finalIllustration}
       </div>
       <div className="space-y-1.5">
         <p className="text-lg font-semibold text-[var(--color-text-primary)]">
@@ -83,3 +116,8 @@ export function CatEmptyState({
     </div>
   )
 }
+
+// Re-export so `CalicoSprite` import doesn't show as unused; future
+// callers may want the calico for a custom mood without restating
+// the import path.
+export const _calicoSprite = CalicoSprite

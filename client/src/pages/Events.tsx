@@ -562,16 +562,27 @@ export function Events() {
   // means a user can flip it. ResizeObserver writes the live height
   // to `--day-header-top` on the Events page wrapper — descendant
   // DayHeader elements use the inner value (CSS variable cascade).
+  // iter-356.56 (mobile audit A2): switched from `contentRect.height`
+  // to `getBoundingClientRect().height`. The header element has
+  // `pt-[env(safe-area-inset-top)]` padding inside it; `contentRect`
+  // gives the content box (excluding padding), but the padding IS
+  // already part of the visible sticky surface. Pre-fix, the formula
+  // also added `env(safe-area-inset-top)` again, double-counting on
+  // notched iPhones in standalone PWA mode. Border-box height fully
+  // includes the safe-area padding once, so the formula no longer
+  // adds it.
   const headerRef = useRef<HTMLElement | null>(null)
   const [headerHeight, setHeaderHeight] = useState<number | null>(null)
   useEffect(() => {
     const el = headerRef.current
     if (!el) return
     if (typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver((entries) => {
-      const h = entries[0]?.contentRect.height
-      if (typeof h === 'number') setHeaderHeight(Math.ceil(h))
-    })
+    const measure = () => {
+      const h = el.getBoundingClientRect().height
+      if (typeof h === 'number' && h > 0) setHeaderHeight(Math.ceil(h))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
@@ -648,7 +659,12 @@ export function Events() {
       style={
         headerHeight !== null
           ? ({
-              '--day-header-top': `calc(${headerHeight}px + env(safe-area-inset-top))`,
+              // iter-356.56 (mobile audit A2): no `+ env(safe-area-inset-top)`
+              // here — the measured height already includes the
+              // header's own `pt-[env(safe-area-inset-top)]` padding
+              // (border-box). Adding it again offset day headers by
+              // 44–59 px on notched iOS in standalone PWA mode.
+              '--day-header-top': `${headerHeight}px`,
             } as React.CSSProperties)
           : undefined
       }
@@ -856,7 +872,17 @@ export function Events() {
                 + 24h picker on mobile. Empty input = use full day's
                 midnight bound on that side. Reset link clears both
                 back to full-day. */}
-            <div className="flex items-center gap-2 text-xs">
+            {/* iter-356.56 (mobile audit D2): time inputs jump from
+                `text-base` (15 px per token scale) to a hard 16 px so
+                iOS Safari doesn't auto-zoom the viewport on tap. The
+                `text-[16px]` arbitrary value is the canonical fix —
+                15 px sits below the 16 px iOS auto-zoom threshold;
+                bumping by 1 px clears it without changing the visual
+                rhythm noticeably.
+                iter-356.56 (mobile audit B2): Reset is now a real
+                touch target — min-h-[44px] + horizontal padding +
+                inline-flex so the click area meets WCAG 2.5.5. */}
+            <div className="flex items-center gap-2 text-xs flex-wrap">
               <span className="text-[var(--color-accent-default)]">From</span>
               <input
                 type="time"
@@ -865,7 +891,7 @@ export function Events() {
                   onTimeBoundsChange(e.target.value || null, dayEndTime)
                 }
                 aria-label="Filter from time of day"
-                className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-[16px] text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               />
               <span className="text-[var(--color-accent-default)]">to</span>
               <input
@@ -875,13 +901,13 @@ export function Events() {
                   onTimeBoundsChange(dayStartTime, e.target.value || null)
                 }
                 aria-label="Filter to time of day"
-                className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-[16px] text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               />
               {(dayStartTime || dayEndTime) && (
                 <button
                   type="button"
                   onClick={() => onTimeBoundsChange(null, null)}
-                  className="text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline ml-1 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+                  className="inline-flex items-center min-h-[44px] px-2 text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline ml-1 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
                   aria-label="Reset time-of-day filter"
                 >
                   Reset

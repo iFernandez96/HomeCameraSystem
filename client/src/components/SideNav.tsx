@@ -36,27 +36,31 @@ export function SideNav() {
       className="hidden lg:flex flex-col fixed top-0 left-0 bottom-0 w-56 bg-[var(--color-surface)] border-r border-[var(--color-border)] px-3 py-6 z-10 shadow-[var(--shadow-card)]"
     >
       <div className="px-3 mb-6">
-        {/* iter-356.28: CatTrioMark sized for legibility. Pre-iter-356.28
-            it was inline with the wordmark at size=28 — 28×9px renders
-            each 16-px-grid cat face at ~9px wide, below the threshold
-            where the pixel-art reads as cats (browser-harness audit
-            against the live tailnet PWA showed three indistinct smudges).
-            Now stacked above the wordmark at size=72 (72×24, ~24px per
-            face), matching the Login card's hero treatment but smaller. */}
-        <CatTrioMark size={72} ariaLabel="HomeCam" className="mb-3" />
-        <div>
-          <div className="text-lg font-semibold text-[var(--color-text-primary)] leading-none">
+        {/* iter-356.57 (radical redesign): brand row reframed.
+            Pre-fix: 72px CatTrioMark + Inter "HomeCam" + "Signed in
+            as Israel" — read as generic logo+wordmark+username.
+            Post-fix: smaller trio mark (44px) inline with a Fraunces
+            serif wordmark; user line reframed as "Israel's watch"
+            possessive — stakes ownership, warmer, removes the
+            "Signed in as" SaaS preamble. The serif wordmark IS the
+            identity marker; the cats are second-tier because the
+            type is the strongest signal at this scale. */}
+        <div className="flex items-center gap-2.5 mb-3">
+          <CatTrioMark size={36} ariaLabel="HomeCam" />
+          <div className="font-display text-2xl font-bold leading-none text-[var(--color-text-primary)]">
             HomeCam
           </div>
-          {user ? (
-            <div className="text-xs text-[var(--color-text-tertiary)] mt-1">
-              Signed in as{' '}
-              <span className="text-[var(--color-text-secondary)] font-medium">
-                {user.username}
-              </span>
-            </div>
-          ) : null}
         </div>
+        {user ? (
+          <div className="text-xs text-[var(--color-text-tertiary)] uppercase tracking-wider">
+            <span className="text-[var(--color-brass-default)] font-semibold">
+              {user.username}
+            </span>
+            <span className="ml-1 text-[var(--color-text-tertiary)]">
+              · on watch
+            </span>
+          </div>
+        ) : null}
       </div>
       <div className="flex flex-col gap-1 flex-1">
         {tabs.map((t) => (

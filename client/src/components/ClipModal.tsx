@@ -82,6 +82,25 @@ export function ClipModal({
     // clipUrl change was redundant. Effect now fires only on actual
     // playbackRate change.
   }, [playbackRate])
+  // iter-356.56 (mobile audit C2): best-effort autoplay.
+  // Replaces the `autoPlay` attribute that iOS Safari silently ignored
+  // for unmuted video re-mounted via React `key=`. Calling .play()
+  // imperatively from this effect runs in the same tick as the modal
+  // mount and inherits the user-gesture activation token from the
+  // tap that opened the modal. iOS Safari still rejects unmuted
+  // .play() in many cases — that's expected; the native controls
+  // surface the play button. The promise reject is swallowed so
+  // it doesn't show up in dev console as an unhandled rejection.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const p = v.play()
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {
+        /* iOS unmuted autoplay rejected — user taps native play. */
+      })
+    }
+  }, [clipUrl])
   const { showToast } = useToast()
   // iter-330 (missing-feature #3, Event Export ZIP): per-event
   // download button. Posts the single event id to /api/events/export
@@ -228,16 +247,26 @@ export function ClipModal({
     // Disable would also work but explicit is clearer.
     body = (
       <div className="relative max-w-full max-h-full">
+        {/* iter-356.56 (mobile audit C2): dropped `autoPlay`. iOS
+            Safari 16.x silently refuses autoplay on unmuted video
+            unless the play() call lands synchronously inside a user
+            gesture. The tap that opened this modal IS a user gesture
+            but the async `key={clipUrl}` remount + load fires AFTER
+            the gesture context closes. Result on iOS: frozen first
+            frame, native play button, no audio prompt visible at
+            first glance. The ref-driven .play() in the effect below
+            is best-effort — succeeds on Chrome/Firefox/desktop, falls
+            back to the native play button on iOS where it correctly
+            requires a tap. */}
         <video
           ref={videoRef}
           key={clipUrl}
           src={clipUrl}
           controls
-          autoPlay
           playsInline
           loop={loop}
           onError={() => setErroredClipUrl(clipUrl)}
-          aria-label={`Clip of ${event.person_name ?? event.label} event`}
+          aria-label={`Clip of ${event.person_name ?? event.label} event from ${humanCameraName(event.camera_id)}`}
           className="max-w-full max-h-full rounded-xl shadow-2xl border border-[var(--color-border)] bg-black"
         >
           <track kind="captions" />

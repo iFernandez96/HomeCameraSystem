@@ -19,25 +19,32 @@
          (legacy dark-theme leftover) which made iOS Safari and Android
          Chrome paint a near-black status bar on top of a cream app —
          visible "this is two apps stitched together" tell. -->
-    <!-- iter-356.55 (visual polish): theme-color follows the warm-
-         hearth bg (#f4ead6) so iOS Safari + Android Chrome paint
-         the status bar in the same surface tone as the page. -->
-    <meta name="theme-color" content="#f4ead6" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#f4ead6" />
+    <!-- iter-356.57 (radical redesign): theme-color shifted to the
+         new "watchpost-at-dusk" parchment bg `#e8d4ac`. The old cream
+         `#f4ead6` was so light it read "office software"; the new
+         deeper toasted-wheat sets the warm-den identity from the
+         very first paint — including the iOS standalone splash and
+         Android Chrome status bar. -->
+    <meta name="theme-color" content="#e8d4ac" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#e8d4ac" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="HomeCam" />
-    <!-- iter-356.55 (visual polish): Inter as the primary sans
-         family. Premium-SaaS standard (Linear, Vercel, Stripe).
-         `display=swap` so first paint uses the system fallback and
-         then upgrades — no flash-of-invisible-text. Subset to the
-         weights actually used (400/500/600/700) to keep the font
-         payload under 50 KB on first load. -->
+    <!-- iter-356.57 (radical redesign): typography shift. Inter
+         stays as the body/UI face — readability is non-negotiable
+         on a security-status surface. The shift is the addition of
+         Fraunces as a DISPLAY serif for h1/h2 + brand wordmark.
+         Fraunces is a variable font with optical sizing — at large
+         sizes its terminals open up and it reads as something
+         someone CHOSE rather than the Linear/Vercel/Stripe Inter
+         default. Subset axes to wght 400-800 + opsz 9-72 so the
+         payload stays under 80 KB. display=swap keeps first paint
+         on the system fallback so no FOIT. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap"
     />
     <title>HomeCam</title>
   </head>

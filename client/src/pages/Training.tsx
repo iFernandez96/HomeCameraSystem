@@ -163,9 +163,12 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
     // from plain-text shrug to <CatEmptyState> primitive so this
     // surface matches Events / People / Timelapses / Review.
     return (
+      // iter-356.57: Mushu is the Greeter (cat-brand brief). Body
+      // copy names him as the queue keeper for unfamiliar faces.
       <CatEmptyState
-        heading="No visitor photos yet"
-        body="When the camera sees a face it doesn&rsquo;t recognize, it&rsquo;ll save a snapshot here so you can teach it who they are."
+        mood="curious"
+        heading="Nothing to review."
+        body="When the camera sees an unfamiliar face, Mushu queues a photo here so you can name them."
         hint="Check that face recognition is turned on in Settings."
       />
     )

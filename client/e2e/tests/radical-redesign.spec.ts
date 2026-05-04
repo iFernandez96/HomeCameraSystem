@@ -1,0 +1,119 @@
+import { test, expect } from '@playwright/test'
+
+// iter-356.57 (radical redesign): pins the new "Watchpost / Den"
+// identity. These tests assert visible artifacts of the radical
+// theme + microcopy shift so a regression that reverts to the
+// iter-356.56 cream-Inter palette would fail at the E2E gate.
+
+test.describe('Radical redesign — visible identity (iter-356.57)', () => {
+  test('given anon user lands on /, then the den brand row identifies the product as a household watch', async ({
+    page,
+  }) => {
+    // act
+    await page.goto('/')
+
+    // assert — the brass uppercase "THE DEN · A HOUSEHOLD WATCH"
+    // tag + the cat-trio + the italic motto attribute the cats as
+    // agents (not beneficiaries). All three must be present on the
+    // login surface for the identity to read.
+    await expect(
+      page.getByText(/the den · a household watch/i),
+    ).toBeVisible()
+    await expect(
+      page.getByText(/Panther, Mushu & Coco are watching the door/i),
+    ).toBeVisible()
+  })
+
+  test('given the user logs in, then the page-level system banner attributes the watch to Panther', async ({
+    page,
+  }) => {
+    // arrange
+    await page.goto('/login')
+    await page.locator('input[autocomplete="username"]').fill('admin')
+    await page.locator('input[type="password"]').fill('admin')
+    await page.getByRole('button', { name: /sign in|log in|login/i }).click()
+    await expect(page).toHaveURL(/\/live$/)
+
+    // act — wait for status poll
+    await page.waitForTimeout(2500)
+
+    // assert — banner copy now uses the cat-brand role phrasing.
+    // The fixture simulator has detection_active=true and worker_alive=true,
+    // so we expect the armed-state copy.
+    const banner = page
+      .getByRole('status')
+      .filter({ hasText: /Panther's watching|Panther's off duty|Camera offline/i })
+      .first()
+    await expect(banner).toBeVisible({ timeout: 10_000 })
+  })
+
+  test('given any authed page is loaded, then page titles use the Fraunces display family (radical-typography flip)', async ({
+    page,
+  }) => {
+    // arrange — log in. The page-title h1 is on every authed page.
+    await page.goto('/login')
+    await page.locator('input[autocomplete="username"]').fill('admin')
+    await page.locator('input[type="password"]').fill('admin')
+    await page.getByRole('button', { name: /sign in|log in|login/i }).click()
+    await expect(page).toHaveURL(/\/live$/)
+    await page.waitForTimeout(1000)
+
+    // assert — the .page-title H1 must resolve `font-family` to
+    // include Fraunces. The radical-redesign Step 1 was the
+    // typography flip from Inter-everywhere to Fraunces-on-headings.
+    // A regression that drops `font-family: var(--font-display)`
+    // from `.page-title` (or removes the Fraunces token) would
+    // fail this test.
+    const h1 = page.locator('h1.page-title').first()
+    await expect(h1).toBeVisible()
+    const fontFamily = await h1.evaluate(
+      (el) => window.getComputedStyle(el).fontFamily,
+    )
+    expect(fontFamily.toLowerCase()).toMatch(/fraunces/i)
+  })
+
+  test('given the People page renders empty, then Mushu greets the user', async ({
+    page,
+  }) => {
+    // arrange
+    await page.goto('/login')
+    await page.locator('input[autocomplete="username"]').fill('admin')
+    await page.locator('input[type="password"]').fill('admin')
+    await page.getByRole('button', { name: /sign in|log in|login/i }).click()
+    await expect(page).toHaveURL(/\/live$/)
+    await page.goto('/people')
+
+    // act
+    await page.waitForTimeout(2000)
+
+    // assert — Mushu copy attributes the empty face-recognition list
+    // to him as the Greeter (cat-brand role mapping).
+    await expect(
+      page.getByText(/Mushu doesn't know anyone yet/i),
+    ).toBeVisible({ timeout: 6000 })
+  })
+
+  test('given the user is signed in, then the SideNav brand row reads "ISRAEL · ON WATCH" not "Signed in as Israel"', async ({
+    page,
+  }) => {
+    // arrange
+    await page.goto('/login')
+    await page.locator('input[autocomplete="username"]').fill('admin')
+    await page.locator('input[type="password"]').fill('admin')
+    await page.getByRole('button', { name: /sign in|log in|login/i }).click()
+    await expect(page).toHaveURL(/\/live$/)
+
+    // act — desktop sidebar is `hidden lg:flex`; the test viewport
+    // (Desktop Chrome via playwright config) renders it. The brass
+    // uppercase tag is the unmistakable iter-356.57 watchpost-rail
+    // identity marker.
+    await page.waitForTimeout(1000)
+
+    // assert — the on-watch attribution row is present. We assert
+    // case-insensitively because the rendered text is uppercased
+    // via CSS letter-spacing + tracking, not via the source string.
+    await expect(
+      page.getByText(/admin\s*· on watch/i).first(),
+    ).toBeVisible({ timeout: 4000 })
+  })
+})

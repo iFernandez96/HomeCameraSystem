@@ -159,20 +159,23 @@ export function EventList({
 }
 
 function DayHeader({ label, count }: { label: string; count: number }) {
-  // iter-249: switched from `text-sm uppercase tracking-wide` (hard
-  // to read at older-eyes scale) to `text-base font-semibold` in
-  // sentence case. Bigger leading + clearer hierarchy. Sticky so
-  // scrolling long days keeps the header visible.
+  // iter-356.57 (radical redesign — Maya Critical "incident journal"):
+  // day headers reframed as a watch-log. Fraunces serif h2 + brass-
+  // accent count tag reads as ledger entry, not Pinterest section.
+  // Sticky behavior + safe-area math preserved.
+  const logSuffix =
+    label === 'Today'
+      ? "Today's log"
+      : label === 'Yesterday'
+        ? "Yesterday's log"
+        : label
   return (
-    // iter-355ae (Maya Major + Minor): "Today — 3 detections" was
-    // technical/log-like (em-dash + "detection" jargon Frank flagged
-    // pre-iter-249). "Today · 3 events" reads consumer-app. Bumped
-    // h2 from text-base → text-lg so the section break reads as a
-    // full step-down from the page-title (text-2xl).
-    <div className="px-4 py-3 flex items-baseline gap-2 bg-[var(--color-bg)]/95 backdrop-blur border-b border-[var(--color-border)] sticky top-[var(--day-header-top,0px)] z-[1]">
-      <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{label}</h2>
-      <span className="text-sm text-[var(--color-text-secondary)]">
-        · {count} {count === 1 ? 'event' : 'events'}
+    <div className="px-4 py-3 flex items-baseline gap-3 bg-[var(--color-bg)]/95 backdrop-blur border-b border-[var(--color-border-subtle)] sticky top-[var(--day-header-top,0px)] z-[1]">
+      <h2 className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
+        {logSuffix}
+      </h2>
+      <span className="text-xs uppercase tracking-[0.16em] text-[var(--color-brass-default)] font-semibold">
+        {count} {count === 1 ? 'entry' : 'entries'}
       </span>
     </div>
   )
@@ -346,6 +349,11 @@ function EventCardImpl({
 function ConfidencePill({ score }: { score: number }) {
   // Color tier: <50% red, 50-75% amber, 75%+ green. Kept low-
   // contrast vs the page background so the photo dominates.
+  // iter-356.56 (Frank E4 + Dana F2): aria-label spells out "How
+  // sure the camera was: 87%, high" — engineer-vocab "Confidence"
+  // is not a word non-technical users map to camera certainty, and
+  // the tier text gives colorblind users the same signal sighted
+  // users get from the green/amber/red fill.
   const pct = (score * 100).toFixed(0)
   const tier =
     score < 0.5
@@ -353,10 +361,12 @@ function ConfidencePill({ score }: { score: number }) {
       : score < 0.75
         ? 'bg-amber-500/85 text-amber-50'
         : 'bg-emerald-500/85 text-emerald-50'
+  const tierLabel =
+    score < 0.5 ? 'low' : score < 0.75 ? 'medium' : 'high'
   return (
     <span
       className={`absolute top-2 right-2 px-2 py-1 rounded-md text-xs font-semibold tabular-nums ${tier}`}
-      aria-label={`Confidence ${pct} percent`}
+      aria-label={`How sure the camera was: ${pct}%, ${tierLabel}`}
     >
       {pct}%
     </span>
@@ -395,9 +405,12 @@ function EmptyState({ cameraOffline }: { cameraOffline: boolean }) {
     )
   }
   return (
+    // iter-356.57 (cat-brand brief): Coco's the Peacekeeper — empty
+    // event list IS Coco's calm watch. Copy attributes the quiet
+    // stretch to her without making the cat speak.
     <CatEmptyState
-      heading="All quiet out there"
-      body="The camera&rsquo;s as quiet as a sleeping cat. New events will land here the moment something moves."
+      heading="Nothing came knocking."
+      body="Panther, Mushu and Coco have the door covered. New events will land here the moment something moves."
       hint="Try walking in front of the camera, or open Settings and lower the Sensitivity slider."
       ariaLabel="All quiet — no events yet"
     />

@@ -185,10 +185,15 @@ export function People() {
         // was plain-text on a screen where Events had a sleeping
         // cat — Priya called it "you gave Events a pet and People
         // a shrug." Now both share the primitive.
+        // iter-356.57 (cat-brand brief): Mushu is the Greeter — face
+        // recognition is his role. Naming him in the heading is OK
+        // here because it literally describes the feature ("Mushu
+        // recognizing visitors"); not anthropomorphizing.
         <CatEmptyState
-          heading="No faces enrolled yet"
-          body="When someone you&rsquo;ve taught the camera to recognize visits, they&rsquo;ll show up here with a friendly name."
-          hint="Ask whoever set up the camera if face recognition is configured."
+          mood="curious"
+          heading="Mushu doesn't know anyone yet."
+          body="Add a face from the Training queue and the camera will recognize them on their next visit."
+          hint="Make sure face recognition is turned on in Settings."
         />
       ) : (
         <>

@@ -103,7 +103,7 @@ describe('Training page', () => {
     expect(screen.getByText(/3 photos/i)).toBeInTheDocument()
   })
 
-  it('given listFaceCaptureDirs resolves empty, when the page mounts, then "No visitor photos yet" is shown', async () => {
+  it('given listFaceCaptureDirs resolves empty, when the page mounts, then "Nothing to review." is shown', async () => {
     // arrange — iter-353a copy update.
     listFaceCaptureDirs.mockResolvedValue({ dirs: [] })
 
@@ -112,7 +112,7 @@ describe('Training page', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText(/No visitor photos yet/i)).toBeInTheDocument()
+      expect(screen.getByText(/Nothing to review/i)).toBeInTheDocument()
     })
   })
 

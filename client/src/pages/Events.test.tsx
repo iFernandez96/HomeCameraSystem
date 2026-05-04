@@ -115,7 +115,7 @@ describe('Events page', () => {
 
     // act / assert — heatmap absent on mount.
     await waitFor(() =>
-      expect(screen.getByText(/all quiet out there/i)).toBeInTheDocument(),
+      expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
     )
     expect(screen.queryByLabelText(/detection events per day/i)).not.toBeInTheDocument()
 
@@ -185,7 +185,7 @@ describe('Events page', () => {
     })
     render(<Events />)
     await waitFor(() =>
-      expect(screen.getByText(/all quiet out there/i)).toBeInTheDocument(),
+      expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
     )
     push({
       v: 1,
@@ -209,7 +209,7 @@ describe('Events page', () => {
     })
     render(<Events />)
     await waitFor(() =>
-      expect(screen.getByText(/all quiet out there/i)).toBeInTheDocument(),
+      expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
     )
     // iter-170: the server's wire shape was narrowed to
     // `ServerEvent = DetectionEvent` (the StatusEvent branch was a
@@ -220,7 +220,7 @@ describe('Events page', () => {
     // non-detection shape — Events should still show the empty state
     // (no crash, no added row).
     push({ v: 1, type: 'status', cpu_temp_c: 30, fps: 24 } as unknown as ServerEvent)
-    expect(screen.getByText(/all quiet out there/i)).toBeInTheDocument()
+    expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument()
   })
 
   it('caps the in-memory event list at 200 entries', async () => {
@@ -232,7 +232,7 @@ describe('Events page', () => {
     })
     render(<Events />)
     await waitFor(() =>
-      expect(screen.getByText(/all quiet out there/i)).toBeInTheDocument(),
+      expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
     )
     for (let i = 0; i < 250; i++) {
       push({

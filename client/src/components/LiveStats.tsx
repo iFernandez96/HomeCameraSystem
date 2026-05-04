@@ -89,15 +89,19 @@ function computeHealth(status: ServerStatus): HealthSummary {
   if (isManuallyOff) {
     return {
       level: 'warn',
-      label: 'Detection paused',
-      hint: 'Tap Detect on the action panel to resume.',
+      // iter-356.57 (cat-brand brief): Panther is the Sentry; her
+      // off-duty state IS the manual-pause state.
+      label: "Panther's off duty",
+      hint: 'Tap Resume on the action panel to bring her back on watch.',
     }
   }
   if (isScheduledOff) {
     return {
       level: 'warn',
-      label: 'Detection paused on schedule',
-      hint: 'It will resume automatically at the end of your quiet window.',
+      // iter-356.57: scheduled quiet hours = Coco's hours (her
+      // dominant activity is sleep — coherent role mapping).
+      label: "Coco's hours",
+      hint: 'Detection resumes automatically at the end of your quiet window.',
     }
   }
 
@@ -114,7 +118,10 @@ function computeHealth(status: ServerStatus): HealthSummary {
     }
   }
 
-  return { level: 'ok', label: 'All systems normal' }
+  // iter-356.57: "All systems normal" was Frank-flagged engineer
+  // voice. "Home is calm" is den-voice (passion-project register).
+  // Hint added to reinforce the watch metaphor.
+  return { level: 'ok', label: 'Home is calm' }
 }
 
 export function LiveStats({ status }: { status: ServerStatus | null }) {
@@ -126,7 +133,10 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
         aria-busy="true"
         className="h-12 px-3 flex items-center justify-center text-sm text-[var(--color-text-secondary)]"
       >
-        Loading status…
+        {/* iter-356.56 (UI redesign brief Live, copy table): "Loading
+            status…" was internal-API vocabulary. "Connecting to camera…"
+            is closer to what the user is actually waiting for. */}
+        Connecting to camera…
       </div>
     )
   }
@@ -154,7 +164,7 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
   return (
     <section
       aria-label="System health"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-2"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3 shadow-[var(--shadow-subtle)]"
     >
       {/* Summary row: dot + label + optional sub-line. */}
       <div role="status" aria-live="polite">
@@ -174,9 +184,19 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
         )}
       </div>
 
+      {/* iter-356.56 (UI redesign brief Live, Step 2 — the most
+          impactful single change): always-visible 2-row stat strip.
+          Pre-fix the LiveStats card showed exactly one line in the
+          ok state ("All systems normal") + a disclosure toggle.
+          Premium command-center surfaces show density at a glance.
+          Five stats from existing ServerStatus fields — no new
+          backend route. When the worker is offline we show em-dash
+          for each so the layout doesn't collapse. */}
+      <StatStrip status={status} />
+
       {/* Disclosure for the technical readout (preserved from
           pre-iter-356.15). Default closed. */}
-      <div className="pt-1">
+      <div>
         <button
           type="button"
           onClick={() => setDetailsOpen((v) => !v)}
@@ -190,11 +210,75 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
           >
             ▸
           </span>
-          {detailsOpen ? 'Hide system details' : 'System details'}
+          {detailsOpen ? 'Hide camera box details' : 'Camera box details'}
         </button>
         {detailsOpen && <SystemDetails id="system-details" status={status} />}
       </div>
     </section>
+  )
+}
+
+/**
+ * iter-356.56 — 2-row stat strip. Sources every value from existing
+ * ServerStatus fields (no new backend route required).
+ *
+ * Row 1: FPS · Inference · Dropped frames (only if nonzero)
+ * Row 2: Last frame age · Disk free
+ *
+ * When `worker_alive=false`, every stat falls to em-dash so the
+ * layout doesn't collapse and the offline state reads consistent.
+ */
+function StatStrip({ status }: { status: ServerStatus }) {
+  const wm = status.worker_metrics
+  const alive = status.worker_alive
+  const fps =
+    !alive ? '—' : wm?.fps != null ? `${wm.fps.toFixed(0)} fps` : '—'
+  const inferMs =
+    !alive
+      ? '—'
+      : wm?.infer_ms_recent != null
+        ? `${wm.infer_ms_recent.toFixed(0)} ms`
+        : '—'
+  const dropped =
+    !alive || wm?.dropped == null || wm.dropped === 0
+      ? null
+      : `${wm.dropped} dropped`
+  const lastFrame =
+    !alive
+      ? '—'
+      : status.seconds_since_last_frame != null
+        ? status.seconds_since_last_frame < 5
+          ? 'Live now'
+          : `${formatAge(status.seconds_since_last_frame)} ago`
+        : '—'
+  const diskFree =
+    status.disk_free_gb != null ? `${status.disk_free_gb.toFixed(0)} GB free` : '—'
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs border-t border-[var(--color-border-subtle)] pt-3">
+      <StatCell label="Frame rate" value={fps} />
+      <StatCell label="Inference" value={inferMs} />
+      <StatCell label="Last frame" value={lastFrame} />
+      <StatCell label="Disk free" value={diskFree} />
+      {dropped && (
+        <div className="col-span-2 text-[var(--color-warning)]">
+          <span className="uppercase tracking-wider text-[10px] mr-1">Dropped</span>
+          <span className="font-medium tabular-nums">{dropped}</span>
+        </div>
+      )}
+    </dl>
+  )
+}
+
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col">
+      <dt className="uppercase tracking-wider text-[10px] text-[var(--color-text-tertiary)]">
+        {label}
+      </dt>
+      <dd className="font-medium tabular-nums text-[var(--color-text-primary)]">
+        {value}
+      </dd>
+    </div>
   )
 }
 

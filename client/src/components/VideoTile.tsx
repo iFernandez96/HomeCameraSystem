@@ -493,7 +493,7 @@ export function VideoTile({
             messages. One string for both channels. */}
         {streamStale && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium"
+            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
           >
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             No video for {Math.round((streamStaleSeconds ?? 0) / 10) * 10}s
@@ -501,7 +501,7 @@ export function VideoTile({
         )}
         {offline && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium"
+            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection offline"
           >
             <span className="w-2 h-2 rounded-full bg-red-500" />
@@ -510,7 +510,7 @@ export function VideoTile({
         )}
         {lowMem && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium"
+            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection paused due to low memory"
           >
             <span className="w-2 h-2 rounded-full bg-red-500" />
@@ -519,7 +519,7 @@ export function VideoTile({
         )}
         {therm && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium"
+            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection rate-limited by GPU thermal"
           >
             <span className="w-2 h-2 rounded-full bg-yellow-500" />
@@ -528,7 +528,7 @@ export function VideoTile({
         )}
         {paused && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium"
+            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection paused"
           >
             <span className="w-2 h-2 rounded-full bg-yellow-500" />
@@ -584,7 +584,10 @@ function StatusPill({ status }: { status: Status }) {
           ? 'Offline'
           : 'Idle'
   return (
-    <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium">
+    // iter-356.56 (Dana E1+E2): pill text was inheriting near-black
+    // --color-text-primary on bg-black/60 — measured 1.05:1 contrast,
+    // catastrophic WCAG fail. text-white is ~10:1 on the same backdrop.
+    <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white">
       <span className={`w-2 h-2 rounded-full ${dot}`} />
       {label}
     </div>

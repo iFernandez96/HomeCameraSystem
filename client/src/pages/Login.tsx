@@ -103,7 +103,13 @@ export function Login() {
       <form
         onSubmit={handleSubmit}
         aria-label="Sign in"
-        className="w-full max-w-sm bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 animate-login-in shadow-[var(--shadow-card)]"
+        // iter-356.56 (mobile F1): flex-col + min-h ensures the Sign
+        // in button doesn't disappear behind the iOS soft keyboard
+        // on short Android devices when interactive-widget=resizes-
+        // content shrinks the viewport. Card grows to fill available
+        // space so the submit button stays bottom-anchored relative
+        // to the card body.
+        className="w-full max-w-sm flex flex-col bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 animate-login-in shadow-[var(--shadow-card)]"
         style={{ boxShadow: 'var(--shadow-card), inset 0 1px 0 rgb(255 255 255 / 0.04)' }}
       >
         {/* iter-356.4-cats: brand identity now CARRIED BY THE THREE
@@ -111,20 +117,23 @@ export function Login() {
             the generic camera-lens glyph — the household-watch crew
             IS the brand. Tagline tweak ties the wordmark to the
             ambient cat layer that walks the bottom of every page. */}
+        {/* iter-356.57 (radical redesign): den-entrance brand block.
+            Bigger trio mark, Fraunces serif headline, italic motto,
+            cat names typeset as a small uppercase brass row — reads
+            as a household sigil panel rather than a SaaS login card. */}
         <div className="flex flex-col items-center text-center mb-8">
-          <CatTrioMark size={96} className="mb-3" />
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
+          <CatTrioMark size={104} className="mb-4" />
+          <h1 className="font-display text-4xl font-bold text-[var(--color-text-primary)] tracking-tight">
             HomeCam
           </h1>
-          <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-            Watching the door so the cats don&apos;t have to.
+          <p
+            className="font-display italic text-base text-[var(--color-text-secondary)] mt-2 max-w-xs"
+            style={{ fontStyle: 'italic' }}
+          >
+            Panther, Mushu &amp; Coco are watching the door.
           </p>
-          {/* iter-356.12 (Frank Round-2 #2): visible cat names on
-              touch devices where the <title> tooltip never fires.
-              Frank's wife asked him their names; he had to read source
-              code. Three words, zero engineering cost. */}
-          <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-            Panther, Mushu &amp; Coco
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold mt-3">
+            The Den · A household watch
           </p>
         </div>
 

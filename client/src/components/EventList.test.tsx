@@ -26,8 +26,13 @@ describe('EventList', () => {
     // <CatEmptyState> primitive. Copy was de-localized from "Coco's
     // having a snooze" to universal "as quiet as a sleeping cat" so
     // first-time users without cat-name context don't read it as a typo.
-    expect(screen.getByText(/all quiet out there/i)).toBeInTheDocument()
-    expect(screen.getByText(/as quiet as a sleeping cat/i)).toBeInTheDocument()
+    expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument()
+    // iter-356.57 (cat-brand brief): body copy attributes the calm
+    // watch to all three cats by name, replacing the prior universal
+    // "as quiet as a sleeping cat" line.
+    expect(
+      screen.getByText(/Panther, Mushu and Coco have the door covered/i),
+    ).toBeInTheDocument()
     // Nudge the user toward action — Frank-test compliant. iter-356.23
     // also swapped "confidence threshold" jargon for "Sensitivity slider"
     // which matches the Settings UI.
@@ -48,7 +53,7 @@ describe('EventList', () => {
     // cat copy does NOT.
     expect(screen.getByText(/camera looks offline/i)).toBeInTheDocument()
     expect(screen.getByText(/check the live tab/i)).toBeInTheDocument()
-    expect(screen.queryByText(/all quiet out there/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/nothing came knocking/i)).not.toBeInTheDocument()
     expect(
       screen.getByRole('status', { name: /camera offline — no events being recorded/i }),
     ).toBeInTheDocument()
@@ -77,12 +82,14 @@ describe('EventList', () => {
       />,
     )
 
-    // assert — iter-355ae (Maya Major): "Today — 2 detections" was
-    // technical / log-like. "Today · 2 events" reads consumer-app.
-    expect(screen.getByText('Today')).toBeInTheDocument()
-    expect(screen.getByText('Yesterday')).toBeInTheDocument()
-    expect(screen.getByText(/2 events/)).toBeInTheDocument()
-    expect(screen.getByText(/1 event/)).toBeInTheDocument()
+    // assert — iter-356.57 (radical redesign): day-headers reframed
+    // as a watch-log: "Today's log" / "Yesterday's log" with brass
+    // entry-count tags. "events" → "entries" matches the journal
+    // register without changing the underlying day grouping logic.
+    expect(screen.getByText("Today's log")).toBeInTheDocument()
+    expect(screen.getByText("Yesterday's log")).toBeInTheDocument()
+    expect(screen.getByText(/2 entries/)).toBeInTheDocument()
+    expect(screen.getByText(/1 entry/)).toBeInTheDocument()
   })
 
   it('when an event has a clip_url, then a small play badge is rendered without burying the thumbnail (iter-249)', () => {
@@ -118,7 +125,9 @@ describe('EventList', () => {
     render(<EventList events={[evt({ score: 0.42 })]} />)
 
     // assert
-    const pill = screen.getByLabelText(/confidence 42 percent/i)
+    // iter-356.56 (Frank E4): "Confidence" rewritten to "How sure
+    // the camera was" + tier label.
+    const pill = screen.getByLabelText(/how sure the camera was: 42%, low/i)
     expect(pill).toBeInTheDocument()
     expect(pill.className).toMatch(/red/)
   })

@@ -579,7 +579,13 @@ const SPRITE_WIDTH = (() => {
 // clipped them. Now: SPRITE_HEIGHT = 1.2 × SPRITE_WIDTH so the cat
 // fills its container with no clipping.
 const SPRITE_HEIGHT = Math.round(SPRITE_WIDTH * 1.2)
-const LAYER_BOTTOM_OFFSET = 70 // mobile (above BottomNav)
+// iter-356.56 (Maya CRITICAL #2): bumped from 70 → 80 so the cats
+// have an extra 10 px clearance above the BottomNav top edge. Maya
+// flagged the cat-tail clipping into the BottomNav border on mobile
+// as the single most "amateur" detail in the iter-356 polish thread:
+// "the whole 'ambient cat' branding pillar collapses when cats overlap
+// nav chrome." 80 px = BottomNav (~64 px) + 16 px breathing.
+const LAYER_BOTTOM_OFFSET = 80 // mobile (above BottomNav)
 const LAYER_BOTTOM_OFFSET_LG = 8 // desktop
 const INTERACTION_DISTANCE = 50
 const INTERACTION_COOLDOWN_MS = 5000

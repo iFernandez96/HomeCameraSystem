@@ -17,10 +17,15 @@ export function JetsonSection({
   status: ServerStatus | null
 }) {
   return (
-    <Section title="Jetson">
-      <Row label="Status" right={<Mono>{status?.ok ? 'online' : '—'}</Mono>} />
+    // iter-356.56 (Frank S5 + Settings redesign brief): renamed
+    // section + row labels from developer vocabulary ("Jetson",
+    // "Worker", "Server uptime", "Face recog") to plain English a
+    // homeowner reads in 2 seconds. The wire shape under the hood
+    // is unchanged; only the labels are user-facing.
+    <Section title="Camera box health">
+      <Row label="Camera box" right={<Mono>{status?.ok ? 'online' : '—'}</Mono>} />
       <Row
-        label="Server uptime"
+        label="On since"
         right={
           <Mono>
             {status?.uptime_s ? formatUptime(status.uptime_s) : '—'}
@@ -28,7 +33,7 @@ export function JetsonSection({
         }
       />
       <Row
-        label="Worker uptime"
+        label="Detection running"
         right={
           <Mono>
             {status?.worker_metrics?.uptime_s != null
@@ -39,23 +44,23 @@ export function JetsonSection({
       />
       <Row label="Camera" right={<Mono>{status?.camera ?? '—'}</Mono>} />
       <Row
-        label="Detection"
+        label="Watching for people"
         right={<Mono>{status?.detection_active ? 'on' : 'off'}</Mono>}
       />
       <Row
-        label="Face recog"
+        label="Face recognition"
         right={
           <FaceRecogStatus names={status?.worker_metrics?.face_recog_names} />
         }
       />
       <Row
-        label="Worker"
+        label="Detection process"
         right={
           <Mono>
             {status?.worker_alive
               ? 'online'
               : status?.worker_last_seen_s != null
-                ? `down ${Math.floor(status.worker_last_seen_s)}s`
+                ? `offline (${Math.floor(status.worker_last_seen_s)}s)`
                 : '—'}
           </Mono>
         }

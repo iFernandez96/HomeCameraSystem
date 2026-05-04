@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { nextRovingIndex } from '../lib/a11y'
 // iter-268..294: every section moved to ./settings/<Name>.tsx.
 // Settings.tsx is now a pure shell — tab state + section composition.
 import { AccountSection } from './settings/AccountSection'
@@ -237,25 +238,64 @@ function SettingsTabs({
   // All tabs natural-sized; flex-1 stretches when only 2 tabs render
   // (viewer role) so the strip doesn't look unfinished.
   const itemClassExtra = tabs.length === 2 ? 'flex-1 text-center' : ''
+
+  // iter-356.56 (Desktop C1 + Dana): WAI-ARIA tabs pattern.
+  // Pre-fix, Tab walked through every tab (3 stops eaten); arrows
+  // didn't move selection. Now: arrows move BOTH selection + focus
+  // within the strip; Tab moves focus out. Implements the
+  // "automatic" radiogroup-equivalent variant per the WAI-ARIA
+  // Authoring Practices Tabs pattern. ChipRadiogroup already uses
+  // this (Events.tsx); we share the same `nextRovingIndex` util.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const onKey = (e: React.KeyboardEvent) => {
+    const idx = tabs.findIndex((t) => t.id === active)
+    if (idx === -1) return
+    const next = nextRovingIndex(e.key, idx, tabs.length)
+    if (next === null) return
+    e.preventDefault()
+    onChange(tabs[next].id)
+    requestAnimationFrame(() => {
+      tabRefs.current[next]?.focus()
+    })
+  }
+
   return (
+    // iter-356.56: tabIndex={-1} on the tablist container satisfies
+    // jsx-a11y/interactive-supports-focus for the role+onKeyDown
+    // combination. The inner tabs carry the real Tab order via the
+    // roving-tabindex pattern (active tab tabIndex=0, others -1) so
+    // focusing the tablist itself is never the keyboard path.
     <div
       role="tablist"
+      tabIndex={-1}
       aria-label="Settings sections"
+      aria-orientation="horizontal"
+      onKeyDown={onKey}
       className="flex gap-1 border-b border-[var(--color-border)]"
     >
-      {tabs.map((t) => {
+      {tabs.map((t, idx) => {
         const isActive = active === t.id
         return (
           <button
             key={t.id}
+            ref={(el) => {
+              tabRefs.current[idx] = el
+            }}
             type="button"
             role="tab"
             aria-selected={isActive}
+            // iter-356.56: roving-tabindex — only the active tab is in
+            // the Tab order; arrow keys cycle within. Inactive tabs
+            // have tabIndex=-1 so Tab leaves the strip after one stop.
+            tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(t.id)}
             className={`px-4 py-3 text-sm -mb-px border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-t ${itemClassExtra} ${
               isActive
                 ? 'border-[var(--color-accent-default)] text-[var(--color-text-primary)] font-semibold'
-                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium'
+                // iter-356.56 (Desktop B1): added `hover:bg-...` so
+                // cursor users get a fill change, not just text-color
+                // shift. Inactive tabs were near-invisible on cream.
+                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] font-medium'
             }`}
           >
             {t.label}

@@ -85,6 +85,7 @@ function ConfirmDialog({
   onCancel: () => void
 }) {
   const confirmRef = useRef<HTMLButtonElement | null>(null)
+  const cancelRef = useRef<HTMLButtonElement | null>(null)
 
   // ESC closes; backdrop click also closes (handler on the wrapping
   // <div>, see below). Focus the confirm button on mount so the user
@@ -113,11 +114,46 @@ function ConfirmDialog({
     }
   }, [onCancel])
 
+  // iter-356.56 (Dana Critical 3): focus trap. Pre-fix, Tab from the
+  // Confirm button advanced into the page DOM behind the modal —
+  // chrome doesn't honor `aria-modal="true"` for keyboard
+  // virtualization. ClipModal already had this pattern (iter-336);
+  // ConfirmDialog was the leftover. Tab cycles between Cancel and
+  // Confirm; Shift-Tab from Cancel wraps to Confirm; Tab from
+  // Confirm wraps to Cancel. Destructive deletes are the surface
+  // most likely to lose a Tab past Cancel and into a focusable
+  // background element.
+  const onKeyDownTrap = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab') return
+    const focusables: (HTMLButtonElement | null)[] = [cancelRef.current, confirmRef.current]
+    const list = focusables.filter(Boolean) as HTMLButtonElement[]
+    if (list.length < 2) return
+    const active = document.activeElement as HTMLElement | null
+    const idx = active ? list.indexOf(active as HTMLButtonElement) : -1
+    if (e.shiftKey) {
+      if (idx <= 0) {
+        e.preventDefault()
+        list[list.length - 1].focus()
+      }
+    } else {
+      if (idx === list.length - 1) {
+        e.preventDefault()
+        list[0].focus()
+      }
+    }
+  }
+
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-title"
+      // iter-356.56 (Dana Critical 3): WAI-ARIA dialog focus-trap
+      // pattern. Same shape as ClipModal.tsx — onKeyDown on the
+      // dialog container is the standard authoring practice; the
+      // jsx-a11y rule is stricter than the spec for this case.
+      onKeyDown={onKeyDownTrap}
       className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in"
     >
       {/* iter-270 (accessibility-auditor A top-3): backdrop is a
@@ -177,6 +213,7 @@ function ConfirmDialog({
         </div>
         <div className="flex gap-2 px-5 pb-5 pt-2 border-t border-[var(--color-border-subtle)]">
           <Button
+            ref={cancelRef}
             variant="ghost"
             size="md"
             onClick={onCancel}

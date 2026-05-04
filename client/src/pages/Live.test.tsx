@@ -132,7 +132,12 @@ describe('Live page', () => {
     render(<Live />)
     await user.click(screen.getByRole('button', { name: /snapshot/i }))
     await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith('Snapshot failed', 'error'),
+      expect(showToast).toHaveBeenCalledWith(
+        // iter-356.56 (Frank L2): copy upgraded from terse "Snapshot
+        // failed" to actionable plain-English with a recovery hint.
+        expect.stringMatching(/couldn't take the snapshot/i),
+        'error',
+      ),
     )
     errorSpy.mockRestore()
   })
@@ -149,7 +154,12 @@ describe('Live page', () => {
     )
     expect(toggleDetection).toHaveBeenCalledTimes(1)
     await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith('Detection on', 'success'),
+      expect(showToast).toHaveBeenCalledWith(
+        // iter-356.56 (Frank L2): success toast spells out what
+        // changed instead of a one-word ack.
+        expect.stringMatching(/detection on — the camera is watching/i),
+        'success',
+      ),
     )
   })
 
@@ -172,16 +182,17 @@ describe('Live page', () => {
     )
   })
 
-  it('given Talk button without audio wired, when rendered, then "Soon" caption is announced via aria-describedby (iter-280/356.3a)', () => {
+  it('given Talk button without audio wired, when rendered, then no "Soon" caption is shown (iter-356.56 caption drop)', () => {
     // arrange + act
     render(<Live />)
 
-    // assert: caption still wired via aria-describedby for SR users
-    // even though the button is no longer disabled (iter-356.18).
+    // assert: caption was dropped per Maya Major + Frank L3 — the
+    // toast on tap explains state. Button still tappable (not disabled);
+    // accessible name is still 'Talk'.
     const talkButton = screen.getByRole('button', { name: /talk/i })
-    const describedById = talkButton.getAttribute('aria-describedby')
-    expect(describedById).toBeTruthy()
-    const caption = describedById ? document.getElementById(describedById) : null
-    expect(caption).toHaveTextContent(/soon/i)
+    expect(talkButton).toBeInTheDocument()
+    expect(talkButton).not.toBeDisabled()
+    // No visible "Soon" tier under the button.
+    expect(screen.queryByText(/^Soon$/i)).not.toBeInTheDocument()
   })
 })

@@ -85,7 +85,9 @@ describe('People page', () => {
 
     // assert
     await waitFor(() =>
-      expect(screen.getByText(/no faces enrolled yet/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/mushu doesn't know anyone yet/i),
+      ).toBeInTheDocument(),
     )
     expect(listPeople).toHaveBeenCalledTimes(2)
   })
@@ -99,7 +101,9 @@ describe('People page', () => {
 
     // assert
     await waitFor(() =>
-      expect(screen.getByText(/no faces enrolled yet/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/mushu doesn't know anyone yet/i),
+      ).toBeInTheDocument(),
     )
     // The empty-state copy must NOT contain the Frank-flagged
     // "camera box" jargon — replaced with "your camera setup"

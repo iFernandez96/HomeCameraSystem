@@ -239,7 +239,9 @@ describe('Settings page', () => {
     expect(
       screen.getByLabelText(/push not supported in this browser/i),
     ).toBeInTheDocument()
-    expect(screen.getByText(/Web Push needs Service Worker/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Alerts aren't available in this browser yet/i),
+    ).toBeInTheDocument()
     // ensurePushSubscription must NEVER fire when push isn't supported —
     // the alert() inside it would be jarring on mobile.
     expect(ensurePushSubscription).not.toHaveBeenCalled()
@@ -588,7 +590,9 @@ describe('Settings page', () => {
     await user.click(send)
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/no reachable subscriptions/i),
+        // iter-356.56 (Frank S2): copy pivot from "no reachable
+        // subscriptions" engineer-voice to actionable plain English.
+        expect.stringMatching(/no devices are set up to receive alerts/i),
         'info',
       ),
     )
@@ -1402,18 +1406,18 @@ describe('Settings page', () => {
   it('displays server version after fetch resolves (iter-234)', async () => {
     getServerVersion.mockResolvedValue({ version: '1.2.3' })
     render(<Settings />)
-    await screen.findByText(/server version/i)
+    await screen.findByText(/app version/i)
     expect(await screen.findByText('1.2.3')).toBeInTheDocument()
   })
 
   it('shows em-dash when getServerVersion rejects (iter-234)', async () => {
     getServerVersion.mockRejectedValue(new Error('network down'))
     render(<Settings />)
-    await screen.findByText(/server version/i)
+    await screen.findByText(/app version/i)
     // Wait for the fetch to settle. Find the em-dash inside the
-    // Server version Row (other rows may also use em-dash; scope by
+    // App version Row (other rows may also use em-dash; scope by
     // the label).
-    const versionRow = screen.getByText(/server version/i).closest('div')
+    const versionRow = screen.getByText(/app version/i).closest('div')
     expect(versionRow).not.toBeNull()
     // Allow react fetch + microtask flush.
     await new Promise((r) => setTimeout(r, 0))
@@ -1427,7 +1431,7 @@ describe('Settings page', () => {
 
   it('fetches server version once on mount (iter-234)', async () => {
     render(<Settings />)
-    await screen.findByText(/server version/i)
+    await screen.findByText(/app version/i)
     expect(getServerVersion).toHaveBeenCalledTimes(1)
   })
 

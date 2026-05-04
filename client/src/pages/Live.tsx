@@ -5,6 +5,7 @@ import { SnapshotPreview } from '../components/SnapshotPreview'
 import { VideoTile } from '../components/VideoTile'
 import { Button } from '../components/primitives/Button'
 import { captureSnapshot, HttpError, toggleDetection } from '../lib/api'
+import { formatAge } from '../lib/format'
 import { useStatus } from '../lib/useStatus'
 import { useToast } from '../lib/toast'
 
@@ -44,7 +45,10 @@ export function Live() {
   // Live nav. Fallbacks: "Front Door" until the first status
   // arrives, audio_enabled defaults to false.
   const cameraLabel = status?.camera_label ?? _DEFAULT_CAMERA_LABEL
-  const audioEnabled = status?.audio_enabled === true
+  // iter-356.56: dropped — Talk's "Soon" caption was also dropped, so
+  // the audio_enabled flag has no remaining consumer on this page.
+  // When two-way audio ships, the toast/handler in onTalk + a real
+  // recording-state read are the surfaces that grow back.
 
   // iter-308: Talk handler placeholder. Real WebRTC mic upstream
   // lands when the user wires hardware — see
@@ -80,10 +84,17 @@ export function Live() {
       // 503 from /api/capture means the worker hasn't produced a recent
       // `latest.jpg` yet (server boot, RTSP reconnect, idle gear pause).
       // The user can just retry. Other errors get a generic message.
+      // iter-356.56 (Frank L2): every error toast carries a recovery
+      // hint. "Snapshot failed" left users with no path forward.
       if (e instanceof HttpError && e.status === 503) {
-        showToast('No recent frame yet — try again in a moment', 'error')
+        showToast('No recent frame yet — try again in a moment.', 'error')
+      } else if (e instanceof HttpError && e.status === 401) {
+        showToast('Sign in expired — refresh the page to continue.', 'error')
       } else {
-        showToast('Snapshot failed', 'error')
+        showToast(
+          "Couldn't take the snapshot — check the camera is on, then try again.",
+          'error',
+        )
       }
       console.error(e)
     } finally {
@@ -95,9 +106,19 @@ export function Live() {
     setBusy('detect')
     try {
       const r = await toggleDetection()
-      showToast(`Detection ${r.active ? 'on' : 'off'}`, 'success')
+      // iter-356.56 (Frank L2): success copy spells out what the
+      // user just changed instead of a terse "Detection on".
+      showToast(
+        r.active
+          ? 'Detection on — the camera is watching for visitors.'
+          : 'Detection off — alerts are paused.',
+        'success',
+      )
     } catch (e) {
-      showToast('Toggle failed', 'error')
+      showToast(
+        "Couldn't change detection — check your connection and try again.",
+        'error',
+      )
       console.error(e)
     } finally {
       setBusy(null)
@@ -105,30 +126,41 @@ export function Live() {
   }
 
   return (
-    // iter-267 (mobile-desktop-coherence-auditor C1 follow-on): the
-    // wrapper-level max-w-5xl was lifted off App.tsx; Live takes
-    // its own cap because a 2000px-wide camera tile is wrong on a
-    // 1920px monitor (loses LiveStats off-screen, video gets
-    // genuinely too big). Centered with mx-auto to preserve the
-    // pre-iter-267 visual.
-    <div className="p-4 space-y-4 max-w-5xl mx-auto">
+    // iter-356.56 (UI redesign architect Live brief, Step 1): max-w
+    // bumped 5xl → 7xl so the desktop video tile fills its column
+    // instead of leaving 60% of the viewport as cream void. Grid
+    // shifts from 3-col equal-weight to `[1fr_320px]` so the right
+    // sidebar is a fixed 320 px context rail and the video grows.
+    // Sidebar is sticky on lg so context stays reachable when the
+    // video tile is taller than the viewport.
+    <div className="p-4 space-y-4 max-w-7xl mx-auto">
       {/* iter-355ac (Maya Major): the right-aligned "homecam" wordmark
           was a non-interactive debug label. SideNav already brands the
           app — drop the floating label, keep the camera name as a
-          clean H1. */}
-      <header>
+          clean H1.
+          iter-356.56 (Maya CRITICAL Live #4): added a subtitle row
+          with armed-state + last-event age so the page title earns
+          its real estate as a security command center, not a bare
+          camera name floating above a black box. */}
+      <header className="space-y-1">
         <h1 className="page-title text-2xl inline-flex items-center gap-2">
           <PawMark className="text-[var(--color-accent-default)]" />
           {cameraLabel}
         </h1>
+        <CameraSubtitle status={status} />
       </header>
 
-      {/* iter-261: side-by-side at lg+. Mobile: single column.
-          Desktop: video left (2/3), action buttons + LiveStats
-          right (1/3) so the user gets the live feed AND the
-          context without scrolling. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
+      {/* iter-356.56 (Maya CRITICAL Live #2 + UI redesign brief
+          Section 2): page-level system-state banner sits between
+          header and grid. One scannable line that mirrors the
+          worker/detection/thermal/memory state hierarchy from
+          computeHealth. Color tells the user at a glance whether
+          the camera is doing its job. */}
+      <SystemStateBanner status={status} />
+
+      {/* iter-356.56: grid layout with 320px sidebar. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
+        <div>
           <VideoTile
             src={whepUrl()}
             detectionActive={detectionActive}
@@ -138,7 +170,7 @@ export function Live() {
             streamStaleSeconds={streamStaleSeconds}
           />
         </div>
-        <div className="lg:col-span-1 space-y-4">
+        <div className="space-y-4 lg:sticky lg:top-4">
           {/* iter-356.18 (Maya 12th CRITICAL #1+#2): action panel
               hierarchy reshuffle.
 
@@ -189,12 +221,16 @@ export function Live() {
                   problem worse (Frank's wife sees grey button +
                   "Soon" caption + no response on tap = "broken").
                   When audio is unwired, tap fires the explanatory
-                  toast instead. */}
+                  toast instead.
+                  iter-356.56 (Maya Major + Frank L3): dropped the
+                  "Soon" caption. Roadmap-leak engineer-voice. The
+                  toast on tap explains the state without a
+                  permanent visible caption that reads as "shipped
+                  half a feature." */}
               <ActionButton
                 label="Talk"
                 icon={<MicIcon />}
                 onClick={onTalk}
-                caption={audioEnabled ? undefined : 'Soon'}
               />
             </div>
           </section>
@@ -252,11 +288,16 @@ function DetectionStatusToggle({
     : isPaused
       ? 'text-[var(--color-warning)]'
       : 'text-[var(--color-text-secondary)]'
+  // iter-356.57 (cat-brand brief): toggle pill labels reduced to
+  // role-bare-bones ("On watch" / "Off duty"). The banner above
+  // already names Panther; the pill is the actionable status, not
+  // the narrative. Sans-only here per security UX guardrail —
+  // never serif on status copy.
   const stateLabel = isActive
-    ? 'Watching for visitors'
+    ? 'On watch'
     : isPaused
-      ? 'Detection paused'
-      : 'Detection status'
+      ? "Panther's off duty"
+      : 'Checking status…'
   const actionLabel = loading
     ? isActive
       ? 'Pausing…'
@@ -389,3 +430,144 @@ function MicIcon() {
 
 // iter-356.3a: local Spinner removed — Button primitive renders its
 // own when loading=true. The ActionButton wrapper now defers to it.
+
+/**
+ * iter-356.56 (Maya CRITICAL Live #4): page-title subtitle row.
+ *
+ * Pre-fix: the H1 was a bare camera name floating above the video.
+ * Premium home-cam apps (Nest, Ring, Eufy, Arlo) anchor the live
+ * screen with the camera name PLUS a sub-line: armed state, last
+ * activity timestamp, and stream resolution. We surface the
+ * already-existing signals (detection_active + worker_alive +
+ * seconds_since_last_frame) as a single scannable subtitle.
+ */
+function CameraSubtitle({ status }: { status: import('../lib/types').ServerStatus | null }) {
+  if (!status) {
+    return (
+      <p className="text-sm text-[var(--color-text-tertiary)]">
+        Connecting to the camera…
+      </p>
+    )
+  }
+  const armed = status.detection_active === true && status.worker_alive === true
+  // iter-356.57: subtitle leads with the cat on duty when armed; on
+  // hardware failure / paused, attribution drops back to the role
+  // (security UX guardrail — no cat names on hard errors).
+  const armedLabel = !status.worker_alive
+    ? 'Camera offline'
+    : status.detection_active
+      ? "Panther on watch"
+      : "Off duty"
+  const armedDot = !status.worker_alive
+    ? 'bg-[var(--color-danger)]'
+    : status.detection_active
+      ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
+      : 'bg-[var(--color-warning)]'
+  const lastFrame = status.seconds_since_last_frame
+  const lastFrameLabel =
+    typeof lastFrame === 'number'
+      ? lastFrame < 5
+        ? 'Live now'
+        : `Last frame ${formatAge(lastFrame)} ago`
+      : null
+  return (
+    <p
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--color-text-secondary)]"
+      aria-label={`Camera status: ${armedLabel}${lastFrameLabel ? ', ' + lastFrameLabel : ''}`}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <span aria-hidden="true" className={`w-2 h-2 rounded-full ${armedDot}`} />
+        <span className={armed ? 'text-[var(--color-success)] font-medium' : 'font-medium'}>
+          {armedLabel}
+        </span>
+      </span>
+      {lastFrameLabel && (
+        <>
+          <span aria-hidden="true" className="opacity-40">·</span>
+          <span>{lastFrameLabel}</span>
+        </>
+      )}
+    </p>
+  )
+}
+
+/**
+ * iter-356.56 (Maya CRITICAL Live #2 + redesign brief Section 2):
+ * full-width status banner between header and grid. Replaces the
+ * pattern of users mentally parsing the DetectionStatusToggle +
+ * LiveStats cards to figure out "is the camera doing its job."
+ *
+ * Reuses the same signal hierarchy as LiveStats.computeHealth via
+ * a thin local mapping. Color-coded by severity (success / warning /
+ * danger / info). aria-live="polite" so screen readers announce
+ * state transitions without spam (no aria-atomic).
+ */
+function SystemStateBanner({ status }: { status: import('../lib/types').ServerStatus | null }) {
+  if (!status) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] px-4 py-2.5 text-sm text-[var(--color-text-secondary)]"
+      >
+        <span aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-[var(--color-text-tertiary)] animate-pulse" />
+        <span>Connecting to the camera…</span>
+      </div>
+    )
+  }
+  const gear = status.worker_metrics?.gear
+  // iter-356.57 (cat-brand brief): role-based status phrasing.
+  // Panther = the Sentry (active detection); Coco = the Peacekeeper
+  // (calm/quiet hours). System failures stay attribution-free —
+  // hardware errors aren't a cat's fault and the security UX
+  // guardrail forbids cat-themed glyphs on danger surfaces.
+  // Mirror LiveStats.computeHealth precedence so the banner and the
+  // sidebar health summary never disagree.
+  let level: 'ok' | 'warn' | 'error' = 'ok'
+  let label = "Panther's watching — all clear at the door."
+  if (!status.worker_alive) {
+    level = 'error'
+    label = 'Camera offline — reconnecting…'
+  } else if (gear === 'low-memory') {
+    level = 'error'
+    label = 'System under pressure — detection paused.'
+  } else if (gear === 'thermal-throttled') {
+    level = 'warn'
+    label = 'Running warm — detection may miss fast movement.'
+  } else if (status.detection_active === false || gear === 'off') {
+    level = 'warn'
+    label = "Panther's off duty — tap Resume to arm."
+  } else if (gear === 'scheduled-off') {
+    level = 'warn'
+    label = "Coco's hours — detection resumes on schedule."
+  } else if (
+    status.memory_used_mb != null &&
+    status.memory_total_mb &&
+    status.memory_used_mb / status.memory_total_mb >= 0.9
+  ) {
+    level = 'warn'
+    label = 'Memory tight — heavy detection may slow.'
+  }
+  const surface =
+    level === 'ok'
+      ? 'border-[var(--color-success-border)] bg-[var(--color-success-bg)] text-[var(--color-success)]'
+      : level === 'warn'
+        ? 'border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
+        : 'border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
+  const dot =
+    level === 'ok'
+      ? 'bg-[var(--color-success)]'
+      : level === 'warn'
+        ? 'bg-[var(--color-warning)]'
+        : 'bg-[var(--color-danger)]'
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`flex items-center gap-2.5 rounded-xl border px-4 py-2.5 text-sm font-medium ${surface}`}
+    >
+      <span aria-hidden="true" className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+      <span>{label}</span>
+    </div>
+  )
+}

@@ -150,15 +150,24 @@ export function NotificationsSection({
     try {
       const sent = await sendTestPush()
       if (sent === 0) {
-        showToast('No reachable subscriptions on the server', 'info')
+        // iter-356.56 (Frank S2): "No reachable subscriptions on the
+        // server" was developer voice and never told the user what
+        // to do next. Plain English + the recovery action.
+        showToast(
+          'No devices are set up to receive alerts yet — flip the toggle on each phone you want to notify, then try again.',
+          'info',
+        )
       } else {
         showToast(
-          `Test push sent to ${sent} device${sent === 1 ? '' : 's'}`,
+          `Test alert sent to ${sent} device${sent === 1 ? '' : 's'}.`,
           'success',
         )
       }
     } catch (e) {
-      showToast('Test push failed: ' + formatError(e), 'error')
+      showToast(
+        "Couldn't send the test alert: " + formatError(e),
+        'error',
+      )
     }
   }
 
@@ -252,10 +261,15 @@ export function NotificationsSection({
         }
       />
       {!pushAvailable && (
+        // iter-356.56 (Frank S1): swept engineer-voice ("Service Worker
+        // + PushManager") for the human path. Same content, different
+        // vocabulary — the user only needs to know what to do, not the
+        // browser API names.
         <p className="px-1 -mt-1 text-xs text-[var(--color-text-secondary)]">
-          Web Push needs Service Worker + PushManager. On iOS, install
-          this app to your Home Screen first; on desktop, use Chrome,
-          Firefox, or Edge.
+          Alerts aren&apos;t available in this browser yet. On iPhone, first
+          add HomeCam to your Home Screen (tap the share button, then
+          &ldquo;Add to Home Screen&rdquo;), then come back to turn alerts on.
+          On a computer, use Chrome, Firefox, or Edge.
         </p>
       )}
       {pushAvailable && pushEnabled && (
