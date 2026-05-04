@@ -62,6 +62,46 @@ def _sanitize_name(name):
     return safe.lower() if safe else "__unknown__"
 
 
+# iter-356.62 (slice 1, sidecar v2): pinned keys cannot be overwritten by
+# caller-supplied `meta`. Worker may pass enriched fields (source res,
+# model version, bbox coords, infer ms, etc.) but must not be able to
+# rewrite the bookkeeping primitives the review UI relies on.
+_PINNED_SIDECAR_KEYS = (
+    "schema_version",
+    "kind",
+    "predicted_name",
+    "confidence",
+    "event_id",
+    "ts_ms",
+)
+
+
+def _build_sidecar_v2(kind, name, event_id, ts_ms, confidence,
+                      predicted_name, meta):
+    """Compose the v2 sidecar dict. Always includes the v1 keys for
+    back-compat; layers caller-supplied `meta` on top BUT never lets it
+    overwrite pinned bookkeeping fields. iter-356.62 slice 1.
+    """
+    sidecar = {}
+    if meta:
+        for k, v in meta.items():
+            if k in _PINNED_SIDECAR_KEYS:
+                # Caller cannot override the pinned fields — silently drop.
+                continue
+            sidecar[k] = v
+    sidecar["schema_version"] = 2
+    sidecar["kind"] = kind
+    sidecar["predicted_name"] = (
+        predicted_name if predicted_name is not None else (
+            name if name else None
+        )
+    )
+    sidecar["confidence"] = confidence
+    sidecar["event_id"] = event_id
+    sidecar["ts_ms"] = int(ts_ms)
+    return sidecar
+
+
 def save_face_capture(
     capture_dir,
     name,
@@ -71,6 +111,7 @@ def save_face_capture(
     max_per_dir=DEFAULT_MAX_PER_DIR,
     confidence=None,
     predicted_name=None,
+    meta=None,
 ):
     """Write `jpeg_bytes` to `<capture_dir>/<sanitized_name>/<ts_ms>_<event_id>.jpg`.
     iter-355a: also writes a sidecar `<filename>.json` with
@@ -135,16 +176,18 @@ def save_face_capture(
     # iter-355a: write the sidecar JSON. Failure here is non-fatal —
     # the JPEG already wrote. Sidecar absent = server treats as
     # legacy capture (confidence=null, predicted_name=dirname).
-    sidecar = {
-        "predicted_name": (
-            predicted_name if predicted_name is not None else (
-                name if name else None
-            )
-        ),
-        "confidence": confidence,
-        "event_id": event_id,
-        "ts_ms": int(ts_ms),
-    }
+    # iter-356.62 (slice 1): bumped to schema_version=2 with optional
+    # rich metadata (source res, model version, bbox coords). v1 readers
+    # still work — they ignore unknown keys and use the pinned v1 fields.
+    sidecar = _build_sidecar_v2(
+        kind="face",
+        name=name,
+        event_id=event_id,
+        ts_ms=ts_ms,
+        confidence=confidence,
+        predicted_name=predicted_name,
+        meta=meta,
+    )
     try:
         fd = os.open(
             sidecar_path,
@@ -203,3 +246,82 @@ def _enforce_cap(directory, max_files):
         except OSError:
             # Sidecar may not exist (legacy capture pre-iter-355a).
             pass
+
+
+def save_person_capture(
+    capture_dir,
+    name,
+    event_id,
+    ts_ms,
+    jpeg_bytes,
+    max_per_dir=DEFAULT_MAX_PER_DIR,
+    confidence=None,
+    predicted_name=None,
+    meta=None,
+):
+    """iter-356.62 (slice 1): mirror of save_face_capture for the
+    full-person crop. Writes to `<capture_dir>/<sanitized_name>/<ts>_<eid>.jpg`
+    with a sidecar `kind: "person"` (vs `kind: "face"`).
+
+    Critical: `capture_dir` MUST be a parallel root to the face captures
+    dir, NOT a subdirectory of it. The existing /face/captures listing
+    route in `server/app/routes/face.py` walks `face_captures_dir/<name>/`
+    and would otherwise treat a `_person` subtree as a person bucket.
+    Caller (detect.py) reads the path from `PERSON_CAPTURES_DIR`.
+
+    Same 0o600 mode + LRU cap + name sanitization + `__unknown__`
+    sentinel as the face path. Sidecar uses the v2 schema with
+    `kind="person"` so the trainer can distinguish crops at export time.
+    """
+    if not jpeg_bytes:
+        return None
+    safe_name = _sanitize_name(name)
+    target_dir = os.path.join(capture_dir, safe_name)
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except OSError:
+        return None
+    safe_event = _SAFE_NAME_RE.sub("_", event_id) if event_id else "x"
+    base = "{}_{}".format(int(ts_ms), safe_event)
+    target_path = os.path.join(target_dir, base + ".jpg")
+    sidecar_path = os.path.join(target_dir, base + ".json")
+    try:
+        fd = os.open(
+            target_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        try:
+            os.write(fd, jpeg_bytes)
+        finally:
+            os.close(fd)
+    except OSError:
+        return None
+
+    sidecar = _build_sidecar_v2(
+        kind="person",
+        name=name,
+        event_id=event_id,
+        ts_ms=ts_ms,
+        confidence=confidence,
+        predicted_name=predicted_name,
+        meta=meta,
+    )
+    try:
+        fd = os.open(
+            sidecar_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        try:
+            os.write(fd, json.dumps(sidecar, sort_keys=True).encode("utf-8"))
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+    try:
+        _enforce_cap(target_dir, max_per_dir)
+    except OSError:
+        pass
+    return target_path
