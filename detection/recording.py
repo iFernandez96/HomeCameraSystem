@@ -88,6 +88,72 @@ class ClipRecorder(object):
             self._reap()
             return len(self._procs)
 
+    def _filter_valid_segments(self, segments, event_id):
+        """iter-356.60b (HANDOFF.md §4 root cause): keep only
+        segments whose MP4 has a parseable moov atom. Drops the
+        actively-being-written segment that the segment-recorder
+        ffmpeg has not yet finalized — without this filter the
+        concat demuxer hits `[mov,mp4,m4a,3gp,3g2,mj2] moov atom
+        not found`, exits rc=0, and silently truncates the merged
+        clip BEFORE reaching the post-roll input.
+
+        Uses ffprobe (already on PATH because ClipRecorder requires
+        ffmpeg). One subprocess per segment; ~30-80ms each. We're
+        in the daemon merge thread so this latency is invisible to
+        the user-facing emit path.
+
+        Returns the filtered list. Logs how many were dropped so
+        a future spike of broken segments is visible in journalctl.
+        """
+        import os as _os
+        valid = []
+        dropped = []
+        # ffprobe argv: cheapest possible — just enough to parse
+        # the container. -show_entries format= ensures it has to
+        # touch the moov; -v error suppresses non-error output.
+        ffprobe_bin = self.ffmpeg_bin
+        if ffprobe_bin.endswith("ffmpeg"):
+            ffprobe_bin = ffprobe_bin[:-len("ffmpeg")] + "ffprobe"
+        for seg in segments:
+            if not _os.path.exists(seg):
+                dropped.append((seg, "missing"))
+                continue
+            try:
+                rc = subprocess.run(
+                    [
+                        ffprobe_bin,
+                        "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1",
+                        seg,
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5.0,
+                ).returncode
+                if rc == 0:
+                    valid.append(seg)
+                else:
+                    dropped.append((seg, "ffprobe rc={}".format(rc)))
+            except (OSError, subprocess.TimeoutExpired) as e:
+                dropped.append((seg, type(e).__name__))
+        if dropped:
+            try:
+                print(
+                    "[recording-merge] event_id={} dropped {} broken "
+                    "segment(s): {}".format(
+                        event_id, len(dropped),
+                        ", ".join(
+                            "{}({})".format(_os.path.basename(p), reason)
+                            for p, reason in dropped
+                        ),
+                    ),
+                    flush=True,
+                )
+            except OSError:
+                pass
+        return valid
+
     def _build_args(self, output_path, duration_s):
         """ffmpeg arg list. ``-c copy`` avoids re-encode (cheap CPU,
         keeps NVENC output bitstream-identical). ``-t duration``
@@ -377,24 +443,55 @@ class ClipRecorder(object):
         while not _os.path.exists(post_only_path) and _retries < _MAX_RETRIES:
             _time.sleep(_RETRY_SLEEP_S)
             _retries += 1
-        # Diagnostic: HANDOFF.md asked for a one-line log so the next
-        # regression of this race is debuggable from journalctl alone.
-        # Logged only when retries > 0 (the race actually fired) so
-        # the happy path stays log-quiet.
-        if _retries > 0:
-            try:
-                _exists = _os.path.exists(post_only_path)
-                _size = _os.path.getsize(post_only_path) if _exists else 0
-                print(
-                    "[recording-merge] post_only dirent flushed after "
-                    "{} retries ({} ms) for event_id={} exists={} size={}B".format(
-                        _retries, int(_retries * _RETRY_SLEEP_S * 1000),
-                        event_id, _exists, _size,
-                    ),
-                    flush=True,
-                )
-            except OSError:
-                pass
+        # iter-356.60a (HANDOFF.md §4 follow-up): structured per-merge
+        # diagnostic so the regression is observable. Logs the branch
+        # we're about to take + the post_only_path size — when post-
+        # roll lands as a 0-byte file (concat-runs-but-keeps-pre-roll-
+        # only symptom), this line surfaces it without needing a
+        # journal-side print() in every failure mode.
+        try:
+            _exists = _os.path.exists(post_only_path)
+            _size = _os.path.getsize(post_only_path) if _exists else 0
+            _rc = getattr(proc, "returncode", "?")
+            print(
+                "[recording-merge] event_id={} retries={} ({}ms) "
+                "post_only exists={} size={}B proc_rc={} pre_segs={}".format(
+                    event_id, _retries,
+                    int(_retries * _RETRY_SLEEP_S * 1000),
+                    _exists, _size, _rc, len(pre_segments),
+                ),
+                flush=True,
+            )
+        except OSError:
+            pass
+        # iter-356.60b (HANDOFF.md §4 root cause): drop pre-roll
+        # segments whose MP4 moov atom isn't yet written. Symptom:
+        # concat ffmpeg hits "[mov,mp4,m4a,3gp,3g2,mj2] moov atom
+        # not found" on the actively-being-written segment, prints
+        # "Invalid data found when processing input", exits with
+        # rc=0 anyway, and the output contains only the segments
+        # processed BEFORE the broken one — pre-roll truncated and
+        # post-roll never reached.
+        #
+        # Reproduction (this morning's session):
+        #   inputs = 9 pre-roll segs + 17 s post-roll
+        #   broken seg: seg_008 (moov atom missing — being written)
+        #   ffmpeg output: 7.78 s (stops at seg_007), rc=0, post-roll dropped
+        #
+        # The segment-recorder ffmpeg uses `-f segment` muxer, which
+        # writes the moov atom on segment ROTATION (when the next
+        # segment starts). So the most-recent slot in
+        # `preroll_buffer.segments_in_window()` is reliably broken
+        # whenever the wall-clock falls between segment boundaries.
+        # iter-356.51 scratch-copy decoupled merge from `-segment_wrap`
+        # rotation but didn't address the in-flight-moov case.
+        #
+        # Fix: ffprobe each segment before adding it to the concat
+        # list. Drop ones that fail. Cost: ~30-80ms per segment ×
+        # 9 segs ≈ 0.3-0.7s extra merge latency. Merge thread is
+        # already daemon + post-event so this is invisible to the
+        # user-facing emit path.
+        pre_segments = self._filter_valid_segments(pre_segments, event_id)
         # iter-350 (camera-library-usage G2 from iter-333 broad audit):
         # write concat to `final_path + ".tmp"` then atomic
         # `os.rename` to `final_path`. Pre-iter-350 the concat
@@ -451,6 +548,25 @@ class ClipRecorder(object):
             ok = preroll_module.run_concat(
                 self.ffmpeg_bin, list_path, tmp_path,
             )
+            # iter-356.60a diagnostic: log the concat outcome + the
+            # output size so we can see whether post-roll content
+            # actually made it into the merged clip.
+            try:
+                _tmp_size = (
+                    _os.path.getsize(tmp_path)
+                    if _os.path.exists(tmp_path) else 0
+                )
+                print(
+                    "[recording-merge] event_id={} concat ok={} "
+                    "tmp_size={}B post_only_size={}B".format(
+                        event_id, ok, _tmp_size,
+                        _os.path.getsize(post_only_path)
+                        if _os.path.exists(post_only_path) else 0,
+                    ),
+                    flush=True,
+                )
+            except OSError:
+                pass
             if ok:
                 try:
                     _os.rename(tmp_path, final_path)

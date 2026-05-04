@@ -353,6 +353,11 @@ def test_given_preroll_segments_when_post_roll_done_then_concat_invoked(
     post_only = tmp_path / "evt.mp4.postroll.tmp"
     post_only.write_bytes(b"postroll")
     rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    # iter-356.60b: bypass the moov-validation filter — fake bytes
+    # in this test would correctly be rejected by ffprobe.
+    monkeypatch.setattr(
+        rec, "_filter_valid_segments", lambda segs, eid: list(segs),
+    )
 
     # act
     rec.start_clip("evt", pre_roll_s=5.0, preroll_buffer=fake_pb)
@@ -482,6 +487,9 @@ def test_iter350_concat_writes_to_tmp_then_atomic_rename(tmp_path, monkeypatch):
     post_only = tmp_path / "atom.mp4.postroll.tmp"
     post_only.write_bytes(b"postroll")
     rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    monkeypatch.setattr(
+        rec, "_filter_valid_segments", lambda segs, eid: list(segs),
+    )
 
     # act
     rec.start_clip("atom", pre_roll_s=5.0, preroll_buffer=fake_pb)
@@ -697,6 +705,9 @@ def test_given_post_only_dirent_lags_when_merge_waits_then_retry_bridges_race_to
     writer.start()
 
     rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    monkeypatch.setattr(
+        rec, "_filter_valid_segments", lambda segs, eid: list(segs),
+    )
 
     # act
     rec.start_clip("evt-race", pre_roll_s=5.0, preroll_buffer=fake_pb)
@@ -719,11 +730,61 @@ def test_given_post_only_dirent_lags_when_merge_waits_then_retry_bridges_race_to
     assert str(post_only) in list_arg
     assert list_arg[-1] == str(post_only)
 
-    # Diagnostic log fires when retries > 0 (i.e., the race actually
-    # did fire). Captured stdout should contain the marker line.
+    # iter-356.60a: diagnostic logs every merge with structured info
+    # (retries / size / branch). Carries enough for future regression
+    # triage from journalctl alone.
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "[recording-merge] post_only dirent flushed after" in combined, (
+    assert "[recording-merge] event_id=evt-race retries=" in combined, (
         "diagnostic log missing — HANDOFF.md asked for journalctl "
         "evidence on the next race appearance; preserve it."
     )
+    assert "post_only exists=True" in combined
+    assert "pre_segs=2" in combined
+
+
+def test_iter356_60b_filter_valid_segments_drops_files_without_moov_atom(
+    tmp_path,
+):
+    """iter-356.60b root cause: ffmpeg's segment muxer leaves the
+    most-recent segment slot WITHOUT a moov atom until rotation.
+    Concat-demuxer hits "moov atom not found" on it, exits rc=0,
+    and silently truncates the merged output before reaching the
+    post-roll. The fix: drop these segments via ffprobe before
+    handing the list to concat. This test feeds a mix of valid +
+    invalid files and verifies only the valid ones survive.
+    """
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+
+    # arrange — three "files":
+    # - good.mp4: a real (tiny) MP4 that ffprobe accepts. Build via
+    #   ffmpeg's lavfi color source so we don't need a fixture file.
+    # - missing.mp4: doesn't exist on disk (segment vanished).
+    # - broken.mp4: arbitrary bytes; ffprobe rejects.
+    good = tmp_path / "good.mp4"
+    rc = subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=size=64x64:duration=0.2:rate=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-tune", "stillimage",
+            str(good),
+        ],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=10,
+    ).returncode
+    if rc != 0:
+        # ffmpeg not on PATH on this host (CI without a system ffmpeg).
+        # Skip rather than false-fail the suite.
+        import pytest
+        pytest.skip("ffmpeg not available for fixture build")
+    missing = tmp_path / "missing.mp4"
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"this is not an mp4")
+
+    # act
+    survivors = rec._filter_valid_segments(
+        [str(good), str(missing), str(broken)], "test-evt",
+    )
+
+    # assert — only the good MP4 survives.
+    assert survivors == [str(good)]
