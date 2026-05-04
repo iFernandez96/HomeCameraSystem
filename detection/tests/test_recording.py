@@ -638,3 +638,92 @@ def test_given_real_ffmpeg_and_tmp_output_when_build_args_then_writes_mp4(
         "output is not a valid MP4 (no ftyp atom at offset 4); got: %r"
         % head_bytes
     )
+
+
+def test_given_post_only_dirent_lags_when_merge_waits_then_retry_bridges_race_to_concat_path(
+    tmp_path, monkeypatch, capsys,
+):
+    """iter-356.60: bridge the kernel-flush race between the
+    post-roll ffmpeg's exit and `os.path.exists(post_only_path)`.
+
+    HANDOFF.md §4 symptom: ffmpeg writes the MP4 cleanly, proc.wait()
+    returns, but the dirent is not yet visible to subsequent stat()
+    calls — `_merge_preroll` falls into the cold-start "pre-roll only"
+    branch and the user sees a 7-8 s clip instead of the expected
+    24 s. The fix retries `os.path.exists` for up to ~1.5 s after
+    fsyncing the parent dir.
+
+    This test simulates the race by having a writer thread create
+    the post-roll temp file 250 ms after the merge thread starts.
+    Pre-fix the merge would hit the cold-start branch (no concat).
+    Post-fix the retry sees the dirent and proceeds through the
+    normal concat path.
+    """
+    # arrange — fake_proc.wait returns immediately. The post-roll
+    # temp does NOT exist when the merge starts; a writer thread
+    # creates it after a brief delay (smaller than the retry window).
+    import threading as _threading
+    import time as _time
+
+    fake_proc = mock.MagicMock()
+    fake_proc.poll = mock.MagicMock(return_value=0)
+    fake_proc.wait = mock.MagicMock(return_value=0)
+    monkeypatch.setattr(
+        "recording.subprocess.Popen", mock.MagicMock(return_value=fake_proc)
+    )
+
+    import preroll
+    write_mock = mock.MagicMock()
+    concat_mock = mock.MagicMock(return_value=True)
+    monkeypatch.setattr(preroll, "write_concat_list", write_mock)
+    monkeypatch.setattr(preroll, "run_concat", concat_mock)
+
+    seg1 = tmp_path / "seg_001.mp4"
+    seg2 = tmp_path / "seg_002.mp4"
+    seg1.write_bytes(b"a")
+    seg2.write_bytes(b"b")
+    fake_pb = mock.MagicMock()
+    fake_pb.segments_in_window = mock.MagicMock(
+        return_value=[str(seg1), str(seg2)]
+    )
+
+    post_only = tmp_path / "evt-race.mp4.postroll.tmp"
+
+    def _delayed_writer():
+        _time.sleep(0.25)
+        post_only.write_bytes(b"postroll-arrived-late")
+
+    writer = _threading.Thread(target=_delayed_writer, daemon=True)
+    writer.start()
+
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+
+    # act
+    rec.start_clip("evt-race", pre_roll_s=5.0, preroll_buffer=fake_pb)
+    deadline = _time.time() + 4.0
+    while _time.time() < deadline:
+        if concat_mock.call_count > 0:
+            break
+        _time.sleep(0.05)
+    writer.join(timeout=1.0)
+
+    # assert — concat was invoked (the retry bridged the race) and
+    # the post-roll path lands as the LAST entry of the concat list.
+    assert concat_mock.called, (
+        "iter-356.60 retry-bridge regression: post-roll dirent "
+        "appeared late, but the merge thread fell into the cold-"
+        "start branch instead of waiting. Did the retry loop or "
+        "fsync get reverted?"
+    )
+    list_arg = write_mock.call_args[0][1]
+    assert str(post_only) in list_arg
+    assert list_arg[-1] == str(post_only)
+
+    # Diagnostic log fires when retries > 0 (i.e., the race actually
+    # did fire). Captured stdout should contain the marker line.
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "[recording-merge] post_only dirent flushed after" in combined, (
+        "diagnostic log missing — HANDOFF.md asked for journalctl "
+        "evidence on the next race appearance; preserve it."
+    )

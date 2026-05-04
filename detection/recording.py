@@ -337,6 +337,64 @@ class ClipRecorder(object):
             except Exception:
                 pass
         import os as _os
+        import time as _time
+        # iter-356.60 (HANDOFF.md §4 fix — pre-roll clip-duration
+        # regression): bridge the kernel-flush race between the
+        # post-roll ffmpeg's exit and the merge thread's existence
+        # check. Symptom: ffmpeg writes 17 s of MP4 to
+        # `<id>.mp4.postroll.tmp` cleanly, proc.wait() returns, but
+        # `os.path.exists(post_only_path)` returns False at line ~360
+        # below — the merge falls into the cold-start "pre-roll only"
+        # branch and the user sees a 7-8 s clip instead of 24 s.
+        #
+        # Two-step bridge:
+        #   1. fsync the parent directory FD so any pending dirent
+        #      metadata is flushed. Best-effort: some filesystems
+        #      reject directory fsync (vfat / network mounts) with
+        #      EBADF or EINVAL — wrapped in try/except so we just
+        #      fall through to the retry on rejection.
+        #   2. bounded retry on os.path.exists — up to 1.5 s polling
+        #      at 50 ms intervals. Worst case the loop returns at the
+        #      timeout and we still hit the cold-start branch (no
+        #      regression vs today). Best case the dirent appears
+        #      within 1-2 retries (≤ 100 ms), invisible to the user.
+        #
+        # Tests pre-create the post-roll temp file before merge runs,
+        # so the loop returns at iteration 0 and adds zero latency to
+        # the test path.
+        _parent_dir = _os.path.dirname(post_only_path) or "."
+        try:
+            _dirfd = _os.open(_parent_dir, _os.O_RDONLY)
+            try:
+                _os.fsync(_dirfd)
+            finally:
+                _os.close(_dirfd)
+        except OSError:
+            pass
+        _retries = 0
+        _MAX_RETRIES = 30  # 30 × 50 ms = 1.5 s total
+        _RETRY_SLEEP_S = 0.05
+        while not _os.path.exists(post_only_path) and _retries < _MAX_RETRIES:
+            _time.sleep(_RETRY_SLEEP_S)
+            _retries += 1
+        # Diagnostic: HANDOFF.md asked for a one-line log so the next
+        # regression of this race is debuggable from journalctl alone.
+        # Logged only when retries > 0 (the race actually fired) so
+        # the happy path stays log-quiet.
+        if _retries > 0:
+            try:
+                _exists = _os.path.exists(post_only_path)
+                _size = _os.path.getsize(post_only_path) if _exists else 0
+                print(
+                    "[recording-merge] post_only dirent flushed after "
+                    "{} retries ({} ms) for event_id={} exists={} size={}B".format(
+                        _retries, int(_retries * _RETRY_SLEEP_S * 1000),
+                        event_id, _exists, _size,
+                    ),
+                    flush=True,
+                )
+            except OSError:
+                pass
         # iter-350 (camera-library-usage G2 from iter-333 broad audit):
         # write concat to `final_path + ".tmp"` then atomic
         # `os.rename` to `final_path`. Pre-iter-350 the concat
