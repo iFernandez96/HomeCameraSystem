@@ -508,6 +508,54 @@ describe('ClipModal', () => {
     }
   })
 
+  it('Given a clip mounts, Then the bbox overlay registers seeking/seeked/play/pause listeners on the video so it redraws when the user scrubs the seek bar (iter-356.59)', () => {
+    // arrange — pre-iter-356.59 the overlay only listened for
+    // `timeupdate`, which fires at ~4 Hz and never during a manual
+    // scrub gesture on the native <video controls> seek bar. The
+    // result was: bbox stuck while user dragged the scrubber, and
+    // the post-roll region looked like the box was frozen. The fix
+    // adds seeking/seeked/play/pause/ended event listeners + a
+    // requestVideoFrameCallback per-frame redraw.
+    const seen = new Set<string>()
+    const origAdd = HTMLVideoElement.prototype.addEventListener
+    HTMLVideoElement.prototype.addEventListener = function (
+      this: HTMLVideoElement,
+      type: string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      listener: any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      options?: any,
+    ) {
+      seen.add(type)
+      return origAdd.call(this, type, listener, options)
+    }
+    try {
+      // act
+      render(
+        <ClipModal
+          event={makeEvent({
+            boxes: [
+              { x: 0.1, y: 0.2, w: 0.3, h: 0.4, label: 'person', score: 0.9 },
+            ],
+          })}
+          onClose={() => {}}
+        />,
+      )
+
+      // assert — the new listeners are wired. timeupdate stays as
+      // a defensive net for browsers that don't fire rVFC during
+      // seek-without-play, but the load-bearing additions are
+      // seeking/seeked (scrubber wiring) + play/pause (frame loop).
+      expect(seen.has('seeking')).toBe(true)
+      expect(seen.has('seeked')).toBe(true)
+      expect(seen.has('play')).toBe(true)
+      expect(seen.has('pause')).toBe(true)
+      expect(seen.has('timeupdate')).toBe(true)
+    } finally {
+      HTMLVideoElement.prototype.addEventListener = origAdd
+    }
+  })
+
   it('Given the boxes toggle is clicked, When the user toggles, Then aria-pressed flips and the localStorage key persists', async () => {
     // arrange
     const userEvent = (await import('@testing-library/user-event')).default

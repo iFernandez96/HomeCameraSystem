@@ -199,14 +199,32 @@ export function ClipModal({
     const ctx = canvas.getContext('2d')
     const fallbackBoxes: DetectionBox[] = boxesVisible ? event.boxes : []
     const visibleName = boxesVisible ? event.person_name ?? null : null
+    // iter-356.59 — staleness window. If the latest sample is more
+    // than this many seconds older than `currentTime`, treat it as
+    // "no current detection" and clear the box. Without this, the
+    // last pre-roll/event box would freeze on screen indefinitely
+    // when the user scrubs into post-roll regions where no
+    // detections occurred (the binary search clamps to the last
+    // sample even when the gap is huge — looked like the bbox was
+    // following the user's mouse instead of the object).
+    //
+    // 0.5s is roughly 2× the worker's active-gear inference period
+    // (5 fps → 0.2s). At 0.5s a real detection would have produced
+    // a follow-up sample; absence of one means the object left the
+    // frame or the worker is in idle gear with nothing to track.
+    const SAMPLE_STALENESS_S = 0.5
     // Pick the closest-in-time sample by binary search over
-    // `samples` (server emits ascending by ts_offset_s). Returns
-    // `event.boxes` when no track sidecar OR boxes hidden — keeps
-    // the legacy-clip path coherent with the live tile.
+    // `samples` (server emits ascending by ts_offset_s).
     const pickBoxesAt = (currentTime: number): DetectionBox[] => {
       if (!boxesVisible) return []
       if (!tracks || tracks.samples.length === 0) return fallbackBoxes
       const samples = tracks.samples
+      // Before the first sample's offset → no detection yet at this
+      // time. (Avoids painting the first detection's box throughout
+      // the entire pre-roll lead-in.)
+      if (currentTime + SAMPLE_STALENESS_S < samples[0].ts_offset_s) {
+        return []
+      }
       let lo = 0
       let hi = samples.length - 1
       while (lo < hi) {
@@ -214,7 +232,13 @@ export function ClipModal({
         if (samples[mid].ts_offset_s <= currentTime) lo = mid
         else hi = mid - 1
       }
-      return samples[lo].boxes
+      const picked = samples[lo]
+      // After the last sample → if the gap exceeds staleness, the
+      // detection ended; clear the overlay rather than freezing.
+      if (currentTime - picked.ts_offset_s > SAMPLE_STALENESS_S) {
+        return []
+      }
+      return picked.boxes
     }
     const draw = () => {
       if (!ctx) return
@@ -222,8 +246,84 @@ export function ClipModal({
       drawBoxes(ctx, canvas, video, pickBoxesAt(t), visibleName)
     }
     draw()
+
+    // iter-356.59 (bbox per-frame + scrubber wiring fix):
+    // ──────────────────────────────────────────────────────────────
+    // PRE-FIX: the overlay redrew only on `timeupdate` events. The
+    // browser fires that at ~4-5 Hz on most engines (Chrome 4 Hz,
+    // Firefox 4 Hz, Safari 1 Hz on iOS Low Power Mode). At 30 fps
+    // playback that means the box jumps in 6-7-frame chunks — what
+    // the user reported as "not updating per frame." On scrub
+    // (drag the seek bar), the box also lagged or froze because
+    // `seeking`/`seeked` events were NOT handled — only `timeupdate`,
+    // and the browser doesn't always fire timeupdate during a scrub
+    // gesture (it fires after the seek completes).
+    //
+    // FIX A — `requestVideoFrameCallback`: Chromium/Safari/Edge ≥
+    // M83/Sa15.4 expose a per-rendered-frame callback API. We re-
+    // schedule the callback after every paint so the overlay redraws
+    // exactly once per displayed video frame. Firefox doesn't have
+    // it; we fall through to the timeupdate listener (still fires)
+    // PLUS a `requestAnimationFrame` polling loop while playing.
+    //
+    // FIX B — `seeking` + `seeked` event listeners: when the user
+    // grabs the native scrubber on the <video controls>, the seeking
+    // event fires immediately and continues firing as they drag.
+    // Listening here means the overlay tracks the scrubber in real
+    // time across BOTH pre-roll AND post-roll regions, which is
+    // what was broken.
+    //
+    // FIX C — also redraw on `play`/`pause` so the first paint after
+    // a state change is always correct (rVFC stops firing on pause).
+    // ──────────────────────────────────────────────────────────────
+    type VideoWithRVFC = HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number
+      cancelVideoFrameCallback?: (handle: number) => void
+    }
+    const v = video as VideoWithRVFC
+    const hasRVFC = typeof v.requestVideoFrameCallback === 'function'
+    let rvfcHandle: number | null = null
+    let rafHandle: number | null = null
+
+    const drawAndReschedule = () => {
+      draw()
+      if (hasRVFC && v.requestVideoFrameCallback) {
+        rvfcHandle = v.requestVideoFrameCallback(drawAndReschedule)
+      }
+    }
+    // Firefox fallback: rAF poll while playing.
+    const rafTick = () => {
+      if (video.paused || video.ended) {
+        rafHandle = null
+        return
+      }
+      draw()
+      rafHandle = requestAnimationFrame(rafTick)
+    }
+    const onPlay = () => {
+      if (hasRVFC && v.requestVideoFrameCallback) {
+        if (rvfcHandle == null) {
+          rvfcHandle = v.requestVideoFrameCallback(drawAndReschedule)
+        }
+      } else {
+        if (rafHandle == null) rafHandle = requestAnimationFrame(rafTick)
+      }
+    }
+
+    if (hasRVFC && v.requestVideoFrameCallback) {
+      rvfcHandle = v.requestVideoFrameCallback(drawAndReschedule)
+    }
+
+    // Even with rVFC, keep timeupdate as a defensive net for the
+    // seek-without-play case (browser may not fire rVFC if no new
+    // frame is being rendered).
     video.addEventListener('timeupdate', draw)
     video.addEventListener('loadedmetadata', draw)
+    video.addEventListener('seeking', draw)
+    video.addEventListener('seeked', draw)
+    video.addEventListener('play', onPlay)
+    video.addEventListener('pause', draw)
+    video.addEventListener('ended', draw)
     let observer: ResizeObserver | null = null
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(draw)
@@ -232,6 +332,15 @@ export function ClipModal({
     return () => {
       video.removeEventListener('timeupdate', draw)
       video.removeEventListener('loadedmetadata', draw)
+      video.removeEventListener('seeking', draw)
+      video.removeEventListener('seeked', draw)
+      video.removeEventListener('play', onPlay)
+      video.removeEventListener('pause', draw)
+      video.removeEventListener('ended', draw)
+      if (rvfcHandle != null && v.cancelVideoFrameCallback) {
+        v.cancelVideoFrameCallback(rvfcHandle)
+      }
+      if (rafHandle != null) cancelAnimationFrame(rafHandle)
       if (observer) observer.disconnect()
     }
   }, [event.boxes, event.person_name, clipUrl, boxesVisible, clipErrored, tracks])
