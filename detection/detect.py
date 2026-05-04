@@ -199,10 +199,18 @@ class RuntimeConfig:
         return in_off_window(self.schedule_off_start, self.schedule_off_end, cur)
 
 
-def start_config_poll(url, runtime, interval_s=30.0):
+def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0):
     """Periodically GET the config endpoint and update `runtime`. Runs as
     a daemon thread; failures are logged once per backoff cycle so a brief
-    server-restart blip doesn't fill the journal."""
+    server-restart blip doesn't fill the journal.
+
+    iter-356.61: when `preroll_buffer` is supplied, the poll also grows
+    the segment-recorder ring on demand whenever the live
+    `clip_pre_roll_s` exceeds the current ring's window. Lets the
+    Settings "Pre-roll" slider take effect on the next event without a
+    worker restart, even when the user pushes the value above the
+    PrerollBuffer's boot-time `DEFAULT_CAPACITY`. Never shrinks (would
+    lose history mid-capture)."""
 
     def loop():
         backoff = 1.0
@@ -250,6 +258,20 @@ def start_config_poll(url, runtime, interval_s=30.0):
                         runtime.clip_pre_roll_s = float(data["clip_pre_roll_s"])
                     except (ValueError, TypeError):
                         pass
+                    # iter-356.61: grow the segment-recorder ring if
+                    # the slider asked for more pre-roll than the
+                    # current capacity covers. No-op when the ring
+                    # already has enough headroom; never shrinks.
+                    if preroll_buffer is not None:
+                        try:
+                            preroll_buffer.ensure_capacity_for(
+                                runtime.clip_pre_roll_s,
+                            )
+                        except Exception as _e:
+                            print(
+                                "[detect] preroll resize failed: {}".format(_e),
+                                flush=True,
+                            )
                 backoff = 1.0
                 warned = False
             except Exception as e:
@@ -720,7 +742,10 @@ def main():
         sorted(set(recognizer.names)) if recognizer is not None else []
     )
     config_url = event_url.rsplit("/event", 1)[0] + "/detection/config"
-    start_config_poll(config_url, runtime)
+    # iter-356.61: thread the preroll_buffer through so the poll can
+    # grow the segment-recorder ring on demand when the user pushes
+    # the Settings "Pre-roll" slider above the boot-time capacity.
+    start_config_poll(config_url, runtime, preroll_buffer=preroll_buffer)
     print("[detect] config poll -> {}".format(config_url), flush=True)
 
     # Liveness signal driven by the inference loop; heartbeat thread reads

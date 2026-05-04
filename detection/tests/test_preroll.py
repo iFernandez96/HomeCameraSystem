@@ -534,3 +534,81 @@ def test_given_real_ffmpeg_and_tmp_output_when_run_concat_then_writes_mp4(
         "output is not a valid MP4 (no ftyp atom at offset 4); got: %r"
         % head_bytes
     )
+
+
+def test_iter356_61_required_capacity_for_returns_ceil_plus_slack():
+    """iter-356.61: required_capacity_for() rounds up to cover the
+    full pre-roll window and adds slack for the in-flight slot the
+    iter-356.60b validator drops + clock-skew at the boundary."""
+    import sys, os
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from preroll import PrerollBuffer
+    pb = PrerollBuffer("rtsp://x", "/tmp/x", segment_s=1, capacity=10)
+    # 30s window @ 1s segments + default 5 slack = 35.
+    assert pb.required_capacity_for(30.0) == 35
+    # 30.5s window rounds UP to 31 + slack = 36.
+    assert pb.required_capacity_for(30.5) == 36
+    # 0 returns the existing capacity (no shrink request).
+    assert pb.required_capacity_for(0.0) == 10
+    # Negative returns existing capacity.
+    assert pb.required_capacity_for(-5.0) == 10
+    # Custom slack.
+    assert pb.required_capacity_for(30.0, slack_segments=0) == 30
+
+
+def test_iter356_61_ensure_capacity_for_no_op_when_already_large(monkeypatch, tmp_path):
+    """ensure_capacity_for() returns False (no-op) when the existing
+    capacity already covers the requested pre_roll_s."""
+    import sys
+    from pathlib import Path
+    from unittest import mock as _mock
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from preroll import PrerollBuffer
+    pb = PrerollBuffer(
+        "rtsp://x", str(tmp_path), segment_s=1, capacity=100,
+    )
+    # 30s window + 5 slack = 35; capacity=100 is already enough.
+    fake_popen = _mock.MagicMock()
+    monkeypatch.setattr("preroll.subprocess.Popen", fake_popen)
+    resized = pb.ensure_capacity_for(30.0)
+    assert resized is False
+    assert pb.capacity == 100
+    fake_popen.assert_not_called()
+
+
+def test_iter356_61_ensure_capacity_for_grows_and_restarts(monkeypatch, tmp_path):
+    """ensure_capacity_for() grows the ring + restarts ffmpeg when
+    the requested window exceeds the current capacity."""
+    import sys
+    from pathlib import Path
+    from unittest import mock as _mock
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from preroll import PrerollBuffer
+
+    pb = PrerollBuffer(
+        "rtsp://x", str(tmp_path), segment_s=1, capacity=15,
+    )
+    # Simulate already-running ffmpeg.
+    running_proc = _mock.MagicMock()
+    running_proc.poll.return_value = None  # alive
+    pb._proc = running_proc
+
+    # Stub Popen so the restart spawns a fake new proc.
+    new_proc = _mock.MagicMock()
+    new_proc.poll.return_value = None
+    fake_popen = _mock.MagicMock(return_value=new_proc)
+    monkeypatch.setattr("preroll.subprocess.Popen", fake_popen)
+
+    # Ask for 60s + 5 slack = 65 slots. Current is 15 → grow.
+    resized = pb.ensure_capacity_for(60.0)
+
+    assert resized is True
+    assert pb.capacity == 65
+    # Old proc was killed.
+    running_proc.kill.assert_called_once()
+    # New ffmpeg spawned with the bigger -segment_wrap.
+    fake_popen.assert_called_once()
+    spawned_args = fake_popen.call_args[0][0]
+    wrap_idx = spawned_args.index("-segment_wrap")
+    assert spawned_args[wrap_idx + 1] == "65"

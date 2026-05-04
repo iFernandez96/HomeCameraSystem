@@ -220,6 +220,84 @@ class PrerollBuffer(object):
         except Exception:
             return False
 
+    # iter-356.61: dynamic ring sizing. Pre-iter-356.61 the ring
+    # capacity was fixed at boot (DEFAULT_CAPACITY × DEFAULT_SEGMENT_S
+    # = 60 s of history). The Settings "Pre-roll" slider could ask
+    # for up to 300 s on the "week" preset — anything past 60 s
+    # silently fell back to whatever the ring happened to hold.
+    # Now: the worker re-checks the slider against the live ring
+    # window and grows the ring (kill + update capacity + restart)
+    # when the slider exceeds it. Never shrinks — that would lose
+    # history mid-capture.
+
+    def window_seconds(self):
+        """Current ring window size in seconds (capacity × segment_s)."""
+        return float(self.segment_s) * float(self.capacity)
+
+    def required_capacity_for(self, pre_roll_s, slack_segments=5):
+        """Capacity (slot count) needed to cover `pre_roll_s` of history
+        plus `slack_segments` of safety. The slack covers (a) the
+        actively-being-written slot which the iter-356.60b validator
+        will drop, and (b) clock-skew between segment mtime and the
+        wall clock. Floor of 1 segment so we never ask for 0.
+        """
+        try:
+            seconds = float(pre_roll_s)
+        except (TypeError, ValueError):
+            return self.capacity
+        if seconds <= 0:
+            return self.capacity
+        # Round up: ceil(seconds / segment_s) + slack.
+        n = int(seconds / float(self.segment_s))
+        if n * float(self.segment_s) < seconds:
+            n += 1
+        return max(1, n + int(slack_segments))
+
+    def ensure_capacity_for(self, pre_roll_s, slack_segments=5):
+        """If the live ring is too small to cover `pre_roll_s`, grow it
+        by killing + restarting the segment-recorder with a larger
+        `-segment_wrap`. Returns True when a resize happened, False
+        when no-op (already large enough or pre_roll_s is invalid).
+
+        Never shrinks. Once the user has bumped the slider higher,
+        the ring stays at that size until the worker restarts —
+        shrinking would discard history segments and could break
+        an in-flight pre-roll snapshot.
+
+        During the kill + restart window (~1-2 s) no new segments
+        are written. Existing slot files on disk are NOT removed;
+        the new ffmpeg instance overwrites them as the ring rotates
+        through. A clip starting during the resize window will see
+        the existing segments via `segments_in_window()` (mtime
+        filter is independent of which ffmpeg wrote the slot).
+        """
+        needed = self.required_capacity_for(pre_roll_s, slack_segments)
+        if needed <= self.capacity:
+            return False
+        with self._lock:
+            self.capacity = needed
+            if self._proc is not None and self._proc.poll() is None:
+                try:
+                    self._proc.kill()
+                    self._proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+                self._proc = None
+        # Restart out-of-lock so start() can re-acquire it cleanly.
+        try:
+            print(
+                "[preroll] resized ring to capacity={} ({}s window) "
+                "for slider pre_roll={:.1f}s".format(
+                    needed, needed * float(self.segment_s),
+                    float(pre_roll_s),
+                ),
+                flush=True,
+            )
+        except Exception:
+            pass
+        self.start()
+        return True
+
     def segments_in_window(self, now, pre_roll_s):
         """Return a chronologically-sorted list of segment paths whose
         mtime falls within [now - pre_roll_s, now]. Returns [] if
