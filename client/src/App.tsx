@@ -1,11 +1,12 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { PawSpinner } from './components/PawSpinner'
 import { RequireAuth } from './components/RequireAuth'
-import { SideNav } from './components/SideNav'
+import { SideRail } from './components/SideRail'
+import { WatchRibbon } from './components/WatchRibbon'
 import { AuthProvider, useAuth } from './lib/auth'
 import { useUnreadBadge } from './lib/badge'
 import { useCatsEnabled } from './lib/catPref'
@@ -85,52 +86,35 @@ function PageFallback() {
 // navigate away from a crashed page without a hard reload.
 function AppShell() {
   const { state } = useAuth()
-  // iter-248: home-screen app-icon badge wiring. The hook is a no-op
-  // when the user is anon (no /unread_count permission) — auth-failed
-  // calls swallow silently and the WS subscription likewise inherits
-  // the auth-gated WS handshake which closes 1008 if not authed.
+  const location = useLocation()
+  // iter-248: home-screen app-icon badge wiring.
   useUnreadBadge()
-  // iter-356.10 (Frank #5): per-device toggle for the ambient cat
-  // layer. Default on. Settings → Account → "Show ambient cats"
-  // flips it. Reads localStorage; cross-tab via storage event.
   const [catsEnabled] = useCatsEnabled()
+  // iter-356.58 (layout rebuild): cats only walk on Live. The
+  // mobile-architect brief flagged the cat strip overlapping the
+  // empty-state cat illustration on People + Settings. Restricting
+  // to /live keeps the brand atmosphere while removing the visual
+  // register collision on other routes.
+  const isLiveRoute = location.pathname === '/live' || location.pathname === '/'
+  // iter-356.58: hide the entire shell chrome on Login. Login owns
+  // the full viewport with its own brand block.
+  const isLoginRoute = location.pathname === '/login'
+  const showShell = state === 'authed' && !isLoginRoute
   return (
     <div className="flex flex-col h-full">
       <ConnectionBanner />
-      {/* iter-261: real desktop layout. SideNav fixed-positioned at
-          left on `lg:` (≥1024px) viewports; BottomNav stays for
-          smaller screens. Main content gets `lg:ml-56` to clear the
-          240 px sidebar, `lg:pb-6` to drop the bottom-nav padding.
-
-          iter-267 (mobile-desktop-coherence-auditor C1): the
-          previous `lg:max-w-5xl` wrapper here was capping every
-          page at 1024 px on desktop, leaving 200-1000 px of empty
-          neutral-950 to the right of every screen on a 1440 px+
-          monitor. The original intent (Live + Login readability)
-          is now enforced PER PAGE — pages that benefit from a
-          width cap (Live's `max-w-5xl`, Login's `max-w-sm`) set
-          their own, while Events + Settings + Manage Users get the
-          full available width and can lay themselves out as actual
-          desktop surfaces.
-
-          --sidenav-width is also exposed as a CSS variable here so
-          the iter-262 column-aware fixed elements (ConnectionBanner,
-          toast) can stop hard-coding `lg:left-56` and the iter-260
-          band-aid lineage doesn't compound.
-
-          --day-header-top fixes the iter-? sticky-header collision:
-          EventList day-section headers stick to top: var(...) which
-          was unset, so they collided with the Events page sticky
-          header. Set to ~64px so day headers sit just below the
-          page header. */}
-      {/* iter-356.45: gate SideNav on auth state. Pre-iter-356.45 the
-          sidebar was always rendered, so the unauthenticated Login
-          page showed empty nav stubs (Live / Events / People / etc.)
-          to the left of the sign-in card. Clicking them was a no-op
-          (RequireAuth bounced back), but visually it diluted the
-          focal "sign in" action. Mirrors the BottomNav and CatLayer
-          gates below. */}
-      {state === 'authed' && <SideNav />}
+      {/* iter-356.58 (layout rebuild) — STRUCTURAL: kill the 224px
+          sidebar + per-page-h1 pattern. Replace with:
+            (a) <WatchRibbon> — 56px persistent top bar with brand +
+                live-watch state + jump-to-live action.
+            (b) <SideRail>   — slim 64px icon-only nav rail (was 224
+                px SideNav with stacked icon+label rows).
+            (c) Per-page H1s collapse to optional headers; the
+                ribbon carries identity universally.
+          This is the load-bearing layout move. SaaS-template
+          sidebar pattern dies here. */}
+      {showShell && <WatchRibbon />}
+      {showShell && <SideRail />}
       {/* iter-269 (accessibility-auditor D top-3): skip-to-main link.
           Visible only when keyboard-focused. Closes the iter-261
           desktop SideNav tab-gauntlet (3 nav items × N pages = N×3
@@ -153,29 +137,21 @@ function AppShell() {
       </a>
       <main
         id="main"
-        // iter-347 (Mobile E1 from iter-347 audit): overscroll-y-contain
-        // here on the actual scroll container (was placed on People
-        // wrapper at iter-342 — silent no-op because the wrapper is
-        // not a scroll container). Suppresses Android Chrome
-        // pull-to-refresh app-wide which was discarding the loaded
-        // list on a fast top-fling.
-        // iter-356.45: drop `lg:ml-56 lg:max-w-[calc(100vw-14rem)]`
-        // when unauthed so the Login card centers in the full viewport
-        // instead of fighting a missing sidebar's reserved 14rem.
-        className={`flex-1 overflow-y-auto overscroll-y-contain pb-20 lg:pb-6 pt-[env(safe-area-inset-top)] w-full ${
-          state === 'authed' ? 'lg:ml-56 lg:max-w-[calc(100vw-14rem)]' : ''
+        // iter-356.58 (layout rebuild): main column now offsets for
+        // the 64px SideRail (was 224px) on lg+ AND clears the 56px
+        // WatchRibbon on top via padding. Sidenav-width var
+        // updated 14rem → 4rem so any other consumer (toast,
+        // ConnectionBanner) inherits the new offset. Day-header
+        // sticky-top now starts BELOW the ribbon (56px) instead of
+        // the old generic 64px.
+        className={`flex-1 overflow-y-auto overscroll-y-contain pb-20 lg:pb-6 w-full ${
+          showShell ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)]' : ''
         }`}
         style={
           {
-            '--sidenav-width': '14rem',
-            // iter-286 (mobile-view-auditor C1): include the iOS
-            // safe-area inset so day-headers don't briefly overlap
-            // the page-header during scroll-back gestures. The page
-            // header sits at top: env(safe-area-inset-top) (via
-            // pt-[env(...)] on this `<main>`), so the day-header
-            // sticky offset must include the same inset to land
-            // beneath it.
-            '--day-header-top': 'calc(64px + env(safe-area-inset-top))',
+            '--sidenav-width': '4rem',
+            // Below the WatchRibbon (56 px) + iOS safe area.
+            '--day-header-top': 'calc(56px + env(safe-area-inset-top))',
           } as React.CSSProperties
         }
       >
@@ -249,9 +225,9 @@ function AppShell() {
           </Suspense>
         </div>
       </main>
-      {/* Hide BottomNav on /login AND on `lg:` viewports (the
-          SideNav fills that role on desktop). */}
-      {state === 'authed' && (
+      {/* iter-356.58: BottomNav stays on mobile only; SideRail
+          covers desktop. Login also hides it. */}
+      {showShell && (
         <div className="lg:hidden">
           <BottomNav />
         </div>
@@ -266,7 +242,14 @@ function AppShell() {
           iter-356.6: Suspense fallback={null} — the cats are pure
           decoration; rendering nothing during the brief lazy-load
           is correct (a spinner here would defeat the purpose). */}
-      {state === 'authed' && catsEnabled && (
+      {/* iter-356.58 (layout rebuild) — cats only walk on /live.
+          Mobile-architect brief: the cat strip overlapped empty-
+          state cat illustrations on People + collided with text
+          density on Settings. Restricting the layer to the camera
+          page keeps the brand atmosphere where it belongs (the
+          camera IS the cats' domain) and clears bottom space on
+          every other route. */}
+      {showShell && catsEnabled && isLiveRoute && (
         <Suspense fallback={null}>
           <CatLayer />
         </Suspense>

@@ -402,7 +402,7 @@ export function ClipModal({
           }
         }
       }}
-      className="fixed inset-0 z-40 flex flex-col bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      className="fixed inset-0 z-40 flex flex-col lg:flex-row bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       {/* iter-270 (accessibility-auditor A top-3): backdrop is a
           DIV with onClick + aria-hidden, NOT a button. Pre-iter-270
@@ -420,6 +420,10 @@ export function ClipModal({
         data-testid="clip-backdrop"
         className="absolute inset-0 w-full h-full cursor-default"
       />
+      {/* iter-356.58 (LAYOUT REBUILD): VIDEO PANE wrapper. On lg+
+          this becomes the left flex-1 column; the evidence pane is
+          its sibling on the right. On mobile both stack vertically. */}
+      <div className="relative flex-1 flex flex-col min-h-0 min-w-0">
       {/* iter-356.17 (Maya 11th CRITICAL #1): event-header bar.
           Title + camera + face-match badge + close-X. Lives ABOVE the
           video region so the user has context before the player even
@@ -585,6 +589,89 @@ export function ClipModal({
           Close
         </Button>
       </div>
+      </div>
+      {/* iter-356.58 (LAYOUT REBUILD) — EVIDENCE PANE.
+          Right column on lg+, full-width section below the video on
+          mobile. Structured WHO / WHEN / WHERE / HOW SURE so an
+          incident review reads as actual evidence, not just a video
+          with a close button. */}
+      <aside
+        aria-label="Incident details"
+        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 bg-black/40 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto"
+      >
+        <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+              Who
+            </div>
+            <div className="font-display text-xl font-bold mt-0.5">
+              {personLabel ?? 'Unknown person'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close clip viewer"
+            className="hidden lg:inline-flex shrink-0 items-center justify-center w-9 h-9 rounded-full text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] space-y-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+              When
+            </div>
+            <div className="text-sm font-semibold mt-0.5">{timeLabel}</div>
+            <div className="text-xs text-white/60 lg:text-[var(--color-text-tertiary)] tabular-nums">
+              {absoluteTime(event.ts)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+              Where
+            </div>
+            <div className="text-sm font-semibold mt-0.5">
+              {humanCameraName(event.camera_id)}
+            </div>
+          </div>
+          {!personLabel && event.label && (
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+                What
+              </div>
+              <div className="text-sm font-semibold mt-0.5 capitalize">
+                {event.label}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)]">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+            How sure
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="font-display text-3xl font-bold tabular-nums">
+              {Math.round(event.score * 100)}%
+            </span>
+            <span className="text-sm text-white/70 lg:text-[var(--color-text-secondary)]">
+              {event.score < 0.5
+                ? 'Low'
+                : event.score < 0.75
+                  ? 'Medium'
+                  : 'High'}
+            </span>
+          </div>
+          {matchConfidence != null && (
+            <div className="text-xs text-white/55 lg:text-[var(--color-text-tertiary)] mt-1">
+              Face match: {matchConfidence}%
+            </div>
+          )}
+        </div>
+      </aside>
     </div>
   )
 }

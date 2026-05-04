@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CatEmptyState } from '../components/CatEmptyState'
-import { PawMark } from '../components/CatIcons'
 import {
   deleteFaceCapture,
   listFaceCaptureDirs,
@@ -41,15 +40,15 @@ export function Training() {
   return (
     <div className="p-4 space-y-4 max-w-3xl lg:max-w-4xl mx-auto">
       <header className="flex items-baseline justify-between gap-3 flex-wrap">
+        {/* iter-356.58: dropped page-title H1 + paw mark. */}
         <div>
-          <h1 className="page-title text-2xl inline-flex items-center gap-2">
-            <PawMark className="text-[var(--color-accent-default)]" />
-            Training
-          </h1>
-          <p className="text-base text-[var(--color-text-primary)] mt-1">
+          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
+            Teach Mushu
+          </p>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-1">
             {activeName
               ? `Photos the camera saved as "${_displayName(activeName)}". Move any that are wrong, then come back later to re-train.`
-              : 'Photos the camera took of visitors, sorted by who it thinks they are. Pick a name to check its work.'}
+              : 'Photos of unfamiliar visitors. Sort them so the camera learns who is who.'}
           </p>
         </div>
         {/* iter-356.12: deep-link to the iter-355c1 review queue.

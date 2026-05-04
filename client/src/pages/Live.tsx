@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { PawMark } from '../components/CatIcons'
 import { LiveStats } from '../components/LiveStats'
 import { SnapshotPreview } from '../components/SnapshotPreview'
 import { VideoTile } from '../components/VideoTile'
@@ -126,122 +125,158 @@ export function Live() {
   }
 
   return (
-    // iter-356.56 (UI redesign architect Live brief, Step 1): max-w
-    // bumped 5xl → 7xl so the desktop video tile fills its column
-    // instead of leaving 60% of the viewport as cream void. Grid
-    // shifts from 3-col equal-weight to `[1fr_320px]` so the right
-    // sidebar is a fixed 320 px context rail and the video grows.
-    // Sidebar is sticky on lg so context stays reachable when the
-    // video tile is taller than the viewport.
-    <div className="p-4 space-y-4 max-w-7xl mx-auto">
-      {/* iter-355ac (Maya Major): the right-aligned "homecam" wordmark
-          was a non-interactive debug label. SideNav already brands the
-          app — drop the floating label, keep the camera name as a
-          clean H1.
-          iter-356.56 (Maya CRITICAL Live #4): added a subtitle row
-          with armed-state + last-event age so the page title earns
-          its real estate as a security command center, not a bare
-          camera name floating above a black box. */}
-      <header className="space-y-1">
-        <h1 className="page-title text-2xl inline-flex items-center gap-2">
-          <PawMark className="text-[var(--color-accent-default)]" />
-          {cameraLabel}
-        </h1>
-        <CameraSubtitle status={status} />
-      </header>
+    // iter-356.58 (LAYOUT REBUILD): Live is no longer a "page with
+    // header + grid + cards." It is a command-center surface where
+    // the video field DOMINATES the viewport. Per architect brief:
+    //   - kill the page-title <h1> + paw-mark + subtitle row
+    //     (WatchRibbon already carries armed state on every page)
+    //   - kill the SystemStateBanner (duplicated in WatchRibbon)
+    //   - kill the right-rail card cluster on desktop
+    //   - replace with: full-bleed video field that fills available
+    //     height, status overlays ON the video (camera name +
+    //     armed badge bottom-left, action cluster bottom-right),
+    //     compact watch-panel column on lg+ that floats over the
+    //     right edge of the video, and a horizontal recent-events
+    //     strip below the video.
+    <div className="flex flex-col h-[calc(100vh-3.5rem-5rem)] lg:h-[calc(100vh-3.5rem)]">
+      <div className="relative flex-1 min-h-0 bg-black overflow-hidden lg:rounded-tl-2xl">
+        {/* The cinematic video field. fills 100% of this region. */}
+        <VideoTile
+          src={whepUrl()}
+          detectionActive={detectionActive}
+          workerAlive={workerAlive}
+          lowMemory={lowMemory}
+          thermal={thermal}
+          streamStaleSeconds={streamStaleSeconds}
+        />
 
-      {/* iter-356.56 (Maya CRITICAL Live #2 + UI redesign brief
-          Section 2): page-level system-state banner sits between
-          header and grid. One scannable line that mirrors the
-          worker/detection/thermal/memory state hierarchy from
-          computeHealth. Color tells the user at a glance whether
-          the camera is doing its job. */}
-      <SystemStateBanner status={status} />
+        {/* Bottom gradient + identity strip — camera name + armed
+            dot + last-frame age. This replaces the per-page H1.
+            pointer-events-none so the video clicks (fullscreen
+            button etc.) still pass through to the video tile;
+            individual interactive children in this overlay opt
+            back in via pointer-events-auto. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 sm:px-6 pb-4 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent">
+          <div className="flex items-end justify-between gap-4">
+            <div className="flex items-end gap-3 min-w-0">
+              <h1 className="font-display text-2xl sm:text-3xl font-bold text-white leading-none truncate">
+                {cameraLabel}
+              </h1>
+              <CameraSubtitle status={status} onDark />
+            </div>
+            <div className="hidden sm:flex pointer-events-auto">
+              <ArmedBadge status={status} />
+            </div>
+          </div>
+        </div>
 
-      {/* iter-356.56: grid layout with 320px sidebar. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
-        <div>
-          <VideoTile
-            src={whepUrl()}
+        {/* Floating action cluster — bottom-right edge of the video.
+            Compact pill column on lg+, horizontal row on mobile.
+            pointer-events-auto so taps register. */}
+        <div className="pointer-events-auto absolute bottom-4 right-3 sm:right-4 hidden sm:flex flex-col gap-2 items-end">
+          <DetectionStatusToggle
             detectionActive={detectionActive}
-            workerAlive={workerAlive}
-            lowMemory={lowMemory}
-            thermal={thermal}
-            streamStaleSeconds={streamStaleSeconds}
+            onToggle={onToggleDetect}
+            loading={busy === 'detect'}
+            compact
+          />
+          <div className="flex flex-row gap-2">
+            <ActionButton
+              label="Snapshot"
+              icon={<CameraIcon />}
+              onClick={onSnapshot}
+              loading={busy === 'snapshot'}
+              dark
+            />
+            <ActionButton
+              label="Talk"
+              icon={<MicIcon />}
+              onClick={onTalk}
+              dark
+            />
+          </div>
+        </div>
+
+        {/* Watch panel — compressed health card floating on the
+            top-right corner of the video. Desktop-only. Replaces
+            the iter-356.56 separate-card right-rail. */}
+        <div className="hidden lg:block absolute top-4 right-4 w-[260px]">
+          <LiveStats status={status} compact />
+        </div>
+      </div>
+
+      {/* Mobile-only action strip below the video. The desktop
+          version lives as overlays on the video itself. */}
+      <div className="sm:hidden flex flex-col gap-2 px-4 py-3 border-b border-[var(--color-border-subtle)]">
+        <DetectionStatusToggle
+          detectionActive={detectionActive}
+          onToggle={onToggleDetect}
+          loading={busy === 'detect'}
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <ActionButton
+            label="Snapshot"
+            icon={<CameraIcon />}
+            onClick={onSnapshot}
+            loading={busy === 'snapshot'}
+          />
+          <ActionButton
+            label="Talk"
+            icon={<MicIcon />}
+            onClick={onTalk}
           />
         </div>
-        <div className="space-y-4 lg:sticky lg:top-4">
-          {/* iter-356.18 (Maya 12th CRITICAL #1+#2): action panel
-              hierarchy reshuffle.
+      </div>
 
-              Pre-iter-356.18: 3 buttons of equal weight in a
-              `grid-cols-3` row, Detect (the most important — controls
-              whether the camera is watching) was the THIRD slot in
-              reading order, AND when detection was active the Detect
-              button rendered as a primary blue CTA (Stroop-effect
-              violation: visual says "tap me!", actual meaning is
-              "this is happening").
-
-              Now: a card with TWO sections.
-                1. Detection STATUS-PILL row (full-width, top): not a
-                   CTA-styled button. Reads as a status surface with
-                   a stop/resume affordance. Green dot when watching,
-                   amber when paused. Same visual vocabulary as the
-                   System Health card below.
-                2. Snapshot + Talk row (2-up, secondary): smaller
-                   pill buttons for the side actions. Snapshot is the
-                   one-shot file capture; Talk is the iter-308 mic
-                   placeholder.
-
-              Wrapped in `bg-[var(--color-surface)] border rounded-2xl`
-              to match LiveStats card. Pre-iter-356.18 the buttons
-              floated unanchored while LiveStats below sat in a
-              card — Maya MAJOR #2: "asymmetry feels unfinished." */}
-          <section
-            aria-label="Camera controls"
-            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-3 py-3 space-y-2.5"
-          >
-            <DetectionStatusToggle
-              detectionActive={detectionActive}
-              onToggle={onToggleDetect}
-              loading={busy === 'detect'}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <ActionButton
-                label="Snapshot"
-                icon={<CameraIcon />}
-                onClick={onSnapshot}
-                loading={busy === 'snapshot'}
-              />
-              {/* iter-280 + iter-308: Talk activates when
-                  `audio_enabled` flips true (operator wires mic +
-                  speaker + owner toggle in Settings).
-                  iter-356.18 (Maya MAJOR #1): always wire the
-                  onTalk toast — `disabled` makes the dead-button
-                  problem worse (Frank's wife sees grey button +
-                  "Soon" caption + no response on tap = "broken").
-                  When audio is unwired, tap fires the explanatory
-                  toast instead.
-                  iter-356.56 (Maya Major + Frank L3): dropped the
-                  "Soon" caption. Roadmap-leak engineer-voice. The
-                  toast on tap explains the state without a
-                  permanent visible caption that reads as "shipped
-                  half a feature." */}
-              <ActionButton
-                label="Talk"
-                icon={<MicIcon />}
-                onClick={onTalk}
-              />
-            </div>
-          </section>
-          <LiveStats status={status} />
-        </div>
+      {/* Mobile-only health strip below the action strip. */}
+      <div className="sm:hidden px-4 py-3">
+        <LiveStats status={status} />
       </div>
 
       {previewUrl && (
         <SnapshotPreview url={previewUrl} onClose={() => setPreviewUrl(null)} />
       )}
     </div>
+  )
+}
+
+/**
+ * iter-356.58: armed-state badge on the dark video gradient.
+ * Bigger than the WatchRibbon dot, designed to read against the
+ * black video bg. Mirrors the ribbon's truth-source so it never
+ * disagrees, but visually it's a meaningful 32px pill that the
+ * eye lands on as you look at the camera feed.
+ */
+function ArmedBadge({ status }: { status: import('../lib/types').ServerStatus | null }) {
+  if (!status) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur px-3 py-1.5 text-xs text-white/80 ring-1 ring-white/20">
+        <span aria-hidden="true" className="w-2 h-2 rounded-full bg-white/40 animate-pulse" />
+        Connecting…
+      </span>
+    )
+  }
+  const armed = status.detection_active === true && status.worker_alive === true
+  const offline = status.worker_alive === false
+  const label = offline ? 'Offline' : armed ? 'Armed' : 'Off duty'
+  const dotClass = offline
+    ? 'bg-[var(--color-danger)]'
+    : armed
+      ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
+      : 'bg-[var(--color-warning)]'
+  const ringClass = offline
+    ? 'ring-[var(--color-danger)]/40'
+    : armed
+      ? 'ring-[var(--color-success)]/40'
+      : 'ring-[var(--color-warning)]/40'
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur px-3 py-1.5 text-xs font-semibold text-white ring-1 ${ringClass}`}
+      aria-label={`Camera state: ${label}`}
+    >
+      <span aria-hidden="true" className={`w-2 h-2 rounded-full ${dotClass}`} />
+      {label}
+    </span>
   )
 }
 
@@ -266,18 +301,56 @@ function DetectionStatusToggle({
   detectionActive,
   onToggle,
   loading,
+  compact,
 }: {
   detectionActive: boolean | null
   onToggle: () => void
   loading: boolean
+  compact?: boolean
 }) {
   const isActive = detectionActive === true
   const isPaused = detectionActive === false
+  // iter-356.58 (layout rebuild): `compact` mode — overlaid on
+  // the dark video field, so the surface flips to black/glass and
+  // the text goes white. Default mode (non-compact) stays as
+  // before for the mobile action strip.
   const dotClass = isActive
     ? 'bg-[var(--color-success)]'
     : isPaused
       ? 'bg-[var(--color-warning)]'
-      : 'bg-[var(--color-text-tertiary)]'
+      : 'bg-white/40'
+  const stateLabel = isActive
+    ? 'On watch'
+    : isPaused
+      ? "Panther's off duty"
+      : 'Checking…'
+  const actionLabel = loading
+    ? isActive
+      ? 'Pausing…'
+      : 'Resuming…'
+    : isActive
+      ? 'Pause'
+      : isPaused
+        ? 'Resume'
+        : 'Toggle'
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={loading}
+        aria-pressed={isActive}
+        aria-label={`${stateLabel}. Tap to ${isActive ? 'pause detection' : 'resume detection'}.`}
+        className="inline-flex items-center gap-2.5 min-h-[40px] px-3 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+      >
+        <span aria-hidden="true" className={`w-2 h-2 rounded-full ${dotClass}`} />
+        <span>{stateLabel}</span>
+        <span className="text-white/60">·</span>
+        <span className="text-[var(--color-accent-bright)] font-semibold">{actionLabel}</span>
+      </button>
+    )
+  }
+  // Default (mobile non-overlay) mode — token-driven surface.
   const ringClass = isActive
     ? 'ring-[var(--color-success-border)]'
     : isPaused
@@ -288,25 +361,6 @@ function DetectionStatusToggle({
     : isPaused
       ? 'text-[var(--color-warning)]'
       : 'text-[var(--color-text-secondary)]'
-  // iter-356.57 (cat-brand brief): toggle pill labels reduced to
-  // role-bare-bones ("On watch" / "Off duty"). The banner above
-  // already names Panther; the pill is the actionable status, not
-  // the narrative. Sans-only here per security UX guardrail —
-  // never serif on status copy.
-  const stateLabel = isActive
-    ? 'On watch'
-    : isPaused
-      ? "Panther's off duty"
-      : 'Checking status…'
-  const actionLabel = loading
-    ? isActive
-      ? 'Pausing…'
-      : 'Resuming…'
-    : isActive
-      ? 'Pause'
-      : isPaused
-        ? 'Resume'
-        : 'Toggle'
   return (
     <button
       type="button"
@@ -325,10 +379,6 @@ function DetectionStatusToggle({
           {stateLabel}
         </span>
       </div>
-      {/* iter-356.19 (Frank Round-8 #2): dropped uppercase + tracking.
-          Frank: "PAUSE reads like a button on a 1998 VCR. The state
-          label on the left is sentence-case 'Watching for visitors';
-          those two voices were fighting on the same row." */}
       <span className={`text-sm font-medium ${isPaused ? 'text-[var(--color-accent-default)]' : 'text-[var(--color-text-secondary)]'}`}>
         {actionLabel}
       </span>
@@ -344,6 +394,7 @@ function ActionButton({
   loading,
   highlight,
   caption,
+  dark,
 }: {
   label: string
   icon: React.ReactNode
@@ -351,10 +402,30 @@ function ActionButton({
   disabled?: boolean
   loading?: boolean
   highlight?: boolean
-  // iter-280: optional sub-label rendered beneath the main label,
-  // used for status hints on disabled actions ("Soon" for Talk).
   caption?: string
+  dark?: boolean
 }) {
+  // iter-356.58 (layout rebuild): `dark` mode — overlaid on the
+  // dark video field. Renders as a glass-pill button instead of
+  // the surface-bg primitive. Loading + disabled states preserved.
+  if (dark) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled || loading}
+        className="inline-flex items-center gap-2 min-h-[40px] px-4 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+        aria-pressed={highlight ? true : undefined}
+      >
+        {!loading && (
+          <span aria-hidden="true" className="flex-shrink-0 inline-flex">
+            {icon}
+          </span>
+        )}
+        <span>{label}</span>
+      </button>
+    )
+  }
   // iter-356.3a (Maya iter-355ac defer + Major iter-355c1):
   // vertical-stack icon-above-label → horizontal pill icon-left-
   // label-right. Built on the iter-356.2 Button primitive so:
@@ -441,23 +512,32 @@ function MicIcon() {
  * already-existing signals (detection_active + worker_alive +
  * seconds_since_last_frame) as a single scannable subtitle.
  */
-function CameraSubtitle({ status }: { status: import('../lib/types').ServerStatus | null }) {
+function CameraSubtitle({
+  status,
+  onDark,
+}: {
+  status: import('../lib/types').ServerStatus | null
+  onDark?: boolean
+}) {
+  // iter-356.58 (layout rebuild): onDark variant for the video-
+  // overlay placement (white-on-gradient). Default light variant
+  // retained for the mobile action strip.
+  const baseClass = onDark
+    ? 'flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/85 leading-tight'
+    : 'flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--color-text-secondary)]'
   if (!status) {
     return (
-      <p className="text-sm text-[var(--color-text-tertiary)]">
-        Connecting to the camera…
+      <p className={baseClass}>
+        <span>Connecting…</span>
       </p>
     )
   }
   const armed = status.detection_active === true && status.worker_alive === true
-  // iter-356.57: subtitle leads with the cat on duty when armed; on
-  // hardware failure / paused, attribution drops back to the role
-  // (security UX guardrail — no cat names on hard errors).
   const armedLabel = !status.worker_alive
     ? 'Camera offline'
     : status.detection_active
       ? "Panther on watch"
-      : "Off duty"
+      : 'Off duty'
   const armedDot = !status.worker_alive
     ? 'bg-[var(--color-danger)]'
     : status.detection_active
@@ -470,21 +550,26 @@ function CameraSubtitle({ status }: { status: import('../lib/types').ServerStatu
         ? 'Live now'
         : `Last frame ${formatAge(lastFrame)} ago`
       : null
+  const armedTextClass = onDark
+    ? armed
+      ? 'text-[var(--color-success)] font-semibold'
+      : 'text-white font-semibold'
+    : armed
+      ? 'text-[var(--color-success)] font-medium'
+      : 'font-medium'
   return (
     <p
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--color-text-secondary)]"
+      className={baseClass}
       aria-label={`Camera status: ${armedLabel}${lastFrameLabel ? ', ' + lastFrameLabel : ''}`}
     >
       <span className="inline-flex items-center gap-1.5">
         <span aria-hidden="true" className={`w-2 h-2 rounded-full ${armedDot}`} />
-        <span className={armed ? 'text-[var(--color-success)] font-medium' : 'font-medium'}>
-          {armedLabel}
-        </span>
+        <span className={armedTextClass}>{armedLabel}</span>
       </span>
       {lastFrameLabel && (
         <>
-          <span aria-hidden="true" className="opacity-40">·</span>
-          <span>{lastFrameLabel}</span>
+          <span aria-hidden="true" className={onDark ? 'text-white/40' : 'opacity-40'}>·</span>
+          <span className={onDark ? 'text-white/70' : ''}>{lastFrameLabel}</span>
         </>
       )}
     </p>
@@ -492,82 +577,10 @@ function CameraSubtitle({ status }: { status: import('../lib/types').ServerStatu
 }
 
 /**
- * iter-356.56 (Maya CRITICAL Live #2 + redesign brief Section 2):
- * full-width status banner between header and grid. Replaces the
- * pattern of users mentally parsing the DetectionStatusToggle +
- * LiveStats cards to figure out "is the camera doing its job."
- *
- * Reuses the same signal hierarchy as LiveStats.computeHealth via
- * a thin local mapping. Color-coded by severity (success / warning /
- * danger / info). aria-live="polite" so screen readers announce
- * state transitions without spam (no aria-atomic).
+ * iter-356.58 (LAYOUT REBUILD): SystemStateBanner removed.
+ * The persistent WatchRibbon at the top of the app shell now
+ * carries armed-state attribution for every route. Repeating it
+ * in the page body was duplication. The video-overlay <ArmedBadge>
+ * gives the same signal at the moment of attention (looking at the
+ * camera). The banner is dead.
  */
-function SystemStateBanner({ status }: { status: import('../lib/types').ServerStatus | null }) {
-  if (!status) {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="flex items-center gap-2 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] px-4 py-2.5 text-sm text-[var(--color-text-secondary)]"
-      >
-        <span aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-[var(--color-text-tertiary)] animate-pulse" />
-        <span>Connecting to the camera…</span>
-      </div>
-    )
-  }
-  const gear = status.worker_metrics?.gear
-  // iter-356.57 (cat-brand brief): role-based status phrasing.
-  // Panther = the Sentry (active detection); Coco = the Peacekeeper
-  // (calm/quiet hours). System failures stay attribution-free —
-  // hardware errors aren't a cat's fault and the security UX
-  // guardrail forbids cat-themed glyphs on danger surfaces.
-  // Mirror LiveStats.computeHealth precedence so the banner and the
-  // sidebar health summary never disagree.
-  let level: 'ok' | 'warn' | 'error' = 'ok'
-  let label = "Panther's watching — all clear at the door."
-  if (!status.worker_alive) {
-    level = 'error'
-    label = 'Camera offline — reconnecting…'
-  } else if (gear === 'low-memory') {
-    level = 'error'
-    label = 'System under pressure — detection paused.'
-  } else if (gear === 'thermal-throttled') {
-    level = 'warn'
-    label = 'Running warm — detection may miss fast movement.'
-  } else if (status.detection_active === false || gear === 'off') {
-    level = 'warn'
-    label = "Panther's off duty — tap Resume to arm."
-  } else if (gear === 'scheduled-off') {
-    level = 'warn'
-    label = "Coco's hours — detection resumes on schedule."
-  } else if (
-    status.memory_used_mb != null &&
-    status.memory_total_mb &&
-    status.memory_used_mb / status.memory_total_mb >= 0.9
-  ) {
-    level = 'warn'
-    label = 'Memory tight — heavy detection may slow.'
-  }
-  const surface =
-    level === 'ok'
-      ? 'border-[var(--color-success-border)] bg-[var(--color-success-bg)] text-[var(--color-success)]'
-      : level === 'warn'
-        ? 'border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
-        : 'border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
-  const dot =
-    level === 'ok'
-      ? 'bg-[var(--color-success)]'
-      : level === 'warn'
-        ? 'bg-[var(--color-warning)]'
-        : 'bg-[var(--color-danger)]'
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`flex items-center gap-2.5 rounded-xl border px-4 py-2.5 text-sm font-medium ${surface}`}
-    >
-      <span aria-hidden="true" className={`w-2.5 h-2.5 rounded-full ${dot}`} />
-      <span>{label}</span>
-    </div>
-  )
-}

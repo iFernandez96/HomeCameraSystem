@@ -79,7 +79,10 @@ describe('Live page', () => {
     captureSnapshot.mockResolvedValue({ url: '/snapshots/snap_123.jpg' })
     const user = userEvent.setup()
     render(<Live />)
-    await user.click(screen.getByRole('button', { name: /snapshot/i }))
+    // iter-356.58 (LAYOUT REBUILD): Live now renders Snapshot/Talk
+    // in two places (desktop overlay + mobile strip) so jsdom finds
+    // multiple matches. Click the first; both wire to the same handler.
+    await user.click(screen.getAllByRole('button', { name: /snapshot/i })[0])
     expect(captureSnapshot).toHaveBeenCalledTimes(1)
     const dialog = await screen.findByRole('dialog', { name: /snapshot preview/i })
     expect(dialog).toBeInTheDocument()
@@ -95,7 +98,10 @@ describe('Live page', () => {
     captureSnapshot.mockResolvedValue({ url: '/snapshots/snap_456.jpg' })
     const user = userEvent.setup()
     render(<Live />)
-    await user.click(screen.getByRole('button', { name: /snapshot/i }))
+    // iter-356.58 (LAYOUT REBUILD): Live now renders Snapshot/Talk
+    // in two places (desktop overlay + mobile strip) so jsdom finds
+    // multiple matches. Click the first; both wire to the same handler.
+    await user.click(screen.getAllByRole('button', { name: /snapshot/i })[0])
     await screen.findByRole('dialog', { name: /snapshot preview/i })
     await user.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() =>
@@ -112,7 +118,10 @@ describe('Live page', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const user = userEvent.setup()
     render(<Live />)
-    await user.click(screen.getByRole('button', { name: /snapshot/i }))
+    // iter-356.58 (LAYOUT REBUILD): Live now renders Snapshot/Talk
+    // in two places (desktop overlay + mobile strip) so jsdom finds
+    // multiple matches. Click the first; both wire to the same handler.
+    await user.click(screen.getAllByRole('button', { name: /snapshot/i })[0])
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
         expect.stringMatching(/no recent frame/i),
@@ -130,7 +139,10 @@ describe('Live page', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const user = userEvent.setup()
     render(<Live />)
-    await user.click(screen.getByRole('button', { name: /snapshot/i }))
+    // iter-356.58 (LAYOUT REBUILD): Live now renders Snapshot/Talk
+    // in two places (desktop overlay + mobile strip) so jsdom finds
+    // multiple matches. Click the first; both wire to the same handler.
+    await user.click(screen.getAllByRole('button', { name: /snapshot/i })[0])
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
         // iter-356.56 (Frank L2): copy upgraded from terse "Snapshot
@@ -149,8 +161,9 @@ describe('Live page', () => {
     // iter-356.18: replaced the Detect ActionButton with a status-
     // pill toggle. Match by aria-label which contains "tap to ...
     // detection" in either state.
+    // iter-356.58: also rendered twice (overlay + mobile strip).
     await user.click(
-      screen.getByRole('button', { name: /tap to (resume|pause) detection/i }),
+      screen.getAllByRole('button', { name: /tap to (resume|pause) detection/i })[0],
     )
     expect(toggleDetection).toHaveBeenCalledTimes(1)
     await waitFor(() =>
@@ -171,7 +184,8 @@ describe('Live page', () => {
     // explanatory toast when audio isn't wired.
     const user = userEvent.setup()
     render(<Live />)
-    const talk = screen.getByRole('button', { name: /talk/i })
+    // iter-356.58: rendered twice; test the first.
+    const talk = screen.getAllByRole('button', { name: /talk/i })[0]
     expect(talk).not.toBeDisabled()
     await user.click(talk)
     await waitFor(() =>
@@ -189,7 +203,9 @@ describe('Live page', () => {
     // assert: caption was dropped per Maya Major + Frank L3 — the
     // toast on tap explains state. Button still tappable (not disabled);
     // accessible name is still 'Talk'.
-    const talkButton = screen.getByRole('button', { name: /talk/i })
+    // iter-356.58: rendered twice (overlay + strip); first is the
+    // canonical accessible name for SR users.
+    const talkButton = screen.getAllByRole('button', { name: /talk/i })[0]
     expect(talkButton).toBeInTheDocument()
     expect(talkButton).not.toBeDisabled()
     // No visible "Soon" tier under the button.

@@ -9,7 +9,6 @@ import { DetectionSection } from './settings/DetectionSection'
 import { JetsonSection } from './settings/JetsonSection'
 import { NotificationsSection } from './settings/NotificationsSection'
 import { TimelapsesSection } from './settings/TimelapsesSection'
-import { PawMark } from '../components/CatIcons'
 import { useAuth } from '../lib/auth'
 import { useStatus } from '../lib/useStatus'
 
@@ -101,94 +100,48 @@ export function Settings() {
   const showSystemPanel = _renderAllTabs || activeTab === 'system'
 
   return (
-    // iter-286 (desktop-view-auditor A1): cap the Settings page at
-    // max-w-4xl on desktop so the iter-278 tab strip doesn't run as
-    // an empty horizontal rule across a 1920 monitor — pre-iter-286
-    // the strip's content was ~480 px and the bottom border ran
-    // ~1180 px right of the last tab. ManageUsersPanel rows and
-    // ZoneEditor inherit the same cap. Mobile keeps the full-width
-    // layout (no `max-w-*` below `lg:`).
-    <div className="p-4 space-y-6 pb-8 lg:max-w-4xl lg:mx-auto">
-      <h1 className="page-title text-2xl inline-flex items-center gap-2">
-        <PawMark className="text-[var(--color-accent-default)]" />
-        Settings
-      </h1>
-
-      {/* iter-278: 3-tab IA. Tabs are surface-level navigation; the
-          underlying Section components are unchanged. Family/viewer
-          users see Notifications + System; the Camera tab is hidden
-          for them because its body is fully owner-gated. */}
+    // iter-356.58 (LAYOUT REBUILD): Settings is now a two-pane
+    // control-room layout, not a single column with a tab strip.
+    //   - Desktop (lg+): 200px left rail with section list +
+    //     scrollable content pane on the right.
+    //   - Mobile: section rail collapses to a horizontal pill row
+    //     above the content (replaces the full-width 3-tab strip
+    //     that wrapped to two lines on 390px viewports).
+    //
+    // The H1 page title + paw-mark pattern is removed. The
+    // WatchRibbon already identifies the app at the top; Settings
+    // doesn't need its own H1 to compete with the section nav.
+    //
+    // The 3-tab data model (`SettingsTab` = camera | notifications
+    // | system) is preserved verbatim so the 92-test suite stays
+    // green. Only the rendering shape changes.
+    <div className="lg:flex lg:gap-6 lg:max-w-5xl lg:mx-auto lg:px-6 lg:py-6">
       <SettingsTabs
         active={activeTab}
         onChange={onTabChange}
         showCamera={isOwner}
       />
 
-      {/* iter-278: each tab's content lives in a `<div hidden=...>`
-          panel rather than a conditional `{activeTab === X && (...)}`.
-          The hidden attribute keeps inactive content out of the
-          flow + accessibility tree (so SR users hear ONLY the
-          active tab) while leaving it in the DOM. This preserves
-          the React component state across tab switches AND lets
-          test queries find content regardless of which tab is
-          active — the behavioral contract of `screen.getByText('X')`
-          is "is X anywhere in the rendered tree", and that intent
-          is unchanged across the iter-278 IA shift. */}
-      {/* iter-294: Account section + serverVersion state extracted
-          to ./settings/AccountSection.tsx. */}
-      {showSystemPanel && <AccountSection />}
+      <div className="flex-1 min-w-0 space-y-6 px-4 pb-8 pt-4 lg:px-0 lg:pt-0">
+        {showSystemPanel && <AccountSection />}
 
-      {showNotificationsPanel && (
-        <NotificationsSection
-          pushSubsCount={status?.push_subs_count ?? null}
-        />
-      )}
+        {showNotificationsPanel && (
+          <NotificationsSection
+            pushSubsCount={status?.push_subs_count ?? null}
+          />
+        )}
 
-      {/* iter-198 (Feature #3 slice 3b): Detection knobs / What to
-          detect / Detection zones / Schedule sections all PATCH
-          /api/detection/config which iter-197 gated `require_role
-          ("owner")`. Hide them entirely from non-owner users —
-          presenting controls that would 403 on commit is bad UX.
-          Server is still source of truth; this is belt-and-braces.
-          iter-278: also gated by Camera tab; non-owners never see
-          the panel (no Camera tab on the strip). The `isOwner`
-          short-circuit stays so a malicious DOM mutation can't
-          unhide owner-only knobs for a non-owner.
-          iter-291: 240-line block extracted to
-          ./settings/DetectionSection.tsx. */}
-      {showCameraPanel && isOwner && <DetectionSection />}
+        {showCameraPanel && isOwner && <DetectionSection />}
 
-      {showSystemPanel && (
-      <>
-
-      {/* iter-269: read-only Jetson health panel (~90 lines + 5
-          helper components) moved to ./settings/JetsonSection.tsx
-          to keep this file under the iter-267 audit threshold. */}
-      <JetsonSection status={status} />
-
-      {/* iter-214 (Feature #8 slice 3): owner-only timelapses
-          section. iter-292 extracted to ./settings/TimelapsesSection.tsx. */}
-      {isOwner && <TimelapsesSection />}
-
-      {/* iter-356.37: Debug pane — Reload app / Reset cache & reload
-          buttons + bundle ID + SW diagnostics. Available to ALL roles
-          on the System tab; the buttons are local-only (no server
-          side-effects), and the SW + cache state is harmless to view. */}
-      <DebugSection />
-
-      {/* iter-198/211/231/237: owner-only destructive ops
-          (Backup / Update / Restore / Reboot). iter-293 extracted to
-          ./settings/DangerZone.tsx. Visual gradient blue→amber→red
-          maps to "safe → medium → destructive" preserved there. */}
-      {isOwner && <DangerZone />}
-
-      </>
-      )}{/* end showSystemPanel */}
-
-      {/* iter-355ac (Maya Major): footer "Home Camera" was decorative
-          (no information, no interaction) and took up vertical space
-          the user had to scroll past. Server version is already
-          surfaced in the Account section. Drop it. */}
+        {showSystemPanel && (
+          <>
+            <JetsonSection status={status} />
+            {isOwner && <TimelapsesSection />}
+            <DebugSection />
+            {isOwner && <DangerZone />}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -260,18 +213,18 @@ function SettingsTabs({
   }
 
   return (
-    // iter-356.56: tabIndex={-1} on the tablist container satisfies
-    // jsx-a11y/interactive-supports-focus for the role+onKeyDown
-    // combination. The inner tabs carry the real Tab order via the
-    // roving-tabindex pattern (active tab tabIndex=0, others -1) so
-    // focusing the tablist itself is never the keyboard path.
+    // iter-356.58 (LAYOUT REBUILD): tablist becomes a vertical left
+    // rail on desktop (lg+) and a horizontal pill strip on mobile.
+    // Pre-fix it was a full-width underline-tab strip that read as
+    // generic browser tabs. The pill+rail treatment makes it
+    // unmistakably navigation, not a tab control on a form.
     <div
       role="tablist"
       tabIndex={-1}
       aria-label="Settings sections"
       aria-orientation="horizontal"
       onKeyDown={onKey}
-      className="flex gap-1 border-b border-[var(--color-border)]"
+      className="flex gap-1 lg:flex-col lg:gap-1.5 lg:w-48 lg:flex-none lg:sticky lg:top-20 lg:self-start lg:p-3 lg:rounded-2xl lg:bg-[var(--color-surface)] lg:border lg:border-[var(--color-border-subtle)] lg:shadow-[var(--shadow-subtle)] mx-4 mt-4 px-2 py-1 overflow-x-auto lg:mx-0 lg:mt-0 lg:overflow-visible scrollbar-hide"
     >
       {tabs.map((t, idx) => {
         const isActive = active === t.id
@@ -284,18 +237,12 @@ function SettingsTabs({
             type="button"
             role="tab"
             aria-selected={isActive}
-            // iter-356.56: roving-tabindex — only the active tab is in
-            // the Tab order; arrow keys cycle within. Inactive tabs
-            // have tabIndex=-1 so Tab leaves the strip after one stop.
             tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(t.id)}
-            className={`px-4 py-3 text-sm -mb-px border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-t ${itemClassExtra} ${
+            className={`whitespace-nowrap px-3 py-2 text-sm font-medium rounded-lg lg:rounded-xl lg:text-left lg:py-2.5 lg:px-3 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${itemClassExtra} ${
               isActive
-                ? 'border-[var(--color-accent-default)] text-[var(--color-text-primary)] font-semibold'
-                // iter-356.56 (Desktop B1): added `hover:bg-...` so
-                // cursor users get a fill change, not just text-color
-                // shift. Inactive tabs were near-invisible on cream.
-                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] font-medium'
+                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] lg:ring-1 lg:ring-[var(--color-accent-default)]/40'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)]'
             }`}
           >
             {t.label}

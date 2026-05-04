@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
-import { PawMark } from '../components/CatIcons'
 import {
   deleteFaceCapture,
   getReviewQueue,
@@ -159,10 +158,11 @@ export function Review() {
     <div className="px-4 lg:px-6 py-4 max-w-5xl mx-auto">
       <header className="flex items-baseline justify-between gap-3 mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)] inline-flex items-center gap-2">
-            <PawMark className="text-[var(--color-accent-default)]" />
+          {/* iter-356.58: dropped paw-mark H1 in favor of the
+              shell-level WatchRibbon identity. */}
+          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
             Review queue
-          </h1>
+          </p>
           {/* iter-356.14 (Frank Round-3 D2): copy rewritten human-
               side. "Face crops the classifier wasn't sure about"
               became "Photos of people the camera wasn't sure it

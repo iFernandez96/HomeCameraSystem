@@ -124,18 +124,19 @@ function computeHealth(status: ServerStatus): HealthSummary {
   return { level: 'ok', label: 'Home is calm' }
 }
 
-export function LiveStats({ status }: { status: ServerStatus | null }) {
+export function LiveStats({ status, compact }: { status: ServerStatus | null; compact?: boolean }) {
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   if (!status) {
     return (
       <div
         aria-busy="true"
-        className="h-12 px-3 flex items-center justify-center text-sm text-[var(--color-text-secondary)]"
+        className={
+          compact
+            ? 'h-10 px-3 flex items-center justify-center text-xs text-white/70 bg-black/55 backdrop-blur ring-1 ring-white/15 rounded-xl'
+            : 'h-12 px-3 flex items-center justify-center text-sm text-[var(--color-text-secondary)]'
+        }
       >
-        {/* iter-356.56 (UI redesign brief Live, copy table): "Loading
-            status…" was internal-API vocabulary. "Connecting to camera…"
-            is closer to what the user is actually waiting for. */}
         Connecting to camera…
       </div>
     )
@@ -161,6 +162,32 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
         ? 'ring-[var(--color-warning-border)]'
         : 'ring-[var(--color-danger-border)]'
 
+  // iter-356.58 (layout rebuild): `compact` mode — overlaid on the
+  // dark video field as a floating watch-panel. Glass surface + white
+  // text + tighter spacing. The disclosure is dropped in this mode
+  // because the panel is meant to be a persistent glance-target, not
+  // a navigable drawer; tapping the small "more" link leads users
+  // through to /settings/system anyway.
+  if (compact) {
+    return (
+      <section
+        aria-label="Watch panel"
+        className="bg-black/55 backdrop-blur ring-1 ring-white/15 rounded-2xl px-3 py-3 space-y-2.5 text-white"
+      >
+        <div role="status" aria-live="polite">
+          <div className="flex items-center gap-2.5">
+            <span aria-hidden="true" className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />
+            <span className="text-sm font-semibold">{health.label}</span>
+          </div>
+          {health.hint && (
+            <p className="text-[11px] text-white/70 mt-1 ml-5 leading-snug">{health.hint}</p>
+          )}
+        </div>
+        <CompactStatStrip status={status} />
+      </section>
+    )
+  }
+
   return (
     <section
       aria-label="System health"
@@ -184,18 +211,8 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
         )}
       </div>
 
-      {/* iter-356.56 (UI redesign brief Live, Step 2 — the most
-          impactful single change): always-visible 2-row stat strip.
-          Pre-fix the LiveStats card showed exactly one line in the
-          ok state ("All systems normal") + a disclosure toggle.
-          Premium command-center surfaces show density at a glance.
-          Five stats from existing ServerStatus fields — no new
-          backend route. When the worker is offline we show em-dash
-          for each so the layout doesn't collapse. */}
       <StatStrip status={status} />
 
-      {/* Disclosure for the technical readout (preserved from
-          pre-iter-356.15). Default closed. */}
       <div>
         <button
           type="button"
@@ -265,6 +282,51 @@ function StatStrip({ status }: { status: ServerStatus }) {
           <span className="font-medium tabular-nums">{dropped}</span>
         </div>
       )}
+    </dl>
+  )
+}
+
+/**
+ * iter-356.58: compact watch-panel stat strip — 2-col, white-on-dark.
+ */
+function CompactStatStrip({ status }: { status: ServerStatus }) {
+  const wm = status.worker_metrics
+  const alive = status.worker_alive
+  const fps = !alive ? '—' : wm?.fps != null ? `${wm.fps.toFixed(0)} fps` : '—'
+  const inferMs =
+    !alive
+      ? '—'
+      : wm?.infer_ms_recent != null
+        ? `${wm.infer_ms_recent.toFixed(0)} ms`
+        : '—'
+  const lastFrame =
+    !alive
+      ? '—'
+      : status.seconds_since_last_frame != null
+        ? status.seconds_since_last_frame < 5
+          ? 'Live'
+          : `${formatAge(status.seconds_since_last_frame)} ago`
+        : '—'
+  const diskFree =
+    status.disk_free_gb != null ? `${status.disk_free_gb.toFixed(0)} GB` : '—'
+  return (
+    <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] border-t border-white/15 pt-2">
+      <div>
+        <dt className="uppercase tracking-wider text-[9px] text-white/55">Frame rate</dt>
+        <dd className="font-semibold tabular-nums">{fps}</dd>
+      </div>
+      <div>
+        <dt className="uppercase tracking-wider text-[9px] text-white/55">Inference</dt>
+        <dd className="font-semibold tabular-nums">{inferMs}</dd>
+      </div>
+      <div>
+        <dt className="uppercase tracking-wider text-[9px] text-white/55">Last frame</dt>
+        <dd className="font-semibold tabular-nums">{lastFrame}</dd>
+      </div>
+      <div>
+        <dt className="uppercase tracking-wider text-[9px] text-white/55">Disk free</dt>
+        <dd className="font-semibold tabular-nums">{diskFree}</dd>
+      </div>
     </dl>
   )
 }

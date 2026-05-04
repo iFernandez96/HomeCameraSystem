@@ -135,10 +135,13 @@ describe('Events page', () => {
     expect(window.localStorage.getItem('homecam:calendarOpen')).toBe('1')
   })
 
-  it('renders the header', async () => {
+  it('renders the page header', async () => {
+    // iter-356.58 (LAYOUT REBUILD): Events page-title H1 is gone.
+    // The shell-level WatchRibbon carries identity. The page now
+    // opens with a "Watch log" subhead in the sticky filter bar.
     fetchEvents.mockResolvedValue([])
     render(<Events />)
-    expect(screen.getByRole('heading', { name: /events/i })).toBeInTheDocument()
+    expect(screen.getByText(/watch log/i)).toBeInTheDocument()
   })
 
   it('shows a skeleton loading state then the fetched events', async () => {

@@ -119,7 +119,28 @@ export function EventList({
   const groups = groupEventsByDay(events)
 
   return (
-    <div className="pb-4">
+    // iter-356.58 (LAYOUT REBUILD): the responsive Pinterest grid
+    // (grid-cols-1 / lg:cols-2 / xl:cols-3 / 2xl:cols-4) was the
+    // single most "generic SaaS dashboard" layout in the app. Maya
+    // brutal verdict: "Three-column equal-card Events grid + right-
+    // rail calendar is a Stripe-dashboard cliché. A camera review
+    // surface should be a TIMELINE."
+    //
+    // Timeline structure:
+    //   - one column flowing top-down, capped at lg:max-w-3xl.
+    //   - each event is a horizontal row: TIME column (left, brass-
+    //     accent timestamps in monospace tabular nums), AXIS line
+    //     (1px continuous vertical line down the left), and a
+    //     HORIZONTAL event card to the right (thumbnail-left, meta-
+    //     right). NOT a square grid card.
+    //   - per-day section headers carry the day name in Fraunces
+    //     serif and a brass entry-count tag (already implemented).
+    //
+    // Effect: Events page reads as a vertical incident log. The
+    // axis line gives spatial coherence; the time column makes
+    // when-something-happened scannable without scanning into
+    // each card.
+    <div className="pb-4 lg:max-w-3xl lg:mx-auto">
       {groups.map((group) => (
         <section
           key={group.dayKey}
@@ -129,20 +150,29 @@ export function EventList({
             label={formatDayLabel(group.dayKey, now)}
             count={group.events.length}
           />
-          {/* iter-262 (desktop-view-auditor D4): event cards in a
-              responsive grid. Mobile: 1 column. lg (1024+): 2
-              columns. xl (1280+): 3 columns. Cuts the per-card
-              thumbnail from ~1024 px wide to ~320-480 px — the
-              user can scan more events per screen on desktop
-              without losing the photo's information. */}
-          {/* iter-286 (desktop-view-auditor D1): add 2xl:grid-cols-4
-              so a 1920+ monitor lands on 4 cards/row (~390 px each)
-              instead of the iter-262 3 cards/row (~530 px each
-              wasted as the card title is text-base only). xl:3 still
-              hits at 1280-1535. */}
-          <ul className="px-4 py-3 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 list-none">
+          {/* iter-356.58: vertical timeline body. The axis line is
+              an absolutely-positioned 1px brass-tinted line at
+              left: 4.25rem (matches the right edge of the time
+              column). Each entry gets a 0.5rem-wide axis tick. */}
+          <ol className="relative list-none px-4 pt-4 pb-6">
+            <span
+              aria-hidden="true"
+              className="absolute left-[4.25rem] top-2 bottom-2 w-px bg-[var(--color-border-subtle)]"
+            />
             {group.events.map((e) => (
-              <li key={e.id}>
+              <li key={e.id} className="relative pl-20 pb-3 last:pb-0">
+                {/* TIME column — brass uppercase tabular nums */}
+                <span
+                  className="absolute left-0 top-2 w-14 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--color-brass-default)] tabular-nums"
+                  title={absoluteTime(e.ts)}
+                >
+                  {clockTime(e.ts)}
+                </span>
+                {/* AXIS tick — small filled circle on the axis line */}
+                <span
+                  aria-hidden="true"
+                  className="absolute left-[3.875rem] top-3.5 w-2.5 h-2.5 rounded-full bg-[var(--color-accent-default)] ring-2 ring-[var(--color-bg)]"
+                />
                 <EventCard
                   event={e}
                   now={now}
@@ -151,7 +181,7 @@ export function EventList({
                 />
               </li>
             ))}
-          </ul>
+          </ol>
         </section>
       ))}
     </div>
@@ -242,106 +272,69 @@ function EventCardImpl({
   // button. Card click target stays the same (button or div); the
   // delete button is a SIBLING of the wrapper, NOT nested inside
   // (button-in-button is invalid HTML).
+  // iter-356.58 (LAYOUT REBUILD): horizontal log-entry card.
+  // Thumbnail (left, w-28 h-20) + metadata column (right). Replaces
+  // the iter-262 square aspect-video Pinterest tile.
   return (
-    // iter-356.46: `group` so the delete-X can dim by default and
-    // reveal on card hover/focus. Pre-iter-356.46 every card carried
-    // a fully-saturated red circle 100% of the time → on a 3×N grid
-    // the eye saw 9-12 "delete!" affordances competing with the
-    // actual photo content. Now: 35% opacity at rest (still
-    // discoverable on touch), 100% on hover or keyboard focus
-    // (group-focus-within covers the keyboard-traversal case).
     <div className="relative group">
-    <Wrapper
-      type={clickable ? 'button' : undefined}
-      onClick={clickable ? () => onSelect?.(e) : undefined}
-      className={`w-full text-left rounded-2xl overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)] transition-colors ${
-        clickable
-          ? 'hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
-          : ''
-      }`}
-      aria-label={
-        clickable
-          ? `${hasClip ? 'Play clip:' : 'Open:'} ${title} at ${absoluteTime(e.ts)}`
-          : undefined
-      }
-    >
-      {/* Thumbnail spans the card's full width — the photo is the
-          point. iter-247 hid this under a full-overlay play button;
-          iter-249 keeps the image visible and tucks indicators in
-          the corners instead. */}
-      <div className="relative w-full aspect-video bg-[var(--color-surface-raised)]">
-        <EventThumbnail url={e.thumb_url} alt={title} />
-        {/* Top-left: relative time pill so it's the first thing the
-            eye sees alongside the photo. */}
-        <span
-          className="absolute top-2 left-2 px-2 py-1 rounded-md text-xs font-semibold bg-black/65 backdrop-blur text-[var(--color-text-primary)]"
-          title={absoluteTime(e.ts)}
-        >
-          {relativeTime(e.ts, now)}
-        </span>
-        {/* Top-right: confidence pill. De-emphasized vs iter-247. */}
-        <ConfidencePill score={e.score} />
-        {/* Bottom-left: face-match badge (only when recognized).
-            iter-355ae (Maya Nit): full-opacity emerald-500 was the
-            loudest element on the card and competed with the
-            ConfidencePill. Dropped to /85 to match the rest of the
-            badge ecosystem. */}
-        {isRecognized ? (
-          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold bg-emerald-500/85 text-neutral-950 shadow">
-            <FaceMatchIcon />
-            {e.person_name}
-          </span>
-        ) : null}
-        {/* Bottom-right: small play badge (NOT a full-overlay).
-            Visible cue that a clip exists; doesn't bury the photo. */}
-        {hasClip ? (
-          <span
-            className="absolute bottom-2 right-2 inline-flex items-center justify-center w-9 h-9 rounded-full bg-white/95 text-neutral-950 shadow-lg"
-            aria-label="Clip available"
-          >
-            <PlayIcon />
-          </span>
-        ) : null}
-      </div>
-      {/* Below-the-photo title block — Frank's "what is this?" answer
-          in plain English. */}
-      <div className="px-4 py-3 space-y-1">
-        <div className="text-base font-semibold text-[var(--color-text-primary)] truncate">
-          {title}
-        </div>
-        {/* iter-355ae (Maya Nit): "Tap to play clip" was mobile-
-            centric and patronizing on desktop. The play badge in
-            the photo corner is the affordance; the whole card has
-            hover state. Drop the redundant copy. */}
-        <div className="text-sm text-[var(--color-text-secondary)]">
-          {clockTime(e.ts)}
-        </div>
-      </div>
-    </Wrapper>
-    {/* iter-307: per-card delete button. Sits at top-right OUTSIDE
-        the card edges (negative top/right offsets) so it doesn't
-        collide with the in-image ConfidencePill at top-2/right-2.
-        White ring around the badge keeps it readable against any
-        thumbnail background. Click stops propagation so the card's
-        onClick (open ClipModal) doesn't also fire.
-        iter-319 (mobile-view-auditor B2): bumped from w-9 h-9 (36px)
-        → w-11 h-11 (44px) to meet WCAG 2.1 AA touch-size minimum.
-        ring-2 doesn't extend the touch target — only the button
-        bounds do. Offset moved -top-3/-right-3 so the visual
-        placement (over the card's top-right corner) is preserved. */}
-    {onDelete && (
-      <button
-        type="button"
-        onClick={(ev) => {
-          ev.stopPropagation()
-          onDelete(e)
-        }}
-        aria-label={`Delete event from ${absoluteTime(e.ts)}`}
-        className="absolute -top-3 -right-3 w-11 h-11 rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-base font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-35 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity hover:opacity-100 active:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
+      <Wrapper
+        type={clickable ? 'button' : undefined}
+        onClick={clickable ? () => onSelect?.(e) : undefined}
+        className={`w-full text-left flex gap-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-2 transition-colors ${
+          clickable
+            ? 'hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-raised)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
+            : ''
+        }`}
+        aria-label={
+          clickable
+            ? `${hasClip ? 'Play clip:' : 'Open:'} ${title} at ${absoluteTime(e.ts)}`
+            : undefined
+        }
       >
-        ✕
-      </button>
-    )}
+        {/* THUMBNAIL — left, fixed 112x72 with 16:9 framing. */}
+        <div className="relative w-28 h-[72px] flex-none rounded-lg overflow-hidden bg-[var(--color-surface-raised)]">
+          <EventThumbnail url={e.thumb_url} alt={title} />
+          {hasClip ? (
+            <span
+              className="absolute bottom-1 right-1 inline-flex items-center justify-center w-6 h-6 rounded-full bg-black/70 text-white shadow"
+              aria-label="Clip available"
+            >
+              <PlayIcon />
+            </span>
+          ) : null}
+          <ConfidencePill score={e.score} />
+        </div>
+        {/* META — right, vertical stack: title / timestamp + face match */}
+        <div className="flex-1 min-w-0 flex flex-col py-0.5 gap-0.5">
+          <div className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
+            {title}
+          </div>
+          <div className="text-xs text-[var(--color-text-tertiary)]">
+            {relativeTime(e.ts, now)}
+          </div>
+          {isRecognized ? (
+            <div className="mt-auto pt-1.5">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-success-bg)] text-[var(--color-success)] border border-[var(--color-success-border)]">
+                <FaceMatchIcon />
+                {e.person_name}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </Wrapper>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(ev) => {
+            ev.stopPropagation()
+            onDelete(e)
+          }}
+          aria-label={`Delete event from ${absoluteTime(e.ts)}`}
+          className="absolute top-1/2 -translate-y-1/2 -right-2 w-9 h-9 rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity active:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
+        >
+          ✕
+        </button>
+      )}
     </div>
   )
 }

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { PawMark } from '../components/CatIcons'
 import { ClipModal } from '../components/ClipModal'
 import { EventHeatmap } from '../components/EventHeatmap'
 import { EventList } from '../components/EventList'
@@ -698,10 +697,15 @@ export function Events() {
       >
         <div className="px-4 pt-4 pb-3">
         <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">
-          <h1 className="page-title text-2xl inline-flex items-center gap-2">
-            <PawMark className="text-[var(--color-accent-default)]" />
-            Events
-          </h1>
+          {/* iter-356.58 (LAYOUT REBUILD): killed the page-title
+              H1 with PawMark. The WatchRibbon already says where
+              you are; the day-headers further down ("Today's log")
+              act as the section anchor for content. The Events
+              page now opens directly into the filter chips +
+              timeline, no decorative title row. */}
+          <span className="font-display text-xl font-semibold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
+            Watch log
+          </span>
           <div className="flex items-center gap-3">
             {!loading && !error && events.length > 0 && (
               // iter-356.49: "100 recent" reads as a noun-phrase

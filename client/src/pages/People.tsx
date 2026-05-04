@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { listPeople, type PersonSummary } from '../lib/api'
 import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
-import { PawMark } from '../components/CatIcons'
 import { formatError } from '../lib/format'
 import { useTicker } from '../lib/useTicker'
 
@@ -117,14 +116,16 @@ export function People() {
     // iter-262 grid layout pairs at lg.
     <div className="p-4 space-y-4 max-w-3xl lg:max-w-4xl mx-auto">
       <header className="flex items-start justify-between gap-3">
+        {/* iter-356.58 (LAYOUT REBUILD): dropped the page-title
+            H1 + paw mark. WatchRibbon at the top of the shell now
+            carries identity universally. People opens with a
+            directional subhead instead of repeating where you are. */}
         <div className="flex-1 min-w-0">
-          <h1 className="page-title text-2xl inline-flex items-center gap-2">
-            <PawMark className="text-[var(--color-accent-default)]" />
-            People
-          </h1>
-          <p className="text-base text-[var(--color-text-primary)] mt-1">
-            Faces the camera has recognized, sorted by most recent
-            visit.
+          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
+            Familiar faces
+          </p>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+            Sorted by most recent visit. Tap a face to see their events.
           </p>
         </div>
         {/* iter-352/353a/355aa: mobile entry-point to /training

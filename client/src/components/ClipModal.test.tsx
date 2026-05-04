@@ -324,46 +324,49 @@ describe('ClipModal', () => {
     ).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('given Close button focused (last in DOM), when Tab is pressed, then focus wraps to the first focusable inside the dialog (iter-336: focus trap)', () => {
-    // arrange — pin via direct keydown event so we exercise the
-    // dialog's onKeyDown handler without relying on userEvent's
-    // jsdom-Tab simulation (which shifts focus internally and
-    // makes element-specific assertions fragile).
+  it('given Tab from the LAST focusable, then focus wraps to the FIRST focusable inside the dialog (iter-336 → iter-356.58 split-pane)', () => {
+    // arrange — iter-356.58 (LAYOUT REBUILD) added the right-pane
+    // evidence panel with its own desktop-Close button. The "last"
+    // focusable is now the evidence pane's Close X (in DOM order),
+    // not the footer Close. The trap contract is unchanged: Tab
+    // from the LAST focusable wraps to the FIRST.
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const closeBtn = screen.getByRole('button', { name: /^close$/i })
-    closeBtn.focus()
-    // iter-356.17: dialog aria-label is now dynamic eventTitle.
     const dialog = screen.getByRole('dialog', { name: /at the front door/i })
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.getAttribute('tabindex') !== '-1')
+    expect(focusables.length).toBeGreaterThan(1)
+    const last = focusables[focusables.length - 1]
+    const first = focusables[0]
+    last.focus()
 
-    // act — fire keydown Tab on the dialog (where the handler
-    // lives). The handler computes focusables = all focusable
-    // descendants in DOM order, sees Close at index N-1 (last),
-    // and wraps to focusables[0] via .focus() + preventDefault.
+    // act
     fireEvent.keyDown(dialog, { key: 'Tab' })
 
-    // assert — focus moved off Close (the wrap fired). It landed
-    // on the first focusable in the dialog (video in DOM order;
-    // jsdom may not actually focus <video>, so we just assert
-    // that focus changed and stayed inside the dialog).
-    expect(document.activeElement).not.toBe(closeBtn)
-    expect(dialog.contains(document.activeElement)).toBe(true)
+    // assert — focus moved off `last` and is now on `first`.
+    expect(document.activeElement).toBe(first)
   })
 
-  it('given the first focusable focused, when Shift+Tab fires on the dialog, then focus wraps to the last focusable (iter-336)', () => {
-    // arrange — focus the FIRST focusable. Pre-iter-356.17 this was
-    // the 1× speed pill; iter-356.17 added a top-right ✕ ("Close
-    // clip viewer") at the top of the dialog so that's now first.
+  it('given Shift+Tab from the FIRST focusable, then focus wraps to the LAST focusable inside the dialog (iter-336 → iter-356.58)', () => {
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const topX = screen.getByRole('button', { name: /close clip viewer/i }) as HTMLButtonElement
-    topX.focus()
     const dialog = screen.getByRole('dialog', { name: /at the front door/i })
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.getAttribute('tabindex') !== '-1')
+    expect(focusables.length).toBeGreaterThan(1)
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    first.focus()
 
-    // act — fire Shift+Tab on the dialog.
+    // act
     fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
 
-    // assert — wraps to the last focusable (footer Close button).
-    const footerClose = screen.getByRole('button', { name: /^close$/i })
-    expect(document.activeElement).toBe(footerClose)
+    // assert — wrapped to last
+    expect(document.activeElement).toBe(last)
   })
 
   it('given Download focused (mid-DOM), when Tab fires on the dialog, then focus stays inside dialog (iter-336: trap)', () => {
