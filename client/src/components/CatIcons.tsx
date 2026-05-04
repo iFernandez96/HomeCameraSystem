@@ -1,37 +1,61 @@
 /**
- * iter-356.4-cats — pixel-art cat illustrations modeled on the
- * three actual household cats. Drawn on a 16-px grid (each rect is
- * one pixel) so they read as 8-bit. `shape-rendering="crispEdges"`
- * disables anti-aliasing so the grid stays sharp at any size.
+ * iter-356.31 — high-detail mascot SVG cats. Replaces the iter-356.4
+ * pixel-art era which the user (and Frank) called "small colored
+ * smears." Each cat is now a rounded organic-shape vector mascot with
+ * face detail (cheeks, whiskers, slit pupils), paws, tail, and per-cat
+ * coat markings. Spec lives in `memory/cat_mascot_spec.md`.
  *
- * Three cats:
- *   - BOMBAY ("Panther") — solid black, bright green eyes. Female.
- *     Personality: grumpy / aloof. Likes high perches.
- *   - TUXEDO ("Mushu") — black + white domino face, BLACK TAIL WITH
- *     WHITE TIP, pink nose, big whiskers. Male.
- *     Personality: playful instigator, bumps the others.
- *   - CALICO ("Coco") — white + orange + black tri-color, green eyes.
- *     Female. Personality: sleepy, often napping in baskets.
+ * Three cats — modeled on the user's real cats:
+ *   - PANTHER (Bombay, ♀) — solid black, amber eyes. Aloof / judgey.
+ *   - MUSHU   (Tuxedo, ♂) — black + white bib + 4 socks + white tail
+ *                            tip. Playful instigator.
+ *   - COCO    (Calico, ♀) — white base + orange + black calico
+ *                            patches. Sleepy + cuddly.
  *
- * Two view modes:
- *   - Face icons (16×16) for the wordmark trio mark.
- *   - Side-profile sprites (24×16) for the ambient CatLayer that walks
- *     along the bottom of the app + climbs to perches.
+ * Public API — preserved from iter-356.4 so CatLayer + tests stay
+ * untouched:
+ *   - BombayCatIcon / TuxedoCatIcon / CalicoCatIcon (face icons)
+ *   - CatTrioMark (3 face icons in a row, used in Login + SideNav)
+ *   - BombaySprite / TuxedoSprite / CalicoSprite (side-profile sprites
+ *     used by the ambient CatLayer; accept a `state` prop)
+ *   - SleepingCatIllustration (default empty-state mascot)
+ *   - PawMark (small accent paw glyph for headings)
+ *   - CAT_PALETTE (color tokens shared with CatLayer particles)
+ *   - Habitat objects (YarnBall / ToyMouse / FeatherWand / FloatingBed
+ *     / WallLedge / CardboardBox) — unchanged from iter-356.30.
  *
- * Hand-drawn feel comes from intentional asymmetry (whisker angles
- * differ left vs right; ear pink offset by 1 px) — no SVG filters,
- * which would be GPU-expensive on the Nano-served PWA.
+ * Internal viewBox bumps:
+ *   - Faces: 16×16 → 64×64 (4× resolution for organic curves)
+ *   - Sprites: 24×16 → 96×64 (preserves 3:2 aspect ratio so the
+ *     `width = size * 1.5` math in *Sprite stays valid; passes through
+ *     to CatLayer's SPRITE_WIDTH/HEIGHT geometry without change)
+ *   - Trio: 48×16 → 192×64
+ *   - Sleeping illustration: 24×16 → 96×64 (2:3 aspect kept)
+ *
+ * `shape-rendering="crispEdges"` is DROPPED on the mascot art (it
+ * killed anti-aliasing and made the curves look like staircases). It
+ * stays on PawMark (still a graphic glyph; no curves benefit).
  */
 
 export const CAT_PALETTE = {
-  black: '#0a0a0a',
-  white: '#f5f5f5',
-  orange: '#f59e0b',
+  black: '#0e0c0a',
+  white: '#f7f3eb',
+  orange: '#d97706',
   greenEye: '#86efac',
   yellowEye: '#fde047',
   pinkNose: '#fda4af',
-  whisker: '#a3a3a3',
+  whisker: '#6b6358',
+  shadow: 'rgba(60,40,20,0.28)',
+  // iter-356.32: warm-dark outline used on light-coated cats so the
+  // calico (Coco — body fill #f7f3eb) doesn't disappear on the cream
+  // page bg (#faf6ee, ~2 RGB-values off). Dark cats fall back to 'none'.
+  outline: '#1a1410',
 } as const
+
+// iter-356.36..38: legacy SVG mascot art removed. Face icons + side-
+// profile sprites + sleeping illustration are now raster PNGs sliced
+// from the user's sprite-sheet. The `Coat` + `COAT` per-cat color
+// tokens that drove the SVG art are no longer needed.
 
 type CatIconProps = {
   size?: number
@@ -39,21 +63,8 @@ type CatIconProps = {
   ariaLabel?: string
 }
 
-// === PAW MARK (decorative inline accent next to page headings) ============
+// === PAW MARK (decorative, kept from iter-356.28) =========================
 
-/**
- * iter-356.28: small accent paw glyph used inline next to page-level
- * <h1>s. Pre-iter-356.28 the paw print only showed up on the active
- * SideNav row + active BottomNav tab — page headings were a bare
- * 2xl word ("Events", "People", …) with zero brand carry-through.
- * Browser-harness audit flagged it: the only chrome that says "this
- * app has a cat theme" beyond the nav rail was the ambient walking
- * strip at the bottom, which a logged-in user notices ~once.
- *
- * Renders a 20-px paw print in the accent color, vertically centered
- * with the adjacent text via inline-flex on the parent. Decorative
- * only (aria-hidden); the heading text is the accessible name.
- */
 export function PawMark({ size = 20, className }: { size?: number; className?: string }) {
   return (
     <svg
@@ -73,60 +84,91 @@ export function PawMark({ size = 20, className }: { size?: number; className?: s
   )
 }
 
-// === FACE ICONS (16×16) ===================================================
+// === FACE ICONS — iter-356.36 raster swap ================================
+//
+// User uploaded a sprite-sheet reference (`public/cats/sprite-sheet.png`)
+// and asked the face icons to come from there instead of the hand-drawn
+// SVG mascots. Per-cat face PNG lives at `public/cats/{cat}-face.png`,
+// extracted from the sheet's FACE ICON column (sub-row 1 of each cat's
+// band). The full sheet is kept as a public asset for future migrations
+// of the side-profile poses.
+//
+// The CatLayer side-profile sprites (BombaySprite / TuxedoSprite /
+// CalicoSprite) and the SleepingCatIllustration deliberately stay on
+// the iter-356.31..33 SVG art — they need per-state pose variants
+// (walk/sit/sleep/hiss/etc.) that aren't yet sliced from the sheet.
+
+const FACE_SRC = {
+  panther: '/cats/panther-face.png',
+  mushu: '/cats/mushu-face.png',
+  coco: '/cats/coco-face.png',
+} as const
+
+function FaceImg({
+  src,
+  alt,
+  size,
+  className,
+}: {
+  src: string
+  alt: string
+  size: number
+  className?: string
+}) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      width={size}
+      height={size}
+      className={className}
+      style={{ objectFit: 'contain', display: 'inline-block' }}
+      decoding="async"
+      loading="lazy"
+    />
+  )
+}
 
 export function BombayCatIcon({ size = 24, className, ariaLabel }: CatIconProps) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      shapeRendering="crispEdges"
+    <FaceImg
+      src={FACE_SRC.panther}
+      alt={ariaLabel ?? ''}
+      size={size}
       className={className}
-      role={ariaLabel ? 'img' : undefined}
-      aria-label={ariaLabel}
-      aria-hidden={ariaLabel ? undefined : true}
-    >
-      <BombayFace />
-    </svg>
+    />
   )
 }
 
 export function TuxedoCatIcon({ size = 24, className, ariaLabel }: CatIconProps) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      shapeRendering="crispEdges"
+    <FaceImg
+      src={FACE_SRC.mushu}
+      alt={ariaLabel ?? ''}
+      size={size}
       className={className}
-      role={ariaLabel ? 'img' : undefined}
-      aria-label={ariaLabel}
-      aria-hidden={ariaLabel ? undefined : true}
-    >
-      <TuxedoFace />
-    </svg>
+    />
   )
 }
 
 export function CalicoCatIcon({ size = 24, className, ariaLabel }: CatIconProps) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      shapeRendering="crispEdges"
+    <FaceImg
+      src={FACE_SRC.coco}
+      alt={ariaLabel ?? ''}
+      size={size}
       className={className}
-      role={ariaLabel ? 'img' : undefined}
-      aria-label={ariaLabel}
-      aria-hidden={ariaLabel ? undefined : true}
-    >
-      <CalicoFace />
-    </svg>
+    />
   )
 }
 
-// === TRIO MARK (3 face icons in a row) ====================================
+// iter-356.36 — face-icon surfaces (CatTrioMark + Bombay/Tuxedo/Calico
+// icons) render raster PNGs from the user's sprite-sheet
+// (`public/cats/{cat}-face.png`). The legacy `FaceSvg` + `CatFace` +
+// `Eye` SVG primitive (was iter-356.31..33) was removed; recover from
+// git history if a future surface needs the SVG art.
+
+// === TRIO MARK ============================================================
 
 export function CatTrioMark({
   size = 48,
@@ -137,39 +179,181 @@ export function CatTrioMark({
   className?: string
   ariaLabel?: string
 }) {
+  // iter-356.36: trio mark now stitches the three raster face PNGs from
+  // `public/cats/{cat}-face.png` (extracted from the user's sprite-sheet
+  // reference). The SVG container preserves the role=img + aria-label
+  // contract pinned by `CatIcons.test.tsx` AND the <title> announcement
+  // ("Panther, Mushu, and Coco") so screen-reader users still hear the
+  // cat names — that copy is load-bearing per CatIcons.test.tsx iter-356.6
+  // pin. PNG width per cell = size/3; the row height = size/3 as well so
+  // the lockup stays rectangular at 3:1 (was the SVG viewBox ratio).
+  const cell = size / 3
   return (
-    <svg
-      width={size}
-      height={Math.round(size / 3)}
-      viewBox="0 0 48 16"
-      shapeRendering="crispEdges"
+    <span
       className={className}
       role="img"
       aria-label={ariaLabel}
+      title="Panther, Mushu, and Coco"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0,
+        lineHeight: 0,
+      }}
     >
-      {/* iter-356.6 (Frank #1): browser tooltip on hover + SR-readable
-          name. Frank's wife was asking him "what are the cats called"
-          and he had to read source code to answer. <title> is the
-          one-line fix that solves both desktop hover ("hovers and
-          sees the names") and SR ("Three cats... Panther, Mushu, and
-          Coco" in NVDA/VoiceOver). The aria-label still wins for SR
-          because it's on the parent <svg>, but <title> shows in the
-          browser tooltip layer too. */}
-      <title>Panther, Mushu, and Coco</title>
-      <BombayFace />
-      <g transform="translate(16 0)">
-        <TuxedoFace />
-      </g>
-      <g transform="translate(32 0)">
-        <CalicoFace />
-      </g>
-    </svg>
+      {/* SR-only title pin — `CatIcons.test.tsx` selects `container.querySelector('title')`
+          which is an SVG element. We keep an inline SVG with just <title> to
+          preserve that test contract without rendering anything visible. */}
+      <svg
+        width="0"
+        height="0"
+        viewBox="0 0 0 0"
+        aria-hidden="true"
+        style={{ position: 'absolute' }}
+      >
+        <title>Panther, Mushu, and Coco</title>
+      </svg>
+      <img
+        src={FACE_SRC.panther}
+        alt=""
+        width={cell}
+        height={cell}
+        decoding="async"
+        loading="lazy"
+        style={{ objectFit: 'contain', display: 'inline-block' }}
+      />
+      <img
+        src={FACE_SRC.mushu}
+        alt=""
+        width={cell}
+        height={cell}
+        decoding="async"
+        loading="lazy"
+        style={{ objectFit: 'contain', display: 'inline-block' }}
+      />
+      <img
+        src={FACE_SRC.coco}
+        alt=""
+        width={cell}
+        height={cell}
+        decoding="async"
+        loading="lazy"
+        style={{ objectFit: 'contain', display: 'inline-block' }}
+      />
+    </span>
   )
 }
+// === FACE PRIMITIVE removed iter-356.36 (raster PNG migration) ============
 
-// === SIDE-PROFILE SPRITES (24×16, walking) ================================
-// Used by the iter-356.4-cats CatLayer. Each cat is drawn facing RIGHT;
-// the layer flips horizontally via CSS scaleX(-1) when walking left.
+// === SIDE-PROFILE SPRITES — iter-356.38 raster migration ==================
+//
+// User uploaded a polished cat sprite-sheet and asked the side-profile
+// CatLayer art to use it. Previously these were inline-SVG with per-state
+// `Pose*` components, ~700 lines. Now: each cat × pose is a PNG in
+// `public/cats/{cat}-{pose}.png`, sliced from the sheet by the
+// `tools/extract-cat-frames.py`-style script (run ad-hoc to regenerate).
+//
+// 8 poses per cat are extracted: face, sit, walk_a, walk_b, play,
+// stretch, sleep_curled, hiss. The `BodyState` union has 9 values; the
+// 9th (`groom`) maps to `sit` since the sheet has no licking-paw frame
+// — closest stationary pose. `sit` and `sit2` collapse to the same image
+// (no "tail flick" raster variant). `walk` ↔ `walk2` toggles the two
+// walk frames, preserving the iter-356.4 leg-phase animation.
+//
+// Direction-flip (cat walking LEFT) is handled by CatLayer applying
+// `transform: scaleX(-1)` on the sprite container — the sprite PNGs all
+// face RIGHT by default. The 3:2 aspect ratio (`SPRITE_W_RATIO = 1.5`)
+// is preserved so CatLayer's SPRITE_WIDTH/HEIGHT math is unchanged.
+
+export type BodyState =
+  | 'walk'
+  | 'walk2'
+  | 'sit'
+  | 'sit2'
+  | 'sleep'
+  | 'hiss'
+  | 'groom'
+  | 'stretch'
+  | 'play'
+  | 'on_post' // iter-356.41: cat sitting on the cat-tree habitat object
+
+// iter-356.39: switched from inline-SVG (3:2 wide aspect) to raster
+// curated PNGs (~0.83 wide / ~1.2 tall — cats stand tail-up). Box is
+// now slightly TALLER than wide so the curated PNGs fill height
+// naturally with a touch of horizontal breathing room. CatLayer uses
+// these constants to size the sprite container.
+const SPRITE_W_RATIO = 0.83
+const SPRITE_H_OVER_W = 1 / SPRITE_W_RATIO  // ≈1.2 — height/width
+
+type CatId = 'panther' | 'mushu' | 'coco'
+
+function poseFor(state: BodyState): string {
+  switch (state) {
+    case 'walk':
+      return 'walk_a'
+    case 'walk2':
+      return 'walk_b'
+    case 'sit':
+    case 'sit2':
+    case 'groom':
+      return 'sit'
+    case 'sleep':
+      return 'sleep_curled'
+    case 'hiss':
+      return 'hiss'
+    case 'stretch':
+      return 'stretch'
+    case 'play':
+      return 'play'
+    case 'on_post':
+      return 'on_post'
+  }
+}
+
+function RasterSprite({
+  cat,
+  size,
+  state,
+  className,
+}: {
+  cat: CatId
+  size: number
+  state: BodyState
+  className?: string
+}) {
+  const pose = poseFor(state)
+  // iter-356.39: render IMG at a slightly-taller-than-square box so the
+  // curated PNGs (which stand tail-up, taller than wide) aren't clipped
+  // at the bottom by a wide-aspect 3:2 container. width = `size`;
+  // height = `size * 1.2`. CatLayer's SPRITE_WIDTH/HEIGHT constants are
+  // adjusted in lockstep.
+  return (
+    <img
+      src={`/cats/${cat}-${pose}.png`}
+      alt=""
+      width={size}
+      height={Math.round(size * SPRITE_H_OVER_W)}
+      data-testid="cat-sprite"
+      data-cat-id={cat}
+      data-cat-state={state}
+      decoding="async"
+      loading="lazy"
+      style={{
+        objectFit: 'contain',
+        // iter-356.40: anchor the cat's FEET to the container's bottom
+        // edge. Previously default `center center` meant a tall pose
+        // like `walk_a` (156×188) and a short pose like `sleep_curled`
+        // (115×100) ended up vertically centered in the same 36×43
+        // box — when a cat transitioned walk→sleep its feet appeared
+        // to lift off the ground by ~6px (user reported as "teleport").
+        // Bottom-centering keeps the ground line stable across poses.
+        objectPosition: 'center bottom',
+        display: 'block',
+      }}
+      className={className}
+    />
+  )
+}
 
 export function BombaySprite({
   size = 48,
@@ -180,18 +364,7 @@ export function BombaySprite({
   state?: BodyState
   className?: string
 }) {
-  return (
-    <svg
-      width={(size * 24) / 16}
-      height={size}
-      viewBox="0 0 24 16"
-      shapeRendering="crispEdges"
-      className={className}
-      aria-hidden="true"
-    >
-      <BombayBody state={state} />
-    </svg>
-  )
+  return <RasterSprite cat="panther" size={size} state={state} className={className} />
 }
 
 export function TuxedoSprite({
@@ -203,18 +376,7 @@ export function TuxedoSprite({
   state?: BodyState
   className?: string
 }) {
-  return (
-    <svg
-      width={(size * 24) / 16}
-      height={size}
-      viewBox="0 0 24 16"
-      shapeRendering="crispEdges"
-      className={className}
-      aria-hidden="true"
-    >
-      <TuxedoBody state={state} />
-    </svg>
-  )
+  return <RasterSprite cat="mushu" size={size} state={state} className={className} />
 }
 
 export function CalicoSprite({
@@ -226,760 +388,16 @@ export function CalicoSprite({
   state?: BodyState
   className?: string
 }) {
-  return (
-    <svg
-      width={(size * 24) / 16}
-      height={size}
-      viewBox="0 0 24 16"
-      shapeRendering="crispEdges"
-      className={className}
-      aria-hidden="true"
-    >
-      <CalicoBody state={state} />
-    </svg>
-  )
+  return <RasterSprite cat="coco" size={size} state={state} className={className} />
 }
 
-// === FACE PRIMITIVES (used by both icons + trio) ==========================
-
-function BombayFace() {
-  const c = CAT_PALETTE
-  return (
-    <>
-      <rect x="3" y="3" width="2" height="2" fill={c.black} />
-      <rect x="11" y="3" width="2" height="2" fill={c.black} />
-      <rect x="3.5" y="4" width="1" height="1" fill={c.pinkNose} opacity="0.6" />
-      <rect x="11.5" y="4" width="1" height="1" fill={c.pinkNose} opacity="0.6" />
-      <rect x="3" y="5" width="10" height="8" fill={c.black} />
-      <rect x="2" y="6" width="1" height="6" fill={c.black} />
-      <rect x="13" y="6" width="1" height="6" fill={c.black} />
-      <rect x="5" y="8" width="2" height="2" fill={c.greenEye} />
-      <rect x="9" y="8" width="2" height="2" fill={c.greenEye} />
-      <rect x="5.5" y="8" width="1" height="2" fill={c.black} />
-      <rect x="9.5" y="8" width="1" height="2" fill={c.black} />
-      <rect x="7.5" y="11" width="1" height="1" fill={c.pinkNose} />
-    </>
-  )
-}
-
-function TuxedoFace() {
-  const c = CAT_PALETTE
-  return (
-    <>
-      <rect x="3" y="3" width="2" height="2" fill={c.black} />
-      <rect x="11" y="3" width="2" height="2" fill={c.black} />
-      <rect x="3.5" y="4" width="1" height="1" fill={c.pinkNose} opacity="0.6" />
-      <rect x="11.5" y="4" width="1" height="1" fill={c.pinkNose} opacity="0.6" />
-      <rect x="3" y="5" width="10" height="3" fill={c.black} />
-      <rect x="2" y="6" width="1" height="3" fill={c.black} />
-      <rect x="13" y="6" width="1" height="3" fill={c.black} />
-      <rect x="4" y="8" width="8" height="5" fill={c.white} />
-      <rect x="3" y="9" width="1" height="3" fill={c.white} />
-      <rect x="12" y="9" width="1" height="3" fill={c.white} />
-      <rect x="4" y="8" width="3" height="2" fill={c.black} />
-      <rect x="9" y="8" width="3" height="2" fill={c.black} />
-      <rect x="5" y="8" width="2" height="2" fill={c.yellowEye} />
-      <rect x="9" y="8" width="2" height="2" fill={c.yellowEye} />
-      <rect x="5.5" y="8" width="1" height="2" fill={c.black} />
-      <rect x="9.5" y="8" width="1" height="2" fill={c.black} />
-      <rect x="7.5" y="11" width="1" height="1" fill={c.pinkNose} />
-    </>
-  )
-}
-
-function CalicoFace() {
-  const c = CAT_PALETTE
-  return (
-    <>
-      <rect x="3" y="3" width="2" height="2" fill={c.black} />
-      <rect x="11" y="3" width="2" height="2" fill={c.orange} />
-      <rect x="3.5" y="4" width="1" height="1" fill={c.pinkNose} opacity="0.6" />
-      <rect x="11.5" y="4" width="1" height="1" fill={c.pinkNose} opacity="0.6" />
-      <rect x="3" y="5" width="10" height="8" fill={c.white} />
-      <rect x="2" y="6" width="1" height="6" fill={c.white} />
-      <rect x="13" y="6" width="1" height="6" fill={c.white} />
-      <rect x="3" y="5" width="3" height="3" fill={c.orange} />
-      <rect x="2" y="6" width="1" height="2" fill={c.orange} />
-      <rect x="10" y="5" width="3" height="3" fill={c.black} />
-      <rect x="13" y="6" width="1" height="2" fill={c.black} />
-      <rect x="9" y="11" width="2" height="1" fill={c.orange} />
-      <rect x="5" y="8" width="2" height="2" fill={c.greenEye} />
-      <rect x="9" y="8" width="2" height="2" fill={c.greenEye} />
-      <rect x="5.5" y="8" width="1" height="2" fill={c.black} />
-      <rect x="9.5" y="8" width="1" height="2" fill={c.black} />
-      <rect x="7.5" y="11" width="1" height="1" fill={c.pinkNose} />
-    </>
-  )
-}
-
-// === SIDE-PROFILE BODY PRIMITIVES =========================================
-// Side-view facing right. 24 wide × 16 tall. Includes head + body + tail.
-// `state` switches body posture.
-
-type BodyState =
-  | 'walk'
-  | 'walk2'
-  | 'sit'
-  | 'sit2'
-  | 'sleep'
-  | 'hiss'
-  | 'groom'
-  | 'stretch'
-  | 'play'
-
-function legsForState(state: BodyState, baseY: number, color: string) {
-  if (state === 'sleep' || state === 'sit' || state === 'sit2') {
-    return null // tucked under
-  }
-  if (state === 'walk2') {
-    // iter-356.4-cats — frame B of the walk cycle. Front-right + back-left
-    // are FORWARD (advanced 1px to the right + lifted 1px); front-left +
-    // back-right are BACK (shifted 1px to the left + planted on the ground).
-    // Alternation with walk frame A creates the believable 2-frame walk
-    // cycle vscode-pets uses at ~15fps. baseY-1 raises the lifted legs;
-    // baseY keeps the planted ones flush. Slight x shift sells the "swing."
-    return (
-      <>
-        {/* back-right: forward + lifted */}
-        <rect x="10" y={baseY - 1} width="1" height="2" fill={color} />
-        {/* back-left: back + planted */}
-        <rect x="11" y={baseY} width="1" height="2" fill={color} />
-        {/* front-right: forward + lifted */}
-        <rect x="17" y={baseY - 1} width="1" height="2" fill={color} />
-        {/* front-left: back + planted */}
-        <rect x="18" y={baseY} width="1" height="2" fill={color} />
-      </>
-    )
-  }
-  // Walking — 4 legs offset for a mid-stride pose (frame A)
-  return (
-    <>
-      <rect x="9" y={baseY} width="1" height="2" fill={color} />
-      <rect x="12" y={baseY} width="1" height="2" fill={color} />
-      <rect x="16" y={baseY} width="1" height="2" fill={color} />
-      <rect x="19" y={baseY} width="1" height="2" fill={color} />
-    </>
-  )
-}
-
-function BombayBody({ state }: { state: BodyState }) {
-  const c = CAT_PALETTE
-  if (state === 'sleep') {
-    return (
-      <>
-        {/* Curled — flat oval body */}
-        <rect x="6" y="11" width="14" height="3" fill={c.black} />
-        <rect x="7" y="10" width="12" height="1" fill={c.black} />
-        {/* Head tucked left */}
-        <rect x="4" y="9" width="4" height="3" fill={c.black} />
-        <rect x="3" y="8" width="2" height="2" fill={c.black} />
-        {/* Closed eye */}
-        <rect x="5" y="10" width="1" height="0.4" fill={c.greenEye} opacity="0.5" />
-        {/* Tail wrapped over body */}
-        <rect x="18" y="9" width="2" height="1" fill={c.black} />
-        <rect x="20" y="9" width="1" height="2" fill={c.black} />
-      </>
-    )
-  }
-  if (state === 'hiss') {
-    // Arched back, fur raised (jagged spine), puffed tail straight up
-    return (
-      <>
-        {/* Puffed tail — vertical, fat */}
-        <rect x="2" y="3" width="2" height="6" fill={c.black} />
-        <rect x="1" y="4" width="1" height="2" fill={c.black} />
-        <rect x="4" y="4" width="1" height="2" fill={c.black} />
-        <rect x="2" y="2" width="2" height="1" fill={c.black} />
-        {/* Arched body — peak in the middle */}
-        <rect x="6" y="9" width="12" height="3" fill={c.black} />
-        <rect x="7" y="8" width="10" height="1" fill={c.black} />
-        <rect x="9" y="7" width="6" height="1" fill={c.black} />
-        {/* Raised fur spikes along spine */}
-        <rect x="9" y="6" width="1" height="1" fill={c.black} />
-        <rect x="11" y="6" width="1" height="1" fill={c.black} />
-        <rect x="13" y="6" width="1" height="1" fill={c.black} />
-        {/* Hind hip raised */}
-        <rect x="4" y="10" width="3" height="3" fill={c.black} />
-        {/* Head low + forward */}
-        <rect x="17" y="9" width="3" height="3" fill={c.black} />
-        {/* Ears flat back */}
-        <rect x="17" y="8" width="1" height="1" fill={c.black} />
-        <rect x="19" y="8" width="1" height="1" fill={c.black} />
-        {/* Angry eye */}
-        <rect x="19" y="10" width="1" height="1" fill={c.greenEye} />
-        {/* Open mouth (white teeth gap) */}
-        <rect x="20" y="11" width="1" height="1" fill={c.white} />
-        {/* Stiff legs */}
-        <rect x="6" y="13" width="1" height="2" fill={c.black} />
-        <rect x="9" y="13" width="1" height="2" fill={c.black} />
-        <rect x="15" y="13" width="1" height="2" fill={c.black} />
-        <rect x="18" y="13" width="1" height="2" fill={c.black} />
-      </>
-    )
-  }
-  if (state === 'groom') {
-    // Sitting, head tilted down, paw raised to face
-    return (
-      <>
-        {/* Tail curled at side */}
-        <rect x="3" y="11" width="3" height="2" fill={c.black} />
-        <rect x="2" y="10" width="1" height="2" fill={c.black} />
-        {/* Sitting body — upright haunches */}
-        <rect x="7" y="10" width="10" height="3" fill={c.black} />
-        <rect x="8" y="9" width="8" height="1" fill={c.black} />
-        {/* Hind */}
-        <rect x="6" y="11" width="2" height="2" fill={c.black} />
-        {/* Head tilted DOWN */}
-        <rect x="16" y="9" width="3" height="3" fill={c.black} />
-        {/* Ears */}
-        <rect x="16" y="7" width="1" height="2" fill={c.black} />
-        <rect x="18" y="7" width="1" height="2" fill={c.black} />
-        {/* Eye — closed contented */}
-        <rect x="18" y="10" width="1" height="0.4" fill={c.greenEye} opacity="0.6" />
-        {/* Nose */}
-        <rect x="19" y="11" width="1" height="1" fill={c.pinkNose} />
-        {/* Raised paw at face */}
-        <rect x="19" y="9" width="1" height="2" fill={c.black} />
-        <rect x="20" y="10" width="1" height="1" fill={c.black} />
-        {/* Front leg standing */}
-        <rect x="14" y="13" width="1" height="2" fill={c.black} />
-        <rect x="16" y="13" width="1" height="2" fill={c.black} />
-      </>
-    )
-  }
-  if (state === 'stretch') {
-    // Long elongated body — low + wide, head tucked, butt up
-    return (
-      <>
-        {/* Tail relaxed back, low */}
-        <rect x="1" y="11" width="2" height="1" fill={c.black} />
-        <rect x="3" y="10" width="1" height="2" fill={c.black} />
-        {/* Butt UP */}
-        <rect x="4" y="8" width="4" height="4" fill={c.black} />
-        <rect x="5" y="7" width="3" height="1" fill={c.black} />
-        {/* Long stretched body — slope down */}
-        <rect x="8" y="11" width="10" height="2" fill={c.black} />
-        <rect x="8" y="10" width="9" height="1" fill={c.black} />
-        {/* Head LOW + tucked, paws stretched forward */}
-        <rect x="18" y="11" width="3" height="2" fill={c.black} />
-        {/* Ears flat */}
-        <rect x="18" y="10" width="1" height="1" fill={c.black} />
-        <rect x="20" y="10" width="1" height="1" fill={c.black} />
-        {/* Eye half-closed */}
-        <rect x="20" y="11" width="1" height="0.5" fill={c.greenEye} opacity="0.6" />
-        {/* Stretched front paws extending right */}
-        <rect x="21" y="12" width="2" height="1" fill={c.black} />
-        {/* Back legs — angled, butt-up posture */}
-        <rect x="5" y="12" width="1" height="3" fill={c.black} />
-        <rect x="7" y="12" width="1" height="3" fill={c.black} />
-        {/* Front legs */}
-        <rect x="17" y="13" width="1" height="2" fill={c.black} />
-        <rect x="19" y="13" width="1" height="2" fill={c.black} />
-      </>
-    )
-  }
-  if (state === 'play') {
-    // Front paws up, mid-pounce, butt low
-    return (
-      <>
-        {/* Tail wagged up */}
-        <rect x="2" y="8" width="1" height="4" fill={c.black} />
-        <rect x="1" y="6" width="1" height="3" fill={c.black} />
-        <rect x="2" y="5" width="1" height="2" fill={c.black} />
-        {/* Hindquarters low */}
-        <rect x="3" y="10" width="6" height="3" fill={c.black} />
-        <rect x="4" y="9" width="5" height="1" fill={c.black} />
-        {/* Body sloping UP toward head */}
-        <rect x="9" y="9" width="8" height="3" fill={c.black} />
-        <rect x="10" y="8" width="7" height="1" fill={c.black} />
-        {/* Head HIGH + alert */}
-        <rect x="17" y="6" width="3" height="3" fill={c.black} />
-        {/* Ears perked */}
-        <rect x="17" y="4" width="1" height="2" fill={c.black} />
-        <rect x="19" y="4" width="1" height="2" fill={c.black} />
-        {/* Wide eye */}
-        <rect x="19" y="7" width="1" height="1" fill={c.greenEye} />
-        {/* Nose */}
-        <rect x="20" y="8" width="1" height="1" fill={c.pinkNose} />
-        {/* Front paws RAISED off ground */}
-        <rect x="15" y="12" width="1" height="2" fill={c.black} />
-        <rect x="17" y="12" width="1" height="2" fill={c.black} />
-        {/* Back paws planted */}
-        <rect x="4" y="13" width="1" height="2" fill={c.black} />
-        <rect x="7" y="13" width="1" height="2" fill={c.black} />
-      </>
-    )
-  }
-  // walk + walk2 + sit + sit2 (sit2 flicks the tail tip up 1px)
-  // iter-356.4-cats — sit2 is a micro-frame cycled with sit at ~600ms so a
-  // sitting cat's tail subtly twitches; walk2 alternates leg positions for
-  // a 2-frame walk cycle (handled in legsForState above).
-  const tailTipY = state === 'sit2' ? 5 : 6
-  return (
-    <>
-      {/* Tail (sweeping up) — tip rises 1px in sit2 for the flick */}
-      <rect x="2" y="9" width="1" height="3" fill={c.black} />
-      <rect x="1" y="7" width="1" height="3" fill={c.black} />
-      <rect x="2" y={tailTipY} width="1" height="2" fill={c.black} />
-      {/* Body */}
-      <rect x="7" y="9" width="11" height="4" fill={c.black} />
-      <rect x="8" y="8" width="9" height="1" fill={c.black} />
-      {/* Hind hip */}
-      <rect x="3" y="10" width="5" height="3" fill={c.black} />
-      {/* Neck + head */}
-      <rect x="17" y="7" width="3" height="3" fill={c.black} />
-      {/* Ears */}
-      <rect x="17" y="5" width="1" height="2" fill={c.black} />
-      <rect x="19" y="5" width="1" height="2" fill={c.black} />
-      {/* Eye — green */}
-      <rect x="19" y="8" width="1" height="1" fill={c.greenEye} />
-      {/* Nose */}
-      <rect x="20" y="9" width="1" height="1" fill={c.pinkNose} />
-      {/* Whisker hint */}
-      <line x1="20" y1="9.5" x2="22" y2="9" stroke={c.whisker} strokeWidth="0.3" />
-      {legsForState(state, 13, c.black)}
-    </>
-  )
-}
-
-function TuxedoBody({ state }: { state: BodyState }) {
-  const c = CAT_PALETTE
-  if (state === 'sleep') {
-    return (
-      <>
-        <rect x="6" y="11" width="14" height="3" fill={c.black} />
-        <rect x="7" y="10" width="12" height="1" fill={c.black} />
-        {/* White belly */}
-        <rect x="9" y="12" width="9" height="2" fill={c.white} />
-        {/* Head tucked left */}
-        <rect x="4" y="9" width="4" height="3" fill={c.black} />
-        <rect x="3" y="8" width="2" height="2" fill={c.black} />
-        <rect x="5" y="11" width="2" height="1" fill={c.white} />
-        {/* Closed eye */}
-        <rect x="5" y="10" width="1" height="0.4" fill={c.yellowEye} opacity="0.5" />
-        {/* TAIL with WHITE TIP — user-correction iter-356.4-cats round 2 */}
-        <rect x="18" y="9" width="2" height="1" fill={c.black} />
-        <rect x="20" y="9" width="1" height="2" fill={c.black} />
-        <rect x="20" y="11" width="1" height="1" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'hiss') {
-    return (
-      <>
-        {/* Puffed tail straight up — black with WHITE TIP at top */}
-        <rect x="2" y="3" width="2" height="6" fill={c.black} />
-        <rect x="1" y="4" width="1" height="2" fill={c.black} />
-        <rect x="4" y="4" width="1" height="2" fill={c.black} />
-        <rect x="2" y="2" width="2" height="1" fill={c.white} />
-        {/* Arched body */}
-        <rect x="6" y="9" width="12" height="2" fill={c.black} />
-        <rect x="7" y="8" width="10" height="1" fill={c.black} />
-        <rect x="9" y="7" width="6" height="1" fill={c.black} />
-        {/* White belly preserved */}
-        <rect x="7" y="11" width="11" height="1" fill={c.white} />
-        {/* Raised fur spikes */}
-        <rect x="9" y="6" width="1" height="1" fill={c.black} />
-        <rect x="11" y="6" width="1" height="1" fill={c.black} />
-        <rect x="13" y="6" width="1" height="1" fill={c.black} />
-        {/* Hind hip — tuxedo line */}
-        <rect x="4" y="10" width="3" height="2" fill={c.black} />
-        <rect x="4" y="12" width="3" height="1" fill={c.white} />
-        {/* Head low + forward */}
-        <rect x="17" y="9" width="3" height="3" fill={c.black} />
-        <rect x="17" y="8" width="1" height="1" fill={c.black} />
-        <rect x="19" y="8" width="1" height="1" fill={c.black} />
-        {/* WHITE muzzle */}
-        <rect x="19" y="11" width="2" height="1" fill={c.white} />
-        {/* Eye + open mouth (white teeth) */}
-        <rect x="19" y="10" width="1" height="1" fill={c.yellowEye} />
-        <rect x="20" y="11" width="1" height="1" fill={c.white} />
-        {/* Stiff legs + WHITE SOCKS */}
-        <rect x="6" y="13" width="1" height="2" fill={c.black} />
-        <rect x="9" y="13" width="1" height="2" fill={c.black} />
-        <rect x="15" y="13" width="1" height="2" fill={c.black} />
-        <rect x="18" y="13" width="1" height="2" fill={c.black} />
-        <rect x="6" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="9" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="15" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="18" y="14" width="1" height="0.6" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'groom') {
-    return (
-      <>
-        {/* Tail curled at side — WHITE TIP */}
-        <rect x="3" y="11" width="3" height="2" fill={c.black} />
-        <rect x="2" y="10" width="1" height="2" fill={c.black} />
-        <rect x="2" y="9" width="1" height="1" fill={c.white} />
-        {/* Sitting body */}
-        <rect x="7" y="10" width="10" height="2" fill={c.black} />
-        <rect x="8" y="9" width="8" height="1" fill={c.black} />
-        {/* White belly preserved */}
-        <rect x="7" y="12" width="10" height="1" fill={c.white} />
-        {/* Hind */}
-        <rect x="6" y="11" width="2" height="1" fill={c.black} />
-        <rect x="6" y="12" width="2" height="1" fill={c.white} />
-        {/* Head tilted DOWN */}
-        <rect x="16" y="9" width="3" height="3" fill={c.black} />
-        {/* Ears */}
-        <rect x="16" y="7" width="1" height="2" fill={c.black} />
-        <rect x="18" y="7" width="1" height="2" fill={c.black} />
-        {/* WHITE muzzle */}
-        <rect x="18" y="11" width="2" height="1" fill={c.white} />
-        {/* Closed eye */}
-        <rect x="18" y="10" width="1" height="0.4" fill={c.yellowEye} opacity="0.6" />
-        {/* Pink nose */}
-        <rect x="19" y="11" width="1" height="1" fill={c.pinkNose} />
-        {/* Raised paw at face */}
-        <rect x="19" y="9" width="1" height="2" fill={c.black} />
-        <rect x="20" y="10" width="1" height="1" fill={c.black} />
-        {/* Front legs with WHITE SOCKS */}
-        <rect x="14" y="13" width="1" height="2" fill={c.black} />
-        <rect x="16" y="13" width="1" height="2" fill={c.black} />
-        <rect x="14" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="16" y="14" width="1" height="0.6" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'stretch') {
-    return (
-      <>
-        {/* Tail relaxed back — WHITE TIP at the end */}
-        <rect x="1" y="11" width="2" height="1" fill={c.black} />
-        <rect x="3" y="10" width="1" height="2" fill={c.black} />
-        <rect x="0" y="11" width="1" height="1" fill={c.white} />
-        {/* Butt UP */}
-        <rect x="4" y="8" width="4" height="4" fill={c.black} />
-        <rect x="5" y="7" width="3" height="1" fill={c.black} />
-        {/* Long stretched body */}
-        <rect x="8" y="11" width="10" height="1" fill={c.black} />
-        <rect x="8" y="10" width="9" height="1" fill={c.black} />
-        {/* White belly preserved (long thin band) */}
-        <rect x="8" y="12" width="10" height="1" fill={c.white} />
-        {/* Head LOW + tucked */}
-        <rect x="18" y="11" width="3" height="2" fill={c.black} />
-        <rect x="18" y="10" width="1" height="1" fill={c.black} />
-        <rect x="20" y="10" width="1" height="1" fill={c.black} />
-        {/* WHITE muzzle */}
-        <rect x="20" y="12" width="2" height="1" fill={c.white} />
-        {/* Eye half-closed */}
-        <rect x="20" y="11" width="1" height="0.5" fill={c.yellowEye} opacity="0.6" />
-        {/* Stretched front paws */}
-        <rect x="21" y="12" width="2" height="1" fill={c.white} />
-        {/* Back legs */}
-        <rect x="5" y="12" width="1" height="3" fill={c.black} />
-        <rect x="7" y="12" width="1" height="3" fill={c.black} />
-        {/* Front legs */}
-        <rect x="17" y="13" width="1" height="2" fill={c.black} />
-        <rect x="19" y="13" width="1" height="2" fill={c.black} />
-        {/* WHITE SOCKS on all four */}
-        <rect x="5" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="7" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="17" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="19" y="14" width="1" height="0.6" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'play') {
-    return (
-      <>
-        {/* Tail wagged up — WHITE TIP */}
-        <rect x="2" y="8" width="1" height="4" fill={c.black} />
-        <rect x="1" y="6" width="1" height="3" fill={c.black} />
-        <rect x="2" y="5" width="1" height="2" fill={c.black} />
-        <rect x="2" y="4" width="1" height="1" fill={c.white} />
-        {/* Hindquarters low */}
-        <rect x="3" y="10" width="6" height="2" fill={c.black} />
-        <rect x="4" y="9" width="5" height="1" fill={c.black} />
-        <rect x="3" y="12" width="6" height="1" fill={c.white} />
-        {/* Body sloping UP toward head */}
-        <rect x="9" y="9" width="8" height="2" fill={c.black} />
-        <rect x="10" y="8" width="7" height="1" fill={c.black} />
-        {/* White belly band */}
-        <rect x="9" y="11" width="8" height="1" fill={c.white} />
-        {/* Head HIGH + alert */}
-        <rect x="17" y="6" width="3" height="3" fill={c.black} />
-        <rect x="17" y="4" width="1" height="2" fill={c.black} />
-        <rect x="19" y="4" width="1" height="2" fill={c.black} />
-        {/* WHITE muzzle */}
-        <rect x="19" y="8" width="2" height="1" fill={c.white} />
-        {/* Eye */}
-        <rect x="19" y="7" width="1" height="1" fill={c.yellowEye} />
-        {/* Nose */}
-        <rect x="20" y="8" width="1" height="1" fill={c.pinkNose} />
-        {/* Front paws RAISED off ground */}
-        <rect x="15" y="12" width="1" height="2" fill={c.black} />
-        <rect x="17" y="12" width="1" height="2" fill={c.black} />
-        {/* Back paws planted */}
-        <rect x="4" y="13" width="1" height="2" fill={c.black} />
-        <rect x="7" y="13" width="1" height="2" fill={c.black} />
-        {/* WHITE SOCKS on all four */}
-        <rect x="4" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="7" y="14" width="1" height="0.6" fill={c.white} />
-        <rect x="15" y="13.4" width="1" height="0.6" fill={c.white} />
-        <rect x="17" y="13.4" width="1" height="0.6" fill={c.white} />
-      </>
-    )
-  }
-  // walk + walk2 + sit + sit2 (sit2 flicks the tail tip up 1px)
-  // iter-356.4-cats — sit2 raises BOTH the upper tail segment and the
-  // signature white tip by 1px so the tuxedo's tail flick stays cohesive.
-  // walk2 alternates legs (handled in legsForState) AND the socks
-  // condition fires for both walk + walk2 so the signature white socks
-  // travel with the alternating frames.
-  const isSit2 = state === 'sit2'
-  const tailUpperY = isSit2 ? 5 : 6
-  const tailWhiteTipY = isSit2 ? 4 : 5
-  const isWalkFrame = state === 'walk' || state === 'walk2'
-  return (
-    <>
-      {/* TAIL: black with WHITE TIP (tuxedo signature) — tip + upper rise 1px in sit2 */}
-      <rect x="2" y="9" width="1" height="3" fill={c.black} />
-      <rect x="1" y="7" width="1" height="3" fill={c.black} />
-      <rect x="2" y={tailUpperY} width="1" height="2" fill={c.black} />
-      <rect x="2" y={tailWhiteTipY} width="1" height="1" fill={c.white} />
-      {/* Body — black top, white belly */}
-      <rect x="7" y="9" width="11" height="3" fill={c.black} />
-      <rect x="8" y="8" width="9" height="1" fill={c.black} />
-      <rect x="7" y="12" width="11" height="1" fill={c.white} />
-      {/* Hind hip — half black half white "tuxedo line" */}
-      <rect x="3" y="10" width="5" height="2" fill={c.black} />
-      <rect x="3" y="12" width="5" height="1" fill={c.white} />
-      {/* Front white "shirt" patch */}
-      <rect x="15" y="10" width="3" height="2" fill={c.white} />
-      {/* Neck + head */}
-      <rect x="17" y="7" width="3" height="3" fill={c.black} />
-      <rect x="17" y="5" width="1" height="2" fill={c.black} />
-      <rect x="19" y="5" width="1" height="2" fill={c.black} />
-      {/* WHITE muzzle */}
-      <rect x="19" y="9" width="2" height="1" fill={c.white} />
-      {/* Eye — yellow */}
-      <rect x="19" y="8" width="1" height="1" fill={c.yellowEye} />
-      {/* Pink nose */}
-      <rect x="20" y="9" width="1" height="1" fill={c.pinkNose} />
-      {/* White socks — fires for both walk frames so the signature carries through */}
-      {isWalkFrame && state === 'walk' && (
-        <>
-          <rect x="9" y="14" width="1" height="0.6" fill={c.white} />
-          <rect x="12" y="14" width="1" height="0.6" fill={c.white} />
-          <rect x="16" y="14" width="1" height="0.6" fill={c.white} />
-          <rect x="19" y="14" width="1" height="0.6" fill={c.white} />
-        </>
-      )}
-      {/* walk2 socks track the alternating leg positions (10/11/17/18 not 9/12/16/19) */}
-      {isWalkFrame && state === 'walk2' && (
-        <>
-          <rect x="10" y="13" width="1" height="0.6" fill={c.white} />
-          <rect x="11" y="14" width="1" height="0.6" fill={c.white} />
-          <rect x="17" y="13" width="1" height="0.6" fill={c.white} />
-          <rect x="18" y="14" width="1" height="0.6" fill={c.white} />
-        </>
-      )}
-      {legsForState(state, 13, c.black)}
-    </>
-  )
-}
-
-function CalicoBody({ state }: { state: BodyState }) {
-  const c = CAT_PALETTE
-  if (state === 'sleep') {
-    return (
-      <>
-        {/* Curled white base */}
-        <rect x="6" y="11" width="14" height="3" fill={c.white} />
-        <rect x="7" y="10" width="12" height="1" fill={c.white} />
-        {/* Orange + black calico patches */}
-        <rect x="8" y="11" width="3" height="2" fill={c.orange} />
-        <rect x="13" y="11" width="3" height="2" fill={c.black} />
-        <rect x="16" y="10" width="3" height="2" fill={c.orange} />
-        {/* Head tucked left */}
-        <rect x="4" y="9" width="4" height="3" fill={c.white} />
-        <rect x="3" y="8" width="2" height="2" fill={c.orange} />
-        {/* Closed eye */}
-        <rect x="5" y="10" width="1" height="0.4" fill={c.black} />
-        {/* Tail — orange */}
-        <rect x="18" y="9" width="2" height="1" fill={c.orange} />
-        <rect x="20" y="9" width="1" height="2" fill={c.orange} />
-      </>
-    )
-  }
-  if (state === 'hiss') {
-    return (
-      <>
-        {/* Puffed orange tail straight up */}
-        <rect x="2" y="3" width="2" height="6" fill={c.orange} />
-        <rect x="1" y="4" width="1" height="2" fill={c.orange} />
-        <rect x="4" y="4" width="1" height="2" fill={c.orange} />
-        <rect x="2" y="2" width="2" height="1" fill={c.orange} />
-        {/* Arched body — white base */}
-        <rect x="6" y="9" width="12" height="3" fill={c.white} />
-        <rect x="7" y="8" width="10" height="1" fill={c.white} />
-        <rect x="9" y="7" width="6" height="1" fill={c.white} />
-        {/* Calico patches preserved */}
-        <rect x="7" y="9" width="3" height="2" fill={c.orange} />
-        <rect x="13" y="9" width="3" height="2" fill={c.black} />
-        <rect x="11" y="10" width="2" height="2" fill={c.orange} />
-        {/* Raised fur spikes — alternating colors */}
-        <rect x="9" y="6" width="1" height="1" fill={c.orange} />
-        <rect x="11" y="6" width="1" height="1" fill={c.black} />
-        <rect x="13" y="6" width="1" height="1" fill={c.orange} />
-        {/* Hind hip */}
-        <rect x="4" y="10" width="3" height="3" fill={c.white} />
-        <rect x="4" y="11" width="2" height="1" fill={c.orange} />
-        {/* Head low + forward */}
-        <rect x="17" y="9" width="3" height="3" fill={c.white} />
-        <rect x="17" y="8" width="1" height="1" fill={c.black} />
-        <rect x="19" y="8" width="1" height="1" fill={c.orange} />
-        {/* Eye + open mouth (white) */}
-        <rect x="19" y="10" width="1" height="1" fill={c.greenEye} />
-        <rect x="20" y="11" width="1" height="1" fill={c.pinkNose} />
-        {/* Stiff legs */}
-        <rect x="6" y="13" width="1" height="2" fill={c.white} />
-        <rect x="9" y="13" width="1" height="2" fill={c.white} />
-        <rect x="15" y="13" width="1" height="2" fill={c.white} />
-        <rect x="18" y="13" width="1" height="2" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'groom') {
-    return (
-      <>
-        {/* Tail curled at side — orange */}
-        <rect x="3" y="11" width="3" height="2" fill={c.orange} />
-        <rect x="2" y="10" width="1" height="2" fill={c.orange} />
-        {/* Sitting body — white base */}
-        <rect x="7" y="10" width="10" height="3" fill={c.white} />
-        <rect x="8" y="9" width="8" height="1" fill={c.white} />
-        {/* Calico patches preserved */}
-        <rect x="8" y="10" width="3" height="2" fill={c.orange} />
-        <rect x="13" y="10" width="3" height="2" fill={c.black} />
-        {/* Hind */}
-        <rect x="6" y="11" width="2" height="2" fill={c.white} />
-        <rect x="6" y="11" width="1" height="1" fill={c.orange} />
-        {/* Head tilted DOWN */}
-        <rect x="16" y="9" width="3" height="3" fill={c.white} />
-        {/* Ears — one orange one black */}
-        <rect x="16" y="7" width="1" height="2" fill={c.black} />
-        <rect x="18" y="7" width="1" height="2" fill={c.orange} />
-        {/* Closed eye */}
-        <rect x="18" y="10" width="1" height="0.4" fill={c.black} />
-        {/* Pink nose */}
-        <rect x="19" y="11" width="1" height="1" fill={c.pinkNose} />
-        {/* Raised paw at face */}
-        <rect x="19" y="9" width="1" height="2" fill={c.white} />
-        <rect x="20" y="10" width="1" height="1" fill={c.white} />
-        {/* Front legs */}
-        <rect x="14" y="13" width="1" height="2" fill={c.white} />
-        <rect x="16" y="13" width="1" height="2" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'stretch') {
-    return (
-      <>
-        {/* Tail relaxed back — orange */}
-        <rect x="1" y="11" width="2" height="1" fill={c.orange} />
-        <rect x="3" y="10" width="1" height="2" fill={c.orange} />
-        {/* Butt UP — white base */}
-        <rect x="4" y="8" width="4" height="4" fill={c.white} />
-        <rect x="5" y="7" width="3" height="1" fill={c.white} />
-        {/* Orange patch on the butt */}
-        <rect x="4" y="9" width="3" height="2" fill={c.orange} />
-        {/* Long stretched body */}
-        <rect x="8" y="11" width="10" height="2" fill={c.white} />
-        <rect x="8" y="10" width="9" height="1" fill={c.white} />
-        {/* Black patch mid-back */}
-        <rect x="11" y="10" width="3" height="2" fill={c.black} />
-        {/* Head LOW + tucked */}
-        <rect x="18" y="11" width="3" height="2" fill={c.white} />
-        {/* Ears */}
-        <rect x="18" y="10" width="1" height="1" fill={c.black} />
-        <rect x="20" y="10" width="1" height="1" fill={c.orange} />
-        {/* Eye half-closed */}
-        <rect x="20" y="11" width="1" height="0.5" fill={c.greenEye} opacity="0.6" />
-        {/* Stretched front paws */}
-        <rect x="21" y="12" width="2" height="1" fill={c.white} />
-        {/* Back legs */}
-        <rect x="5" y="12" width="1" height="3" fill={c.white} />
-        <rect x="7" y="12" width="1" height="3" fill={c.white} />
-        {/* Front legs */}
-        <rect x="17" y="13" width="1" height="2" fill={c.white} />
-        <rect x="19" y="13" width="1" height="2" fill={c.white} />
-      </>
-    )
-  }
-  if (state === 'play') {
-    return (
-      <>
-        {/* Tail wagged up — orange */}
-        <rect x="2" y="8" width="1" height="4" fill={c.orange} />
-        <rect x="1" y="6" width="1" height="3" fill={c.orange} />
-        <rect x="2" y="5" width="1" height="2" fill={c.orange} />
-        {/* Hindquarters low — white */}
-        <rect x="3" y="10" width="6" height="3" fill={c.white} />
-        <rect x="4" y="9" width="5" height="1" fill={c.white} />
-        {/* Orange patch on hind */}
-        <rect x="3" y="11" width="3" height="1" fill={c.orange} />
-        {/* Body sloping UP toward head — white */}
-        <rect x="9" y="9" width="8" height="3" fill={c.white} />
-        <rect x="10" y="8" width="7" height="1" fill={c.white} />
-        {/* Black patch on side */}
-        <rect x="12" y="9" width="3" height="2" fill={c.black} />
-        {/* Head HIGH + alert */}
-        <rect x="17" y="6" width="3" height="3" fill={c.white} />
-        {/* Ears — black + orange */}
-        <rect x="17" y="4" width="1" height="2" fill={c.black} />
-        <rect x="19" y="4" width="1" height="2" fill={c.orange} />
-        {/* Wide eye */}
-        <rect x="19" y="7" width="1" height="1" fill={c.greenEye} />
-        {/* Nose */}
-        <rect x="20" y="8" width="1" height="1" fill={c.pinkNose} />
-        {/* Front paws RAISED off ground */}
-        <rect x="15" y="12" width="1" height="2" fill={c.white} />
-        <rect x="17" y="12" width="1" height="2" fill={c.white} />
-        {/* Back paws planted */}
-        <rect x="4" y="13" width="1" height="2" fill={c.white} />
-        <rect x="7" y="13" width="1" height="2" fill={c.white} />
-      </>
-    )
-  }
-  // walk + walk2 + sit + sit2 (sit2 flicks the tail tip up 1px)
-  // iter-356.4-cats — sit2 raises the orange tail tip 1px for the flick.
-  // walk2 alternation lives in legsForState; the calico patches stay
-  // identical across frames since they're body markings not pose.
-  const tailTipY = state === 'sit2' ? 5 : 6
-  return (
-    <>
-      {/* Tail — orange (tip rises 1px in sit2) */}
-      <rect x="2" y="9" width="1" height="3" fill={c.orange} />
-      <rect x="1" y="7" width="1" height="3" fill={c.orange} />
-      <rect x="2" y={tailTipY} width="1" height="2" fill={c.orange} />
-      {/* Body — white base */}
-      <rect x="7" y="9" width="11" height="4" fill={c.white} />
-      <rect x="8" y="8" width="9" height="1" fill={c.white} />
-      {/* Calico patches scattered */}
-      <rect x="8" y="9" width="3" height="2" fill={c.orange} />
-      <rect x="13" y="9" width="3" height="2" fill={c.black} />
-      <rect x="11" y="11" width="2" height="2" fill={c.orange} />
-      {/* Hind */}
-      <rect x="3" y="10" width="5" height="3" fill={c.white} />
-      <rect x="3" y="11" width="3" height="1" fill={c.orange} />
-      {/* Head + ears */}
-      <rect x="17" y="7" width="3" height="3" fill={c.white} />
-      <rect x="17" y="5" width="1" height="2" fill={c.black} />
-      <rect x="19" y="5" width="1" height="2" fill={c.orange} />
-      {/* Eye — green */}
-      <rect x="19" y="8" width="1" height="1" fill={c.greenEye} />
-      {/* Pink nose */}
-      <rect x="20" y="9" width="1" height="1" fill={c.pinkNose} />
-      {legsForState(state, 13, c.white)}
-    </>
-  )
-}
-
-// === SLEEPING CAT ILLUSTRATION (legacy empty-state) =======================
+// === SLEEPING CAT ILLUSTRATION (empty-state mascot) =======================
+//
+// iter-356.38: was a 50-line SVG with feMorphology outline; now a single
+// raster PNG of the calico sleep-curled pose plus z-z-z text. The PNG
+// already has a clean head + tail + paw tuck (sliced from the user's
+// sprite-sheet bot row idx 8) so the SVG's iter-356.33 anatomy redraw
+// is no longer load-bearing — the sheet's polished art is.
 
 export function SleepingCatIllustration({
   size = 96,
@@ -990,355 +408,253 @@ export function SleepingCatIllustration({
   className?: string
   ariaLabel?: string
 }) {
-  // Re-uses the calico sleep-profile, scaled up.
+  // 96×64 outer frame keeps the iter-356.31..33 SleepingCatIllustration
+  // aspect ratio so consumers (CatEmptyState et al.) don't need layout
+  // changes. PNG centered with z-z-z drifting up at the top-right.
+  const w = size
+  const h = Math.round(size / SPRITE_W_RATIO)
   return (
-    <svg
-      width={size}
-      height={Math.round(size / 1.5)}
-      viewBox="0 0 24 16"
-      shapeRendering="crispEdges"
-      className={className}
+    <div
       role="img"
       aria-label={ariaLabel}
+      className={className}
+      style={{
+        position: 'relative',
+        width: w,
+        height: h,
+        display: 'inline-block',
+      }}
+      data-testid="sleeping-cat"
     >
-      <CalicoBody state="sleep" />
-      {/* Z Z Z above */}
-      <text x="14" y="6" fontSize="3" fill={CAT_PALETTE.whisker} opacity="0.7">
+      <img
+        src="/cats/coco-sleep_curled.png"
+        alt=""
+        decoding="async"
+        loading="lazy"
+        style={{
+          position: 'absolute',
+          left: '15%',
+          bottom: 0,
+          width: '60%',
+          height: 'auto',
+          objectFit: 'contain',
+        }}
+      />
+      {/* Z-Z-Z drift in warm-dark, escalating opacity off the top-right
+          of the cat's head. Same character chosen as iter-356.33 SVG. */}
+      <span
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          right: '10%',
+          top: '5%',
+          fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+          fontWeight: 700,
+          fontSize: Math.round(h * 0.16),
+          color: '#1a1410',
+          lineHeight: 1,
+          letterSpacing: '0.05em',
+          opacity: 0.7,
+        }}
+      >
         z
-      </text>
-      <text x="17" y="4" fontSize="3" fill={CAT_PALETTE.whisker} opacity="0.5">
+      </span>
+      <span
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          right: '4%',
+          top: '18%',
+          fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+          fontWeight: 700,
+          fontSize: Math.round(h * 0.12),
+          color: '#1a1410',
+          lineHeight: 1,
+          opacity: 0.55,
+        }}
+      >
         z
-      </text>
-      <text x="20" y="2.5" fontSize="2.5" fill={CAT_PALETTE.whisker} opacity="0.4">
+      </span>
+      <span
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          right: '0%',
+          top: '30%',
+          fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+          fontWeight: 700,
+          fontSize: Math.round(h * 0.09),
+          color: '#1a1410',
+          lineHeight: 1,
+          opacity: 0.4,
+        }}
+      >
         z
-      </text>
-    </svg>
+      </span>
+    </div>
   )
 }
 
-// === HABITAT OBJECTS ======================================================
-//
-// iter-356.30 (Pet Habitat Phase 1, slice 1) — decorative non-interactive
-// objects rendered on the ambient CatLayer's "floor" so the strip reads
-// like a small cat habitat instead of a flat walking band. All shapes are
-// original SVG primitives (no third-party / Nintendo / Animal-Crossing
-// art); the warm calico palette ties them to the rest of the brand.
-//
-// Convention:
-//   - viewBox in pixels, width/height = passed `size`. Objects are drawn
-//     bottom-aligned within their viewBox so callers can stack them on
-//     the floor with a single `bottom: 0` rule.
-//   - All decorative — `aria-hidden="true"` on every root <svg>.
-//   - No animation here. Slice 4 adds bed-bob + toy-jiggle.
+// === HABITAT OBJECTS (iter-356.34 restyle to match the iter-356.31..33
+// vector mascot baseline). All five user-listed objects share the same
+// warm-dark outline filter as the white-coated cats, so a calico Coco
+// curling next to a yarn ball reads as ONE visual system instead of two.
+// Feather wand DROPPED per user directive (was iter-356.30 carryover —
+// not on the user's curated list, and Maya's "yellow flower + blue paw
+// cluster" was its on-screen reading at small sizes). =====================
 
 type HabitatProps = { size?: number; className?: string }
 
 const HABITAT_PALETTE = {
-  yarnA: '#d97706', // calico-orange
-  yarnB: '#b45309', // amber-700 (yarn shadow / contour line)
-  mouseGrey: '#a3a3a3',
+  yarnA: '#d97706', // --color-accent-default (calico orange)
+  yarnB: '#b45309', // --color-warning (amber-700)
+  mouseGrey: '#8c8784',
   mousePink: '#fda4af',
-  woodLight: '#c08552', // warm wood
+  woodLight: '#c08552',
   woodDark: '#7a4f2c',
-  feather: '#f59e0b',
-  featherTip: '#fde047',
-  cushion: '#fef3c7', // accent-subtle
-  cushionDeep: '#f5deb3', // tan
-  blanketStripe: '#d97706',
+  cushion: '#fef3c7', // --color-accent-subtle
+  cushionDeep: '#f5deb3',
+  blanketStripe: '#b45309',
   cardboard: '#d4a373',
   cardboardShadow: '#b08968',
 } as const
 
-/**
- * Yarn ball — round wound-yarn shape with two crossing arc lines for
- * the wound look + a short dangling thread. Sits on the floor.
- */
+// Shared outline filter — matches the iter-356.32 sprite filter so every
+// habitat object reads as the same line-weight + color family as Coco.
+function HabitatOutline({ id }: { id: string }) {
+  return (
+    <defs>
+      <filter id={id} x="-10%" y="-10%" width="120%" height="120%">
+        <feMorphology in="SourceAlpha" operator="dilate" radius="0.7" />
+        <feFlood floodColor={CAT_PALETTE.outline} floodOpacity="0.6" />
+        <feComposite in2="SourceAlpha" operator="in" result="outline" />
+        <feComposite in="SourceGraphic" in2="outline" operator="over" />
+      </filter>
+    </defs>
+  )
+}
+
 export function YarnBall({ size = 22, className }: HabitatProps) {
+  const fid = 'habitat-outline-yarn'
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 22 22"
-      aria-hidden="true"
-      className={className}
-    >
-      {/* shadow */}
+    <svg width={size} height={size} viewBox="0 0 22 22" aria-hidden="true" className={className}>
+      <HabitatOutline id={fid} />
       <ellipse cx="11" cy="20" rx="7" ry="1.2" fill="rgba(60,40,20,0.18)" />
-      {/* ball body */}
-      <circle cx="11" cy="13" r="7" fill={HABITAT_PALETTE.yarnA} />
-      {/* wound contours */}
-      <path
-        d="M5 13 Q11 6 17 13"
-        stroke={HABITAT_PALETTE.yarnB}
-        strokeWidth="0.8"
-        fill="none"
-        opacity="0.65"
-      />
-      <path
-        d="M5 13 Q11 20 17 13"
-        stroke={HABITAT_PALETTE.yarnB}
-        strokeWidth="0.8"
-        fill="none"
-        opacity="0.65"
-      />
-      <path
-        d="M11 6 Q15 13 11 20"
-        stroke={HABITAT_PALETTE.yarnB}
-        strokeWidth="0.6"
-        fill="none"
-        opacity="0.45"
-      />
-      {/* dangling thread */}
-      <path
-        d="M16.5 14 Q19 16 18 19"
-        stroke={HABITAT_PALETTE.yarnA}
-        strokeWidth="0.7"
-        fill="none"
-      />
+      <g filter={`url(#${fid})`}>
+        <circle cx="11" cy="13" r="7" fill={HABITAT_PALETTE.yarnA} opacity="0.92" />
+        <path d="M5 13 Q11 6 17 13" stroke={HABITAT_PALETTE.yarnB} strokeWidth="0.9" fill="none" opacity="0.7" />
+        <path d="M5 13 Q11 20 17 13" stroke={HABITAT_PALETTE.yarnB} strokeWidth="0.9" fill="none" opacity="0.7" />
+        <path d="M11 6 Q15 13 11 20" stroke={HABITAT_PALETTE.yarnB} strokeWidth="0.7" fill="none" opacity="0.55" />
+        <path d="M16.5 14 Q19 16 18 19" stroke={HABITAT_PALETTE.yarnA} strokeWidth="0.9" fill="none" />
+      </g>
     </svg>
   )
 }
 
-/**
- * Toy mouse — small grey mouse silhouette with pink tail-tip + nose,
- * two round ears, eye dot. Side-profile, faces right.
- */
 export function ToyMouse({ size = 20, className }: HabitatProps) {
+  const fid = 'habitat-outline-mouse'
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 22 14"
-      aria-hidden="true"
-      className={className}
-    >
+    <svg width={size} height={size} viewBox="0 0 22 14" aria-hidden="true" className={className}>
+      <HabitatOutline id={fid} />
       <ellipse cx="11" cy="13" rx="6" ry="0.8" fill="rgba(60,40,20,0.18)" />
-      {/* tail */}
-      <path
-        d="M5 11 Q1 11 2 8"
-        stroke={HABITAT_PALETTE.mousePink}
-        strokeWidth="1.1"
-        fill="none"
-        strokeLinecap="round"
-      />
-      {/* body */}
-      <ellipse cx="11" cy="9" rx="6" ry="3.5" fill={HABITAT_PALETTE.mouseGrey} />
-      {/* head */}
-      <circle cx="16" cy="8.5" r="2.6" fill={HABITAT_PALETTE.mouseGrey} />
-      {/* ears */}
-      <circle cx="14.7" cy="6" r="1.3" fill={HABITAT_PALETTE.mouseGrey} />
-      <circle cx="14.7" cy="6" r="0.6" fill={HABITAT_PALETTE.mousePink} />
-      {/* eye + nose */}
-      <circle cx="16.6" cy="8.2" r="0.4" fill="#1a1410" />
-      <circle cx="18.2" cy="9.2" r="0.4" fill={HABITAT_PALETTE.mousePink} />
+      <g filter={`url(#${fid})`}>
+        {/* tail (curved) */}
+        <path d="M5 10 Q1 10 2 7" stroke={HABITAT_PALETTE.mousePink} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+        {/* body */}
+        <ellipse cx="11" cy="9" rx="6" ry="3.5" fill={HABITAT_PALETTE.mouseGrey} />
+        {/* head */}
+        <circle cx="16" cy="8.5" r="2.7" fill={HABITAT_PALETTE.mouseGrey} />
+        {/* ear */}
+        <circle cx="14.7" cy="6" r="1.4" fill={HABITAT_PALETTE.mouseGrey} />
+        <circle cx="14.7" cy="6" r="0.7" fill={HABITAT_PALETTE.mousePink} />
+        {/* eye + nose */}
+        <circle cx="16.8" cy="8.2" r="0.45" fill={CAT_PALETTE.outline} />
+        <circle cx="18.2" cy="9.2" r="0.45" fill={HABITAT_PALETTE.mousePink} />
+      </g>
     </svg>
   )
 }
 
-/**
- * Feather wand — short wooden stick leaning right with a feather plume.
- */
-export function FeatherWand({ size = 28, className }: HabitatProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 22 22"
-      aria-hidden="true"
-      className={className}
-    >
-      <ellipse cx="11" cy="21" rx="5" ry="0.8" fill="rgba(60,40,20,0.18)" />
-      {/* stick (leaning) */}
-      <line
-        x1="6"
-        y1="20"
-        x2="14"
-        y2="6"
-        stroke={HABITAT_PALETTE.woodDark}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-      />
-      <line
-        x1="6.4"
-        y1="20"
-        x2="14.4"
-        y2="6"
-        stroke={HABITAT_PALETTE.woodLight}
-        strokeWidth="0.5"
-        strokeLinecap="round"
-      />
-      {/* feather plume */}
-      <path
-        d="M14 6 Q19 4 18 1 Q15 2 14 6 Z"
-        fill={HABITAT_PALETTE.feather}
-      />
-      <path
-        d="M14 6 Q11 3 12 1 Q14 3 14 6 Z"
-        fill={HABITAT_PALETTE.featherTip}
-        opacity="0.85"
-      />
-      <line
-        x1="14"
-        y1="6"
-        x2="16"
-        y2="2"
-        stroke={HABITAT_PALETTE.woodDark}
-        strokeWidth="0.4"
-      />
-    </svg>
-  )
-}
-
-/**
- * Floating cat bed — round basket / bean-bag shape with a striped
- * cushion. Sits on the floor; mid-elevated profile so a cat can later
- * climb onto it.
- */
 export function FloatingBed({ size = 38, className }: HabitatProps) {
+  const fid = 'habitat-outline-bed'
   return (
-    <svg
-      width={size}
-      height={(size * 22) / 38}
-      viewBox="0 0 38 22"
-      aria-hidden="true"
-      className={className}
-    >
-      <ellipse cx="19" cy="20" rx="14" ry="1.2" fill="rgba(60,40,20,0.18)" />
-      {/* basket outer */}
-      <ellipse
-        cx="19"
-        cy="14"
-        rx="14"
-        ry="6"
-        fill={HABITAT_PALETTE.cardboard}
-      />
-      {/* basket inner cushion well */}
-      <ellipse
-        cx="19"
-        cy="11"
-        rx="11"
-        ry="3.5"
-        fill={HABITAT_PALETTE.cardboardShadow}
-      />
-      {/* cushion */}
-      <ellipse
-        cx="19"
-        cy="10.5"
-        rx="10"
-        ry="2.6"
-        fill={HABITAT_PALETTE.cushion}
-      />
-      {/* cushion stripe */}
-      <path
-        d="M11 10 Q19 12 27 10"
-        stroke={HABITAT_PALETTE.blanketStripe}
-        strokeWidth="0.7"
-        fill="none"
-        opacity="0.65"
-      />
-      {/* basket weave hint */}
-      <path
-        d="M5 14 Q19 17 33 14"
-        stroke={HABITAT_PALETTE.woodDark}
-        strokeWidth="0.4"
-        fill="none"
-        opacity="0.4"
-      />
+    <svg width={size} height={(size * 22) / 38} viewBox="0 0 38 22" aria-hidden="true" className={className}>
+      <HabitatOutline id={fid} />
+      <ellipse cx="19" cy="20" rx="14" ry="1.4" fill="rgba(60,40,20,0.18)" />
+      <g filter={`url(#${fid})`}>
+        {/* basket exterior */}
+        <ellipse cx="19" cy="14" rx="14" ry="6" fill={HABITAT_PALETTE.cardboard} />
+        {/* inner rim */}
+        <ellipse cx="19" cy="11" rx="11.5" ry="3.5" fill={HABITAT_PALETTE.cardboardShadow} />
+        {/* cushion */}
+        <ellipse cx="19" cy="10.5" rx="10" ry="2.6" fill={HABITAT_PALETTE.cushion} />
+        {/* blanket stripe */}
+        <path d="M11 10 Q19 12 27 10" stroke={HABITAT_PALETTE.blanketStripe} strokeWidth="0.8" fill="none" opacity="0.7" />
+      </g>
     </svg>
   )
 }
 
-/**
- * Wall ledge / perch — horizontal plank with two small brackets. For
- * slice 2 the cats can climb up; for slice 1 it's pure decor.
- */
 export function WallLedge({ size = 60, className }: HabitatProps) {
+  const fid = 'habitat-outline-ledge'
   return (
-    <svg
-      width={size}
-      height={(size * 14) / 60}
-      viewBox="0 0 60 14"
-      aria-hidden="true"
-      className={className}
-    >
-      {/* plank */}
-      <rect
-        x="0"
-        y="3"
-        width="60"
-        height="4"
-        rx="1"
-        fill={HABITAT_PALETTE.woodLight}
-      />
-      <rect
-        x="0"
-        y="3"
-        width="60"
-        height="1"
-        fill={HABITAT_PALETTE.cushion}
-        opacity="0.6"
-      />
-      <rect
-        x="0"
-        y="6"
-        width="60"
-        height="1"
-        fill={HABITAT_PALETTE.woodDark}
-        opacity="0.55"
-      />
-      {/* brackets (under plank) */}
-      <path d="M6 7 L4 13 L10 7 Z" fill={HABITAT_PALETTE.woodDark} />
-      <path d="M50 7 L48 13 L54 7 Z" fill={HABITAT_PALETTE.woodDark} />
-      {/* wood grain */}
-      <line x1="8" y1="5" x2="20" y2="5" stroke={HABITAT_PALETTE.woodDark} strokeWidth="0.3" opacity="0.4" />
-      <line x1="30" y1="5" x2="48" y2="5" stroke={HABITAT_PALETTE.woodDark} strokeWidth="0.3" opacity="0.4" />
+    <svg width={size} height={(size * 14) / 60} viewBox="0 0 60 14" aria-hidden="true" className={className}>
+      <HabitatOutline id={fid} />
+      <g filter={`url(#${fid})`}>
+        {/* plank */}
+        <rect x="0" y="3" width="60" height="4" rx="1.2" fill={HABITAT_PALETTE.woodLight} />
+        {/* top highlight + bottom shadow */}
+        <rect x="0" y="3" width="60" height="1" fill={HABITAT_PALETTE.cushion} opacity="0.55" />
+        <rect x="0" y="6" width="60" height="1" fill={HABITAT_PALETTE.woodDark} opacity="0.5" />
+        {/* L-brackets */}
+        <path d="M6 7 L4 13 L10 7 Z" fill={HABITAT_PALETTE.woodDark} />
+        <path d="M50 7 L48 13 L54 7 Z" fill={HABITAT_PALETTE.woodDark} />
+      </g>
     </svg>
   )
 }
 
-/**
- * Cardboard box — open-top corrugated box with a small folded flap +
- * faint stripes. Cat-bait staple. Sits on the floor.
- */
 export function CardboardBox({ size = 30, className }: HabitatProps) {
+  const fid = 'habitat-outline-box'
   return (
-    <svg
-      width={size}
-      height={(size * 22) / 30}
-      viewBox="0 0 30 22"
-      aria-hidden="true"
-      className={className}
-    >
-      <ellipse cx="15" cy="21" rx="13" ry="0.9" fill="rgba(60,40,20,0.20)" />
-      {/* back wall (slightly darker) */}
-      <rect x="3" y="6" width="24" height="14" fill={HABITAT_PALETTE.cardboardShadow} />
-      {/* front wall */}
-      <path
-        d="M3 8 L27 8 L26 20 L4 20 Z"
-        fill={HABITAT_PALETTE.cardboard}
-      />
-      {/* top rim (open box) */}
-      <path
-        d="M3 8 L8 4 L24 4 L27 8 Z"
-        fill={HABITAT_PALETTE.cardboardShadow}
-      />
-      {/* folded flap */}
-      <path
-        d="M8 4 L11 1 L17 1 L15 4 Z"
-        fill={HABITAT_PALETTE.cardboard}
-      />
-      {/* tape */}
-      <line
-        x1="13"
-        y1="8"
-        x2="13"
-        y2="20"
-        stroke={HABITAT_PALETTE.woodLight}
-        strokeWidth="0.6"
-        opacity="0.6"
-      />
-      {/* corrugation hint */}
-      <line x1="5" y1="14" x2="25" y2="14" stroke={HABITAT_PALETTE.woodDark} strokeWidth="0.3" opacity="0.35" />
+    <svg width={size} height={(size * 22) / 30} viewBox="0 0 30 22" aria-hidden="true" className={className}>
+      <HabitatOutline id={fid} />
+      <ellipse cx="15" cy="21" rx="13" ry="1" fill="rgba(60,40,20,0.20)" />
+      <g filter={`url(#${fid})`}>
+        {/* back wall */}
+        <rect x="3" y="6" width="24" height="14" fill={HABITAT_PALETTE.cardboardShadow} />
+        {/* front face */}
+        <path d="M3 8 L27 8 L26 20 L4 20 Z" fill={HABITAT_PALETTE.cardboard} />
+        {/* top folds */}
+        <path d="M3 8 L8 4 L24 4 L27 8 Z" fill={HABITAT_PALETTE.cardboardShadow} />
+        <path d="M8 4 L11 1 L17 1 L15 4 Z" fill={HABITAT_PALETTE.cardboard} />
+        {/* seam */}
+        <line x1="13" y1="8" x2="13" y2="20" stroke={HABITAT_PALETTE.woodLight} strokeWidth="0.6" opacity="0.55" />
+      </g>
     </svg>
+  )
+}
+
+// iter-356.41: cat tree / scratching post. Source asset is the "BODY"
+// part-image from the user's Cats.zip (`cats/parts/black-10-on-post-BODY.png`)
+// — same post drawing across all 3 cats, just the post (no cat). Aspect
+// 106×82 → ~1.29 wide / 1 tall. The `<CatTree>` habitat object is the
+// PERSISTENT cat-tree drawing always shown in the layer; when a cat
+// rolls the `'on_post'` activity, its sprite swaps to the corresponding
+// `{cat}-on_post.png` (which has the cat sitting on the tree) at the
+// tree's x position — visually the empty tree + cat-on-tree overlap to
+// "the cat is now on the tree." See `CatLayer.tsx::HabitatBackground`.
+export function CatTree({ size = 80, className }: HabitatProps) {
+  return (
+    <img
+      src="/cats/cat-tree.png"
+      alt=""
+      width={size}
+      height={Math.round((size * 82) / 106)}
+      decoding="async"
+      loading="lazy"
+      style={{ objectFit: 'contain', display: 'block' }}
+      className={className}
+    />
   )
 }

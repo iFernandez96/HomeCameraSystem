@@ -43,11 +43,18 @@ import time
 # is acceptable for the doorbell intercept use-case). 30 fps × 1 s × ~30
 # kbit/frame at 720p H.264 ≈ 90 KB per segment.
 DEFAULT_SEGMENT_S = 1
-# Capacity = how many segments ffmpeg cycles through. With seg_time=1
-# and capacity=15, the buffer holds ~15 s of history (more than the
-# 8 s default pre-roll cap from iter-257's "week" preset). At ~90 KB
-# per segment that's ~1.4 MB on disk — negligible vs the 64 GB SD card.
-DEFAULT_CAPACITY = 15
+# Capacity = how many segments ffmpeg cycles through. iter-356.51
+# bumped 15 → 60 (~60 s of history) to give the merge thread headroom
+# above any reasonable post-roll setting. The earlier 15 was a race-
+# floor: when `clip_post_roll_s` exceeded 15 s, the merge thread's
+# wait outlasted the ring's wrap window — by the time `run_concat`
+# read the segment paths, the ring had rewritten those slots with
+# post-event content (recording.py's iter-356.51 scratch-copy is the
+# primary defense; this bump is belt-and-suspenders for the live ring
+# so the copy doesn't race the wrap on long post-roll captures).
+# At ~90 KB per segment that's ~5.4 MB on disk — still negligible vs
+# the 64 GB SD card.
+DEFAULT_CAPACITY = 60
 
 
 class PrerollBuffer(object):
@@ -268,6 +275,13 @@ def run_concat(ffmpeg_bin, list_path, output_path, timeout_s=30.0):
     pre-roll concat is tiny (<1 s for ~10 segments at -c copy).
     `-safe 0` allows absolute paths; `+faststart` for inline play.
     """
+    # iter-356.43: explicit output `-f mp4`. The concat output is the
+    # `<final>.tmp` path used by `recording.py`'s atomic-rename merge;
+    # ffmpeg cannot infer the muxer from a `.tmp` extension and would
+    # exit RC=1 with "Unable to find a suitable output format". The
+    # input `-f concat` (above) describes the demuxer; the second
+    # `-f mp4` (below, immediately before output_path) forces the
+    # muxer.
     cmd = [
         ffmpeg_bin,
         "-y",
@@ -278,6 +292,7 @@ def run_concat(ffmpeg_bin, list_path, output_path, timeout_s=30.0):
         "-i", list_path,
         "-c", "copy",
         "-movflags", "+faststart",
+        "-f", "mp4",
         output_path,
     ]
     try:

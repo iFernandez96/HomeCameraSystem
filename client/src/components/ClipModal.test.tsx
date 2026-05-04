@@ -444,4 +444,90 @@ describe('ClipModal', () => {
 
     vi.restoreAllMocks()
   })
+
+  // iter-356.44 — bbox overlay on clip playback (Feature #1 follow-up).
+  // The decision was "B" (Canvas overlay, not pixel burn-in): keeps
+  // the worker's `-c copy` fast path, draws boxes via the same shape
+  // as the live VideoTile, honors the same localStorage toggle.
+
+  it('Given an event with a bbox, When ClipModal opens, Then a bbox-overlay canvas renders over the video', () => {
+    // arrange
+    const eventWithBox = makeEvent({
+      boxes: [
+        { x: 0.1, y: 0.2, w: 0.3, h: 0.4, label: 'person', score: 0.92 },
+      ],
+    })
+
+    // act
+    render(<ClipModal event={eventWithBox} onClose={() => {}} />)
+
+    // assert
+    const canvas = screen.getByTestId('clip-bbox-canvas')
+    expect(canvas.tagName).toBe('CANVAS')
+    expect(canvas.getAttribute('aria-hidden')).toBe('true')
+    // The toggle button only renders when the event has at least one bbox.
+    expect(screen.getByRole('button', { name: /hide detection boxes/i })).toBeInTheDocument()
+  })
+
+  it('Given an event with no bboxes, When ClipModal opens, Then the canvas mounts but the toggle button does not', () => {
+    // arrange
+    const eventNoBoxes = makeEvent({ boxes: [] })
+
+    // act
+    render(<ClipModal event={eventNoBoxes} onClose={() => {}} />)
+
+    // assert — canvas still mounts (cheap, lets the live tile-style
+    // resize logic stay simple) but the toggle button is suppressed
+    // when there is nothing to overlay.
+    expect(screen.getByTestId('clip-bbox-canvas')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /(show|hide) detection boxes/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('Given the boxes toggle was off in localStorage, When ClipModal opens, Then the toggle is unchecked and aria-pressed=false', () => {
+    // arrange — share the iter-246 VideoTile localStorage key so the
+    // live + clip toggles stay in lockstep.
+    window.localStorage.setItem('homecam:boxesVisible', '0')
+    try {
+      const eventWithBox = makeEvent({
+        boxes: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2, label: 'cat', score: 0.7 }],
+      })
+
+      // act
+      render(<ClipModal event={eventWithBox} onClose={() => {}} />)
+
+      // assert
+      const toggle = screen.getByRole('button', { name: /show detection boxes/i })
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    } finally {
+      window.localStorage.removeItem('homecam:boxesVisible')
+    }
+  })
+
+  it('Given the boxes toggle is clicked, When the user toggles, Then aria-pressed flips and the localStorage key persists', async () => {
+    // arrange
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    window.localStorage.setItem('homecam:boxesVisible', '1')
+    try {
+      const eventWithBox = makeEvent({
+        boxes: [{ x: 0, y: 0, w: 0.5, h: 0.5, label: 'person', score: 0.8 }],
+      })
+      render(<ClipModal event={eventWithBox} onClose={() => {}} />)
+      const toggle = screen.getByRole('button', { name: /hide detection boxes/i })
+
+      // act
+      await user.click(toggle)
+
+      // assert — aria-label flips from "Hide" to "Show", aria-pressed
+      // false, and the iter-246 localStorage key now reads '0'.
+      expect(
+        screen.getByRole('button', { name: /show detection boxes/i }),
+      ).toBeInTheDocument()
+      expect(window.localStorage.getItem('homecam:boxesVisible')).toBe('0')
+    } finally {
+      window.localStorage.removeItem('homecam:boxesVisible')
+    }
+  })
 })

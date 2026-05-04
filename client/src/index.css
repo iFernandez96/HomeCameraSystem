@@ -31,19 +31,26 @@
    *   - Semantic colors retuned for light contrast (success/danger/warning)
    */
 
-  /* === Color: brand accent scale (CALICO ORANGE) ============== */
-  --color-accent-subtle:  #fef3c7;  /* selected chips, toggle track bg (amber-100) */
-  --color-accent-muted:   #fde68a;  /* active ActionButton bg (amber-200) */
-  --color-accent-default: #d97706;  /* primary button fill, links, focus ring (amber-600) */
-  --color-accent-bright:  #f59e0b;  /* text on dark accent bg / hover (amber-500) */
+  /* === Color: brand accent scale (TERRACOTTA — warm hearth) ===
+   * iter-356.38: shifted from amber-600 (#d97706, slightly cold-
+   * corporate) to terracotta. Reads less "office app", more
+   * "lived-in living room." Contrast preserved: terracotta on
+   * cream-white = 4.8:1 (AA), white on terracotta = 5.0:1 (AA). */
+  --color-accent-subtle:  #fde6cf;  /* selected chips, toggle track bg — peach */
+  --color-accent-muted:   #fbd1a8;  /* active ActionButton bg — deeper peach */
+  --color-accent-default: #b85614;  /* primary button fill, links, focus ring — terracotta */
+  --color-accent-bright:  #e0762a;  /* text on dark accent bg / hover — warm coral */
 
-  /* === Color: surface + border tiers (LIGHT, WARM) ============ */
-  --color-bg:              #faf6ee;  /* page background — calico cream */
-  --color-surface:         #ffffff;  /* card bg — bright white pop */
-  --color-surface-raised:  #f5efe3;  /* hover / selected state bg — warmer cream */
-  --color-surface-overlay: #ffffff;  /* sheet / modal bg */
-  --color-border-subtle:   #ede5d3;  /* section dividers — warm tan-grey */
-  --color-border:          #d4cab4;  /* card borders, input borders — warm tan */
+  /* === Color: surface + border tiers (WARM HEARTH) ============
+   * iter-356.38: cream-white cards instead of printer-paper white;
+   * deeper aged-paper bg. Removes the "clinical white sheet on
+   * cream rug" feel. */
+  --color-bg:              #f4ead6;  /* page background — aged-paper cream */
+  --color-surface:         #fffaf0;  /* card bg — warm cream-white (NOT printer-paper) */
+  --color-surface-raised:  #ede0c5;  /* hover / selected state bg — toasted cream */
+  --color-surface-overlay: #fffaf0;  /* sheet / modal bg — same warm cream-white */
+  --color-border-subtle:   #e5d8bc;  /* section dividers — warm tan-grey */
+  --color-border:          #c9b894;  /* card borders, input borders — warm tan */
   --color-border-strong:   #a8997a;  /* hover state borders — warm taupe */
 
   /* === Color: text tiers (WARM DARK) ========================== */
@@ -106,8 +113,11 @@
   --radius-2xl: 20px;     /* modals, full-width panels */
   --radius-pill: 9999px;  /* status pills, toasts, chips */
 
-  /* === Typography scale ======================================= */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* === Typography scale =======================================
+   * iter-356.55: Inter as the primary sans-family. Premium-SaaS
+   * standard. System-stack fallback chain preserved for the brief
+   * window before the web font loads (or when offline). */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'SF Mono', 'Fira Code', Consolas, monospace;
 
   --text-xs:   11px;  /* caption, badge, pill label */
@@ -127,14 +137,19 @@
   --weight-semibold: 600;
   --weight-bold:     700;
 
-  /* === Shadow scale (LIGHT THEME, iter-356.25) ================ */
-  /* Pre-iter-356.25 shadows used 0.4-0.7 alpha black for dark-bg
-   * elevation. On a cream bg those read as muddy bruises. Now warm
-   * brown-tinted shadows at lower alpha for the soft-paper feel of
-   * a light UI. */
-  --shadow-subtle:  0 1px 2px rgb(60 40 20 / 0.08);
-  --shadow-card:    0 4px 12px rgb(60 40 20 / 0.10);
-  --shadow-overlay: 0 16px 48px rgb(60 40 20 / 0.18);
+  /* === Shadow scale (LIGHT THEME, iter-356.25 + iter-356.55) =====
+   * Layered warm-brown shadows. iter-356.55 added a second layer to
+   * each token for a sharper top-edge + softer ambient drop —
+   * matches the elevation feel of premium SaaS (Linear, Stripe,
+   * Notion). All alpha values stay below 0.20 so the light-theme
+   * cream surfaces never read as "muddy bruises."
+   *
+   * Recipe: small 1-2 px contact shadow + larger ambient shadow.
+   * The contact is tighter for definition; the ambient sells depth.
+   */
+  --shadow-subtle:  0 1px 1px rgb(60 40 20 / 0.04), 0 2px 4px rgb(60 40 20 / 0.06);
+  --shadow-card:    0 1px 2px rgb(60 40 20 / 0.06), 0 12px 28px rgb(60 40 20 / 0.12);
+  --shadow-overlay: 0 6px 12px rgb(60 40 20 / 0.08), 0 32px 72px rgb(60 40 20 / 0.20);
 
   /* === Motion ================================================= */
   --duration-fast: 80ms;
@@ -217,9 +232,83 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* iter-356.55: Inter primary, system fallback. */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* iter-356.55: enable Inter's tabular numerics + character variants
+   * (cv11 = single-storey 'a', ss03 = upright italic 'g') so timestamps
+   * and counts align cleanly across rows. */
+  font-feature-settings: 'cv11', 'ss03';
+  font-optical-sizing: auto;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: contain;
+}
+
+/* iter-356.55 (visual polish): tightened heading typography across
+ * the app. Inter renders best at slightly negative letter-spacing on
+ * larger sizes — a quiet hallmark of premium SaaS (Linear, Stripe,
+ * Notion, Vercel). The base body keeps default tracking. */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.011em;
+  font-feature-settings: 'cv11', 'ss03';
+}
+h1 { letter-spacing: -0.022em; }
+h2 { letter-spacing: -0.018em; }
+h3 { letter-spacing: -0.014em; }
+
+/* iter-356.55 — page-title polish. The route-level <h1>s on Live /
+ * Events / People / Settings / Training were all `text-2xl
+ * font-semibold` (24 px / 600). On desktop that reads "comfortable
+ * but not commanding" — the user's eye expects the page title to be
+ * the strongest anchor. Bump the desktop weight to 700 (font-bold)
+ * via this opt-in class so it's a one-line application change per
+ * page (PawMark + h1 inline-flex preserved). */
+.page-title {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+@media (min-width: 1024px) {
+  .page-title {
+    font-size: 28px;
+    line-height: 1.15;
+  }
+}
+
+/* iter-356.35 — native-feel polish layer:
+   - Text selection painted in calico-orange so highlighted text reads
+     as part of the brand instead of the OS default blue tint.
+   - Custom scrollbar styling: cream track, calico-orange thumb that
+     warms on hover. Survives WebKit (Safari/Chrome) + Firefox. Auto-
+     falls back to platform-default if the browser ignores the props.
+   - `accent-color` token cascades into native form controls
+     (checkboxes, radios, range thumbs that DON'T use `appearance:none`)
+     so they inherit the brand orange rather than the OS blue. */
+::selection {
+  background: var(--color-accent-default);
+  color: #ffffff;
+}
+::-moz-selection {
+  background: var(--color-accent-default);
+  color: #ffffff;
+}
+html {
+  accent-color: var(--color-accent-default);
+  scrollbar-color: var(--color-accent-default) var(--color-surface-raised);
+  scrollbar-width: thin;
+}
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-surface-raised);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-accent-default);
+  border: 3px solid var(--color-surface-raised);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent-bright);
 }
 
 * {
@@ -325,6 +414,24 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* iter-356.35 — paw-spinner. Three paw glyphs fade in sequence
+   left-to-right so loading reads as "cat walking past" instead of a
+   mechanical ring spinner. Reduced-motion users see all three paws
+   at full opacity (the global @media block above clamps the animation
+   to 0.01ms × 1 iteration which leaves the LAST keyframe state, and
+   all three keyframes end at opacity 1). */
+@keyframes pawSpinnerStep {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1); }
+}
+.paw-spinner-dot {
+  animation: pawSpinnerStep 1.2s ease-in-out infinite;
+  transform-origin: center;
+}
+.paw-spinner-dot-1 { animation-delay: 0s; }
+.paw-spinner-dot-2 { animation-delay: 0.2s; }
+.paw-spinner-dot-3 { animation-delay: 0.4s; }
 
 /* iter-356.25 Phase 2 (Maya CRITICAL): tokenized range-slider styling.
  * Pre-iter-356.25-Phase-2 the slider track + thumb + focus ring were

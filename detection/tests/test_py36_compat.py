@@ -55,6 +55,7 @@ _GUARDED_MODULES = (
     "detection/zones.py",
     "detection/recording.py",
     "detection/preroll.py",
+    "detection/tracks.py",
     "detection/face_recog/recognizer.py",
     "detection/face_recog/encode_known_faces.py",
     "detection/face_recog/capture.py",

@@ -65,16 +65,14 @@ describe('CatLayer', () => {
       vi.advanceTimersByTime(5000)
     })
 
-    // assert — three independent cat sprite SVGs are rendered. The layer
-    // root is the first child of the container. The iter-356.30 habitat
-    // background also renders 6 decorative SVGs (yarn / mouse / feather
-    // / bed / ledge / box) inside the layer; we count CAT sprites only
-    // by filtering on the data-testid="habitat-*" markers.
+    // assert — three independent cat sprite imgs are rendered. iter-356.38
+    // migrated the side-profile sprites from inline-SVG to raster PNGs
+    // sliced from the user's sprite-sheet; each sprite carries
+    // data-testid="cat-sprite" + data-cat-id so they're easy to count.
     const layer = container.firstElementChild
     expect(layer).not.toBeNull()
-    const allSvgs = layer!.querySelectorAll('svg')
-    const habitatSvgs = layer!.querySelectorAll('[data-testid^="habitat-"] svg')
-    expect(allSvgs.length - habitatSvgs.length).toBe(3)
+    const catSprites = layer!.querySelectorAll('[data-testid="cat-sprite"]')
+    expect(catSprites.length).toBe(3)
   })
 
   it('given prefers-reduced-motion is true, when the layer mounts, then it does not schedule any animation frame', () => {
@@ -123,26 +121,29 @@ describe('CatLayer', () => {
   // App.tsx). The layer itself is the right granularity to pin: when the
   // gate flips off, App.tsx unmounts CatLayer entirely, which takes the
   // habitat with it.
-  it('given the layer is mounted, when it renders, then all six habitat objects appear with stable test ids', () => {
+  it('given the layer is mounted, when it renders, then the six habitat objects appear with stable test ids — yarn, mouse, bed, ledge, box, cat-tree (iter-356.41)', () => {
     // arrange
     stubMatchMedia({ matches: true })
 
     // act
     const { container } = render(<CatLayer />)
 
-    // assert — every habitat object has its own data-testid for slice
-    // 2's movement-zone targeting, and all six are present.
+    // assert — every habitat object has its own data-testid; iter-356.41
+    // adds the cat tree (`habitat-cat-tree`) so cats can climb onto the
+    // perch via the new `on_post` activity. iter-356.34 had dropped the
+    // feather wand; that exclusion is preserved.
     const ids = [
       'habitat-yarn',
       'habitat-mouse',
-      'habitat-feather',
       'habitat-bed',
       'habitat-ledge',
       'habitat-box',
+      'habitat-cat-tree',
     ]
     for (const id of ids) {
       expect(container.querySelector(`[data-testid="${id}"]`)).not.toBeNull()
     }
+    expect(container.querySelector('[data-testid="habitat-feather"]')).toBeNull()
   })
 
   it('given habitat objects render, when reduced-motion matches, then no animation classes are applied to them', () => {
@@ -189,7 +190,7 @@ describe('CatLayer', () => {
     )
     expect(habitats.length).toBe(6)
     expect(firstCatBlock).toBeDefined()
-    // If the order is correct, habitats[5] precedes firstCatBlock
+    // If the order is correct, last habitat precedes firstCatBlock
     const lastHabitat = habitats[habitats.length - 1] as HTMLElement
     const cmp = lastHabitat.compareDocumentPosition(firstCatBlock as Node)
     // Node.DOCUMENT_POSITION_FOLLOWING === 4

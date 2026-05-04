@@ -43,6 +43,7 @@ vi.mock('../lib/api', () => ({
   deleteEvent: (...a: unknown[]) => deleteEvent(...a),
   deleteEventsByDay: (...a: unknown[]) => deleteEventsByDay(...a),
   exportEvents: (...a: unknown[]) => exportEventsM(...a),
+  fetchEventTracks: () => Promise.resolve(null),
   getStatus: (...a: unknown[]) => getStatusM(...a),
 }))
 vi.mock('../lib/ws', () => ({
@@ -172,7 +173,7 @@ describe('Events page', () => {
       },
     ])
     render(<Events />)
-    await waitFor(() => expect(screen.getByText(/1 recent/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/last 1/i)).toBeInTheDocument())
   })
 
   it('prepends new detection events received over WebSocket', async () => {
@@ -370,7 +371,7 @@ describe('Events page', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('listitem')).toHaveLength(1)
     })
-    expect(screen.getByText(/1 of 2 recent/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 of last 2/i)).toBeInTheDocument()
   })
 
   it('clicking a thumb row opens the ClipModal (iter-203)', async () => {

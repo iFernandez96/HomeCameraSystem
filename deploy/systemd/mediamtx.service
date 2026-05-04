@@ -1,7 +1,16 @@
 [Unit]
 Description=MediaMTX video gateway (Home Camera System)
-After=network-online.target
-Wants=network-online.target
+# iter-356.52: order/want nvargus-daemon. Without this, mediamtx's
+# runOnInit gst-launch fires before nvargus-daemon has finished its
+# socket setup → first attempt hits "AlreadyAllocated" on
+# nvarguscamerasrc, the gst-launch crashes, mediamtx restarts, the
+# next attempt races again. Boot logs showed 14 gst-launch processes
+# tried and failed across a 5-minute window before stabilising. The
+# After= alone establishes ordering; the Wants= ensures nvargus-daemon
+# is actually started (it is socket-activated and may not be active
+# at our boot time).
+After=network-online.target nvargus-daemon.service
+Wants=network-online.target nvargus-daemon.service
 # Match the homecam-detect storm guard: 5 failures inside 60 s and
 # systemd gives up rather than spinning. A misconfigured mediamtx.yml
 # fails fast and stays failed — better to see "service failed" in the

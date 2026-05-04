@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { drawBoxes } from '../lib/drawBoxes'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
@@ -294,52 +295,12 @@ export function VideoTile({
     if (!canvas || !video) return
     const ctx = canvas.getContext('2d')
 
+    // Bail in jsdom (where 2D context isn't implemented). The
+    // ResizeObserver setup below still runs so tests can assert on
+    // its lifecycle.
     const draw = () => {
-      // Bail in jsdom (where 2D context isn't implemented). The
-      // ResizeObserver setup below still runs so tests can assert on
-      // its lifecycle.
       if (!ctx) return
-      const w = video.clientWidth
-      const h = video.clientHeight
-      if (canvas.width !== w) canvas.width = w
-      if (canvas.height !== h) canvas.height = h
-      ctx.clearRect(0, 0, w, h)
-      ctx.lineWidth = 2
-      ctx.font = '600 12px sans-serif'
-
-      // The matched person_name applies to the highest-confidence person
-      // bbox in this event — find it once so we can color/label it green
-      // while leaving other boxes (cars, dogs, second people) red.
-      let matchedIdx = -1
-      if (visibleName) {
-        let bestScore = -1
-        for (let i = 0; i < visibleBoxes.length; i++) {
-          const b = visibleBoxes[i]
-          if (b.label === 'person' && b.score > bestScore) {
-            bestScore = b.score
-            matchedIdx = i
-          }
-        }
-      }
-
-      for (let i = 0; i < visibleBoxes.length; i++) {
-        const b = visibleBoxes[i]
-        const x = b.x * w
-        const y = b.y * h
-        const bw = b.w * w
-        const bh = b.h * h
-        const matched = i === matchedIdx
-        // Tailwind emerald-400 / red-500 — the same accent we use elsewhere
-        // for the recognized state.
-        ctx.strokeStyle = matched ? '#34d399' : '#ef4444'
-        ctx.fillStyle = matched ? '#34d399' : '#ef4444'
-        ctx.strokeRect(x, y, bw, bh)
-        const labelText =
-          matched && visibleName
-            ? `${visibleName} ${(b.score * 100).toFixed(0)}%`
-            : `${b.label} ${(b.score * 100).toFixed(0)}%`
-        ctx.fillText(labelText, x, Math.max(12, y - 4))
-      }
+      drawBoxes(ctx, canvas, video, visibleBoxes, visibleName)
     }
     draw()
 

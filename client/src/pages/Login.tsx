@@ -147,7 +147,7 @@ export function Login() {
             // so NVDA reads field+error together, not separately.
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? 'login-error' : undefined}
-            className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg px-3.5 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-1 focus:ring-[var(--color-accent-default)] transition-colors duration-100"
+            className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3.5 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-default)]/30 transition-all duration-150"
           />
           <p className="text-xs text-[var(--color-text-tertiary)] mt-1.5">
             Created when HomeCam was first set up.
@@ -175,7 +175,7 @@ export function Login() {
               onFocus={handlePasswordFocus}
               aria-invalid={error ? true : undefined}
               aria-describedby={error ? 'login-error' : undefined}
-              className="w-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg pl-3.5 pr-11 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-1 focus:ring-[var(--color-accent-default)] transition-colors duration-150"
+              className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg pl-3.5 pr-11 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-default)]/30 transition-all duration-150"
             />
             <button
               type="button"

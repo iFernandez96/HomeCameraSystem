@@ -1,6 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" fill="#0a0a0a"/>
-  <rect x="160" y="200" width="192" height="128" rx="16" fill="#1f1f1f"/>
-  <circle cx="256" cy="264" r="44" fill="#0a0a0a" stroke="#ef4444" stroke-width="8"/>
-  <circle cx="256" cy="264" r="16" fill="#ef4444"/>
+  <!-- iter-356.35 — maskable variant. Android adaptive icons crop the
+       outer 20% (safe zone is inner 80%); ears + features kept inside
+       the safe zone so nothing clips under circle / squircle masks. -->
+  <rect width="512" height="512" fill="#d97706"/>
+
+  <path d="M158 196 L132 96 L218 152 Z" fill="#0e0c0a"/>
+  <path d="M354 196 L380 96 L294 152 Z" fill="#0e0c0a"/>
+  <path d="M170 184 L150 124 L204 152 Z" fill="#fda4af" opacity="0.85"/>
+  <path d="M342 184 L362 124 L308 152 Z" fill="#fda4af" opacity="0.85"/>
+
+  <path d="M256 130
+           C 156 130, 100 206, 100 296
+           C 100 384, 160 452, 256 452
+           C 352 452, 412 384, 412 296
+           C 412 206, 356 130, 256 130 Z"
+        fill="#0e0c0a"/>
+
+  <path d="M188 348 C 220 424, 292 424, 324 348 L 332 452 L 180 452 Z" fill="#f7f3eb"/>
+  <ellipse cx="256" cy="386" rx="46" ry="30" fill="#f7f3eb"/>
+
+  <ellipse cx="204" cy="276" rx="30" ry="34" fill="#fde047"/>
+  <ellipse cx="308" cy="276" rx="30" ry="34" fill="#fde047"/>
+  <ellipse cx="204" cy="276" rx="8" ry="28" fill="#0a0a0a"/>
+  <ellipse cx="308" cy="276" rx="8" ry="28" fill="#0a0a0a"/>
+  <circle cx="213" cy="267" r="6" fill="#ffffff" opacity="0.95"/>
+  <circle cx="317" cy="267" r="6" fill="#ffffff" opacity="0.95"/>
+
+  <path d="M256 336 C 244 322, 228 328, 232 344 L 256 366 L 280 344 C 284 328, 268 322, 256 336 Z" fill="#fda4af" stroke="#1a1410" stroke-width="2" stroke-opacity="0.5"/>
 </svg>

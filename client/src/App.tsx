@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { PawSpinner } from './components/PawSpinner'
 import { RequireAuth } from './components/RequireAuth'
 import { SideNav } from './components/SideNav'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -66,19 +67,14 @@ const CatLayer = lazy(() =>
 // PageFallback is the fallback for everything else; not worth
 // per-route skeletons until a specific page requests one.
 function PageFallback() {
-  // iter-356.25 (light theme): tokenized spinner ring colors. The
-  // base ring uses --color-border-subtle (warm tan); the moving
-  // arc uses --color-accent-default (calico orange) so the loading
-  // motion brings a touch of brand warmth instead of a generic
-  // grey ring.
+  // iter-356.35 (cat-themed loading): replaces the iter-356.25 ring
+  // spinner with three paw glyphs that fade in sequentially — reads
+  // as "cat walking past" instead of a generic mechanical ring. On-
+  // brand with the rest of the cat theme; reduced-motion respected
+  // via index.css gate.
   return (
-    <div
-      className="flex items-center justify-center py-12"
-      role="status"
-      aria-label="Loading"
-      aria-busy="true"
-    >
-      <div className="w-6 h-6 rounded-full border-2 border-[var(--color-border-subtle)] border-t-[var(--color-accent-default)] animate-spin" />
+    <div className="flex items-center justify-center py-12">
+      <PawSpinner size={20} ariaLabel="Loading" />
     </div>
   )
 }
@@ -127,7 +123,14 @@ function AppShell() {
           was unset, so they collided with the Events page sticky
           header. Set to ~64px so day headers sit just below the
           page header. */}
-      <SideNav />
+      {/* iter-356.45: gate SideNav on auth state. Pre-iter-356.45 the
+          sidebar was always rendered, so the unauthenticated Login
+          page showed empty nav stubs (Live / Events / People / etc.)
+          to the left of the sign-in card. Clicking them was a no-op
+          (RequireAuth bounced back), but visually it diluted the
+          focal "sign in" action. Mirrors the BottomNav and CatLayer
+          gates below. */}
+      {state === 'authed' && <SideNav />}
       {/* iter-269 (accessibility-auditor D top-3): skip-to-main link.
           Visible only when keyboard-focused. Closes the iter-261
           desktop SideNav tab-gauntlet (3 nav items × N pages = N×3
@@ -156,7 +159,12 @@ function AppShell() {
         // not a scroll container). Suppresses Android Chrome
         // pull-to-refresh app-wide which was discarding the loaded
         // list on a fast top-fling.
-        className="flex-1 overflow-y-auto overscroll-y-contain pb-20 lg:pb-6 pt-[env(safe-area-inset-top)] w-full lg:ml-56 lg:max-w-[calc(100vw-14rem)]"
+        // iter-356.45: drop `lg:ml-56 lg:max-w-[calc(100vw-14rem)]`
+        // when unauthed so the Login card centers in the full viewport
+        // instead of fighting a missing sidebar's reserved 14rem.
+        className={`flex-1 overflow-y-auto overscroll-y-contain pb-20 lg:pb-6 pt-[env(safe-area-inset-top)] w-full ${
+          state === 'authed' ? 'lg:ml-56 lg:max-w-[calc(100vw-14rem)]' : ''
+        }`}
         style={
           {
             '--sidenav-width': '14rem',

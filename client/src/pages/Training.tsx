@@ -42,14 +42,14 @@ export function Training() {
     <div className="p-4 space-y-4 max-w-3xl lg:max-w-4xl mx-auto">
       <header className="flex items-baseline justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold inline-flex items-center gap-2">
+          <h1 className="page-title text-2xl inline-flex items-center gap-2">
             <PawMark className="text-[var(--color-accent-default)]" />
             Training
           </h1>
           <p className="text-base text-[var(--color-text-primary)] mt-1">
             {activeName
               ? `Photos the camera saved as "${_displayName(activeName)}". Move any that are wrong, then come back later to re-train.`
-              : 'Photos the camera took of visitors, sorted by who it thinks they are. Tap a name to check its work.'}
+              : 'Photos the camera took of visitors, sorted by who it thinks they are. Pick a name to check its work.'}
           </p>
         </div>
         {/* iter-356.12: deep-link to the iter-355c1 review queue.

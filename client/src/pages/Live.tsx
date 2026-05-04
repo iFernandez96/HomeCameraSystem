@@ -117,7 +117,7 @@ export function Live() {
           app — drop the floating label, keep the camera name as a
           clean H1. */}
       <header>
-        <h1 className="text-2xl font-semibold inline-flex items-center gap-2">
+        <h1 className="page-title text-2xl inline-flex items-center gap-2">
           <PawMark className="text-[var(--color-accent-default)]" />
           {cameraLabel}
         </h1>
@@ -345,14 +345,21 @@ function ActionButton({
         )}
         <span>{label}</span>
       </Button>
-      {caption && (
-        <span
-          id={captionId}
-          className="text-[10px] text-[var(--color-text-tertiary)] mt-1 text-center"
-        >
-          {caption}
-        </span>
-      )}
+      {/* iter-356.47: always reserve the caption row's vertical space
+          so a 2-up grid where one button has a caption ("Talk / Soon")
+          and the other doesn't ("Snapshot") doesn't render with one
+          column visibly taller than the other. The non-captioned span
+          renders an invisible placeholder ("&nbsp;") with the same
+          font + leading so both columns flush. aria-describedby
+          wiring (iter-280) only fires when caption is present, so SR
+          users still get the "Soon" hint scoped to Talk only. */}
+      <span
+        id={captionId}
+        aria-hidden={caption ? undefined : true}
+        className="text-[10px] text-[var(--color-text-tertiary)] mt-1 text-center leading-tight"
+      >
+        {caption || ' '}
+      </span>
     </div>
   )
 }

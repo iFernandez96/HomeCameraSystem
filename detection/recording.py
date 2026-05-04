@@ -99,6 +99,15 @@ class ClipRecorder(object):
         runtime config (user-tunable in Settings). Falls back to
         the constructor default when caller passes None.
         """
+        # iter-356.43: explicit `-f mp4`. ffmpeg infers the muxer from
+        # the output filename's extension; the iter-350 G1 change put a
+        # `.tmp` suffix on the post-roll temp path (and the iter-350 G2
+        # concat also writes to `<final>.tmp`), which ffmpeg cannot map
+        # to a muxer ("Unable to find a suitable output format" in <1 s,
+        # subprocess exits RC=1, no clip file written). Forcing the
+        # muxer here makes the argv extension-independent so future
+        # suffix changes can't regress this. Defense-in-depth: also
+        # patched in `preroll.run_concat`.
         return [
             self.ffmpeg_bin,
             "-y",                    # overwrite output without prompting
@@ -108,6 +117,7 @@ class ClipRecorder(object):
             "-i", self.rtsp_url,
             "-t", str(duration_s),
             "-c", "copy",
+            "-f", "mp4",
             output_path,
         ]
 
@@ -242,21 +252,69 @@ class ClipRecorder(object):
             pre_segments = preroll_buffer.segments_in_window(
                 now=now, pre_roll_s=pre_roll_s,
             )
+            # iter-356.51 (race fix): the segment-recorder ffmpeg uses
+            # `-segment_wrap N` which OVERWRITES segment slots in-place
+            # as the ring rotates. The merge thread holds segment
+            # PATHS (not bytes) and waits up to clip_post_roll_s for
+            # the post-roll ffmpeg to finish — during that wait, the
+            # live recorder cycles past the wrap point and rewrites
+            # those slots with post-event content. By the time
+            # `run_concat` reads the paths, the bytes are no longer
+            # pre-event. Confirmed via frame-sampling: a 25.5 s clip
+            # captured during a continuous person-emit burst contained
+            # zero people in any frame. Fix: copy segments out of the
+            # ring NOW, before the merge thread waits. The merge
+            # thread reads from the per-event scratch dir; ring
+            # rotation is harmless. Scratch dir cleaned in `finally`
+            # of the merge thread.
+            import shutil as _shutil
+            scratch_dir = os.path.join(
+                self.recordings_dir, "_preroll", "event_" + event_id,
+            )
+            copied_segments = []
+            try:
+                os.makedirs(scratch_dir, exist_ok=True)
+                for i, seg_src in enumerate(pre_segments):
+                    seg_dst = os.path.join(
+                        scratch_dir, "seg_{:03d}.mp4".format(i),
+                    )
+                    try:
+                        _shutil.copy2(seg_src, seg_dst)
+                        copied_segments.append(seg_dst)
+                    except (OSError, IOError):
+                        # A segment that vanished mid-copy (ring
+                        # rotation already rewrote it OR ffmpeg held
+                        # the slot open) is skipped, not fatal — the
+                        # merge can still produce a useful pre-roll
+                        # from whatever copied successfully.
+                        pass
+            except OSError:
+                # Scratch-dir creation failed (disk full, perms);
+                # fall back to passing the live ring paths and accept
+                # the race. Better than no clip at all.
+                copied_segments = list(pre_segments)
+                scratch_dir = None
             t = threading.Thread(
                 target=self._merge_preroll,
-                args=(proc, pre_segments, post_only_path, output_path,
-                      _preroll, event_id),
+                args=(proc, copied_segments, post_only_path, output_path,
+                      _preroll, event_id, scratch_dir),
                 daemon=True,
             )
             t.start()
         return True
 
     def _merge_preroll(self, proc, pre_segments, post_only_path,
-                       final_path, preroll_module, event_id):
+                       final_path, preroll_module, event_id,
+                       scratch_dir=None):
         """iter-324 daemon-thread: wait for the post-roll ffmpeg to
         finish, then ffmpeg-concat the pre-roll segments with the
         post-roll output into `final_path`. Cleanup the temp post-
         roll file.
+
+        iter-356.51: `pre_segments` is a list of paths inside
+        `scratch_dir` (a per-event copy of the live ring), not the
+        live ring itself. `scratch_dir` is rmtree'd in the outer
+        `finally` so post-merge cleanup is bounded.
 
         Failure modes (defensive — log-free, fail-quiet):
         - post-roll ffmpeg returned non-zero: still try to concat
@@ -369,3 +427,14 @@ class ClipRecorder(object):
         # merge outcome via a metric. Currently unused — the recorder
         # module stays log-free per its iter-202 design.
         _ = event_id
+        # iter-356.51: tear down the per-event scratch dir holding
+        # the copied pre-roll segments. Fail-quiet: a partial cleanup
+        # leaves bytes on disk but the next event's scratch dir is
+        # uniquely keyed (`event_<id>`), so old debris never blocks
+        # a new merge.
+        if scratch_dir is not None:
+            try:
+                import shutil as _shutil
+                _shutil.rmtree(scratch_dir, ignore_errors=True)
+            except OSError:
+                pass

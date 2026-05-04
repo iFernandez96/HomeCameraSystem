@@ -4,7 +4,23 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// iter-356.37: build-time stamp injected as `__BUILD_ID__` so the
+// debug-reload UI in Settings can show "Bundle: <id>" — operator can
+// confirm a force-reload actually pulled the latest deploy. Format:
+// ISO date + 6-char random suffix so two builds in the same minute
+// still differ.
+const __BUILD_ID = (() => {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`
+  const rand = Math.random().toString(36).slice(2, 8)
+  return `${stamp}-${rand}`
+})()
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(__BUILD_ID),
+  },
   plugins: [
     react(),
     tailwindcss(),
@@ -22,11 +38,18 @@ export default defineConfig({
         type: 'module',
       },
       manifest: {
-        name: 'Home Camera',
+        // iter-356.35: cat-themed brand identity carried into the PWA
+        // install surface. Name flips from "Home Camera" → "HomeCam" so
+        // the short version shows on most Android home-screen labels.
+        // theme_color + background_color flip from legacy dark to cream
+        // matching the iter-356.25 light theme; iOS splash + Android
+        // adaptive-icon background now reads as the same brand surface
+        // as the running app.
+        name: 'HomeCam — Panther, Mushu & Coco',
         short_name: 'HomeCam',
-        description: 'Self-hosted Jetson camera viewer',
-        theme_color: '#0a0a0a',
-        background_color: '#0a0a0a',
+        description: 'Self-hosted home camera, watched over by three cats.',
+        theme_color: '#faf6ee',
+        background_color: '#faf6ee',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 
 const subscribeWsState = vi.fn()
 const reconnectIfClosed = vi.fn()
@@ -59,29 +59,58 @@ describe('ConnectionBanner', () => {
   })
 
   it('shows a disconnected banner with retry hint when closed', () => {
-    subscribeWsState.mockImplementation((cb) => {
-      cb('closed')
-      return () => {}
-    })
-    render(<ConnectionBanner />)
-    expect(screen.getByRole('status')).toHaveTextContent(/disconnected — retrying/i)
+    // arrange — iter-356.48 added a 2 s post-auth grace period that
+    // suppresses the closed-state banner so a normal handshake doesn't
+    // flash red on every page load. Fake timers advance past it.
+    vi.useFakeTimers()
+    try {
+      subscribeWsState.mockImplementation((cb) => {
+        cb('closed')
+        return () => {}
+      })
+
+      // act
+      render(<ConnectionBanner />)
+      act(() => {
+        vi.advanceTimersByTime(2100)
+      })
+
+      // assert
+      expect(screen.getByRole('status')).toHaveTextContent(/disconnected — retrying/i)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('updates when the WS state transitions', () => {
-    let push: (s: string) => void = () => {}
-    subscribeWsState.mockImplementation((cb) => {
-      push = cb
-      cb('connecting')
-      return () => {}
-    })
-    const { rerender } = render(<ConnectionBanner />)
-    expect(screen.getByRole('status')).toHaveTextContent(/connecting/i)
-    push('open')
-    rerender(<ConnectionBanner />)
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    push('closed')
-    rerender(<ConnectionBanner />)
-    expect(screen.getByRole('status')).toHaveTextContent(/disconnected/i)
+    // arrange — same iter-356.48 grace gating; the open→closed
+    // transition path is real-disconnect (banner SHOULD render
+    // synchronously), but we still advance past the initial 2 s
+    // gate to keep the test deterministic.
+    vi.useFakeTimers()
+    try {
+      let push: (s: string) => void = () => {}
+      subscribeWsState.mockImplementation((cb) => {
+        push = cb
+        cb('connecting')
+        return () => {}
+      })
+      const { rerender } = render(<ConnectionBanner />)
+
+      // act + assert — connecting renders unconditionally.
+      expect(screen.getByRole('status')).toHaveTextContent(/connecting/i)
+      push('open')
+      rerender(<ConnectionBanner />)
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      act(() => {
+        vi.advanceTimersByTime(2100)
+      })
+      push('closed')
+      rerender(<ConnectionBanner />)
+      expect(screen.getByRole('status')).toHaveTextContent(/disconnected/i)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('forces a WS reconnect when the tab returns to visible (iter-158)', () => {

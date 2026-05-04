@@ -14,6 +14,11 @@ export default tseslint.config(
       'coverage',
       '*.config.js',
       'src/sw.ts',
+      // iter-356.36+: Node tooling scripts use Node globals (process,
+      // console, document via Playwright) and aren't part of the
+      // browser bundle. ESLint's browser-only config flags them as
+      // no-undef false-positives.
+      'tools/',
     ],
   },
   js.configs.recommended,

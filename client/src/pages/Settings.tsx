@@ -3,6 +3,7 @@ import { useState } from 'react'
 // Settings.tsx is now a pure shell — tab state + section composition.
 import { AccountSection } from './settings/AccountSection'
 import { DangerZone } from './settings/DangerZone'
+import { DebugSection } from './settings/DebugSection'
 import { DetectionSection } from './settings/DetectionSection'
 import { JetsonSection } from './settings/JetsonSection'
 import { NotificationsSection } from './settings/NotificationsSection'
@@ -107,7 +108,7 @@ export function Settings() {
     // ZoneEditor inherit the same cap. Mobile keeps the full-width
     // layout (no `max-w-*` below `lg:`).
     <div className="p-4 space-y-6 pb-8 lg:max-w-4xl lg:mx-auto">
-      <h1 className="text-2xl font-semibold inline-flex items-center gap-2">
+      <h1 className="page-title text-2xl inline-flex items-center gap-2">
         <PawMark className="text-[var(--color-accent-default)]" />
         Settings
       </h1>
@@ -167,6 +168,12 @@ export function Settings() {
       {/* iter-214 (Feature #8 slice 3): owner-only timelapses
           section. iter-292 extracted to ./settings/TimelapsesSection.tsx. */}
       {isOwner && <TimelapsesSection />}
+
+      {/* iter-356.37: Debug pane — Reload app / Reset cache & reload
+          buttons + bundle ID + SW diagnostics. Available to ALL roles
+          on the System tab; the buttons are local-only (no server
+          side-effects), and the SW + cache state is harmless to view. */}
+      <DebugSection />
 
       {/* iter-198/211/231/237: owner-only destructive ops
           (Backup / Update / Restore / Reboot). iter-293 extracted to
@@ -245,10 +252,10 @@ function SettingsTabs({
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(t.id)}
-            className={`px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-t ${itemClassExtra} ${
+            className={`px-4 py-3 text-sm -mb-px border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-t ${itemClassExtra} ${
               isActive
-                ? 'border-[var(--color-accent-default)] text-[var(--color-text-primary)]'
-                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                ? 'border-[var(--color-accent-default)] text-[var(--color-text-primary)] font-semibold'
+                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium'
             }`}
           >
             {t.label}

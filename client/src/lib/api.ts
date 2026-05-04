@@ -1,6 +1,7 @@
 import type {
   DetectionConfig,
   DetectionEvent,
+  EventTracks,
   LoginRequest,
   LoginResponse,
   MeResponse,
@@ -107,6 +108,31 @@ export const getStatus = (init?: RequestInit) =>
   req<ServerStatus>('/api/status', init)
 export const fetchEvents = (limit = 100) =>
   req<DetectionEvent[]>(`/api/events?limit=${limit}`)
+
+/**
+ * iter-356.53 — fetch the per-event bbox-track sidecar. Returns
+ * `null` on a 404 (legacy clip without a track sidecar — the
+ * `ClipModal` falls back to today's static `event.boxes` overlay).
+ * Other non-2xx still throw `HttpError` so a real outage surfaces.
+ */
+export async function fetchEventTracks(
+  eventId: string,
+): Promise<EventTracks | null> {
+  const path = `/api/events/${encodeURIComponent(eventId)}/tracks`
+  const res = await fetch(path, { credentials: 'same-origin' })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const body = await res.json()
+      if (body && typeof body.detail === 'string') detail = body.detail
+    } catch {
+      /* response wasn't JSON — keep statusText */
+    }
+    throw new HttpError(path, res.status, detail)
+  }
+  return (await res.json()) as EventTracks
+}
 // iter-220 (Feature #6 slice 6): cursor-paginated event search. Wraps
 // the iter-219 `GET /api/events/search` route. All filters optional;
 // `before_ts` is the cursor passed back from `next_cursor` on the

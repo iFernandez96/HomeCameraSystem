@@ -43,10 +43,10 @@ export function SideNav() {
             against the live tailnet PWA showed three indistinct smudges).
             Now stacked above the wordmark at size=72 (72×24, ~24px per
             face), matching the Login card's hero treatment but smaller. */}
-        <CatTrioMark size={72} ariaLabel="Home Camera" className="mb-3" />
+        <CatTrioMark size={72} ariaLabel="HomeCam" className="mb-3" />
         <div>
           <div className="text-lg font-semibold text-[var(--color-text-primary)] leading-none">
-            Home Camera
+            HomeCam
           </div>
           {user ? (
             <div className="text-xs text-[var(--color-text-tertiary)] mt-1">
@@ -86,12 +86,19 @@ export function SideNav() {
         ))}
       </div>
       {user ? (
+        // iter-356.45: shape-matched to the nav rows above (icon + label,
+        // px-3 py-2.5, rounded-lg, same hover surface). Pre-iter-356.45
+        // this was an unstyled text link bottom-left that read as
+        // disconnected from the rest of the sidebar. The icon is a
+        // standard arrow-out-of-a-rectangle to match the universal
+        // sign-out affordance.
         <button
           type="button"
           onClick={logout}
-          className="mt-3 px-3 py-2 text-sm text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] rounded-lg text-left transition-colors focus-ring"
+          className="mt-3 flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] transition-colors focus-ring"
         >
-          Sign out
+          <SignOutIcon />
+          <span>Sign out</span>
         </button>
       ) : null}
     </nav>
@@ -144,6 +151,18 @@ function SettingsIcon({ active: _active }: { active: boolean }) {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  )
+}
+
+function SignOutIcon() {
+  // Universal log-out glyph: door + arrow leaving. Stroke-based to
+  // match the rest of the SideNav icon set (LiveIcon, EventsIcon, …).
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
     </svg>
   )
 }

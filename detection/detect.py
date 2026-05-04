@@ -751,6 +751,25 @@ def main():
     # labels, all of which could in theory survive `wanted` if the
     # operator selected them).
     last_emit_by_key = {}  # type: ignore[var-annotated]
+    # iter-356.53 (bbox-track sidecar, Feature #1 follow-up):
+    # rolling deque of (frame_ts, boxes) for the last ~64 s of
+    # inferences (covers the absolute pre-roll ceiling). Single-
+    # threaded inference loop owns it; CPython GIL covers append.
+    # ACTIVE_TRACKS holds in-flight clip-recordings whose post-roll
+    # window is still capturing. On expiry, drained entries are
+    # written to `<recordings_dir>/<event_id>.tracks.json` and the
+    # ClipModal picks up bbox-following on the next playback.
+    import collections as _collections
+    track_deque = _collections.deque(maxlen=512)
+    active_tracks = {}  # type: ignore[var-annotated]
+    try:
+        import tracks as _tracks_mod
+    except Exception as _e:
+        # Fail-quiet: if tracks.py is missing or broken, fall back
+        # to today's static-overlay behavior. The clip MP4 path is
+        # independent.
+        print("[detect] track sidecar disabled: {}".format(_e), flush=True)
+        _tracks_mod = None
     last_inference = 0.0
     last_detection = 0.0
     last_latest_save = 0.0
@@ -1020,6 +1039,37 @@ def main():
             boxes.append(normalize_box(
                 d.Left, d.Top, d.Right, d.Bottom, w, h, label, d.Confidence,
             ))
+        # iter-356.53: capture this frame's boxes for any in-flight
+        # clip's track sidecar — runs BEFORE zone/cooldown gates so
+        # the post-roll path of a triggering event still sees every
+        # frame even if downstream gates skip the rest of this loop
+        # iteration. Also seeds the rolling deque used at emit time
+        # to snapshot the pre-roll window.
+        if _tracks_mod is not None:
+            track_deque.append((now, list(boxes)))
+            if active_tracks:
+                _expired = []
+                for _eid, _track in active_tracks.items():
+                    if now > _track["expires_at"]:
+                        _expired.append(_eid)
+                    else:
+                        _track["samples"].append((now, list(boxes)))
+                for _eid in _expired:
+                    _track = active_tracks.pop(_eid)
+                    try:
+                        _payload = _tracks_mod.build_payload(
+                            _eid, _track["event_ts"],
+                            _track["pre_roll_s"], _track["post_roll_s"],
+                            _track["samples"],
+                        )
+                        _tracks_mod.write_sidecar(
+                            recordings_dir, _eid, _payload,
+                        )
+                    except Exception as _e:
+                        print(
+                            "[detect] track sidecar write failed for {}: {}".format(_eid, _e),
+                            flush=True,
+                        )
         # iter-191b (Feature #5): zone gate. When the user has drawn
         # zones, drop the event entirely if no detection box's center
         # falls inside any polygon. Empty zones short-circuits to
@@ -1147,6 +1197,25 @@ def main():
                     preroll_buffer=preroll_buffer,
                 ):
                     clip_url = "/api/events/{}/clip".format(event_id)
+                    # iter-356.53: register the active track. Snapshot
+                    # the pre-roll window from the rolling deque NOW,
+                    # then keep appending post-roll samples each loop
+                    # iteration above until `expires_at`. The +1.0 s
+                    # grace covers ffmpeg flush + the moment the clip
+                    # MP4 lands on disk.
+                    if _tracks_mod is not None:
+                        _pre_lo = now - float(runtime.clip_pre_roll_s)
+                        _pre_samples = [
+                            (_t, _b) for (_t, _b) in list(track_deque)
+                            if _t >= _pre_lo
+                        ]
+                        active_tracks[event_id] = {
+                            "event_ts": now,
+                            "pre_roll_s": float(runtime.clip_pre_roll_s),
+                            "post_roll_s": float(runtime.clip_post_roll_s),
+                            "samples": _pre_samples,
+                            "expires_at": now + float(runtime.clip_post_roll_s) + 1.0,
+                        }
             except Exception as e:
                 # Recorder failures are best-effort. The event still
                 # flows; clip_url stays None and the client modal

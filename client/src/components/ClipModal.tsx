@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { nextRovingIndex } from '../lib/a11y'
-import { exportEvents } from '../lib/api'
+import { exportEvents, fetchEventTracks } from '../lib/api'
+import { drawBoxes } from '../lib/drawBoxes'
 import {
   absoluteTime,
   clockTime,
@@ -8,7 +9,7 @@ import {
   humanCameraName,
 } from '../lib/eventLabel'
 import { useToast } from '../lib/toast'
-import type { DetectionEvent } from '../lib/types'
+import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
 import { Button } from './primitives/Button'
 
 /**
@@ -136,6 +137,86 @@ export function ClipModal({
     }
   }, [onClose])
 
+  // iter-356.44 — bbox overlay during clip playback (canvas-on-video,
+  // never pixel burn-in so the worker keeps `-c copy`). Shares the
+  // `homecam:boxesVisible` localStorage key with VideoTile.
+  //
+  // iter-356.53 — bbox FOLLOWS the object: fetch the per-event
+  // bbox-track sidecar (`/api/events/{id}/tracks`), bind the canvas
+  // to `<video>.timeupdate`, and on each tick draw the closest-in-
+  // time sample's boxes. Legacy clips have no sidecar (404) → fall
+  // back to today's static `event.boxes` overlay.
+  const [boxesVisible, setBoxesVisible] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    const stored = window.localStorage.getItem('homecam:boxesVisible')
+    return stored === null ? true : stored === '1'
+  })
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('homecam:boxesVisible', boxesVisible ? '1' : '0')
+  }, [boxesVisible])
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  // Track sidecar — null when not yet fetched OR 404 (legacy clip).
+  // The per-clipUrl fetch fires once on mount + clipUrl change.
+  const [tracks, setTracks] = useState<EventTracks | null>(null)
+  useEffect(() => {
+    if (clipErrored) return
+    let cancelled = false
+    fetchEventTracks(event.id)
+      .then((t) => {
+        if (!cancelled) setTracks(t)
+      })
+      .catch(() => {
+        if (!cancelled) setTracks(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [event.id, clipErrored])
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current
+    const video = videoRef.current
+    if (!canvas || !video) return
+    const ctx = canvas.getContext('2d')
+    const fallbackBoxes: DetectionBox[] = boxesVisible ? event.boxes : []
+    const visibleName = boxesVisible ? event.person_name ?? null : null
+    // Pick the closest-in-time sample by binary search over
+    // `samples` (server emits ascending by ts_offset_s). Returns
+    // `event.boxes` when no track sidecar OR boxes hidden — keeps
+    // the legacy-clip path coherent with the live tile.
+    const pickBoxesAt = (currentTime: number): DetectionBox[] => {
+      if (!boxesVisible) return []
+      if (!tracks || tracks.samples.length === 0) return fallbackBoxes
+      const samples = tracks.samples
+      let lo = 0
+      let hi = samples.length - 1
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (samples[mid].ts_offset_s <= currentTime) lo = mid
+        else hi = mid - 1
+      }
+      return samples[lo].boxes
+    }
+    const draw = () => {
+      if (!ctx) return
+      const t = video.currentTime || 0
+      drawBoxes(ctx, canvas, video, pickBoxesAt(t), visibleName)
+    }
+    draw()
+    video.addEventListener('timeupdate', draw)
+    video.addEventListener('loadedmetadata', draw)
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(draw)
+      observer.observe(video)
+    }
+    return () => {
+      video.removeEventListener('timeupdate', draw)
+      video.removeEventListener('loadedmetadata', draw)
+      if (observer) observer.disconnect()
+    }
+  }, [event.boxes, event.person_name, clipUrl, boxesVisible, clipErrored, tracks])
+
   // Tri-state body content: video (default), snapshot fallback
   // (clip errored), empty state (both errored / no thumb).
   let body: React.ReactNode
@@ -146,20 +227,61 @@ export function ClipModal({
     // here satisfies the lint rule without adding fake captions.
     // Disable would also work but explicit is clearer.
     body = (
-      <video
-        ref={videoRef}
-        key={clipUrl}
-        src={clipUrl}
-        controls
-        autoPlay
-        playsInline
-        loop={loop}
-        onError={() => setErroredClipUrl(clipUrl)}
-        aria-label={`Clip of ${event.person_name ?? event.label} event`}
-        className="max-w-full max-h-full rounded-xl shadow-2xl border border-[var(--color-border)] bg-black"
-      >
-        <track kind="captions" />
-      </video>
+      <div className="relative max-w-full max-h-full">
+        <video
+          ref={videoRef}
+          key={clipUrl}
+          src={clipUrl}
+          controls
+          autoPlay
+          playsInline
+          loop={loop}
+          onError={() => setErroredClipUrl(clipUrl)}
+          aria-label={`Clip of ${event.person_name ?? event.label} event`}
+          className="max-w-full max-h-full rounded-xl shadow-2xl border border-[var(--color-border)] bg-black"
+        >
+          <track kind="captions" />
+        </video>
+        {/* iter-356.44: bbox overlay. pointer-events-none so the
+            native <video> controls (play/pause/scrub/fullscreen) stay
+            clickable through the canvas. data-testid for unit tests. */}
+        <canvas
+          ref={overlayCanvasRef}
+          data-testid="clip-bbox-canvas"
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none rounded-xl"
+        />
+        {/* iter-356.44: bbox visibility toggle, mirror of the
+            VideoTile button. Same localStorage key + same
+            aria-pressed semantics so a screen-reader user gets a
+            consistent affordance across live + recorded surfaces. */}
+        {event.boxes.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setBoxesVisible((v) => !v)}
+            aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
+            aria-pressed={boxesVisible}
+            className={`absolute bottom-3 right-3 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+              boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
+            }`}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              {boxesVisible ? null : <path d="M4 4l16 16" />}
+            </svg>
+          </button>
+        )}
+      </div>
     )
   } else if (event.thumb_url && !imgErrored) {
     body = (

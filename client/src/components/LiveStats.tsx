@@ -186,7 +186,7 @@ export function LiveStats({ status }: { status: ServerStatus | null }) {
         >
           <span
             aria-hidden="true"
-            className={`inline-block transition-transform duration-150 ${detailsOpen ? 'rotate-90' : ''}`}
+            className={`inline-block transition-transform duration-150 text-[var(--color-accent-default)] ${detailsOpen ? 'rotate-90' : ''}`}
           >
             ▸
           </span>

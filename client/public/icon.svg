@@ -1,8 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="96" fill="#0a0a0a"/>
-  <rect x="120" y="180" width="272" height="180" rx="24" fill="#1f1f1f" stroke="#2a2a2a" stroke-width="4"/>
-  <circle cx="256" cy="270" r="60" fill="#0a0a0a" stroke="#ef4444" stroke-width="10"/>
-  <circle cx="256" cy="270" r="22" fill="#ef4444"/>
-  <rect x="200" y="140" width="112" height="40" rx="10" fill="#1f1f1f" stroke="#2a2a2a" stroke-width="4"/>
-  <circle cx="350" cy="210" r="6" fill="#ef4444"/>
+  <!-- iter-356.35 — cat-themed PWA app icon. Calico-orange tile with a
+       Mushu-style tuxedo cat face peeking through. Calico orange = the
+       app's accent token (#d97706). Tuxedo silhouette + yellow eyes +
+       white bib + pink nose reads as cat at every scale from 48 px home
+       screen up to 512 px install splash. Tiny red recording dot in
+       top-right hints at the camera function. -->
+
+  <!-- rounded-square background -->
+  <rect width="512" height="512" rx="96" fill="#d97706"/>
+
+  <!-- subtle warm-dark inner shadow ring for depth -->
+  <rect x="6" y="6" width="500" height="500" rx="92" fill="none" stroke="#1a1410" stroke-width="2" stroke-opacity="0.18"/>
+
+  <!-- cat head — black silhouette centered, scaled to ~70% of tile -->
+  <!-- Ears -->
+  <path d="M138 180 L108 64 L210 144 Z" fill="#0e0c0a"/>
+  <path d="M374 180 L404 64 L302 144 Z" fill="#0e0c0a"/>
+  <!-- Inner ear pink -->
+  <path d="M152 168 L130 100 L194 144 Z" fill="#fda4af" opacity="0.85"/>
+  <path d="M360 168 L382 100 L318 144 Z" fill="#fda4af" opacity="0.85"/>
+
+  <!-- Head silhouette -->
+  <path d="M256 110
+           C 152 110, 92 192, 92 296
+           C 92 388, 156 460, 256 460
+           C 356 460, 420 388, 420 296
+           C 420 192, 360 110, 256 110 Z"
+        fill="#0e0c0a"/>
+
+  <!-- Tuxedo bib — chin + chest, contained within head -->
+  <path d="M188 350 C 220 432, 292 432, 324 350 L 336 460 L 176 460 Z" fill="#f7f3eb"/>
+  <ellipse cx="256" cy="392" rx="48" ry="32" fill="#f7f3eb"/>
+
+  <!-- Eyes — yellow, with slit pupils + catchlight -->
+  <ellipse cx="200" cy="276" rx="32" ry="36" fill="#fde047"/>
+  <ellipse cx="312" cy="276" rx="32" ry="36" fill="#fde047"/>
+  <ellipse cx="200" cy="276" rx="8" ry="30" fill="#0a0a0a"/>
+  <ellipse cx="312" cy="276" rx="8" ry="30" fill="#0a0a0a"/>
+  <circle cx="210" cy="266" r="6" fill="#ffffff" opacity="0.95"/>
+  <circle cx="322" cy="266" r="6" fill="#ffffff" opacity="0.95"/>
+
+  <!-- Pink heart-nose -->
+  <path d="M256 340 C 244 326, 228 332, 232 348 L 256 372 L 280 348 C 284 332, 268 326, 256 340 Z" fill="#fda4af" stroke="#1a1410" stroke-width="2" stroke-opacity="0.5"/>
+
+  <!-- Recording dot — function nod -->
+  <circle cx="438" cy="74" r="20" fill="#b91c1c" stroke="#faf6ee" stroke-width="6"/>
+  <circle cx="438" cy="74" r="8" fill="#faf6ee"/>
 </svg>

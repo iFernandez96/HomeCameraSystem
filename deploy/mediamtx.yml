@@ -50,7 +50,26 @@ paths:
   cam:
     source: publisher
 
-    # Jetson Nano 2GB + RPi camera v2 (IMX219) via libargus.
+    # Jetson Nano 2GB + Arducam IMX477 (1/2.3", 12.3MP) + 96° M12 wide-angle
+    # CCTV lens (F2.0, 3MP-rated). Camera swap landed iter-356.31; DTB
+    # overlay switched via `config-by-hardware.py -n 2="Camera IMX477"`.
+    #
+    # IMX477 native sensor modes (per `gst-launch nvarguscamerasrc num-buffers=1`
+    # GST_ARGUS dump on this Jetson):
+    #   mode 0: 3840 x 2160 @ 30 fps — full sensor area (full FOV)
+    #   mode 1: 1920 x 1080 @ 60 fps — center crop (~60 % horizontal FOV)
+    #
+    # IMPORTANT — image-circle / sensor-size mismatch with the current lens:
+    # The 3MP-rated M12 lens projects an image circle sized for ~1/3" sensors;
+    # the IMX477 is 1/2.3", noticeably larger. In mode 0 the corners are pure
+    # black (geometric vignette — light never reaches those pixels). Mode 1's
+    # 1080p center-crop neatly excludes the unusable corners, so it's the
+    # correct choice for THIS lens. If a true 1/2.3"-rated wide-angle (e.g.
+    # Arducam's "12MP / IMX477 compatible" M12) is fitted later, switch to
+    # `sensor-mode=0` to recover the full ~96° FOV. Pre-iter-356.31 the auto-
+    # pick happened to land on mode 1; pinning makes it explicit so a libargus
+    # firmware bump can't silently switch us to mode 0 and start showing the
+    # vignetted corners.
     #
     # Single producer (`nvarguscamerasrc`) -> hardware H.264 (`nvv4l2h264enc`)
     # -> RTSP push to localhost. The detection worker reads back from the
@@ -91,13 +110,40 @@ paths:
     #     3000000 = 20 % CBR headroom for legitimate motion bursts. No
     #     measurable bandwidth uplift on idle scenes (CBR average stays
     #     at 2.5 Mbps).
+    # iter-356.52 (camera-library-usage-auditor freeze fix):
+    #   - nvvidconv between nvarguscamerasrc and the encoder. Sensor-
+    #     mode 1 on the IMX477 is locked to 1920x1080 @ 60 fps by the
+    #     hardware; the bare `caps-filter,width=1280,height=720,
+    #     framerate=30/1` was silently widened during caps negotiation
+    #     so nvv4l2h264enc was actually encoding 1080p60 into a
+    #     2.5 Mbps CBR target — VBV drain on motion → encoder stalls →
+    #     visible WebRTC freezes + 200+ RTP packets lost in first 60 s
+    #     (mediamtx publisher session log). nvvidconv is the Tegra
+    #     hardware scaler (VIC); keeps everything in NVMM, near-zero
+    #     CPU cost.
+    #   - rtspclientsink protocols=tcp. Default is UDP even on the
+    #     loopback publisher leg; the same encoder back-pressure that
+    #     overflows the VBV also overflows the UDP send buffer,
+    #     dropping RTP packets that downstream NVDEC + WebRTC must
+    #     conceal or stall on. TCP loopback is sub-ms RTT — no
+    #     latency cost, eliminates the loss path.
+    # iter-356.52a: nvvidconv on Tegra L4T 32.x cannot do framerate
+    # conversion — only color/size. We resize to 720p in NVMM and
+    # accept the sensor-native 60 fps into the encoder. At 720p60
+    # the pixel-rate is ~55 Mpx/s (vs 1080p30 ≈ 62 Mpx/s) so the
+    # encoder is actually less loaded than the original 1080p input
+    # path, and 2.5 Mbps CBR is achievable. Smaller GOP-time
+    # (iframeinterval=8 / 60 fps = 133 ms) gives crisper recovery on
+    # any packet loss — beneficial side-effect.
     runOnInit: >-
       gst-launch-1.0 -e
-      nvarguscamerasrc !
-      'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' !
+      nvarguscamerasrc sensor-mode=1 !
+      'video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1' !
+      nvvidconv !
+      'video/x-raw(memory:NVMM),width=1280,height=720' !
       nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true !
       h264parse !
-      rtspclientsink location=rtsp://localhost:$RTSP_PORT/cam
+      rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam
     runOnInitRestart: yes
 
     # Alternative (USB / V4L2 camera) — comment the libargus block above and use this:

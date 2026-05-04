@@ -118,7 +118,7 @@ export function People() {
     <div className="p-4 space-y-4 max-w-3xl lg:max-w-4xl mx-auto">
       <header className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-semibold inline-flex items-center gap-2">
+          <h1 className="page-title text-2xl inline-flex items-center gap-2">
             <PawMark className="text-[var(--color-accent-default)]" />
             People
           </h1>

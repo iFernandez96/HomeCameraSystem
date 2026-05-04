@@ -423,3 +423,114 @@ def test_when_stop_called_then_watchdog_thread_exits(tmp_path, monkeypatch):
 
     # assert
     assert t.is_alive() is False
+
+
+def test_given_tmp_output_path_when_run_concat_then_forces_mp4_muxer(
+    tmp_path, monkeypatch
+):
+    """iter-356.43 regression pin: the concat output is
+    `<final>.tmp` (iter-350 G2's atomic-rename merge target); ffmpeg
+    cannot infer the muxer from `.tmp` and would exit RC=1 with
+    "Unable to find a suitable output format". `-f mp4` immediately
+    before the output path forces the muxer. Note `run_concat`
+    already passes `-f concat` for the input demuxer; the SECOND
+    `-f mp4` (after `-i list_path`) binds to the OUTPUT.
+    """
+    # arrange
+    list_path = tmp_path / "list.txt"
+    list_path.write_text("file 'foo.mp4'\n")
+    out = tmp_path / "evt.mp4.tmp"
+    fake_result = MagicMock()
+    fake_result.returncode = 0
+    captured = MagicMock(return_value=fake_result)
+    monkeypatch.setattr("preroll.subprocess.run", captured)
+
+    # act
+    run_concat("ffmpeg", str(list_path), str(out))
+
+    # assert
+    cmd = captured.call_args[0][0]
+    # Two `-f` flags expected: `-f concat` for input, `-f mp4` for output.
+    f_indices = [i for i, a in enumerate(cmd) if a == "-f"]
+    assert len(f_indices) == 2, (
+        "expected two -f flags (input concat + output mp4); got: %s" % cmd
+    )
+    # The second `-f` must be `mp4` and sit immediately before the output.
+    assert cmd[f_indices[1] + 1] == "mp4"
+    assert cmd[-1] == str(out), (
+        "output path must be the last argv element; got: %s" % cmd[-1]
+    )
+    assert cmd[-2] == "mp4", (
+        "-f mp4 must immediately precede the output path; argv tail: %s"
+        % cmd[-3:]
+    )
+
+
+# --- iter-356.43 real-ffmpeg integration ---
+# Same rationale as test_recording.py's integration block: the mocked
+# argv test above only proves the flag is in the list. Below, we run
+# the real `run_concat` against real ffmpeg with real lavfi-generated
+# segments, writing to a `.tmp` output path. Pre-fix this fails
+# (returncode=1, no file) — exactly how the production bug manifested.
+
+import shutil as _shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+_FFMPEG_BIN = _shutil.which("ffmpeg")
+_skip_no_ffmpeg = pytest.mark.skipif(
+    _FFMPEG_BIN is None,
+    reason="ffmpeg not on PATH (CI / dev-box variance — Jetson always has it)",
+)
+
+
+@_skip_no_ffmpeg
+def test_given_real_ffmpeg_and_tmp_output_when_run_concat_then_writes_mp4(
+    tmp_path,
+):
+    """End-to-end: generate two tiny MP4 segments via lavfi, write a
+    concat list, call `run_concat` with a `.tmp` output — pre-iter-
+    356.43 ffmpeg can't infer the muxer from `.tmp` and the merge
+    silently fails, leaving every detection event clipless.
+    """
+    # arrange — make two real 0.5 s mp4 segments via lavfi.
+    seg_paths = []
+    for i in range(2):
+        seg_path = tmp_path / ("seg_{:03d}.mp4".format(i))
+        gen = subprocess.run(
+            [
+                _FFMPEG_BIN, "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi",
+                "-i", "testsrc=duration=0.5:size=64x64:rate=10",
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                "-f", "mp4",
+                str(seg_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=15,
+        )
+        assert gen.returncode == 0, (
+            "lavfi seg generation failed: %s"
+            % gen.stderr.decode("utf-8", "replace")[:300]
+        )
+        seg_paths.append(str(seg_path))
+    list_path = tmp_path / "concat.txt"
+    write_concat_list(str(list_path), seg_paths)
+    # The output uses the production `.tmp` suffix exactly as
+    # `recording.py` constructs it for the merge target.
+    output_path = tmp_path / "evt.mp4.tmp"
+
+    # act
+    ok = run_concat(_FFMPEG_BIN, str(list_path), str(output_path))
+
+    # assert
+    assert ok is True, "run_concat returned False — ffmpeg rejected the argv"
+    assert output_path.exists(), "concat output file not written"
+    assert output_path.stat().st_size > 0, "concat output file is empty"
+    with open(str(output_path), "rb") as f:
+        head_bytes = f.read(12)
+    assert head_bytes[4:8] == b"ftyp", (
+        "output is not a valid MP4 (no ftyp atom at offset 4); got: %r"
+        % head_bytes
+    )

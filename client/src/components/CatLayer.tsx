@@ -3,7 +3,7 @@ import {
   BombaySprite,
   CalicoSprite,
   CardboardBox,
-  FeatherWand,
+  CatTree,
   FloatingBed,
   ToyMouse,
   TuxedoSprite,
@@ -61,6 +61,7 @@ type Activity =
   | 'stretch'
   | 'loaf'
   | 'judge' // sit + stare aggressively (Panther)
+  | 'on_post' // iter-356.41: sitting on the cat-tree habitat object
   // Interactions
   | 'groom' // Mushu grooming Coco
   | 'snuggle' // Mushu + Coco sit close
@@ -361,6 +362,21 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
       },
     },
     {
+      // iter-356.41: CLIMB THE CAT TREE. Panther's "judge from a perch"
+      // personality fits: she literally climbs to a vantage point to
+      // stare down at everyone. Snap to the tree x; cat-on-post PNG
+      // includes the post so the empty habitat tree visually merges.
+      weight: 5,
+      apply: (c, now, w) => {
+        let n = setActivity(c, 'on_post', 14000, now)
+        n = setMood(n, pickMood('panther', 'default'), 2500, now)
+        n.x = catTreeX(w)
+        n.direction = 'L' // PNGs face L by default; matches the tree's
+        // visible content (cat draped looking left over the post edge).
+        return n
+      },
+    },
+    {
       // Sleep — was 4 / 18s, bumped to 7 / 28s.
       weight: 7,
       apply: (c, now) => {
@@ -398,6 +414,19 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
         let n = setActivity(c, 'play', 2500, now)
         n = setMood(n, '😹', 2500, now, '🐾')
         n.direction = c.x < w / 2 ? 'R' : 'L'
+        return n
+      },
+    },
+    {
+      // iter-356.41: Mushu also occasionally climbs (less than Panther
+      // since his personality is "playful instigator," not "lurking
+      // judge"). Lower weight so the tree mostly belongs to Panther.
+      weight: 2,
+      apply: (c, now, w) => {
+        let n = setActivity(c, 'on_post', 8000, now)
+        n = setMood(n, pickMood('mushu', 'happy'), 2200, now)
+        n.x = catTreeX(w)
+        n.direction = 'L'
         return n
       },
     },
@@ -468,6 +497,18 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
         return n
       },
     },
+    {
+      // iter-356.41: Coco occasionally claims the tree. She's mostly
+      // a sleeper but when she does climb she stays up there a while.
+      weight: 1,
+      apply: (c, now, w) => {
+        let n = setActivity(c, 'on_post', 18000, now)
+        n = setMood(n, pickMood('coco', 'sleepy'), 2500, now, '💤')
+        n.x = catTreeX(w)
+        n.direction = 'L'
+        return n
+      },
+    },
   ],
 }
 
@@ -495,6 +536,25 @@ const SPEED: Record<CatId, number> = {
 const CHASE_SPEED = 1.5
 const FLEE_SPEED = 1.8
 
+// iter-356.41: cat tree x position (% of layer width). Matches
+// HabitatBackground's <CatTree> CSS `left: {CAT_TREE_X_PCT * 100}%`.
+// When a cat enters 'on_post' activity, its container snaps to this
+// pixel x so the cat-on-tree PNG aligns with the empty tree below.
+// iter-356.42: shifted from 0.75 → 0.70 to even out floor-object
+// spacing. Pre-iter-356.42 the gap from bed (50%) to tree (75%) was
+// ~25% while tree (75%) to box (right-6% ≈ 94%) was only ~19% — the
+// row read as cluttered-right + empty-left-of-tree. Now the run is
+// 50→70→93 (20% / 23%) which sits closer to even.
+const CAT_TREE_X_PCT = 0.70
+function catTreeX(w: number): number {
+  // Account for the cat tree's render width (~SPRITE_WIDTH * 2.0) so
+  // the cat sprite center aligns with the tree's center, not its left
+  // edge. Cat tree is anchored by its left edge; we want the cat to
+  // land roughly centered on the post.
+  const treeRenderWidth = Math.max(60, Math.round(SPRITE_WIDTH * 2.0))
+  return Math.round(w * CAT_TREE_X_PCT - (treeRenderWidth - SPRITE_WIDTH) / 2)
+}
+
 // iter-356.8 (mobile-desktop C1): pre-iter-356.8 SPRITE_WIDTH was a
 // flat 36px — calibrated for a 375px mobile viewport (~9.6% width)
 // but on a 4K monitor it shrinks to 0.9% of viewport — three
@@ -513,7 +573,12 @@ const SPRITE_WIDTH = (() => {
   const w = window.innerWidth
   return Math.max(36, Math.min(72, Math.round(w * 0.014)))
 })()
-const SPRITE_HEIGHT = Math.round((SPRITE_WIDTH * 24) / 36)
+// iter-356.39: was `SPRITE_WIDTH * 24 / 36` (height = 0.667 × width,
+// derived from the legacy SVG art's 3:2 viewBox). Curated PNG cats
+// stand tail-up (~1.2 × width); a height-shorter-than-width container
+// clipped them. Now: SPRITE_HEIGHT = 1.2 × SPRITE_WIDTH so the cat
+// fills its container with no clipping.
+const SPRITE_HEIGHT = Math.round(SPRITE_WIDTH * 1.2)
 const LAYER_BOTTOM_OFFSET = 70 // mobile (above BottomNav)
 const LAYER_BOTTOM_OFFSET_LG = 8 // desktop
 const INTERACTION_DISTANCE = 50
@@ -695,52 +760,76 @@ function HabitatBackground() {
   const ledgeBottom = SPRITE_HEIGHT + 30
   return (
     <>
-      {/* Wall ledge (top-of-layer, decorative; slice 2 makes it perchable) */}
+      {/* iter-356.34: shared opacity for habitat set-dressing. Mascots
+          are the focal point at full opacity; habitat reads as backdrop
+          decoration so the app still feels like a security tool. Per
+          Maya's "yellow flower + blue paw cluster" critique + the
+          user's "subtle enough that HomeCam still feels like a security
+          app, not a toy app" mandate. */}
+      {/* Wall ledge (top-of-layer, decorative) */}
       <div
         data-testid="habitat-ledge"
         style={{
           position: 'absolute',
           left: '6%',
           bottom: ledgeBottom,
-          opacity: 0.92,
+          opacity: 0.7,
         }}
       >
         <WallLedge size={Math.max(56, Math.round(SPRITE_WIDTH * 2.2))} />
       </div>
+      {/* iter-356.42: floor-object x-percent rebalance. Pre-iter-356.42
+          the row was 14 / 30 / 50 / 75 / right-6% — left-clustered with
+          a sparse mid-right band. Now: 12 / 28 / 48 / 70 / right-6% so
+          adjacent objects sit at ~16-18% intervals across the layer
+          width. Mobile (390px) reads as a balanced ground-line; desktop
+          (1280-1920px) preserves the ledge → yarn → mouse → bed → tree
+          → box composition without the dead-zone before the cat tree. */}
       {/* Yarn ball — left third of floor */}
       <div
         data-testid="habitat-yarn"
-        style={{ position: 'absolute', left: '14%', bottom: 0 }}
+        style={{ position: 'absolute', left: '12%', bottom: 0, opacity: 0.78 }}
       >
         <YarnBall size={Math.max(20, Math.round(SPRITE_WIDTH * 0.6))} />
       </div>
       {/* Toy mouse — slightly right of yarn ball */}
       <div
         data-testid="habitat-mouse"
-        style={{ position: 'absolute', left: '28%', bottom: 0 }}
+        style={{ position: 'absolute', left: '28%', bottom: 0, opacity: 0.78 }}
       >
         <ToyMouse size={Math.max(18, Math.round(SPRITE_WIDTH * 0.55))} />
       </div>
       {/* Floating bed — center, low oval so cats can be drawn on top later */}
       <div
         data-testid="habitat-bed"
-        style={{ position: 'absolute', left: '46%', bottom: 0 }}
+        style={{ position: 'absolute', left: '48%', bottom: 0, opacity: 0.78 }}
       >
         <FloatingBed size={Math.max(34, Math.round(SPRITE_WIDTH * 1.05))} />
-      </div>
-      {/* Feather wand — leans against an imaginary wall */}
-      <div
-        data-testid="habitat-feather"
-        style={{ position: 'absolute', left: '68%', bottom: 0 }}
-      >
-        <FeatherWand size={Math.max(24, Math.round(SPRITE_WIDTH * 0.75))} />
       </div>
       {/* Cardboard box — right edge anchor */}
       <div
         data-testid="habitat-box"
-        style={{ position: 'absolute', right: '6%', bottom: 0 }}
+        style={{ position: 'absolute', right: '6%', bottom: 0, opacity: 0.78 }}
       >
         <CardboardBox size={Math.max(28, Math.round(SPRITE_WIDTH * 0.85))} />
+      </div>
+      {/* iter-356.41: cat tree / scratching post. Positioned at ~75% of
+          the layer width — to the right of the floating bed, before the
+          cardboard box. Sized larger than other habitat objects (it's
+          tall) so the climbing cats land on a believable perch. The
+          on_post BodyState renders the cat-on-tree PNG OVER this
+          empty-tree image at the same x; the empty tree is drawn at
+          full opacity so it reads as a fixed feature in the layer. */}
+      <div
+        data-testid="habitat-cat-tree"
+        style={{
+          position: 'absolute',
+          left: `${CAT_TREE_X_PCT * 100}%`,
+          bottom: 0,
+          opacity: 0.92,
+        }}
+      >
+        <CatTree size={Math.max(60, Math.round(SPRITE_WIDTH * 2.0))} />
       </div>
     </>
   )
@@ -809,8 +898,18 @@ function CatRenderImpl({ cat }: { cat: CatState }) {
         style={{
           width: '100%',
           height: '100%',
-          transform: cat.direction === 'L' ? 'scaleX(-1)' : undefined,
+          // iter-356.39: curated sprite-sheet PNGs face LEFT by default
+          // (Panther's head visible on the LEFT side of walk_a). Pre-iter
+          // the SVG art faced RIGHT so direction='L' got the scaleX(-1)
+          // flip; now direction='R' needs the flip instead.
+          transform: cat.direction === 'R' ? 'scaleX(-1)' : undefined,
           transformOrigin: 'center',
+          // iter-356.40: smooth scaleX flip when a cat changes direction
+          // mid-walk OR when an activity transition sets a new direction.
+          // SAFE here because this div has NO translateX (translate is
+          // on the parent container — see iter-356.21 sharp edge). Was
+          // an instant 180° pop that read as a teleport.
+          transition: 'transform 220ms ease-in-out',
         }}
       >
         {/* iter-356.6: third nested wrapper — animation goes here so
@@ -824,7 +923,11 @@ function CatRenderImpl({ cat }: { cat: CatState }) {
             animation: spriteAnim(cat.activity),
           }}
         >
-          <Sprite size={SPRITE_HEIGHT} state={spriteState} />
+          {/* iter-356.39: pass `size = SPRITE_WIDTH` (was SPRITE_HEIGHT).
+              RasterSprite now renders IMG at `width=size, height=size*1.2`,
+              matching the container's SPRITE_WIDTH × SPRITE_HEIGHT
+              dimensions exactly. */}
+          <Sprite size={SPRITE_WIDTH} state={spriteState} />
         </div>
       </div>
       {cat.mood && (
@@ -899,7 +1002,8 @@ function activityToSprite(
   | 'hiss'
   | 'groom'
   | 'stretch'
-  | 'play' {
+  | 'play'
+  | 'on_post' {
   switch (activity) {
     case 'sleep':
       return 'sleep'
@@ -911,6 +1015,8 @@ function activityToSprite(
       return 'hiss'
     case 'play':
       return 'play'
+    case 'on_post':
+      return 'on_post'
     case 'chase':
     case 'flee':
     case 'walk':

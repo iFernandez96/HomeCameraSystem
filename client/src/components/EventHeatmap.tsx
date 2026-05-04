@@ -166,7 +166,7 @@ export function EventHeatmap({
           onClick={() => canGoPrev && setView((v) => addMonths(v, -1))}
           disabled={!canGoPrev}
           aria-label="Previous month"
-          className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-surface)] text-[var(--color-text-primary)] ring-1 ring-neutral-800 hover:ring-neutral-700 disabled:opacity-40 disabled:hover:ring-neutral-800 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-surface)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-border-strong)] disabled:opacity-40 disabled:hover:ring-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           <ChevronLeftIcon />
         </button>
@@ -190,7 +190,7 @@ export function EventHeatmap({
           onClick={() => canGoNext && setView((v) => addMonths(v, 1))}
           disabled={!canGoNext}
           aria-label="Next month"
-          className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-surface)] text-[var(--color-text-primary)] ring-1 ring-neutral-800 hover:ring-neutral-700 disabled:opacity-40 disabled:hover:ring-neutral-800 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-surface)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-border-strong)] disabled:opacity-40 disabled:hover:ring-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           <ChevronRightIcon />
         </button>

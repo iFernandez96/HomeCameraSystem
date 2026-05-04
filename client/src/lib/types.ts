@@ -8,6 +8,33 @@ export type DetectionBox = {
   score: number
 }
 
+/**
+ * iter-356.53 — bbox-track sidecar (per-event). The detection
+ * worker writes this JSON file at clip-window expiry; the server
+ * exposes it at GET /api/events/{id}/tracks. The `ClipModal`
+ * fetches it on mount and binds the canvas overlay to
+ * `<video>.timeupdate`, drawing the closest-in-time sample so the
+ * bbox follows the object across pre-roll + post-roll.
+ *
+ * Legacy clips (pre-iter-356.53) have no sidecar; the route 404s
+ * and the client falls back to the static `event.boxes` overlay.
+ */
+export type EventTrackSample = {
+  /** Seconds from clip start (= `event_ts - pre_roll_s`). */
+  ts_offset_s: number
+  boxes: DetectionBox[]
+}
+
+export type EventTracks = {
+  v: 1
+  event_id: string
+  pre_roll_s: number
+  post_roll_s: number
+  /** Ascending by `ts_offset_s`. May be empty when no detection
+   *  passed the threshold during the clip window. */
+  samples: EventTrackSample[]
+}
+
 export type DetectionEvent = {
   v: 1
   type: 'detection'

@@ -74,13 +74,45 @@ def clip_exists(event_id: str) -> bool:
         return False
 
 
+def tracks_path(event_id: str) -> Path:
+    """Compose the on-disk path for an event's bbox-track sidecar
+    (iter-356.53). Same charset gate + recordings_dir as `clip_path`;
+    sidecar lives next to the MP4 (`<id>.tracks.json`).
+
+    Raises ``ValueError`` on a malformed event_id."""
+    if not _is_safe_event_id(event_id):
+        raise ValueError("invalid event_id: {!r}".format(event_id))
+    return settings.recordings_dir / "{}.tracks.json".format(event_id)
+
+
+def tracks_exists(event_id: str) -> bool:
+    """True if the per-event bbox-track sidecar is present on disk.
+    False on missing file OR malformed id (mirrors `clip_exists`)."""
+    try:
+        return tracks_path(event_id).is_file()
+    except ValueError:
+        return False
+
+
 def delete_clip(event_id: str) -> bool:
-    """Best-effort deletion. Returns True on successful unlink,
-    False on missing file or invalid id. Never raises."""
+    """Best-effort deletion. Returns True on successful unlink of the
+    MP4 (regardless of sidecar status), False on missing file or
+    invalid id. Never raises.
+
+    iter-356.53: also unlink the `.tracks.json` sidecar if present.
+    Sidecar removal is independent — a missing/un-deletable sidecar
+    doesn't change the boolean returned, since the user-visible clip
+    is the MP4."""
     try:
         path = clip_path(event_id)
     except ValueError:
         return False
+    try:
+        sidecar = tracks_path(event_id)
+        if sidecar.is_file():
+            sidecar.unlink()
+    except (ValueError, FileNotFoundError, OSError):
+        pass
     try:
         path.unlink()
         return True
@@ -129,15 +161,20 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
         return 0
     cutoff = time.time() - (retention_days * 86400)
     deleted = 0
+    # iter-356.53: also sweep `.tracks.json` sidecars older than the
+    # cutoff. Suffix-match the same way the .mp4 sweep does so a
+    # mistakenly-named operator file (e.g. `notes.tracks.json`)
+    # doesn't get deleted.
     try:
         for entry in rec_dir.iterdir():
             if not entry.is_file():
                 continue
-            if entry.suffix != ".mp4":
-                # Don't touch non-mp4 files — operator might keep
-                # ad-hoc test clips or partial ffmpeg work-files
-                # that share the dir. Recordings emitted by slice 2
-                # always end in .mp4.
+            is_clip = entry.suffix == ".mp4"
+            is_tracks_sidecar = entry.name.endswith(".tracks.json")
+            if not (is_clip or is_tracks_sidecar):
+                # Don't touch non-mp4 / non-sidecar files — operator
+                # might keep ad-hoc test clips or partial ffmpeg
+                # work-files that share the dir.
                 continue
             try:
                 mtime = entry.stat().st_mtime
@@ -146,7 +183,8 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
             if mtime < cutoff:
                 try:
                     entry.unlink()
-                    deleted += 1
+                    if is_clip:
+                        deleted += 1
                 except OSError as e:
                     log.warning(
                         "sweep failed to delete %s: %s", entry.name, e

@@ -70,6 +70,68 @@ def test_clip_rejects_event_id_with_special_chars(client: TestClient, rec_dir):
         )
 
 
+# iter-356.53 (bbox-track sidecar): /api/events/{id}/tracks delivers
+# the JSON sidecar written by `detection/tracks.py`. Auth-gated +
+# path-traversal-defended identically to the clip route. Client
+# `ClipModal` reads it on mount; 404 falls back to the static
+# `event.boxes` overlay (legacy clips have no sidecar).
+
+
+def test_given_anon_when_get_tracks_then_401(client_anon: TestClient, rec_dir):
+    # arrange + act
+    r = client_anon.get("/api/events/evt-001/tracks")
+
+    # assert
+    assert r.status_code == 401
+
+
+def test_given_authed_no_sidecar_when_get_tracks_then_404(
+    client: TestClient, rec_dir,
+):
+    # arrange — recordings dir empty.
+
+    # act
+    r = client.get("/api/events/evt-missing/tracks")
+
+    # assert
+    assert r.status_code == 404
+    assert "tracks" in r.json().get("detail", "").lower()
+
+
+def test_given_authed_sidecar_present_when_get_tracks_then_200_json(
+    client: TestClient, rec_dir,
+):
+    # arrange — drop a fake sidecar at the canonical path.
+    rec_dir.mkdir()
+    fake_payload = (
+        b'{"v":1,"event_id":"evt-have","pre_roll_s":3.0,"post_roll_s":7.0,'
+        b'"samples":[{"ts_offset_s":1.5,"boxes":[{"x":0.1,"y":0.1,"w":0.2,'
+        b'"h":0.2,"label":"person","score":0.9}]}]}'
+    )
+    (rec_dir / "evt-have.tracks.json").write_bytes(fake_payload)
+
+    # act
+    r = client.get("/api/events/evt-have/tracks")
+
+    # assert
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.content == fake_payload
+
+
+def test_given_event_id_with_traversal_chars_when_get_tracks_then_422(
+    client: TestClient, rec_dir,
+):
+    # arrange — set of disallowed chars mirrors the clip-route test.
+
+    # act + assert
+    for bad in ("evt.001", "evt%20space", "evt%24dollar"):
+        r = client.get("/api/events/{}/tracks".format(bad))
+        assert r.status_code == 422, (
+            "expected 422 for {!r}; got {}".format(bad, r.status_code)
+        )
+
+
 # iter-330 (missing-feature #3, Event Export ZIP): POST
 # /api/events/export accepts a list of event IDs, returns a ZIP
 # bundle of clips + thumbs + manifest.json. Auth-gated like the

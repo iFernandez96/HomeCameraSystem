@@ -92,6 +92,30 @@ def get_event_clip(
     )
 
 
+@router.get("/events/{event_id}/tracks")
+def get_event_tracks(
+    # iter-356.53: per-event bbox-track sidecar. Same auth gating
+    # as the clip route (route-include adds `Depends(require_role)`
+    # in main.py); same path-param regex; same 404 semantics.
+    # Sidecar is a JSON file written by the worker (`tracks.py`)
+    # at clip-window expiry — present when iter-356.53+ produced
+    # the clip, absent for legacy clips (client falls back to the
+    # static `event.boxes` overlay).
+    event_id: str = Path(..., pattern=r"^[A-Za-z0-9_-]+$", max_length=128),
+) -> FileResponse:
+    if not recording_service.tracks_exists(event_id):
+        raise HTTPException(
+            status_code=404,
+            detail="bbox tracks not available for this event",
+        )
+    path = recording_service.tracks_path(event_id)
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename="{}.tracks.json".format(event_id),
+    )
+
+
 class _ExportBody(BaseModel):
     """iter-330 request body schema for POST /api/events/export.
 

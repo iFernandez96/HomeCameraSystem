@@ -240,7 +240,14 @@ function EventCardImpl({
   // delete button is a SIBLING of the wrapper, NOT nested inside
   // (button-in-button is invalid HTML).
   return (
-    <div className="relative">
+    // iter-356.46: `group` so the delete-X can dim by default and
+    // reveal on card hover/focus. Pre-iter-356.46 every card carried
+    // a fully-saturated red circle 100% of the time → on a 3×N grid
+    // the eye saw 9-12 "delete!" affordances competing with the
+    // actual photo content. Now: 35% opacity at rest (still
+    // discoverable on touch), 100% on hover or keyboard focus
+    // (group-focus-within covers the keyboard-traversal case).
+    <div className="relative group">
     <Wrapper
       type={clickable ? 'button' : undefined}
       onClick={clickable ? () => onSelect?.(e) : undefined}
@@ -327,7 +334,7 @@ function EventCardImpl({
           onDelete(e)
         }}
         aria-label={`Delete event from ${absoluteTime(e.ts)}`}
-        className="absolute -top-3 -right-3 w-11 h-11 rounded-full bg-red-600 text-[var(--color-text-primary)] flex items-center justify-center text-base font-bold shadow-lg ring-2 ring-neutral-950 hover:bg-red-500 active:bg-red-700 focus-visible:outline-2 focus-visible:outline-red-500 focus-visible:outline-offset-2 z-10"
+        className="absolute -top-3 -right-3 w-11 h-11 rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-base font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-35 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity hover:opacity-100 active:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
       >
         ✕
       </button>

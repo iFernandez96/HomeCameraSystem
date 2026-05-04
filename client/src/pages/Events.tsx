@@ -682,15 +682,20 @@ export function Events() {
       >
         <div className="px-4 pt-4 pb-3">
         <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold inline-flex items-center gap-2">
+          <h1 className="page-title text-2xl inline-flex items-center gap-2">
             <PawMark className="text-[var(--color-accent-default)]" />
             Events
           </h1>
           <div className="flex items-center gap-3">
             {!loading && !error && events.length > 0 && (
+              // iter-356.49: "100 recent" reads as a noun-phrase
+              // riddle — "100 recent what?" Now: "Last 100" /
+              // "X of last 100" so it's clear the system is
+              // capped at the most-recent N events fetched.
               <span className="text-xs text-[var(--color-text-tertiary)] tabular-nums">
-                {filter === 'all' ? events.length : filtered.length}
-                {filter !== 'all' ? ` of ${events.length}` : ''} recent
+                {filter === 'all'
+                  ? `Last ${events.length}`
+                  : `${filtered.length} of last ${events.length}`}
               </span>
             )}
             {/* iter-251: calendar toggle. Hides the 30-day heatmap
@@ -1094,10 +1099,17 @@ function FilterChip({
 }) {
   const base =
     'px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors capitalize border focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 flex-shrink-0'
+  // iter-356.50: active-chip styling tokenized for the light theme.
+  // Pre-iter-356.50 the accent branch used `text-emerald-200` (light
+  // green meant for dark bg, ~2:1 on cream — illegible) and the
+  // default branch used `bg-neutral-100` (cold light-grey, fights
+  // the warm cream page). Now both use semantic tokens that match
+  // SideNav's active-NavLink treatment: subtle accent fill + bold
+  // accent text + accent-tinted border.
   const cls = active
     ? accent
-      ? 'bg-emerald-500/20 text-emerald-200 border-emerald-500/40'
-      : 'bg-neutral-100 text-neutral-950 border-neutral-100'
+      ? 'bg-[var(--color-success-bg)] text-[var(--color-success)] border-[var(--color-success-border)]'
+      : 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] border-[var(--color-accent-default)]/40'
     : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
   return (
     <button

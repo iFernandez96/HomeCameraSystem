@@ -16,6 +16,26 @@ import { reconnectIfClosed, subscribeWsState, type WsState } from '../lib/ws'
 export function ConnectionBanner() {
   const { state: authState } = useAuth()
   const [state, setState] = useState<WsState>('closed')
+  // iter-356.48: post-auth grace period before the "disconnected"
+  // banner can render. Pre-iter-356.48 every page load (and every
+  // anon→authed transition) flashed a loud red "Realtime
+  // disconnected — retrying" for the ~200-1500 ms it takes the WS
+  // to handshake, since the initial useState value is 'closed' and
+  // the first transition lands on 'connecting' a beat later. Now:
+  // first 2 s after auth-resolved, suppress the closed-state banner
+  // (the 'connecting' yellow can still render — it's accurate).
+  // 2 s is long enough to swallow normal handshakes on LAN +
+  // Tailscale, short enough that a real outage still surfaces
+  // promptly.
+  const [graceElapsed, setGraceElapsed] = useState(false)
+  useEffect(() => {
+    if (authState !== 'authed') {
+      setGraceElapsed(false)
+      return
+    }
+    const t = setTimeout(() => setGraceElapsed(true), 2000)
+    return () => clearTimeout(t)
+  }, [authState])
 
   useEffect(() => subscribeWsState(setState), [])
 
@@ -34,6 +54,10 @@ export function ConnectionBanner() {
 
   if (state === 'open') return null
   if (authState !== 'authed') return null
+  // iter-356.48: swallow the closed-state banner during the post-auth
+  // grace window. 'connecting' (yellow) still renders — accurate
+  // signal that the WS is mid-handshake, calmer color than red.
+  if (state === 'closed' && !graceElapsed) return null
 
   const label =
     state === 'connecting' ? 'Connecting to camera…' : 'Realtime disconnected — retrying'

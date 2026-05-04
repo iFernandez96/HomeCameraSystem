@@ -65,3 +65,15 @@ timelapses/
 
 # Local scratch
 potentialJetson.txt
+
+# Source-asset archives (sprite + public-asset zips kept locally; the
+# extracted PNG/SVG files in client/public/cats/ are what ships)
+Cats.zip
+client/public.zip
+
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
+
+# Caveman:compress backups (pre-compression copies of memory/*.md,
+# kept locally so the operator can revert if compression is too lossy)
+memory/*.original.md

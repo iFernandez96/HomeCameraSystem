@@ -364,15 +364,27 @@ def test_given_preroll_segments_when_post_roll_done_then_concat_invoked(
             break
         _time.sleep(0.05)
 
-    # assert — concat called with [seg1, seg2, post_only_path] →
-    # final path.
+    # assert — concat called. iter-356.51: pre-roll segments are
+    # COPIED into a per-event scratch dir before the merge thread
+    # waits, so the concat list contains scratch-dir paths
+    # (`_preroll/event_evt/seg_NNN.mp4`), NOT the original ring-slot
+    # paths. This decouples merge timing from the segment-recorder
+    # ffmpeg's `-segment_wrap` ring rotation, which would otherwise
+    # rewrite the slots in-place during the post-roll wait whenever
+    # `clip_post_roll_s` exceeded the ring capacity (15 s pre-356.51,
+    # 60 s post-bump). Verify (a) two segment-shaped entries exist
+    # under the scratch dir, (b) the post-roll temp lands last.
     assert concat_mock.called
     write_call_args = write_mock.call_args[0]
     list_arg = write_call_args[1]
-    assert str(seg1) in list_arg
-    assert str(seg2) in list_arg
+    scratch_prefix = str(tmp_path / "_preroll" / "event_evt")
+    seg_entries = [p for p in list_arg if p.startswith(scratch_prefix)]
+    assert len(seg_entries) == 2, (
+        "expected 2 scratch-copied segments; got: %s" % list_arg
+    )
     # The post-roll temp comes last (chronologically after pre-roll).
     assert str(post_only) in list_arg
+    assert list_arg[-1] == str(post_only)
 
 
 def test_given_zero_preroll_segments_when_merge_runs_then_post_roll_promoted_to_final(
@@ -497,3 +509,132 @@ def test_iter350_concat_writes_to_tmp_then_atomic_rename(tmp_path, monkeypatch):
     # never actually creates the .tmp file; the rename will fail
     # with OSError which is silently swallowed.)
     _ = final  # rename failure is intentional in this mock setup
+
+
+def test_given_postroll_temp_path_when_build_args_then_forces_mp4_muxer(tmp_path):
+    """iter-356.43 regression pin: ffmpeg infers the muxer from the
+    output filename's extension. Since iter-350 G1 the post-roll temp
+    is `<id>.mp4.postroll.tmp`, which ffmpeg cannot map to a muxer —
+    subprocess exited RC=1 ("Unable to find a suitable output format")
+    in <1 s, no clip file written. `-f mp4` immediately before the
+    output path forces the muxer regardless of suffix.
+    """
+    # arrange
+    rec = ClipRecorder("rtsp://x", str(tmp_path))
+
+    # act
+    args = rec._build_args(
+        os.path.join(str(tmp_path), "evt.mp4.postroll.tmp"), rec.duration_s
+    )
+
+    # assert
+    assert "-f" in args, "ffmpeg argv must include -f to force muxer"
+    f_idx = args.index("-f")
+    assert args[f_idx + 1] == "mp4", (
+        "the -f flag must specify mp4 (the muxer); got: %s" % args[f_idx + 1]
+    )
+    # The forced -f must sit immediately before the output path so it
+    # binds to the output (ffmpeg supports per-input AND per-output -f
+    # depending on argv position). Output is the last argv element.
+    assert args[-2] == "mp4", (
+        "-f mp4 must immediately precede the output path; argv tail: %s"
+        % args[-3:]
+    )
+
+
+# --- iter-356.43 real-ffmpeg integration ---
+# The argv-shape pins above (mocked Popen) only verify the flag landed
+# in the list. They do NOT verify ffmpeg ACTUALLY accepts that argv
+# and writes a playable MP4 — which is what was broken since iter-350
+# G1 changed the temp suffix to `.tmp` and silently lost the muxer.
+# This integration test exercises real ffmpeg with a synthetic input
+# so the next subprocess-shape regression is caught at PR time, not
+# 14 hours into a missing-clip incident on the Jetson.
+
+import shutil  # noqa: E402  (kept near integration tests for locality)
+
+import pytest  # noqa: E402
+
+_FFMPEG_BIN = shutil.which("ffmpeg")
+_skip_no_ffmpeg = pytest.mark.skipif(
+    _FFMPEG_BIN is None,
+    reason="ffmpeg not on PATH (CI / dev-box variance — Jetson always has it)",
+)
+
+
+@_skip_no_ffmpeg
+def test_given_real_ffmpeg_and_tmp_output_when_build_args_then_writes_mp4(
+    tmp_path,
+):
+    """End-to-end: feed `_build_args` argv to a real ffmpeg. Pre-
+    iter-356.43, with no `-f mp4` AND a `.tmp` output suffix, ffmpeg
+    exits RC=1 immediately ("Unable to find a suitable output
+    format") and writes nothing — exactly the iter-350 → iter-356.43
+    regression. With the fix in place, ffmpeg should write a non-
+    empty MP4 with a real `ftyp` box at the head.
+
+    We can't use a live RTSP server in unit tests, so we pre-encode
+    a tiny h264 MP4 with lavfi and swap the RTSP `-i` arg for that
+    file. `-c copy` (the production flag under test) then has a
+    real h264 stream to copy, exactly matching the production path
+    where the worker `-c copy`-s the camera's NVENC h264 bitstream.
+    """
+    # arrange — pre-encode 1 s of synthetic h264 so `-c copy` has
+    # a real stream to copy (lavfi testsrc into MP4 directly produces
+    # `wrapped_avframe`, which mp4 can't pack under `-c copy`).
+    src_mp4 = tmp_path / "src.mp4"
+    gen = subprocess.run(
+        [
+            _FFMPEG_BIN, "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi",
+            "-i", "testsrc=duration=1:size=64x64:rate=10",
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-f", "mp4",
+            str(src_mp4),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=15,
+    )
+    assert gen.returncode == 0, (
+        "lavfi h264 generation failed: %s"
+        % gen.stderr.decode("utf-8", "replace")[:300]
+    )
+
+    # Get the production argv. Then swap RTSP `-i <url>` for the
+    # local h264 file. Drop `-rtsp_transport tcp` (file input doesn't
+    # take it). Everything else under test stays exactly as the
+    # worker emits it: -t, -c copy, -f mp4, output.
+    rec = ClipRecorder("rtsp://placeholder/cam", str(tmp_path), duration_s=1)
+    output_path = os.path.join(str(tmp_path), "evt.mp4.postroll.tmp")
+    args = rec._build_args(output_path, 1)
+    rtsp_transport_idx = args.index("-rtsp_transport")
+    i_idx = args.index("-i")
+    head = args[: rtsp_transport_idx]  # ffmpeg + global flags
+    tail = args[i_idx + 2 :]  # -t / -c copy / -f mp4 / output
+    real_argv = head + ["-i", str(src_mp4)] + tail
+
+    # act
+    result = subprocess.run(
+        real_argv,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=15,
+    )
+
+    # assert — ffmpeg succeeds, output exists, and contains an MP4
+    # `ftyp` atom (bytes 4..8 of any valid MP4). Pre-fix this fails
+    # with returncode=1 + "Unable to find a suitable output format".
+    assert result.returncode == 0, (
+        "ffmpeg failed (this is the regression): rc=%d stderr=%s"
+        % (result.returncode, result.stderr.decode("utf-8", "replace")[:600])
+    )
+    assert os.path.exists(output_path), "output file not written"
+    assert os.path.getsize(output_path) > 0, "output file is empty"
+    with open(output_path, "rb") as f:
+        head_bytes = f.read(12)
+    assert head_bytes[4:8] == b"ftyp", (
+        "output is not a valid MP4 (no ftyp atom at offset 4); got: %r"
+        % head_bytes
+    )
