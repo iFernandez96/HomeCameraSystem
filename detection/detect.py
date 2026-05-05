@@ -131,6 +131,42 @@ def _env(name, default, cast=str):
         return default
 
 
+def _enforce_mem_floor(read_mem_fn, floor_mb):
+    """Startup mem-floor gate. iter-356.62 (camera-algorithm-auditor
+    pre-YOLO win 3): TensorRT engine workspace allocation can demand
+    ~150-300 MB during `detectNet(...)` construction. If MemAvailable
+    is already below ~400 MB at boot (e.g. because the operator left
+    Chrome open on the Jetson), we get OOM-killed by SIGKILL during
+    engine load — no traceback, no log, just a silent service
+    restart loop.
+
+    This gate runs ONCE before model load and aborts with a clear
+    error message + exit code 3 if MemAvailable < floor_mb. The
+    runtime `MemoryGuard` (continuous, post-load) is a different
+    mechanism: it pauses INFERENCE while keeping capture alive so
+    metrics keep flowing; this gate refuses to start at all so
+    systemd's RestartSec gives the operator a chance to free RAM.
+
+    Factored to take `read_mem_fn` as a parameter so tests can
+    substitute a fake without patching `/proc/meminfo`.
+    """
+    avail = read_mem_fn()
+    if avail is None:
+        # /proc/meminfo unreadable — pass through rather than block
+        # boot. This is the dev-host case (the test suite runs here).
+        return
+    if avail < floor_mb:
+        msg = (
+            "[detect] FATAL: mem-floor gate refused to start "
+            "(MemAvailable={:.0f} MB < {:.0f} MB floor). "
+            "Free RAM (close Chrome / kill stale workers) and the "
+            "service will retry. Override with DETECT_MIN_FREE_MEM_MB."
+        ).format(avail, floor_mb)
+        print(msg, flush=True)
+        # Exit code 3 = startup gate refusal (distinct from generic 1).
+        raise SystemExit(3)
+
+
 def post_event(url, payload, timeout=2.0):
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
@@ -750,6 +786,13 @@ def main():
                 print("[detect] preroll buffer disabled: {}".format(e), flush=True)
                 preroll_buffer = None
 
+    # iter-356.62 (camera-algorithm-auditor pre-YOLO win 3): mem-floor
+    # gate runs ONCE here, before TRT engine workspace allocation can
+    # SIGKILL us. Distinct from the runtime MemoryGuard armed below
+    # (which pauses inference; this refuses to start at all).
+    min_free_mem_mb = _env("DETECT_MIN_FREE_MEM_MB", 400.0, float)
+    _enforce_mem_floor(read_mem_available_mb, min_free_mem_mb)
+
     # detectNet uses a fixed low floor; the live-tunable threshold filters
     # the results post-inference (avoids reloading the TRT engine).
     print("[detect] loading {} (floor={}, initial threshold={})".format(
@@ -858,7 +901,14 @@ def main():
     # fanless cases — iter-3's idle-gear keeps the system at ~50 °C in
     # normal operation, so this rarely fires in practice.
     thermal_guard = ThermalGuard(hot_c=80.0, cool_c=70.0)
-    thermal_check_every_n_frames = 30
+    # iter-356.62 (camera-algorithm-auditor pre-YOLO win 1): cadence
+    # was 30 frames — at idle gear (1 fps) that's a 30 s sampling
+    # window, long enough for the GPU to climb from 70 °C to ~87 °C
+    # (Tegra thermal trip) on an idle→active gear transition before
+    # the guard notices. 10 frames = 10 s at idle / 2 s at active,
+    # both safely under any plausible thermal slew. Cost: one extra
+    # `_read_thermal_zone_by_name` syscall per ~10 s — negligible.
+    thermal_check_every_n_frames = 10
     while True:
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
