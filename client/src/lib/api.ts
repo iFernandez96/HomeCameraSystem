@@ -464,6 +464,71 @@ export const moveFaceCapture = (
     },
   )
 
+// iter-356.6X (tiered-inference slice 4): training-data export +
+// per-name purge + consent. All routes are owner-gated server-side.
+//
+// `getTrainingExport` returns the raw Blob for the `application/zip`
+// stream so the caller can trigger a browser download via
+// `URL.createObjectURL`. `kind` ∈ {face, person}; `size` ∈ the
+// server whitelist {64, 96, 128, 224, 320, 416, 640}. Non-2xx
+// throws `HttpError` with the status code (422 invalid args,
+// 413 capture dir > 5000 entries, 401 if non-owner).
+export async function getTrainingExport(
+  kind: 'face' | 'person',
+  size: number,
+): Promise<Blob> {
+  const path = `/api/training/export?kind=${encodeURIComponent(kind)}&size=${size}`
+  const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      detail = (await res.text()).slice(0, 200)
+    } catch {
+      // ignore — bare status is fine
+    }
+    throw new HttpError(path, res.status, detail ? `: ${detail}` : '')
+  }
+  return res.blob()
+}
+
+// Purge every JPEG + sidecar under both face_captures_dir/<name>/
+// AND person_captures_dir/<name>/. consent.json is preserved
+// server-side (see training_admin.py::_purge_dir).
+export const deleteTrainingCaptures = (name: string) =>
+  req<{ ok: true; deleted: number }>(
+    `/api/training/captures?name=${encodeURIComponent(name)}`,
+    { method: 'DELETE' },
+  )
+
+// Per-name consent record. Server returns the default-deny shape
+// (granted=false, all other fields null) on miss — the client does
+// NOT need to branch on 404. Pinned by the api.test wire test.
+export type ConsentRecord = {
+  granted: boolean
+  recorded_at_ms: number | null
+  consent_text_version: string | null
+  recorded_by: string | null
+}
+
+export const getNameConsent = (name: string) =>
+  req<ConsentRecord>(`/api/face/captures/${encodeURIComponent(name)}/consent`)
+
+export const setNameConsent = (
+  name: string,
+  granted: boolean,
+  consentTextVersion: string,
+) =>
+  req<ConsentRecord>(
+    `/api/face/captures/${encodeURIComponent(name)}/consent`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        granted,
+        consent_text_version: consentTextVersion,
+      }),
+    },
+  )
+
 export const deleteFaceCapture = (name: string, filename: string) =>
   req<{ ok: true }>(
     `/api/face/captures/${encodeURIComponent(name)}/${encodeURIComponent(filename)}`,

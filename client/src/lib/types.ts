@@ -164,6 +164,13 @@ export type DetectionConfig = {
    * the operator wires a mic + speaker (per the iter-307 hardware
    * recommendation) and flips this in Settings. */
   audio_enabled: boolean
+  /** iter-356.6X (tiered-inference slice 4): when true, the worker
+   * saves face + person crops on every detection for retraining.
+   * Mirrors `face_capture_enabled` server-side. */
+  face_capture_enabled: boolean
+  /** iter-356.6X: bounded retention for the face/person capture
+   * trees. Server clamps to [1, 365]. */
+  face_capture_retention_days: number
 }
 
 /** A curated pick-list of common COCO classes shown as chips in Settings. */
