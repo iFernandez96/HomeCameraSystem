@@ -78,8 +78,24 @@ export function WatchRibbon() {
       // so the ribbon expands to host both the safe-area inset and
       // the 56px content row. Android (zero inset) collapses to the
       // original 56px exactly.
-      className="flex items-center justify-between px-4 lg:px-6 min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface)]/95 backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
-      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      // Premium-launch slice (mobile-view-auditor A1): lateral
+      // safe-area insets in landscape. Pre-fix the ribbon set
+      // `paddingTop` for the iPhone notch but had no
+      // `safe-area-inset-left/right` — in landscape PWA standalone
+      // on a notched iPhone, the Dynamic Island clips ~47 px from
+      // the left and the home-indicator strip clips ~21 px from
+      // the right. The ribbon's armed-state dot + label (the most
+      // load-bearing security signal in the entire app) was
+      // partially behind the notch on every cold landscape session.
+      // `max(1rem, env(...))` preserves the prior 16 px gutter on
+      // devices with no inset (Android, all desktops) and expands
+      // it only when the OS reports an inset.
+      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface)]/95 backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right))',
+      }}
     >
       {/* LEFT: brand cluster (desktop only — on mobile the rail+nav
           covers brand identity). Tapping the wordmark navigates

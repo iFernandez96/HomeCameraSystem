@@ -34,7 +34,33 @@ export function BottomNav() {
       // the nav touches the screen edge as before. */}
       className="fixed bottom-0 inset-x-0 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] pb-[max(0px,calc(env(safe-area-inset-bottom)-14px))] z-10 shadow-[var(--shadow-card)]"
     >
-      <div className="flex">
+      {/* Premium-launch slice (mobile-view-auditor A2): lateral
+          safe-area inset on the inner tab strip in landscape. Pre-
+          fix the 5-tab `flex-1` distribution didn't reserve room
+          for the iPhone Dynamic Island (~47 px left) or the home-
+          indicator strip (~21 px right) in landscape PWA standalone.
+          The leftmost "Live" tab's icon + label sat partially behind
+          the Dynamic Island; the rightmost "Settings" tab partially
+          under the home indicator. Padding the INNER flex (not the
+          outer `<nav>`, which is `inset-x-0` so the surface still
+          fills the viewport edge-to-edge) keeps the visual bg
+          extending under the safe-area while constraining tap
+          targets to the safe inner band. Android (zero insets) is
+          unchanged. */}
+      <div
+        className="flex"
+        style={{
+          // `max(0px, env(...))` instead of bare `env(...)` so jsdom's
+          // CSSStyleDeclaration accepts the value (it parses `max(...)`
+          // expressions but silently rejects bare `env()` shorthands
+          // when set via the React style prop). Functionally identical
+          // on browsers — `env(safe-area-inset-left, 0px)` resolves to
+          // 0 on devices without the inset, so `max(0px, 0)` = 0; on
+          // devices with the inset, `max(0px, 47px)` = 47px.
+          paddingLeft: 'max(0px, env(safe-area-inset-left))',
+          paddingRight: 'max(0px, env(safe-area-inset-right))',
+        }}
+      >
         {tabs.map((t) => (
           <NavLink
             key={t.to}

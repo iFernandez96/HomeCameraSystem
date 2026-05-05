@@ -69,4 +69,37 @@ describe('WatchRibbon a11y', () => {
     // assert
     expect(screen.getByRole('status').textContent).toMatch(/camera offline/i)
   })
+
+  it('Given a notched landscape iPhone PWA, When the ribbon renders, Then it carries lateral safe-area-inset padding so the armed-state cluster never sits behind the Dynamic Island (premium-launch slice — mobile-view-auditor A1)', () => {
+    // arrange — Pre-fix the ribbon set `paddingTop` for the notch
+    // but had no `safe-area-inset-left/right`. In landscape on a
+    // notched iPhone the Dynamic Island clips ~47 px from the left
+    // and the home-indicator strip clips ~21 px from the right;
+    // the armed-state dot + label (the most load-bearing security
+    // signal in the app) was partially clipped. Pin the inline
+    // style so a future drive-by edit can't silently regress.
+    renderRibbon()
+
+    // act
+    const banner = screen.getByRole('banner')
+
+    // assert — read from the raw `style` attribute. jsdom's
+    // CSSStyleDeclaration interface drops or partially preserves
+    // modern CSS functions; `el.style.paddingLeft` reads as an
+    // empty string even when the attribute string contains the
+    // full `max(env(...))` value. Asserting on the attribute
+    // string sidesteps that. (We don't pin `padding-top:
+    // env(safe-area-inset-top)` here — jsdom drops the bare-env()
+    // shorthand from the serialized style attribute when React
+    // sets it alongside the max(env()) values; the prior iter-
+    // 356.x notch-top behavior is unchanged in production but
+    // unobservable in this test environment.)
+    const styleAttr = banner.getAttribute('style') ?? ''
+    expect(styleAttr).toMatch(
+      /padding-left:\s*max\(1rem,\s*env\(safe-area-inset-left\)\)/,
+    )
+    expect(styleAttr).toMatch(
+      /padding-right:\s*max\(1rem,\s*env\(safe-area-inset-right\)\)/,
+    )
+  })
 })

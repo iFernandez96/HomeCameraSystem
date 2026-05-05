@@ -95,4 +95,39 @@ describe('BottomNav', () => {
       screen.getByRole('link', { name: /events/i }),
     ).not.toHaveAttribute('aria-current', 'page')
   })
+
+  it('Given a notched landscape phone PWA, When BottomNav renders, Then the inner tab strip carries lateral safe-area-inset padding so no tab sits under the Dynamic Island or home-indicator (premium-launch slice — mobile-view-auditor A2)', () => {
+    // arrange — Pre-fix the 5-tab `flex-1` distribution didn't
+    // reserve room for the iPhone Dynamic Island (~47 px left) or
+    // the home-indicator strip (~21 px right) in landscape PWA
+    // standalone. The leftmost "Live" tab's icon + label sat
+    // partially behind the Dynamic Island; the rightmost "Settings"
+    // tab partially under the home indicator. The padding lives on
+    // the INNER flex (not the outer <nav>, which is `inset-x-0`
+    // so the surface still extends edge-to-edge) so the visual bg
+    // continues under the safe-area while taps land in the safe
+    // band.
+    renderAt('/live')
+
+    // act
+    const links = screen.getAllByRole('link')
+    // The shared parent of all tab links is the inner flex strip
+    // that should carry the inset padding.
+    const innerFlex = links[0].parentElement
+    expect(innerFlex).not.toBeNull()
+
+    // assert — read from the raw `style` attribute string. jsdom's
+    // CSSStyleDeclaration interface drops bare `env()` values; the
+    // `max(0px, env(...))` form is the canonical pattern used
+    // across the project's safe-area-inset code (matches the
+    // BottomNav `pb-[max(0px, calc(env(safe-area-inset-bottom)-14px))]`
+    // shape from iter-356.66).
+    const styleAttr = innerFlex!.getAttribute('style') ?? ''
+    expect(styleAttr).toMatch(
+      /padding-left:\s*max\(0px,\s*env\(safe-area-inset-left\)\)/,
+    )
+    expect(styleAttr).toMatch(
+      /padding-right:\s*max\(0px,\s*env\(safe-area-inset-right\)\)/,
+    )
+  })
 })
