@@ -91,12 +91,21 @@ export function EventList({
   onSelect,
   onDelete,
   cameraOffline = false,
+  selectionMode = false,
+  selectedIds,
+  onToggleSelect,
 }: {
   events: DetectionEvent[]
   onSelect?: (event: DetectionEvent) => void
   /** iter-307: when present, renders a per-card delete affordance
    * (small ✕ in the top-right corner). Owner-only — parent gates. */
   onDelete?: (event: DetectionEvent) => void
+  /** iter-356.x: multi-select desktop bulk-delete. When true,
+   * cards render a checkbox and clicks toggle selection instead
+   * of opening ClipModal. Owner-only — parent gates. */
+  selectionMode?: boolean
+  selectedIds?: Set<string>
+  onToggleSelect?: (event: DetectionEvent) => void
   /**
    * iter-356.24 (Frank ux-grandpa #1 carryover from iter-356.22):
    * when true AND no events exist, the empty state pivots from the
@@ -178,6 +187,9 @@ export function EventList({
                   now={now}
                   onSelect={onSelect}
                   onDelete={onDelete}
+                  selectionMode={selectionMode}
+                  isSelected={selectedIds?.has(e.id) ?? false}
+                  onToggleSelect={onToggleSelect}
                 />
               </li>
             ))}
@@ -254,6 +266,12 @@ const EventCard = memo(EventCardImpl, (prev, next) => {
   if (prev.event.label !== next.event.label) return false
   if (prev.onSelect !== next.onSelect) return false
   if (prev.onDelete !== next.onDelete) return false
+  // iter-356.x multi-select: re-render on mode flip or selection
+  // toggle for THIS card. Other cards' selection changes don't
+  // trip the memo because isSelected is computed per-card upstream.
+  if (prev.selectionMode !== next.selectionMode) return false
+  if (prev.isSelected !== next.isSelected) return false
+  if (prev.onToggleSelect !== next.onToggleSelect) return false
   if (Math.floor(prev.now / 60_000) !== Math.floor(next.now / 60_000)) return false
   return true
 })
@@ -263,6 +281,9 @@ function EventCardImpl({
   now,
   onSelect,
   onDelete,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
 }: {
   event: DetectionEvent
   now: number
@@ -271,9 +292,22 @@ function EventCardImpl({
    * button in the top-right; clicking stopPropagates so the card's
    * own onClick (open ClipModal) doesn't fire too. */
   onDelete?: (event: DetectionEvent) => void
+  /** iter-356.x desktop bulk-select. When true, the card click
+   * toggles selection instead of opening the clip modal, and a
+   * checkbox renders at the leading edge. Mobile swipe is suppressed
+   * in selection mode so taps land predictably. */
+  selectionMode?: boolean
+  isSelected?: boolean
+  onToggleSelect?: (event: DetectionEvent) => void
 }) {
   const clickable = !!e.thumb_url && !!onSelect
-  const Wrapper = (clickable ? 'button' : 'div') as 'button' | 'div'
+  // iter-356.x: in selection mode the wrapper is always a button so
+  // taps register as toggles even on rows without thumb_url (which
+  // would otherwise be a non-clickable <div>). Otherwise: keep the
+  // pre-existing button-when-clickable / div-when-not behavior.
+  const Wrapper = (clickable || selectionMode ? 'button' : 'div') as
+    | 'button'
+    | 'div'
   const hasClip = !!e.clip_url
   const title = eventTitle(e)
   const isRecognized = !!e.person_name
@@ -361,13 +395,17 @@ function EventCardImpl({
   // iter-356.62 (bug #2): the outer wrapper now also carries the
   // touch handlers for swipe-to-delete; the inner translating div
   // slides over the (BEHIND) Delete pad.
+  // In selection mode, suppress swipe-to-delete so taps consistently
+  // toggle selection. Hover delete-x is also hidden via the wrapper
+  // class below.
+  const swipeActive = !!onDelete && !selectionMode
   return (
     <div
       className="relative group"
-      onTouchStart={onDelete ? onTouchStart : undefined}
-      onTouchMove={onDelete ? onTouchMove : undefined}
-      onTouchEnd={onDelete ? onTouchEnd : undefined}
-      onTouchCancel={onDelete ? onTouchEnd : undefined}
+      onTouchStart={swipeActive ? onTouchStart : undefined}
+      onTouchMove={swipeActive ? onTouchMove : undefined}
+      onTouchEnd={swipeActive ? onTouchEnd : undefined}
+      onTouchCancel={swipeActive ? onTouchEnd : undefined}
     >
       {/* iter-356.62 (bug #2): the swipe-reveal Delete pad. Sits
           BEHIND the card; the card slides over it as the user swipes
@@ -407,19 +445,48 @@ function EventCardImpl({
         }}
       >
       <Wrapper
-        type={clickable ? 'button' : undefined}
-        onClick={clickable ? () => onSelect?.(e) : undefined}
-        className={`w-full text-left flex gap-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-2 transition-colors ${
-          clickable
+        type={clickable || selectionMode ? 'button' : undefined}
+        onClick={
+          selectionMode
+            ? () => onToggleSelect?.(e)
+            : clickable
+              ? () => onSelect?.(e)
+              : undefined
+        }
+        aria-pressed={selectionMode ? isSelected : undefined}
+        className={`w-full text-left flex gap-3 rounded-xl border p-2 transition-colors ${
+          selectionMode && isSelected
+            ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-default)]'
+            : 'bg-[var(--color-surface)] border-[var(--color-border)]'
+        } ${
+          clickable || selectionMode
             ? 'hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-raised)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
             : ''
         }`}
         aria-label={
-          clickable
-            ? `${hasClip ? 'Play clip:' : 'Open:'} ${title} at ${absoluteTime(e.ts)}`
-            : undefined
+          selectionMode
+            ? `${isSelected ? 'Deselect' : 'Select'} ${title} at ${absoluteTime(e.ts)}`
+            : clickable
+              ? `${hasClip ? 'Play clip:' : 'Open:'} ${title} at ${absoluteTime(e.ts)}`
+              : undefined
         }
       >
+        {selectionMode && (
+          <span
+            aria-hidden="true"
+            className={`flex-none w-5 h-5 self-center rounded border-2 flex items-center justify-center transition-colors ${
+              isSelected
+                ? 'bg-[var(--color-accent-default)] border-[var(--color-accent-default)] text-white'
+                : 'border-[var(--color-border-strong)] bg-[var(--color-surface)]'
+            }`}
+          >
+            {isSelected ? (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : null}
+          </span>
+        )}
         {/* THUMBNAIL — left, fixed 112x72 with 16:9 framing. */}
         <div className="relative w-28 h-[72px] flex-none rounded-lg overflow-hidden bg-[var(--color-surface-raised)]">
           <EventThumbnail url={e.thumb_url} alt={title} />
@@ -451,7 +518,7 @@ function EventCardImpl({
           ) : null}
         </div>
       </Wrapper>
-      {onDelete && (
+      {onDelete && !selectionMode && (
         <button
           type="button"
           onClick={(ev) => {

@@ -408,4 +408,66 @@ describe('EventList', () => {
     const swipeBtn = screen.getByTestId('swipe-delete-button') as HTMLButtonElement
     expect(swipeBtn.tabIndex).toBe(-1)
   })
+
+  it('given selectionMode is on, when a card is clicked, then onToggleSelect fires (not onSelect)', () => {
+    // arrange — multi-select wires the card click to toggle selection
+    // instead of opening the clip modal. iter-356.x desktop D1.
+    const onSelect = vi.fn()
+    const onToggleSelect = vi.fn()
+    render(
+      <EventList
+        events={[evt({ id: 'sel1', thumb_url: '/snapshots/a.jpg' })]}
+        onSelect={onSelect}
+        onToggleSelect={onToggleSelect}
+        selectionMode={true}
+        selectedIds={new Set()}
+      />,
+    )
+
+    // act — click on the card (the wrapper button now toggles selection)
+    const card = screen.getByRole('button', { name: /select/i })
+    fireEvent.click(card)
+
+    // assert
+    expect(onToggleSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('given selectionMode is on and the card is selected, then aria-pressed=true and a check glyph renders', () => {
+    // arrange
+    const onToggleSelect = vi.fn()
+    render(
+      <EventList
+        events={[evt({ id: 'sel2', thumb_url: '/snapshots/a.jpg' })]}
+        onToggleSelect={onToggleSelect}
+        selectionMode={true}
+        selectedIds={new Set(['sel2'])}
+      />,
+    )
+
+    // assert — the wrapper carries aria-pressed=true so AT users hear
+    // "selected" instead of inferring state from a checkbox icon alone.
+    const card = screen.getByRole('button', { name: /deselect/i })
+    expect(card).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('given selectionMode is on, then the hover ✕ delete button is suppressed', () => {
+    // arrange — in selection mode, taps must consistently toggle
+    // selection. The hover ✕ would shadow that affordance and is
+    // hidden so single-delete and bulk-delete don't conflict.
+    render(
+      <EventList
+        events={[evt({ id: 'sel3', thumb_url: '/snapshots/a.jpg' })]}
+        onDelete={() => {}}
+        onToggleSelect={() => {}}
+        selectionMode={true}
+        selectedIds={new Set()}
+      />,
+    )
+
+    // assert
+    expect(
+      screen.queryByRole('button', { name: /delete event from/i }),
+    ).not.toBeInTheDocument()
+  })
 })

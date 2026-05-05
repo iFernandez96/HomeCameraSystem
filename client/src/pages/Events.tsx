@@ -564,6 +564,29 @@ export function Events() {
   // multi-select is iter-334+ candidate.
   const [bulkDownloading, setBulkDownloading] = useState(false)
   const _BULK_EXPORT_CAP = 50
+
+  // iter-356.x (desktop D1 / coherence audit): multi-select bulk-
+  // delete. Pre-fix the desktop user reviewing 30 days of events had
+  // to tap ✕ on each card individually. Now: enter selection mode
+  // via the toolbar, click cards to add to a Set, then "Delete N" to
+  // bulk-remove with one confirm. Mobile keeps swipe-to-delete; the
+  // mode toggle is also available there for users who prefer
+  // checkboxes. Owner-only — gated by isOwner upstream.
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const onToggleSelect = useCallback((e: DetectionEvent) => {
+    setSelectedIds((cur) => {
+      const next = new Set(cur)
+      if (next.has(e.id)) next.delete(e.id)
+      else next.add(e.id)
+      return next
+    })
+  }, [])
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+  }, [])
   const onDownloadVisible = async () => {
     if (bulkDownloading) return
     const ids = filtered.slice(0, _BULK_EXPORT_CAP).map((e) => e.id)
@@ -645,6 +668,50 @@ export function Events() {
       showToast('Could not delete event: ' + formatError(err), 'error')
     }
   }, [isOwner, confirm, showToast])
+
+  const onBulkDelete = async () => {
+    if (!isOwner || selectedIds.size === 0 || bulkDeleting) return
+    const ids = Array.from(selectedIds)
+    const count = ids.length
+    const ok = await confirm({
+      title: `Delete ${count} event${count === 1 ? '' : 's'}?`,
+      body: 'Each selected event and its clip will be removed. This cannot be undone.',
+      confirmLabel: `Delete ${count}`,
+      cancelLabel: 'Cancel',
+      destructive: true,
+    })
+    if (!ok) return
+    setBulkDeleting(true)
+    let snapshot: DetectionEvent[] = []
+    setEvents((cur) => {
+      snapshot = cur
+      const idSet = new Set(ids)
+      return cur.filter((ev) => !idSet.has(ev.id))
+    })
+    setSelectedEvent((cur) => (cur && selectedIds.has(cur.id) ? null : cur))
+    try {
+      const results = await Promise.allSettled(ids.map((id) => deleteEvent(id)))
+      const failed = results.filter((r) => r.status === 'rejected').length
+      if (failed === 0) {
+        showToast(`Deleted ${count} event${count === 1 ? '' : 's'}`, 'success')
+      } else if (failed < count) {
+        showToast(
+          `Deleted ${count - failed} of ${count} — ${failed} failed`,
+          'error',
+        )
+      } else {
+        // All failed: restore.
+        setEvents(snapshot)
+        showToast('Could not delete events — try again', 'error')
+      }
+      exitSelectionMode()
+    } catch (err) {
+      setEvents(snapshot)
+      showToast('Bulk delete failed: ' + formatError(err), 'error')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
 
   const onDeleteDay = async () => {
     if (!isOwner || !selectedDay) return
@@ -777,16 +844,35 @@ export function Events() {
             Watch log
           </span>
           <div className="flex items-center gap-3">
-            {!loading && !error && events.length > 0 && (
+            {!loading && !error && events.length > 0 && !selectionMode && (
               // iter-356.49: "100 recent" reads as a noun-phrase
               // riddle — "100 recent what?" Now: "Last 100" /
               // "X of last 100" so it's clear the system is
               // capped at the most-recent N events fetched.
               <span className="text-xs text-[var(--color-text-tertiary)] tabular-nums">
+                {/* iter-356.x (scalability T2): "Last N" was misleading
+                    once WS prepends + the 200-cap dropped older events
+                    silently — the array was a non-contiguous window,
+                    not a contiguous suffix. "Showing N" is true either
+                    way. */}
                 {filter === 'all'
-                  ? `Last ${events.length}`
-                  : `${filtered.length} of last ${events.length}`}
+                  ? `Showing ${events.length}`
+                  : `Showing ${filtered.length} of ${events.length}`}
               </span>
+            )}
+            {/* iter-356.x (desktop D1): selection-mode toggle. Only
+                renders for owners with at least one event; rest of the
+                roles never see the affordance. The bulk-delete bar
+                below replaces the count text when active. */}
+            {isOwner && !loading && !error && events.length > 0 && !selectionMode && (
+              <button
+                type="button"
+                onClick={() => setSelectionMode(true)}
+                className="text-xs font-medium text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded px-1 min-h-[44px] inline-flex items-center"
+                aria-label="Enter selection mode to delete multiple events"
+              >
+                Select
+              </button>
             )}
             {/* iter-356.66 (round 2): calendar toggle moved OUT of
                 the in-header position into a fixed-positioned
@@ -1085,6 +1171,46 @@ export function Events() {
             />
           ) : (
             <>
+              {/* iter-356.x desktop D1: selection-mode action bar.
+                  Sticky just below the page header so the bar stays
+                  visible while scrolling through 100+ rows. Renders
+                  Cancel + Delete-N. Cancel exits the mode without
+                  destruction; Delete fires the bulk-confirm dialog. */}
+              {selectionMode && (
+                <div
+                  role="region"
+                  aria-label="Bulk selection actions"
+                  className="sticky top-[var(--day-header-top,4rem)] z-20 mb-2 mx-4 lg:mx-0 px-3 py-2 rounded-xl bg-[var(--color-accent-subtle)] border border-[var(--color-accent-default)]/40 flex items-center justify-between gap-3 shadow-[var(--shadow-subtle)]"
+                >
+                  <span className="text-sm font-semibold text-[var(--color-accent-default)] tabular-nums">
+                    {selectedIds.size === 0
+                      ? 'Tap events to select'
+                      : `${selectedIds.size} selected`}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={exitSelectionMode}
+                      disabled={bulkDeleting}
+                      className="text-xs font-medium px-3 min-h-[44px] inline-flex items-center text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onBulkDelete}
+                      disabled={selectedIds.size === 0 || bulkDeleting}
+                      className="text-xs font-semibold px-3 min-h-[44px] inline-flex items-center bg-[var(--color-danger)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
+                    >
+                      {bulkDeleting
+                        ? 'Deleting…'
+                        : selectedIds.size === 0
+                          ? 'Delete'
+                          : `Delete ${selectedIds.size}`}
+                    </button>
+                  </div>
+                </div>
+              )}
               <EventList
                 events={filtered}
                 // iter-307: per-row delete affordance for owners only.
@@ -1094,6 +1220,9 @@ export function Events() {
                 // check sees stable refs across parent re-renders.
                 onDelete={isOwner ? onDeleteOne : undefined}
                 onSelect={onSelectEvent}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelect={onToggleSelect}
                 // iter-356.24 (Frank carryover from iter-356.22): wire
                 // worker_alive + detection_active into the empty-state
                 // branch so the sleeping cat is reserved for "camera
@@ -1252,7 +1381,7 @@ function FilterChip({
   forwardedRef?: (el: HTMLButtonElement | null) => void
 }) {
   const base =
-    'px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors capitalize border focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 flex-shrink-0'
+    'inline-flex items-center min-h-[44px] px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors capitalize border focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 flex-shrink-0'
   // iter-356.50: active-chip styling tokenized for the light theme.
   // Pre-iter-356.50 the accent branch used `text-emerald-200` (light
   // green meant for dark bg, ~2:1 on cream — illegible) and the
@@ -1371,7 +1500,7 @@ function CalendarOverlay({
             type="button"
             onClick={onClose}
             aria-label="Close calendar"
-            className="inline-flex items-center justify-center w-9 h-9 rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="inline-flex items-center justify-center w-11 h-11 rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
           >
             ✕
           </button>
