@@ -240,6 +240,80 @@ describe('buildDayList', () => {
   })
 })
 
+describe('EventHeatmap brand consistency (premium-launch slice)', () => {
+  it('Given today exists in the rendered month, When the today cell renders, Then the active-ring uses the brass brand token (NOT raw blue)', async () => {
+    // arrange — Maya Major: pre-fix the today indicator was
+    // `ring-2 ring-blue-400` — a raw Tailwind blue inside the
+    // warm-den brand palette that read as a dev placeholder.
+    // Brass token matches the rest of the watch-log eyebrow
+    // pattern and stays in the project's color system.
+    const today = new Date()
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    getEventCountsByDay.mockResolvedValue({ counts: { [todayKey]: 1 } })
+
+    // act
+    render(<EventHeatmap />)
+
+    // assert
+    const cell = await screen.findByLabelText(/\(today\)/i)
+    expect(cell.className).toMatch(/ring-\[var\(--color-brass-default\)\]/)
+    expect(cell.className).not.toMatch(/ring-blue/)
+  })
+
+  it('Given counts span all four populated heat-ramp tiers, When the cells render, Then no cell uses the raw `bg-amber-300` Tailwind token (single-hue ramp through ember tokens)', async () => {
+    // arrange — Maya Critical: the mid-tier of the ramp was
+    // `bg-amber-300`, a raw Tailwind tone OUTSIDE the brand
+    // token system. Now the entire ramp climbs through ember
+    // tokens monotonically: subtle → muted → default → bright.
+    // Build a counts map that exercises all four tiers — max=8
+    // so ratios 1/8, 3/8, 5/8, 8/8 hit each band.
+    const today = new Date()
+    const fmt = (offset: number) => {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    getEventCountsByDay.mockResolvedValue({
+      counts: {
+        [fmt(-3)]: 1,
+        [fmt(-2)]: 3,
+        [fmt(-1)]: 5,
+        [fmt(0)]: 8,
+      },
+    })
+
+    // act
+    render(<EventHeatmap />)
+    const cells = await screen.findAllByLabelText(/: \d+ detections?/)
+
+    // assert — no cell carries a raw `amber-` Tailwind token.
+    for (const cell of cells) {
+      expect(cell.className).not.toMatch(/\bbg-amber-\d+\b/)
+    }
+  })
+
+  it('Given the legend renders, When the swatches paint, Then the mid-tier swatch uses the ember-muted brand token (matching the cellTier mid-tier — single-source-of-truth between ramp and legend)', async () => {
+    // arrange — pre-fix the legend swatch was `bg-amber-300` and
+    // the cell-tier mid-band was also `bg-amber-300`. We swap
+    // both to `--color-accent-muted`. This test asserts the
+    // LEGEND side; the cells side is asserted above.
+    const today = new Date()
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    getEventCountsByDay.mockResolvedValue({ counts: { [todayKey]: 5 } })
+
+    // act
+    const { container } = render(<EventHeatmap />)
+    await screen.findByText(/fewer detections/i)
+
+    // assert — search inside the legend row for the muted swatch;
+    // also assert no amber-300 swatch survives.
+    const legend = screen
+      .getByText(/fewer detections/i)
+      .closest('div')!
+    expect(legend.innerHTML).toMatch(/--color-accent-muted/)
+    expect(container.innerHTML).not.toMatch(/bg-amber-300/)
+  })
+})
+
 describe('dayBounds', () => {
   it('returns local-midnight to next-local-midnight as unix epoch seconds', () => {
     const [start, end] = dayBounds('2026-04-30')

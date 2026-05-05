@@ -838,12 +838,23 @@ export function Events() {
           {/* iter-356.63 (Slice D a11y): sr-only <h1> sibling so AT
               users get a level-1 heading per route. The visible
               "Watch log" stays aria-hidden + decorative (WatchRibbon
-              already carries identity). */}
+              already carries identity).
+
+              Premium-launch slice (Maya Critical — log-label
+              triplication): pre-fix the visible decorative
+              `<span>Watch log</span>` echoed BOTH the sr-only h1
+              AND the day-headers below ("Today's log", "Yesterday's
+              log"). A user reads "Watch log → Today's log → entries"
+              — three log labels stacking. The visible span is
+              dropped; the day-headers become the visible section
+              anchors. The sr-only h1 stays (route-level a11y
+              landmark). The right-side meta cluster (Showing N +
+              Select) stays where it is — its `flex justify-between`
+              parent handles a single child by hugging the right
+              edge, which is the same pattern Settings + Live use
+              for their "page meta" row. */}
           <h1 className="sr-only">Watch log</h1>
-          <span className="font-display text-xl font-semibold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
-            Watch log
-          </span>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 ml-auto">
             {!loading && !error && events.length > 0 && !selectionMode && (
               // iter-356.49: "100 recent" reads as a noun-phrase
               // riddle — "100 recent what?" Now: "Last 100" /

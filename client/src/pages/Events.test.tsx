@@ -1414,6 +1414,34 @@ describe('Events page', () => {
     ).toBeInTheDocument()
   })
 
+  it('Given the Events page renders, When the user reads the visible header, Then "Watch log" appears EXACTLY ONCE (the sr-only h1) and NOT as a visible decorative span (premium-launch slice — Maya Critical: drop log-label triplication)', async () => {
+    // arrange — pre-fix "Watch log" appeared twice in the DOM:
+    // a sr-only <h1> for AT structural navigation AND a visible
+    // aria-hidden <span> rendered as a decorative title row.
+    // Maya: the visible span echoed the WatchRibbon (which
+    // already carries identity) AND duplicated the day-header
+    // ("Today's log") that is the real visible section anchor.
+    // Three log labels stacked. The slice drops the visible
+    // span and keeps only the sr-only <h1>.
+    fetchEvents.mockResolvedValue([])
+
+    // act
+    render(<Events />)
+
+    // assert — match every occurrence of "Watch log" in the DOM.
+    // jsdom returns the sr-only h1 here. If a future refactor
+    // re-introduces a visible decorative span, the count flips
+    // from 1 → 2 and the test fails.
+    const matches = await screen.findAllByText(/^Watch log$/)
+    expect(matches.length).toBe(1)
+    // The single match is the sr-only h1 — pin both the role
+    // AND the sr-only class so a regression that drops the
+    // sr-only treatment also fails.
+    const heading = matches[0]
+    expect(heading.tagName.toLowerCase()).toBe('h1')
+    expect(heading.className).toMatch(/\bsr-only\b/)
+  })
+
   it('given the calendar overlay opens, when the user closes it via the X button, then focus returns to the calendar trigger (iter-356.63: Slice D a11y — focus restore)', async () => {
     // arrange — start with calendar closed, then user opens it via
     // the trigger; on close focus must return to the trigger so a
