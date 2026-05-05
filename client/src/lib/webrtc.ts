@@ -3,22 +3,171 @@ export type WhepConnection = {
   close: () => void
 }
 
+// Premium-launch slice — pre-WHEP connection warmup.
+//
+// The WHEP handshake decomposes into:
+//   1. Create RTCPeerConnection (LOCAL — no network)
+//   2. Add recvonly video transceiver (LOCAL)
+//   3. createOffer() (LOCAL — generate SDP)
+//   4. setLocalDescription() (LOCAL — kicks ICE gathering)
+//   5. Wait for ICE gathering to complete (LOCAL — host candidates only,
+//      because iceServers: [] means we never hit STUN)
+//   6. POST /whep/cam/whep with our SDP (NETWORK — auth-protected)
+//   7. setRemoteDescription(answer) (LOCAL)
+//
+// Steps 1-5 are 100% local and safe to do at any time after auth has
+// resolved (we don't warm pre-auth — see auth.tsx for the gate).
+// They take ~5-50 ms total but on a slow phone the createOffer +
+// setLocalDescription + ICE gathering chain serializes in front of
+// the user-perceived "first frame" timer that starts at /live mount.
+//
+// By warming the PC during the brief window between auth-resolved
+// and Live-route-mount (the user typing creds → submit → React
+// navigates → Live lazy chunk loads → VideoTile mounts), we move
+// those 5-50 ms off the critical path. When connectWhep is called
+// post-mount, it claims the warmed PC instead of doing 1-5 itself.
+//
+// Safety:
+//   - Warmup does not touch /whep/* (the auth-protected endpoint).
+//   - Warmup does not bind to a video element (no `<video>` srcObject
+//     change before the user lands on Live). That binding happens at
+//     consume time, when we have the user's intended video element.
+//   - iceServers: [] is preserved. No STUN, no TURN, no third-party
+//     network exposure ever introduced.
+//   - The cached PC is invalidated on the `offline` window event so
+//     a Wi-Fi → cellular swap doesn't re-use stale host candidates.
+//   - TTL of WARM_TTL_MS (30 s) bounds memory if the user warms but
+//     never reaches /live (e.g., logs in then closes the tab).
+
+let _warmed: { pc: RTCPeerConnection; createdAt: number } | null = null
+const WARM_TTL_MS = 30_000
+
+/** Test-only helper: drop the warm cache between tests. */
+export function _resetWhepWarmupForTests(): void {
+  if (_warmed) {
+    try {
+      _warmed.pc.close()
+    } catch {
+      /* ignore — test mocks may not implement close fully */
+    }
+    _warmed = null
+  }
+}
+
 /**
- * Connect to a MediaMTX WHEP endpoint and attach the inbound MediaStream to the given video element.
- * WHEP = WebRTC-HTTP Egress Protocol; MediaMTX exposes one per path at /<name>/whep.
+ * Warm a peer connection in advance. Idempotent: a second call
+ * while a warmed PC exists is a no-op. Errors are swallowed —
+ * warmup is best-effort; if it fails, connectWhep still works
+ * via the cold path. Returns once the cache is primed (or once
+ * the warmup attempt has resolved either way).
+ *
+ * Caller is responsible for gating this behind any preconditions
+ * (e.g., only call after auth resolves to 'authed' — see
+ * lib/auth.tsx for the wiring).
+ */
+export async function warmWhepConnection(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (typeof RTCPeerConnection === 'undefined') return
+  if (_warmed) return
+  let pc: RTCPeerConnection | null = null
+  try {
+    pc = new RTCPeerConnection({ iceServers: [] })
+    pc.addTransceiver('video', { direction: 'recvonly' })
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    await iceGatheringComplete(pc)
+    if (_warmed) {
+      // Lost a race with another warmup call (StrictMode dev double-
+      // mount, double-submit). Keep the existing one, drop ours.
+      pc.close()
+      return
+    }
+    _warmed = { pc, createdAt: Date.now() }
+  } catch {
+    // Warmup is best-effort. A transient failure here must not
+    // poison subsequent connectWhep calls.
+    if (pc) {
+      try {
+        pc.close()
+      } catch {
+        /* swallow */
+      }
+    }
+    _warmed = null
+  }
+}
+
+/** Pop the cached PC if one exists and hasn't aged out. Returns
+ *  null if no warm PC available (or if it aged past TTL). */
+function _claimWarmed(): RTCPeerConnection | null {
+  if (!_warmed) return null
+  const aged = Date.now() - _warmed.createdAt > WARM_TTL_MS
+  if (aged) {
+    try {
+      _warmed.pc.close()
+    } catch {
+      /* swallow */
+    }
+    _warmed = null
+    return null
+  }
+  const pc = _warmed.pc
+  _warmed = null
+  return pc
+}
+
+// Invalidate the warmed cache when the network drops — host
+// candidates would resolve to the previous interface's IP after
+// resume. Test environments without `window` skip this branch.
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => {
+    if (_warmed) {
+      try {
+        _warmed.pc.close()
+      } catch {
+        /* swallow */
+      }
+      _warmed = null
+    }
+  })
+}
+
+/**
+ * Connect to a MediaMTX WHEP endpoint and attach the inbound
+ * MediaStream to the given video element. WHEP = WebRTC-HTTP
+ * Egress Protocol; MediaMTX exposes one per path at /<name>/whep.
+ *
+ * If a warmed peer connection is available (see warmWhepConnection
+ * above), we reuse it — saving the local SDP generation + ICE
+ * gathering phase. The warmed PC's localDescription already has
+ * its host candidates baked in. Otherwise we do the full cold
+ * sequence.
+ *
+ * Connection retry + failure semantics are unchanged from pre-
+ * warmup: a non-2xx WHEP response throws and closes the PC; a
+ * mid-stream connection failure is surfaced via VideoTile's
+ * connectionstatechange listener (iter-162) and recovered via the
+ * manual Retry button.
  */
 export async function connectWhep(
   url: string,
   video: HTMLVideoElement,
 ): Promise<WhepConnection> {
-  // No STUN: this is a LAN-only deployment (Jetson on the same network as the
-  // browser). Skipping STUN saves ~200-500ms of resolution time for the first
-  // frame, and avoids leaking the LAN IP to a public server.
-  const pc = new RTCPeerConnection({ iceServers: [] })
-
-  // Video only — the camera has no audio. An audio transceiver costs ~50-100ms
-  // of SDP/ICE negotiation for a track that never carries data.
-  pc.addTransceiver('video', { direction: 'recvonly' })
+  const claimed = _claimWarmed()
+  let pc: RTCPeerConnection
+  if (claimed) {
+    pc = claimed
+  } else {
+    // No STUN: this is a LAN-only deployment (Jetson on the same
+    // network as the browser). Skipping STUN saves ~200-500 ms of
+    // resolution time for the first frame, and avoids leaking the
+    // LAN IP to a public server.
+    pc = new RTCPeerConnection({ iceServers: [] })
+    // Video only — the camera has no audio. An audio transceiver
+    // costs ~50-100 ms of SDP/ICE negotiation for a track that never
+    // carries data.
+    pc.addTransceiver('video', { direction: 'recvonly' })
+  }
 
   pc.ontrack = (e) => {
     if (video.srcObject !== e.streams[0]) {
@@ -26,9 +175,15 @@ export async function connectWhep(
     }
   }
 
-  const offer = await pc.createOffer()
-  await pc.setLocalDescription(offer)
-  await iceGatheringComplete(pc)
+  // Cold path (no warmup): generate offer + gather ICE now.
+  // Warm path: pc.localDescription is already populated with the
+  // pre-baked host-candidate SDP — skip straight to the network
+  // round-trip.
+  if (!pc.localDescription) {
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    await iceGatheringComplete(pc)
+  }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -66,10 +221,11 @@ function iceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
       if (pc.iceGatheringState === 'complete') finish()
     }
     pc.addEventListener('icegatheringstatechange', onChange)
-    // 250 ms is plenty on a LAN — host candidates gather in <50 ms with no
-    // STUN. The fallback only fires if something is wrong; in normal cases
-    // the icegatheringstatechange event resolves first. The previous 3 s
-    // timeout meant a slow LAN could block first-frame for that long.
+    // 250 ms is plenty on a LAN — host candidates gather in <50 ms
+    // with no STUN. The fallback only fires if something is wrong;
+    // in normal cases the icegatheringstatechange event resolves
+    // first. The previous 3 s timeout meant a slow LAN could block
+    // first-frame for that long.
     const timer = setTimeout(finish, 250)
   })
 }

@@ -22,6 +22,15 @@ vi.mock('./toast', () => ({
   useToast: () => ({ showToast }),
 }))
 
+// Premium-launch slice (WHEP warmup auth boundary): AuthProvider now
+// imports warmWhepConnection from ./webrtc and fires it on the
+// loading→authed transition. Mock at module level so we can pin the
+// "fires only when authed" contract that protects the auth boundary.
+const warmWhepConnection = vi.fn().mockResolvedValue(undefined)
+vi.mock('./webrtc', () => ({
+  warmWhepConnection: () => warmWhepConnection(),
+}))
+
 import { HttpError } from './api'
 import { AuthProvider, useAuth } from './auth'
 
@@ -41,6 +50,7 @@ describe('AuthProvider', () => {
     apiLogin.mockReset()
     apiLogout.mockReset()
     showToast.mockReset()
+    warmWhepConnection.mockReset().mockResolvedValue(undefined)
   })
   afterEach(() => {
     vi.clearAllMocks()
@@ -244,5 +254,114 @@ describe('AuthProvider', () => {
       expect(screen.getByTestId('state')).toHaveTextContent('anon'),
     )
     expect(showToast).toHaveBeenCalledTimes(1)
+  })
+
+  it('Given /me has not yet resolved, When AuthProvider mounts, Then warmWhepConnection is NOT called yet (auth-boundary safety: no WebRTC PC creation while state is loading)', async () => {
+    // arrange — keep getMe pending forever. State stays 'loading'.
+    getMe.mockReturnValueOnce(new Promise(() => {}))
+
+    // act
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    expect(screen.getByTestId('state')).toHaveTextContent('loading')
+
+    // assert — warmup waits for state to flip to 'authed'.
+    expect(warmWhepConnection).not.toHaveBeenCalled()
+  })
+
+  it('Given /me 401s, When auth flips to anon, Then warmWhepConnection is NOT called (auth-boundary safety: anon visitors get no warmup)', async () => {
+    // arrange
+    getMe.mockRejectedValueOnce(new HttpError('/api/auth/me', 401, ''))
+
+    // act
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('anon'),
+    )
+
+    // assert — anon transition does NOT trigger warmup.
+    expect(warmWhepConnection).not.toHaveBeenCalled()
+  })
+
+  it('Given /me returns 200, When auth flips to authed, Then warmWhepConnection fires exactly once (premium-launch slice: WHEP PC pre-creation overlapping the user navigating to Live)', async () => {
+    // arrange
+    getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
+
+    // act
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('authed'),
+    )
+
+    // assert — fired once on the loading→authed transition.
+    expect(warmWhepConnection).toHaveBeenCalledTimes(1)
+  })
+
+  it('Given a successful login, When apiLogin resolves and state flips to authed, Then warmWhepConnection fires (so the user navigating from /login to /live finds the PC primed)', async () => {
+    // arrange
+    getMe.mockRejectedValueOnce(new HttpError('/api/auth/me', 401, ''))
+    apiLogin.mockResolvedValueOnce({
+      user: { username: 'alice', role: 'admin' },
+    })
+
+    function LoginProbe() {
+      const { state, login } = useAuth()
+      return (
+        <div>
+          <span data-testid="state">{state}</span>
+          <button onClick={() => login('alice', 'hunter2')}>do-login</button>
+        </div>
+      )
+    }
+
+    // act — first land anon, then submit login.
+    render(
+      <AuthProvider>
+        <LoginProbe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('anon'),
+    )
+    expect(warmWhepConnection).not.toHaveBeenCalled()
+    await act(async () => {
+      screen.getByText('do-login').click()
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('authed'),
+    )
+
+    // assert — warmup fires on the anon→authed transition.
+    expect(warmWhepConnection).toHaveBeenCalledTimes(1)
+  })
+
+  it('Given warmWhepConnection rejects, When the rejection happens, Then AuthProvider does not crash (warmup is best-effort and failures are non-fatal)', async () => {
+    // arrange
+    warmWhepConnection.mockReset().mockRejectedValueOnce(new Error('mock RTC failure'))
+    getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
+
+    // act + assert — the unhandled rejection from a real-world
+    // browser RTC failure must not propagate. The .catch() in
+    // auth.tsx swallows it; auth still flips to authed.
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('authed'),
+    )
+    expect(warmWhepConnection).toHaveBeenCalledTimes(1)
   })
 })

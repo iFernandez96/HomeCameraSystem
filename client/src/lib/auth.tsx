@@ -9,6 +9,7 @@ import {
 import { getMe, HttpError, login as apiLogin, logout as apiLogout } from './api'
 import { useToast } from './toast'
 import type { User } from './types'
+import { warmWhepConnection } from './webrtc'
 
 /**
  * Tri-state auth lifecycle (iter-182, Auth Plan Phase 4).
@@ -62,6 +63,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    // Premium-launch slice — Live-chunk prefetch. Today the React.lazy
+    // import for the Live page only fires AFTER /api/auth/me resolves
+    // and RequireAuth re-renders with children — so the chunk fetch
+    // runs SERIALLY after the auth round-trip. Kicking the dynamic
+    // import here, in parallel with the auth fetch, lets the chunk
+    // fetch overlap the auth round-trip on every cold visit. The
+    // import is fire-and-forget; it caches in the module loader so
+    // the React.lazy promise resolves instantly when Live mounts.
+    // Errors are swallowed because the React.lazy will surface its
+    // own retry path through Suspense if the chunk genuinely fails.
+    void import('../pages/Live').catch(() => {})
     getMe()
       .then((res) => {
         if (cancelled) return
@@ -86,6 +98,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [])
+
+  // Premium-launch slice — pre-warm the WHEP peer connection AFTER
+  // auth resolves to authed and BEFORE the user reaches /live. Pre-
+  // creates the RTCPeerConnection + generates the SDP offer + waits
+  // for ICE gathering (host candidates only, iceServers: []). All
+  // local — no /whep/* call here, no video element binding here.
+  // Warmup runs only when authed (anon visitors don't need it). The
+  // warm cache invalidates on `offline` and after a 30 s TTL inside
+  // lib/webrtc.ts. See connectWhep for the consume side. Errors are
+  // swallowed — warmup is best-effort; cold-path connectWhep still
+  // works if warmup never primed the cache.
+  useEffect(() => {
+    if (state !== 'authed') return
+    warmWhepConnection().catch(() => {})
+  }, [state])
 
   // iter-185 (Auth Plan Phase 6): when the WS handshake fails with
   // 1008 (auth/origin gate), `lib/ws.ts` dispatches a window-level
