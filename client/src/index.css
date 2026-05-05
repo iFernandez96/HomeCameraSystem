@@ -73,7 +73,14 @@
   /* === Text tiers (PARCHMENT ON DARK) =============================
    * Coco's ginger-cream as primary; warmer mids for hierarchy. */
   --color-text-primary:    #f0e6d0;  /* parchment ink — Coco's coat */
-  --color-text-secondary:  #b09070;  /* warm stone — 4.7:1 on surface */
+  /* iter-356.65 (mobile slice A): bumped warm-stone secondary from
+   * #b09070 (~4.7:1 on #2c2318 surface) to #c4a482 (~6.5:1 by the
+   * standard relative-luminance formula). Aiko's mobile-visual brief
+   * called the old value "comfortably AA on body but borderline on
+   * a 14px metadata row." New value clears AA-large + AA-normal with
+   * room. Hue preserved (warm tan) so it reads as the same family as
+   * the parchment primary, just one step closer to the candlelight. */
+  --color-text-secondary:  #c4a482;  /* warm stone — ~6.5:1 on surface */
   --color-text-tertiary:   #8d7a5d;  /* timestamps, hints — non-critical labels */
   --color-text-disabled:   #5d4f3d;  /* disabled controls */
 
@@ -160,8 +167,14 @@
   --font-mono: 'SF Mono', 'Fira Code', Consolas, monospace;
 
   --text-xs:   11px;  /* caption, badge, pill label */
-  --text-sm:   13px;  /* body secondary, metadata */
-  --text-base: 15px;  /* body primary, form labels */
+  /* iter-356.65 (mobile slice A): bumped --text-sm 13→14 and
+   * --text-base 15→16. The 16px floor on inputs suppresses iOS
+   * Safari's auto-zoom-on-focus (a recurring trap across Training
+   * retention input, Settings numeric inputs, Login form) without
+   * needing per-input overrides. 14px metadata rows clear the
+   * mobile readability floor Aiko's brief flagged. */
+  --text-sm:   14px;  /* body secondary, metadata */
+  --text-base: 16px;  /* body primary, form labels */
   --text-lg:   18px;  /* section header, day header */
   --text-xl:   22px;  /* page subtitle */
   --text-2xl:  28px;  /* page title */

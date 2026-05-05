@@ -33,11 +33,16 @@ type NavItem = {
   icon: (active: boolean) => React.ReactNode
 }
 
+// iter-356.65 (mobile slice A, Hari coherence): Training dropped
+// from the desktop rail. Mobile already treats it as a sub-route
+// under People; the rail now matches that IA so the desktop and
+// mobile nav read the same five-item shape (Live/Events/People/
+// Settings + WatchRibbon). Training is still routable directly via
+// /training and reachable from People.
 const NAV_ITEMS: NavItem[] = [
   { to: '/live',     label: 'Live',     icon: (a) => <LiveIcon active={a} /> },
   { to: '/events',   label: 'Events',   icon: () => <EventsIcon /> },
   { to: '/people',   label: 'People',   icon: () => <PeopleIcon /> },
-  { to: '/training', label: 'Training', icon: () => <TrainingIcon /> },
   { to: '/settings', label: 'Settings', icon: () => <SettingsIcon /> },
 ]
 
@@ -135,14 +140,6 @@ function PeopleIcon() {
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  )
-}
-function TrainingIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 10L12 5 2 10l10 5 10-5z" />
-      <path d="M6 12v5a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3v-5" />
     </svg>
   )
 }

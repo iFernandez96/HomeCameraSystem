@@ -46,6 +46,17 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap"
     />
+    <!-- iter-356.65 (mobile slice A) TODO: Vite emits hash-based
+         per-route chunk filenames (e.g. `Live-DEADBEEF.js`), so
+         a static `<link rel="modulepreload" href="/assets/Live-*.js">`
+         can't be wired up without a build-time HTML transform. Punted
+         to a follow-up: either (a) add a tiny rollup plugin that walks
+         the manifest and emits the preload tag for the Live chunk, or
+         (b) wait for vite-plugin-pwa / Vite to ship a first-class
+         per-route-preload knob. Today the Live route is reached via
+         `<Navigate to="/live">` from the auth gate, so the chunk is
+         already requested as soon as the shell loads — preload would
+         shave at most one round trip. -->
     <title>HomeCam</title>
   </head>
   <body>

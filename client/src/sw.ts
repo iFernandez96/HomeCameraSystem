@@ -2,7 +2,7 @@
 import { clientsClaim } from 'workbox-core'
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
 import { registerRoute } from 'workbox-routing'
-import { NetworkFirst } from 'workbox-strategies'
+import { CacheFirst, NetworkFirst } from 'workbox-strategies'
 import { CacheableResponsePlugin } from 'workbox-cacheable-response'
 import { ExpirationPlugin } from 'workbox-expiration'
 import {
@@ -18,6 +18,29 @@ clientsClaim()
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
+
+// iter-356.65 (mobile slice A): cat PNG sprites are excluded from
+// the precache (vite.config.ts globIgnores) because they're heavy
+// and only show on empty-state / ambient surfaces. Cache them at
+// runtime with CacheFirst — first hit fills the cache, subsequent
+// loads are instant + work offline. 30-day expiration so a long-
+// running install doesn't keep stale art forever.
+registerRoute(
+  ({ url, request }) =>
+    request.destination === 'image' &&
+    /\.png$/i.test(url.pathname) &&
+    url.pathname.startsWith('/assets/'),
+  new CacheFirst({
+    cacheName: 'homecam-cat-art-v1',
+    plugins: [
+      new CacheableResponsePlugin({ statuses: [0, 200] }),
+      new ExpirationPlugin({
+        maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+        maxEntries: 60,
+      }),
+    ],
+  }),
+)
 
 // iter-349 (Discovery #4 from iter-327, value 7, S): NetworkFirst
 // runtime cache for the GET-only events surface. The PWA precaches
