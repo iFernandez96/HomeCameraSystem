@@ -34,6 +34,12 @@ const getStatusM = vi.fn().mockResolvedValue({
   worker_last_seen_s: 1,
   worker_metrics: null,
 })
+// iter-356.62 (bug #4): Events now reads getDetectionConfig() to
+// drive the type-filter chip set from Settings. Default to a never-
+// resolving Promise so tests that don't care about the chip-sync
+// behaviour aren't disturbed; the iter-356.62 BDD test below
+// overrides via getDetectionConfigM.mockResolvedValue.
+const getDetectionConfigM = vi.fn().mockReturnValue(new Promise(() => {}))
 vi.mock('../lib/api', () => ({
   fetchEvents: (...a: unknown[]) => fetchEvents(...a),
   searchEvents: (...a: unknown[]) => searchEvents(...a),
@@ -43,6 +49,7 @@ vi.mock('../lib/api', () => ({
   deleteEvent: (...a: unknown[]) => deleteEvent(...a),
   deleteEventsByDay: (...a: unknown[]) => deleteEventsByDay(...a),
   exportEvents: (...a: unknown[]) => exportEventsM(...a),
+  getDetectionConfig: (...a: unknown[]) => getDetectionConfigM(...a),
   fetchEventTracks: () => Promise.resolve(null),
   getStatus: (...a: unknown[]) => getStatusM(...a),
 }))
@@ -1234,6 +1241,38 @@ describe('Events page', () => {
     await waitFor(() => expect(searchEvents).toHaveBeenCalled())
     const args = searchEvents.mock.calls[0][0]
     expect(args).toMatchObject({ label: 'dog' })
+  })
+
+  it('given detection config with only person, when events page renders, then only the person chip is shown (iter-356.62 bug #4)', async () => {
+    // arrange — config has a single class; no events have arrived yet
+    // so the chip set must come from configClasses, not from events.
+    fetchEvents.mockResolvedValue([])
+    getDetectionConfigM.mockReset().mockResolvedValue({
+      threshold: 0.5,
+      cooldown_s: 5,
+      enabled: true,
+      schedule_off_start: null,
+      schedule_off_end: null,
+      classes: ['person'],
+      zones: [],
+      clip_post_roll_s: 5,
+      clip_pre_roll_s: 0,
+      clip_retention_preset: 'month',
+      camera_label: 'Front Door',
+      audio_enabled: false,
+    })
+
+    // act
+    render(<Events />)
+
+    // assert — the type-filter radiogroup shows All types + Person
+    // and NOT a full COCO list (no Car, Dog, Bicycle, etc).
+    const group = await screen.findByRole('radiogroup', {
+      name: /filter events by detection type/i,
+    })
+    const radios = group.querySelectorAll('[role="radio"]')
+    const labels = Array.from(radios).map((r) => r.textContent?.trim())
+    expect(labels).toEqual(['All types', 'Person'])
   })
 })
 

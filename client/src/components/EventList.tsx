@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import { CatEmptyState } from './CatEmptyState'
 import type { DetectionEvent } from '../lib/types'
 import { useTicker } from '../lib/useTicker'
@@ -268,6 +268,80 @@ function EventCardImpl({
   const hasClip = !!e.clip_url
   const title = eventTitle(e)
   const isRecognized = !!e.person_name
+
+  // iter-356.62 (bug #2 — user "no way to delete any of the logs"):
+  // swipe-left-to-reveal-delete. Touch only — pointer/mouse users
+  // already have the always-visible ✕ in the corner. On touchstart we
+  // record the starting clientX. On touchmove we translate the card
+  // negatively (capped at -SWIPE_REVEAL so the rubber-banding doesn't
+  // run away). On touchend, if the user swiped past SWIPE_THRESHOLD
+  // we latch the card open (revealing the red Delete pad behind it);
+  // tapping the pad calls onDelete (which the parent has wired to
+  // the existing useConfirm flow). Below threshold we snap back.
+  // The pad sits BEHIND the card (absolute, full-height, right-aligned)
+  // so the card slides over it like an iOS list row.
+  const SWIPE_THRESHOLD = 80 // px past which the row latches open
+  const SWIPE_REVEAL = 96 // pad width
+  const [translateX, setTranslateX] = useState(0)
+  const [revealed, setRevealed] = useState(false)
+  // iter-356.62: `dragging` is state (not ref) so the transition
+  // attribute below can switch between "no transition while finger
+  // tracks" and "snap with ease-out on release" reactively, without
+  // reading a ref during render (eslint react-hooks/refs).
+  const [dragging, setDragging] = useState(false)
+  const touchStartX = useRef<number | null>(null)
+  const touchStartY = useRef<number | null>(null)
+  const touchAxis = useRef<'h' | 'v' | null>(null)
+
+  const onTouchStart = (ev: React.TouchEvent) => {
+    if (!onDelete) return
+    const t = ev.touches[0]
+    touchStartX.current = t.clientX
+    touchStartY.current = t.clientY
+    touchAxis.current = null
+    setDragging(true)
+  }
+  const onTouchMove = (ev: React.TouchEvent) => {
+    if (!onDelete || touchStartX.current === null) return
+    const t = ev.touches[0]
+    const dx = t.clientX - touchStartX.current
+    const dy = t.clientY - (touchStartY.current ?? t.clientY)
+    if (touchAxis.current === null) {
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+        touchAxis.current = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'
+      }
+    }
+    if (touchAxis.current !== 'h') return
+    // Constrain to leftward drags (rightward dismisses any reveal).
+    if (dx < 0) {
+      setTranslateX(Math.max(dx, -SWIPE_REVEAL))
+    } else if (revealed) {
+      // Allow drag-right to close the reveal.
+      setTranslateX(Math.min(-SWIPE_REVEAL + dx, 0))
+    } else {
+      setTranslateX(0)
+    }
+  }
+  const onTouchEnd = () => {
+    if (!onDelete) return
+    const start = touchStartX.current
+    touchStartX.current = null
+    touchStartY.current = null
+    setDragging(false)
+    if (touchAxis.current !== 'h' || start === null) {
+      touchAxis.current = null
+      return
+    }
+    touchAxis.current = null
+    if (translateX <= -SWIPE_THRESHOLD) {
+      setTranslateX(-SWIPE_REVEAL)
+      setRevealed(true)
+    } else {
+      setTranslateX(0)
+      setRevealed(false)
+    }
+  }
+
   // iter-307: container relative-positions the absolute delete
   // button. Card click target stays the same (button or div); the
   // delete button is a SIBLING of the wrapper, NOT nested inside
@@ -275,8 +349,54 @@ function EventCardImpl({
   // iter-356.58 (LAYOUT REBUILD): horizontal log-entry card.
   // Thumbnail (left, w-28 h-20) + metadata column (right). Replaces
   // the iter-262 square aspect-video Pinterest tile.
+  // iter-356.62 (bug #2): the outer wrapper now also carries the
+  // touch handlers for swipe-to-delete; the inner translating div
+  // slides over the (BEHIND) Delete pad.
   return (
-    <div className="relative group">
+    <div
+      className="relative group"
+      onTouchStart={onDelete ? onTouchStart : undefined}
+      onTouchMove={onDelete ? onTouchMove : undefined}
+      onTouchEnd={onDelete ? onTouchEnd : undefined}
+      onTouchCancel={onDelete ? onTouchEnd : undefined}
+    >
+      {/* iter-356.62 (bug #2): the swipe-reveal Delete pad. Sits
+          BEHIND the card; the card slides over it as the user swipes
+          left. Only rendered when onDelete is wired (parent gates by
+          owner role). Hidden from screen readers — the X button
+          below is the a11y-canonical surface; this is touch-
+          affordance only. */}
+      {onDelete && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-y-0 right-0 flex items-center justify-center bg-[var(--color-danger)] rounded-xl overflow-hidden"
+          style={{ width: SWIPE_REVEAL }}
+        >
+          <button
+            type="button"
+            tabIndex={revealed ? 0 : -1}
+            aria-hidden={revealed ? undefined : true}
+            onClick={(ev) => {
+              ev.stopPropagation()
+              onDelete(e)
+              setTranslateX(0)
+              setRevealed(false)
+            }}
+            aria-label={`Delete event from ${absoluteTime(e.ts)} (swipe)`}
+            data-testid="swipe-delete-button"
+            className="w-full h-full text-white font-semibold text-sm focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-[-4px]"
+            style={{ pointerEvents: revealed ? 'auto' : 'none' }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
+      <div
+        style={{
+          transform: `translate3d(${translateX}px, 0, 0)`,
+          transition: dragging ? 'none' : 'transform 0.2s ease-out',
+        }}
+      >
       <Wrapper
         type={clickable ? 'button' : undefined}
         onClick={clickable ? () => onSelect?.(e) : undefined}
@@ -335,6 +455,7 @@ function EventCardImpl({
           ✕
         </button>
       )}
+      </div>
     </div>
   )
 }

@@ -350,4 +350,58 @@ describe('EventList', () => {
       /^open: person at the front door/i,
     )
   })
+
+  it('given a row with onDelete, when the user swipes left past the threshold and releases, then the swipe Delete pad becomes interactive (iter-356.62 bug #2)', () => {
+    // arrange
+    const onDelete = vi.fn()
+
+    // act
+    render(
+      <EventList
+        events={[evt({ id: 'sw1', thumb_url: '/snapshots/a.jpg' })]}
+        onDelete={onDelete}
+      />,
+    )
+    // The swipe-handler element is the parent of the swipe-delete pad
+    // button (the EventCard wrapper div). Walk up two levels: button →
+    // pad div → swipe-handler wrapper div.
+    const padButton = screen.getByTestId('swipe-delete-button')
+    const card = padButton.parentElement?.parentElement as HTMLElement
+    // simulate a swipe-left of 100px (past the 80px threshold)
+    fireEvent.touchStart(card, { touches: [{ clientX: 200, clientY: 100 }] })
+    fireEvent.touchMove(card, { touches: [{ clientX: 100, clientY: 100 }] })
+    fireEvent.touchEnd(card, { changedTouches: [{ clientX: 100, clientY: 100 }] })
+
+    // assert — the swipe pad button is now interactive (tabIndex 0)
+    // and tapping it fires onDelete with the event.
+    const swipeBtn = screen.getByTestId('swipe-delete-button') as HTMLButtonElement
+    expect(swipeBtn.tabIndex).toBe(0)
+    fireEvent.click(swipeBtn)
+    expect(onDelete).toHaveBeenCalledTimes(1)
+    expect(onDelete.mock.calls[0][0].id).toBe('sw1')
+  })
+
+  it('given a row with onDelete, when the user swipes left only a few pixels and releases, then the swipe Delete pad stays inactive (iter-356.62 bug #2)', () => {
+    // arrange
+    const onDelete = vi.fn()
+
+    // act
+    render(
+      <EventList
+        events={[evt({ id: 'sw2', thumb_url: '/snapshots/a.jpg' })]}
+        onDelete={onDelete}
+      />,
+    )
+    const padButton = screen.getByTestId('swipe-delete-button')
+    const card = padButton.parentElement?.parentElement as HTMLElement
+    // tiny swipe — well below the 80px threshold
+    fireEvent.touchStart(card, { touches: [{ clientX: 200, clientY: 100 }] })
+    fireEvent.touchMove(card, { touches: [{ clientX: 190, clientY: 100 }] })
+    fireEvent.touchEnd(card, { changedTouches: [{ clientX: 190, clientY: 100 }] })
+
+    // assert — the pad button is not in the tab order; the user
+    // would have to swipe further to expose it.
+    const swipeBtn = screen.getByTestId('swipe-delete-button') as HTMLButtonElement
+    expect(swipeBtn.tabIndex).toBe(-1)
+  })
 })

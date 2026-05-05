@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { EventHeatmap } from '../components/EventHeatmap'
@@ -10,6 +11,7 @@ import {
   deleteEventsByDay,
   exportEvents,
   fetchEvents,
+  getDetectionConfig,
   markAllEventsSeen,
   markEventSeen,
   searchEvents,
@@ -377,16 +379,48 @@ export function Events() {
   }, [events])
   const hasUnmatched = useMemo(() => events.some((e) => !e.person_name), [events])
 
+  // iter-356.62 (bug #4 — type-sync with Detection Settings): the
+  // class-filter chip row used to be derived from observed events,
+  // which meant a multi-class deploy couldn't pre-filter by a class
+  // until at least one event of that class arrived, AND the chips
+  // would show classes the user had since deselected in Settings.
+  // Now we read the persisted DetectionConfig.classes (the user's
+  // canonical "what should I be detecting" list) and derive the
+  // chip values from THAT. Falls back to the observed-events set
+  // until the config arrives so the test fixtures (which don't mock
+  // getDetectionConfig) still see chips.
+  const [configClasses, setConfigClasses] = useState<string[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getDetectionConfig()
+      .then((cfg) => {
+        if (!cancelled) setConfigClasses(cfg.classes)
+      })
+      .catch(() => {
+        // Fall back to observed-events derivation on failure.
+        if (!cancelled) setConfigClasses(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // iter-329: derive distinct event labels (person/dog/car/...) for
   // the per-class chip row. Sort alphabetically for stable order
   // as new events stream in.
+  // iter-356.62: prefer the persisted DetectionConfig.classes when
+  // available so the chip set tracks Settings, not just whatever the
+  // worker happens to have emitted recently.
   const labels = useMemo(() => {
+    if (configClasses !== null) {
+      return [...configClasses].sort((a, b) => a.localeCompare(b))
+    }
     const set = new Set<string>()
     for (const e of events) {
       if (e.label) set.add(e.label)
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [events])
+  }, [events, configClasses])
 
   const filtered = useMemo(() => {
     let pool = events
@@ -484,8 +518,16 @@ export function Events() {
   // would just be "All / Unrecognized" with nothing useful to slice on.
   // iter-330: extended to include `labels.length > 1` so a multi-class
   // deploy with NO recognized faces still gets the class-filter row.
+  // iter-356.62 (bug #4): when configClasses is populated (synced
+  // from Settings) we ALWAYS show the chip row so the user can see
+  // the configured class set even with only one class — that's the
+  // user's "what am I detecting today" answer.
   const showFilters =
-    !loading && !error && (personNames.length > 0 || labels.length > 1)
+    !loading &&
+    !error &&
+    (personNames.length > 0 ||
+      labels.length > 1 ||
+      (configClasses !== null && configClasses.length >= 1))
 
   // iter-312 (performance-auditor #5): stable handler refs so the
   // iter-312 EventCard memo equality check sees `===` between
@@ -552,39 +594,11 @@ export function Events() {
     }
   }
 
-  // iter-320 (mobile-view-auditor E1): track the actual height of
-  // the sticky <header> so the DayHeader's `top: var(--day-header-top)`
-  // sticks beneath it accurately. Pre-iter-320 the offset was a
-  // hardcoded `calc(64px + env(safe-area-inset-top))` set on App.tsx's
-  // <main>. iter-298 made the calendar live INSIDE the header (height
-  // varies by ~140px when open vs closed), and the iter-251 toggle
-  // means a user can flip it. ResizeObserver writes the live height
-  // to `--day-header-top` on the Events page wrapper — descendant
-  // DayHeader elements use the inner value (CSS variable cascade).
-  // iter-356.56 (mobile audit A2): switched from `contentRect.height`
-  // to `getBoundingClientRect().height`. The header element has
-  // `pt-[env(safe-area-inset-top)]` padding inside it; `contentRect`
-  // gives the content box (excluding padding), but the padding IS
-  // already part of the visible sticky surface. Pre-fix, the formula
-  // also added `env(safe-area-inset-top)` again, double-counting on
-  // notched iPhones in standalone PWA mode. Border-box height fully
-  // includes the safe-area padding once, so the formula no longer
-  // adds it.
+  // iter-356.62 (bug #1): header is no longer sticky, so the
+  // ResizeObserver that fed `--day-header-top` is no longer needed.
+  // The ref is retained because `<header ref={headerRef}>` keeps it
+  // for any future feature that wants the live height.
   const headerRef = useRef<HTMLElement | null>(null)
-  const [headerHeight, setHeaderHeight] = useState<number | null>(null)
-  useEffect(() => {
-    const el = headerRef.current
-    if (!el) return
-    if (typeof ResizeObserver === 'undefined') return
-    const measure = () => {
-      const h = el.getBoundingClientRect().height
-      if (typeof h === 'number' && h > 0) setHeaderHeight(Math.ceil(h))
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
 
   // iter-307 (user "be able to delete events manually with a
   // confirmation, or to delete all events for a day"): owner-only
@@ -655,17 +669,15 @@ export function Events() {
       // Falls through to the App.tsx default until the first
       // ResizeObserver tick lands. Includes safe-area padding so
       // standalone-mode iOS still clears the status bar.
+      // iter-356.62 (bug #1): with the header no longer sticky, the
+      // DayHeader pin offset reduces to just the safe-area inset.
+      // Header height is no longer subtracted since the title band
+      // scrolls away. Keep the variable in scope for descendant
+      // components that read --day-header-top.
       style={
-        headerHeight !== null
-          ? ({
-              // iter-356.56 (mobile audit A2): no `+ env(safe-area-inset-top)`
-              // here — the measured height already includes the
-              // header's own `pt-[env(safe-area-inset-top)]` padding
-              // (border-box). Adding it again offset day headers by
-              // 44–59 px on notched iOS in standalone PWA mode.
-              '--day-header-top': `${headerHeight}px`,
-            } as React.CSSProperties)
-          : undefined
+        {
+          '--day-header-top': `env(safe-area-inset-top)`,
+        } as React.CSSProperties
       }
     >
       {/* iter-287 (desktop-view-auditor A2): the sticky page header
@@ -691,9 +703,20 @@ export function Events() {
           would overlap the status bar. Adding the safe-area inline
           here keeps the pinned header below the iOS status bar in
           standalone mode. No-op on Android Chrome (env() is 0). */}
+      {/* iter-356.62 (bug #1 — user "the top Watchlog area shouldn't
+          follow the user as they scroll down"): the page header used
+          to be `sticky top-0` (iter-298 + iter-319 chain) which made
+          the title row, chips, day-banner, AND the calendar pin to
+          the viewport top. The user explicitly asked for the band to
+          scroll away normally. Drop the `sticky top-0` so the header
+          flows in normal block layout. The DayHeader stays sticky
+          (group-level pin is wanted — user did NOT object to those)
+          but we adjust `--day-header-top` to safe-area-inset-top so
+          day labels pin to the actual viewport top instead of
+          beneath the now-gone sticky page header. */}
       <header
         ref={headerRef}
-        className="sticky top-0 pt-[env(safe-area-inset-top)] bg-[var(--color-bg)]/95 backdrop-blur z-10 border-b border-[var(--color-border)]"
+        className="pt-[env(safe-area-inset-top)] bg-[var(--color-bg)] border-b border-[var(--color-border)]"
       >
         <div className="px-4 pt-4 pb-3">
         <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">
@@ -754,7 +777,8 @@ export function Events() {
                 single-class deploys). iter-330 (Frank #2): renamed
                 from "All classes" → "All types" — drops "classes"
                 jargon. */}
-            {labels.length > 1 && (
+            {(labels.length > 1 ||
+              (configClasses !== null && configClasses.length >= 1)) && (
               <ChipRadiogroup
                 ariaLabel="Filter events by detection type"
                 values={[null as string | null, ...labels]}
@@ -940,23 +964,33 @@ export function Events() {
           users see the heatmap permanently in the rail. */}
       <div className="lg:max-w-6xl lg:mx-auto lg:flex lg:items-start lg:gap-4 lg:px-4">
         <div className="flex-1 min-w-0">
-          {/* Mobile-only inline heatmap. Gated on calendarOpen so
-              the iter-251 default-collapsed-on-mobile + tap-to-open
-              behavior is preserved. The desktop right-rail aside
-              below renders the SAME heatmap unconditionally on lg+
-              (where the toggle button is hidden — see lg:hidden on
-              the calendar-icon button). */}
-          {calendarOpen && (
-            <div className="lg:hidden border-b border-[var(--color-border)]">
-              <EventHeatmap
-                onSelectDay={onSelectDay}
-                personName={
-                  filter !== 'all' && filter !== '__unknown__' ? filter : undefined
-                }
-                faceUnrecognized={filter === '__unknown__' ? true : undefined}
-              />
-            </div>
-          )}
+          {/* iter-356.62 (bug #3 — user "calendar should anchor itself
+              to the top no matter where they are when they are scrolled
+              down"): the inline mobile heatmap used to render in scroll
+              flow above the events list, so opening it mid-scroll
+              dropped the user to whatever offset their thumb happened
+              to be at. Now it renders via a portal as a fixed-position
+              overlay anchored to the top of the viewport with a
+              backdrop, regardless of scroll position. The desktop
+              right-rail aside below stays unchanged (lg+ users have
+              dedicated screen real-estate for the heatmap). */}
+          {calendarOpen &&
+            typeof document !== 'undefined' &&
+            createPortal(
+              <CalendarOverlay onClose={() => setCalendarOpen(false)}>
+                <EventHeatmap
+                  onSelectDay={(s, u, day) => {
+                    onSelectDay(s, u, day)
+                    setCalendarOpen(false)
+                  }}
+                  personName={
+                    filter !== 'all' && filter !== '__unknown__' ? filter : undefined
+                  }
+                  faceUnrecognized={filter === '__unknown__' ? true : undefined}
+                />
+              </CalendarOverlay>,
+              document.body,
+            )}
           {loading ? (
             <EventListSkeleton />
           ) : error ? (
@@ -1182,6 +1216,61 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       >
         Retry
       </button>
+    </div>
+  )
+}
+
+// iter-356.62 (bug #3): viewport-anchored modal overlay for the
+// mobile calendar heatmap. Mirrors the pattern in lib/confirm.tsx +
+// ClipModal: fixed inset-0 backdrop, ESC + backdrop-click both
+// dismiss, aria-modal="true" so AT users perceive a modal context.
+// Anchored at the top of the viewport (items-start) so the calendar
+// is always visible at the same place regardless of where the user
+// was scrolled when they tapped the toggle.
+function CalendarOverlay({
+  onClose,
+  children,
+}: {
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Detection calendar"
+      className="fixed inset-0 z-40 flex items-start justify-center pt-[env(safe-area-inset-top)] bg-black/60 backdrop-blur-sm lg:hidden"
+    >
+      <button
+        type="button"
+        aria-label="Close calendar"
+        data-testid="calendar-backdrop"
+        onClick={onClose}
+        className="absolute inset-0 w-full h-full cursor-default"
+      />
+      <div className="relative w-full max-w-md mx-4 mt-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 shadow-xl">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
+            Calendar
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close calendar"
+            className="inline-flex items-center justify-center w-9 h-9 rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          >
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   )
 }
