@@ -13,6 +13,13 @@ const navigate = vi.fn()
 
 vi.mock('../lib/api', () => ({
   listPeople: (...a: unknown[]) => listPeople(...a),
+  // iter-356.66: People reads face_capture_enabled via the new
+  // useFaceCaptureEnabled hook so it can render the household-trust
+  // banner. Stub the call resolved-off so the existing test cases
+  // see the no-banner shape they were authored against.
+  getDetectionConfig: vi.fn().mockResolvedValue({
+    face_capture_enabled: false,
+  }),
 }))
 
 vi.mock('react-router-dom', async () => {

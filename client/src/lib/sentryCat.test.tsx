@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { act, render } from '@testing-library/react'
 import {
   sentryCatAt,
   sentryCatName,
@@ -6,6 +7,7 @@ import {
   sentryOnWatchLabel,
   sentryOffDutyLabel,
   sentryOffDutyHint,
+  useSentryCat,
   type SentryCat,
 } from './sentryCat'
 
@@ -176,5 +178,64 @@ describe('display helpers', () => {
     expect(sentryOffDutyHint('panther')).toContain('Panther')
     expect(sentryOffDutyHint('mushu')).toContain('Mushu')
     expect(sentryOffDutyHint('coco')).toContain('Coco')
+  })
+})
+
+// iter-356.66: visibility-aware tick — the hook pauses while the
+// tab is hidden so a backgrounded session doesn't burn frame budget
+// on a sparkle animation no one can see.
+describe('useSentryCat (visibility-aware)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function HookProbe() {
+    const cat = useSentryCat()
+    return <span data-testid="cat">{cat}</span>
+  }
+
+  it('given the tab is hidden on mount, when 60s pass, then no interval tick fires', () => {
+    // arrange — JSDOM defaults to visibilityState='visible'; force hidden.
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    })
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+
+    // act
+    render(<HookProbe />)
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+
+    // assert — no setInterval was scheduled because mount started hidden.
+    expect(setIntervalSpy).not.toHaveBeenCalled()
+    setIntervalSpy.mockRestore()
+  })
+
+  it('given a visible tick, when the page becomes hidden, then the interval is cleared', () => {
+    // arrange
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    })
+    const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
+    render(<HookProbe />)
+
+    // act — flip to hidden + dispatch the visibility event.
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    })
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    // assert
+    expect(clearIntervalSpy).toHaveBeenCalled()
+    clearIntervalSpy.mockRestore()
   })
 })

@@ -75,13 +75,52 @@ export function sentryCatAt(timestampMs: number): SentryCat {
  * up to once per minute when the slot boundary flips. The 60 s
  * cadence is intentional — slot is 30 min, so a 1 min poll catches
  * the flip within 1/30 ≈ 3 % of the slot duration.
+ *
+ * iter-356.66 (Mira critic open-question #2): visibility-aware. The
+ * 60-s tick PAUSES while the tab is hidden so a backgrounded session
+ * doesn't burn frame budget on a sparkle animation nobody can see.
+ * On `visibilitychange` back to `visible` we sync `now` to the
+ * actual `Date.now()` immediately so the cat flips to the correct
+ * slot at the same moment the tab repaints. This mirrors the
+ * `useStatus.ts` + `Events.tsx` + `ConnectionBanner.tsx` visibility-
+ * listener pattern (CLAUDE.md sharp edge — three load-bearing
+ * listeners that close the mobile-resume gap).
  */
 export function useSentryCat(): SentryCat {
   const [now, setNow] = useState<number>(() => Date.now())
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000)
+    let id: ReturnType<typeof setInterval> | null = null
+    const start = () => {
+      if (id !== null) return
+      // Sync to wall clock immediately on (re)start so a hidden→visible
+      // resume picks up the correct slot in one render.
+      setNow(Date.now())
+      id = setInterval(() => setNow(Date.now()), 60_000)
+    }
+    const stop = () => {
+      if (id !== null) {
+        clearInterval(id)
+        id = null
+      }
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') start()
+      else stop()
+    }
+    if (typeof document !== 'undefined') {
+      // Boot in whichever state matches the current visibility so a
+      // mount on a hidden tab doesn't immediately tick.
+      if (document.visibilityState === 'visible') start()
+      document.addEventListener('visibilitychange', onVisibility)
+    } else {
+      // SSR / non-browser: fall back to the unconditional tick.
+      start()
+    }
     return () => {
-      clearInterval(id)
+      stop()
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility)
+      }
     }
   }, [])
   return sentryCatAt(now)

@@ -29,12 +29,29 @@ export function ConnectionBanner() {
   // promptly.
   const [graceElapsed, setGraceElapsed] = useState(false)
   useEffect(() => {
+    // iter-356.66 (Mira critic last-mile): React 19's
+    // react-hooks/set-state-in-effect rule rejects a synchronous
+    // setState inside an effect body. The reset on a non-authed
+    // transition + the elapsed-flip on the 2-s timer are both
+    // legitimate state writes; route them through Promise.resolve()
+    // and a cancelled flag (CLAUDE.md sharp edge) so the rule clears
+    // and the behaviour is preserved.
+    let cancelled = false
     if (authState !== 'authed') {
-      setGraceElapsed(false)
-      return
+      Promise.resolve().then(() => {
+        if (!cancelled) setGraceElapsed(false)
+      })
+      return () => {
+        cancelled = true
+      }
     }
-    const t = setTimeout(() => setGraceElapsed(true), 2000)
-    return () => clearTimeout(t)
+    const t = setTimeout(() => {
+      if (!cancelled) setGraceElapsed(true)
+    }, 2000)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
   }, [authState])
 
   useEffect(() => subscribeWsState(setState), [])

@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { getDetectionConfig } from '../lib/api'
+import { useFaceCaptureEnabled } from '../lib/useFaceCaptureEnabled'
 
 /**
  * iter-356.C (mobile redesign Slice C — security clarity):
@@ -9,37 +8,19 @@ import { getDetectionConfig } from '../lib/api'
  * when their faces are being saved, regardless of whether they can
  * change the setting (only owners can PATCH /detection/config).
  *
- * Source of truth: GET /api/detection/config → face_capture_enabled.
- * The route only requires auth (not owner role), so family/viewer
- * can read it; PATCH stays owner-gated server-side.
+ * iter-356.66 (perfection sweep): fetch hoisted to
+ * `useFaceCaptureEnabled` so the People banner can share the same
+ * signal without duplicating the network call.
  *
- * No render unless the flag is explicitly true. While the fetch is
- * in flight or it 4xx's (anon, network), the pill stays silent — the
- * default-off failure mode is correct here (don't claim we are
- * saving faces when we are not sure).
+ * No render unless the flag is explicitly `true`. While the fetch
+ * is in flight or it 4xx's (anon, network), the pill stays silent —
+ * the default-quiet failure mode is correct here (don't claim we
+ * are saving faces when we are not sure).
  */
 export function CaptureSavingPill() {
-  const [enabled, setEnabled] = useState<boolean>(false)
+  const enabled = useFaceCaptureEnabled()
 
-  // React 19 react-hooks/set-state-in-effect: setState only inside
-  // .then with a `cancelled` guard.
-  useEffect(() => {
-    let cancelled = false
-    getDetectionConfig()
-      .then((c) => {
-        if (cancelled) return
-        setEnabled(c.face_capture_enabled === true)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setEnabled(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (!enabled) return null
+  if (enabled !== true) return null
 
   return (
     <span

@@ -5,6 +5,7 @@ import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { formatError } from '../lib/format'
+import { useFaceCaptureEnabled } from '../lib/useFaceCaptureEnabled'
 import { useTicker } from '../lib/useTicker'
 
 // iter-326 (missing-feature #5, "Familiar Faces" log): per-person
@@ -116,6 +117,7 @@ export function People() {
     // iter-342 desktop A1: max-w-3xl (mobile) + lg:max-w-4xl (desktop).
     // iter-262 grid layout pairs at lg.
     <div className="p-4 space-y-4 max-w-3xl lg:max-w-4xl mx-auto">
+      <FaceCaptureBanner />
       <header className="flex items-start justify-between gap-3">
         {/* iter-356.58 (LAYOUT REBUILD): dropped the page-title
             H1 + paw mark. WatchRibbon at the top of the shell now
@@ -384,6 +386,52 @@ function _PersonGrid({
         </li>
       ))}
     </ul>
+  )
+}
+
+/**
+ * iter-356.66 (mobile-redesign perfection): household-trust banner.
+ * Renders above the people list when the worker is saving face crops
+ * for retraining (`face_capture_enabled === true`). Read-only — the
+ * actual toggle + per-name consent live on Training. The banner is
+ * the cross-page "you should know about this" signal so a viewer
+ * looking at the people list isn't surprised that the camera knows
+ * who's who.
+ *
+ * Stays silent when the flag is off OR while we don't yet have an
+ * answer (default-quiet, same contract as `CaptureSavingPill`).
+ */
+function FaceCaptureBanner() {
+  const enabled = useFaceCaptureEnabled()
+  if (enabled !== true) return null
+  return (
+    <div
+      role="status"
+      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text-primary)] flex items-start gap-3"
+    >
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="mt-0.5 flex-shrink-0 text-[var(--color-brass-default)]"
+        aria-hidden="true"
+      >
+        <path d="M3 8a2 2 0 0 1 2-2h2.5l1.5-2h6l1.5 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5" />
+        <circle cx="12" cy="12" r="3" />
+        <circle cx="6" cy="18" r="2.5" fill="currentColor" stroke="none" />
+      </svg>
+      <div className="flex-1 min-w-0">
+        <span className="font-semibold">Face captures are saving for training.</span>{' '}
+        <span className="text-[var(--color-text-secondary)]">
+          Manage who&rsquo;s recognized and consent on the Training page.
+        </span>
+      </div>
+    </div>
   )
 }
 
