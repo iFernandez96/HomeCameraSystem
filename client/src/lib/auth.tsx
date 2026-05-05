@@ -31,6 +31,19 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+// iter-356.65 (Mira critic blocker #5): module-scope flag set when
+// /api/auth/refresh 401s mid-session. RequireAuth reads this on the
+// redirect to /login so the Login banner can render the "you've been
+// signed out for security" copy. Cleared by Login when consumed (so
+// a manual /login visit later doesn't keep showing the banner).
+let _wasSessionExpired = false
+export function getSessionExpiredFlag(): boolean {
+  return _wasSessionExpired
+}
+export function clearSessionExpiredFlag(): void {
+  _wasSessionExpired = false
+}
+
 /**
  * Wrap the app inside this once at the top of the tree. Fires a
  * single /api/auth/me on mount to determine initial state.
@@ -112,6 +125,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     function onSessionExpired() {
       setState((cur) => {
         if (cur === 'anon') return cur
+        // iter-356.65 (Mira critic blocker #5): set the module-scope
+        // flag BEFORE the state flip so RequireAuth's next-render
+        // redirect picks it up and lands the user at /login?expired=1.
+        _wasSessionExpired = true
         showToast('Session expired', 'error')
         return 'anon'
       })
@@ -126,6 +143,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await apiLogin({ username, password })
     setUser(res.user)
     setState('authed')
+    // iter-356.65: a successful sign-in clears the expired flag so
+    // a future MANUAL sign-out doesn't show the "signed out for
+    // security" banner (that copy belongs only to involuntary expiry).
+    _wasSessionExpired = false
   }, [])
 
   const logout = useCallback(async () => {

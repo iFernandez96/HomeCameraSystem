@@ -4,7 +4,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { CatTrioMark } from '../components/CatIcons'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
@@ -29,6 +29,15 @@ import { useAuth } from '../lib/auth'
 export function Login() {
   const { state, login } = useAuth()
   const navigate = useNavigate()
+  // iter-356.65 (Mira critic blocker #5): persistent banner when
+  // the user landed here because their session expired (auth.tsx
+  // appends ?expired=1 on the redirect). Without this, a user
+  // bumped mid-session sees a clean Login form and assumes their
+  // password is wrong — they'll burn two attempts before checking
+  // anything else. Banner is informational (role="status"), not an
+  // error, because nothing the user did is wrong.
+  const [searchParams] = useSearchParams()
+  const wasExpired = searchParams.get('expired') === '1'
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -121,6 +130,17 @@ export function Login() {
             Bigger trio mark, Fraunces serif headline, italic motto,
             cat names typeset as a small uppercase brass row — reads
             as a household sigil panel rather than a SaaS login card. */}
+        {wasExpired && (
+          <div
+            role="status"
+            className="mb-6 rounded-lg border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-3 text-sm text-[var(--color-text-primary)]"
+          >
+            <span className="font-semibold">You&apos;ve been signed out for security.</span>{' '}
+            <span className="text-[var(--color-text-secondary)]">
+              Sign back in to pick up where you left off.
+            </span>
+          </div>
+        )}
         <div className="flex flex-col items-center text-center mb-8">
           <CatTrioMark size={104} className="mb-4" />
           <h1 className="font-display text-4xl font-bold text-[var(--color-text-primary)] tracking-tight">

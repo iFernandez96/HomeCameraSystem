@@ -129,7 +129,11 @@ describe('EventList', () => {
     // the camera was" + tier label.
     const pill = screen.getByLabelText(/how sure the camera was: 42%, low/i)
     expect(pill).toBeInTheDocument()
-    expect(pill.className).toMatch(/red/)
+    // iter-356.65: tier fills migrated from raw `bg-red-500/85` to the
+    // `--color-danger-bg-strong` token; assertion follows the move.
+    expect(pill.className).toMatch(/color-danger/)
+    // iter-356.65: visible tier glyph for colorblind partial-sight users.
+    expect(pill.textContent).toMatch(/^L/)
   })
 
   it('when an event has label=person and camera_id=cam1, then the title reads "Person at the front door" (iter-249)', () => {

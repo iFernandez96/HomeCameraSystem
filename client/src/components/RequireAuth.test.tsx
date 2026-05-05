@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 let _authState: 'loading' | 'authed' | 'anon' = 'authed'
+let _sessionExpired = false
 vi.mock('../lib/auth', () => ({
   useAuth: () => ({
     state: _authState,
@@ -10,6 +11,12 @@ vi.mock('../lib/auth', () => ({
     login: vi.fn(),
     logout: vi.fn(),
   }),
+  // iter-356.65: RequireAuth now reads getSessionExpiredFlag() to
+  // decide whether to add ?expired=1 to the redirect target.
+  getSessionExpiredFlag: () => _sessionExpired,
+  clearSessionExpiredFlag: () => {
+    _sessionExpired = false
+  },
 }))
 
 import { RequireAuth } from './RequireAuth'

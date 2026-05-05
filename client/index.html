@@ -25,10 +25,17 @@
          deeper toasted-wheat sets the warm-den identity from the
          very first paint — including the iOS standalone splash and
          Android Chrome status bar. -->
-    <meta name="theme-color" content="#e8d4ac" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#e8d4ac" />
+    <!-- iter-356.65 (Mira critic blocker #2): theme-color was set to
+         the OLD cream `#e8d4ac` while the manifest + actual --color-bg
+         are `#1e1710` (charred-oak dark). On iOS standalone the status
+         bar painted cream above a dark app — visible "two apps stitched
+         together" tell. Aligned all three to `#1e1710` and flipped
+         apple-mobile-web-app-status-bar-style to black-translucent so
+         the iOS standalone status bar overlays the dark surface
+         seamlessly. -->
+    <meta name="theme-color" content="#1e1710" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="HomeCam" />
     <!-- iter-356.57 (radical redesign): typography shift. Inter
          stays as the body/UI face — readability is non-negotiable

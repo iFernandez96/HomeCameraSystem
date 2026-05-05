@@ -861,7 +861,7 @@ function ActionPanel({
                 type="button"
                 disabled={actionInflight}
                 onClick={() => setShowNewPersonInput(true)}
-                className="px-2 py-1 min-h-[44px] text-xs font-medium border border-dashed border-[var(--color-border-strong)] hover:border-neutral-500 hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+                className="px-2 py-1 min-h-[44px] text-xs font-medium border border-dashed border-[var(--color-border-strong)] hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
               >
                 + New person
               </button>

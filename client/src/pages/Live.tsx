@@ -153,7 +153,13 @@ export function Live() {
     //     compact watch-panel column on lg+ that floats over the
     //     right edge of the video, and a horizontal recent-events
     //     strip below the video.
-    <div className="flex flex-col h-[calc(100vh-3.5rem-5rem)] lg:h-[calc(100vh-3.5rem)]">
+    // iter-356.65 (Mira critic blocker #1): 100vh on Android Chrome
+    // includes the URL bar's would-be space; bar collapse on scroll
+    // resizes the video tile by ~56 px every session. 100dvh tracks
+    // the visible viewport portion regardless of bar state. Both
+    // Chrome 108+ and Safari 15.4+ support it, which covers every
+    // tailnet-installed device in this household.
+    <div className="flex flex-col h-[calc(100dvh-3.5rem-5rem)] lg:h-[calc(100dvh-3.5rem)]">
       {/* iter-356.63 (Slice D a11y): sr-only <h1> per route. The
           visible page identity is owned by the WatchRibbon and the
           on-video badge; AT users still need a level-1 heading. */}
@@ -199,7 +205,12 @@ export function Live() {
                 training?". Three independent signals; each pill
                 self-gates so the cluster only crowds when there's
                 something to say. */}
-            <div className="hidden sm:flex pointer-events-auto items-center gap-2 flex-wrap justify-end">
+            <div className="flex pointer-events-auto items-center gap-2 flex-wrap justify-end">
+              {/* iter-356.65 (Mira critic blocker #3): trust-cluster
+                  pills must render at every viewport, not gated to
+                  sm+. A guest on a 360-px Pixel needs to see "is
+                  this thing recording me" the same as a desktop
+                  user. flex-wrap absorbs the line breaks. */}
               <ArmedBadge status={status} />
               <RecordingIndicator status={status} />
               <CaptureSavingPill />
@@ -210,7 +221,12 @@ export function Live() {
         {/* Floating action cluster — bottom-right edge of the video.
             Compact pill column on lg+, horizontal row on mobile.
             pointer-events-auto so taps register. */}
-        <div className="pointer-events-auto absolute bottom-4 right-3 sm:right-4 hidden sm:flex flex-col gap-2 items-end">
+        {/* iter-356.65 (Mira critic blocker #3): action cluster
+            (DetectionStatusToggle + Snapshot/Talk) used to be
+            hidden < sm; that hid the primary thumb-controls on
+            every phone in landscape and on portrait below 640 px.
+            Always render. Fullscreen action stays inside VideoTile. */}
+        <div className="pointer-events-auto absolute bottom-4 right-3 sm:right-4 flex flex-col gap-2 items-end">
           <DetectionStatusToggle
             detectionActive={detectionActive}
             onToggle={onToggleDetect}
@@ -387,7 +403,7 @@ function DetectionStatusToggle({
         disabled={loading}
         aria-pressed={isActive}
         aria-label={`${stateLabel}. Tap to ${isActive ? 'pause detection' : 'resume detection'}.`}
-        className="inline-flex items-center gap-2.5 min-h-[40px] px-3 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+        className="inline-flex items-center gap-2.5 min-h-[44px] px-3 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
       >
         <span aria-hidden="true" className={`w-2 h-2 rounded-full ${dotClass}`} />
         <span>{stateLabel}</span>
@@ -460,7 +476,7 @@ function ActionButton({
         type="button"
         onClick={onClick}
         disabled={disabled || loading}
-        className="inline-flex items-center gap-2 min-h-[40px] px-4 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+        className="inline-flex items-center gap-2 min-h-[44px] px-4 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
         aria-pressed={highlight ? true : undefined}
       >
         {!loading && (

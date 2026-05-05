@@ -521,7 +521,7 @@ export function VideoTile({
             aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
           >
             <span className="inline-flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" />
               Stream stalled
             </span>
             <span className="text-[10px] text-white/80 font-normal">
@@ -556,7 +556,7 @@ export function VideoTile({
             className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection paused — worker offline"
           >
-            <span className="w-2 h-2 rounded-full bg-yellow-500" />
+            <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
             Detection paused — worker offline
           </div>
         )}
@@ -565,7 +565,7 @@ export function VideoTile({
             className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection paused due to low memory"
           >
-            <span className="w-2 h-2 rounded-full bg-red-500" />
+            <span className="w-2 h-2 rounded-full bg-[var(--color-danger)]" />
             Low memory — paused
           </div>
         )}
@@ -574,7 +574,7 @@ export function VideoTile({
             className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection rate-limited by GPU thermal"
           >
-            <span className="w-2 h-2 rounded-full bg-yellow-500" />
+            <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
             Camera too hot — slowed down
           </div>
         )}
@@ -583,7 +583,7 @@ export function VideoTile({
             className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
             aria-label="Detection paused"
           >
-            <span className="w-2 h-2 rounded-full bg-yellow-500" />
+            <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
             Detection paused
           </div>
         )}
@@ -614,9 +614,9 @@ function StatusPill({ status }: { status: Status }) {
   // layer on the first thing the user sees, every load.
   const dot =
     status === 'live'
-      ? 'bg-red-500'
+      ? 'bg-[var(--color-danger)]'
       : status === 'connecting'
-        ? 'bg-yellow-500 animate-pulse'
+        ? 'bg-[var(--color-warning)] animate-pulse'
         : 'bg-neutral-500'
   const label =
     status === 'live'

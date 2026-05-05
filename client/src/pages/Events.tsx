@@ -1276,11 +1276,13 @@ function CalendarOverlay({
     }
   }, [onClose])
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- role="dialog" is a focus-management context per ARIA APG; the keydown handler is the focus trap, not a click handler.
     <div
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Detection calendar"
+      tabIndex={-1}
       // iter-356.63 (Slice D a11y): focus trap — Tab cycles inside
       // the dialog, doesn't escape to the muted page behind. Same
       // shape as ClipModal::iter-336.

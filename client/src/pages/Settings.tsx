@@ -116,6 +116,11 @@ export function Settings() {
     // | system) is preserved verbatim so the 92-test suite stays
     // green. Only the rendering shape changes.
     <div className="lg:flex lg:gap-6 lg:max-w-5xl lg:mx-auto lg:px-6 lg:py-6">
+      {/* iter-356.65 (Mira critic): per-route sr-only h1 was added
+          on Live/Events/People/Training/Review in Slice D but Settings
+          was missed. Without it the SR rotor jumps from the tab nav
+          straight to section h2s with no level-1 anchor. */}
+      <h1 className="sr-only">Settings</h1>
       <SettingsTabs
         active={activeTab}
         onChange={onTabChange}

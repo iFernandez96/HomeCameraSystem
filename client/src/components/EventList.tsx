@@ -469,19 +469,25 @@ function ConfidencePill({ score }: { score: number }) {
   // the tier text gives colorblind users the same signal sighted
   // users get from the green/amber/red fill.
   const pct = (score * 100).toFixed(0)
+  // iter-356.65 (Mira critic blocker #4): tokenized fills + visible
+  // tier letter so the pill survives a colorblind partial-sight scan.
+  // Pre-fix the L/M/H signal lived only in aria-label; the visible
+  // surface was hue-only.
   const tier =
     score < 0.5
-      ? 'bg-red-500/85 text-red-50'
+      ? 'bg-[var(--color-danger-bg-strong)] text-[var(--color-danger)]'
       : score < 0.75
-        ? 'bg-amber-500/85 text-amber-50'
-        : 'bg-emerald-500/85 text-emerald-50'
+        ? 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
+        : 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
+  const tierGlyph = score < 0.5 ? 'L' : score < 0.75 ? 'M' : 'H'
   const tierLabel =
     score < 0.5 ? 'low' : score < 0.75 ? 'medium' : 'high'
   return (
     <span
-      className={`absolute top-2 right-2 px-2 py-1 rounded-md text-xs font-semibold tabular-nums ${tier}`}
+      className={`absolute top-2 right-2 px-2 py-1 rounded-md text-xs font-semibold tabular-nums inline-flex items-center gap-1 ${tier}`}
       aria-label={`How sure the camera was: ${pct}%, ${tierLabel}`}
     >
+      <span aria-hidden="true" className="opacity-80">{tierGlyph}</span>
       {pct}%
     </span>
   )
@@ -577,7 +583,7 @@ function PlaceholderIcon() {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="text-neutral-700"
+      className="text-[var(--color-text-tertiary)]"
       aria-hidden="true"
     >
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />

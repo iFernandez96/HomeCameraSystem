@@ -62,11 +62,13 @@ export function SnapshotPreview({
   }, [onClose])
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- role="dialog" is a focus-management context per ARIA APG; the keydown handler is the focus trap, not a click handler.
     <div
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Snapshot preview"
+      tabIndex={-1}
       // iter-356.63: focus-trap. Tab from the last focusable child
       // wraps to the first; Shift-Tab from the first wraps to the
       // last. Same pattern as ClipModal::iter-336.

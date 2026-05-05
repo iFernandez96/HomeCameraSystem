@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { LivePageSkeleton } from './Skeleton'
-import { useAuth } from '../lib/auth'
+import { getSessionExpiredFlag, useAuth } from '../lib/auth'
 
 /**
  * Route gate (iter-182, Auth Plan Phase 4). Wrap every protected
@@ -23,6 +23,14 @@ import { useAuth } from '../lib/auth'
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { state } = useAuth()
   if (state === 'loading') return <LivePageSkeleton />
-  if (state === 'anon') return <Navigate to="/login" replace />
+  if (state === 'anon') {
+    // iter-356.65 (Mira critic blocker #5): when the redirect was
+    // triggered by an expiring session (auth.tsx setting the
+    // module-scope flag), append ?expired=1 so Login renders the
+    // informational banner. Fresh-visit / never-logged-in case
+    // lands on a clean /login.
+    const target = getSessionExpiredFlag() ? '/login?expired=1' : '/login'
+    return <Navigate to={target} replace />
+  }
   return <>{children}</>
 }
