@@ -188,12 +188,15 @@ def test_given_no_face_recognition_when_recognize_in_crop_called_then_uses_cv2_f
     saved = []
 
     def _capture_save_stub(rgb_image, box, name, confidence,
-                            capture_dir, event_id, ts_ms):
+                            capture_dir, event_id, ts_ms, **kwargs):
+        # iter-356.62 (slice 1): **kwargs absorbs the new optional
+        # `meta` kwarg threaded through by the recognizer.
         saved.append({
             "name": name,
             "confidence": confidence,
             "event_id": event_id,
             "ts_ms": ts_ms,
+            "meta": kwargs.get("meta"),
         })
 
     import recognizer as recognizer_module
@@ -314,3 +317,107 @@ def test_given_cv2_fallback_with_multiple_faces_when_recognize_called_then_each_
     # All have name=None confidence=0.0 (cv2 doesn't match).
     assert all(s["name"] is None for s in saved)
     assert all(s["confidence"] == 0.0 for s in saved)
+
+
+# --- iter-356.62 (slice 1): capture_meta + face_origin_xy hand-off ---
+
+
+def _wire_fake_cv2_detector(monkeypatch, boxes):
+    """Helper: install a fake Cv2HaarDetector that returns `boxes`,
+    so the recognizer's cv2-fallback path runs without dlib/face_recognition.
+    """
+    import sys
+    import types
+
+    fake_detector_module = types.SimpleNamespace()
+
+    class _FakeDetector(object):
+        def load(self):
+            return True
+
+        def face_locations(self, rgb_image):
+            return list(boxes)
+
+    fake_detector_module.Cv2HaarDetector = _FakeDetector
+    monkeypatch.setitem(
+        sys.modules, "face_recog.detector", fake_detector_module,
+    )
+
+
+def test_recognizer_when_face_origin_xy_supplied_then_sidecar_records_face_bbox_within_source(
+    monkeypatch, tmp_path,
+):
+    # arrange — face at (top=10, right=110, bottom=110, left=10) inside
+    # a face-region crop whose origin in the source frame is (100, 200).
+    # Expected face_bbox_within_source = [10+100, 10+200, 110+100, 110+200].
+    _wire_fake_cv2_detector(monkeypatch, [(10, 110, 110, 10)])
+
+    saved = []
+    import recognizer as recognizer_module
+    monkeypatch.setattr(
+        recognizer_module, "_save_face_capture",
+        lambda **kw: saved.append(kw),
+    )
+
+    r = FaceRecognizer("/dev/null")
+
+    # act
+    r.recognize_in_crop(
+        rgb_image="fake",
+        capture_dir=str(tmp_path / "captures"),
+        event_id="evt-origin",
+        ts_ms=1700000000000,
+        face_origin_xy=(100, 200),
+    )
+
+    # assert
+    assert len(saved) == 1
+    meta = saved[0]["meta"]
+    assert meta["face_bbox_within_source"] == [110, 210, 210, 310]
+    # face_bbox_within_crop is the box in the recognizer's input space
+    # (left, top, right, bottom) without the offset.
+    assert meta["face_bbox_within_crop"] == [10, 10, 110, 110]
+
+
+def test_recognizer_when_capture_meta_supplied_then_sidecar_carries_model_version(
+    monkeypatch, tmp_path,
+):
+    # arrange — worker-supplied capture_meta should flow through into
+    # the sidecar untouched (except for the per-face overrides the
+    # recognizer adds).
+    _wire_fake_cv2_detector(monkeypatch, [(0, 50, 50, 0)])
+
+    saved = []
+    import recognizer as recognizer_module
+    monkeypatch.setattr(
+        recognizer_module, "_save_face_capture",
+        lambda **kw: saved.append(kw),
+    )
+
+    capture_meta = {
+        "model": {
+            "name": "ssd-mobilenet-v2",
+            "version": "trt-fp16",
+            "floor": 0.05,
+        },
+        "source": {"w": 1280, "h": 720, "camera_id": "cam1"},
+        "gear": "active",
+    }
+
+    r = FaceRecognizer("/dev/null")
+
+    # act
+    r.recognize_in_crop(
+        rgb_image="fake",
+        capture_dir=str(tmp_path / "captures"),
+        event_id="evt-meta",
+        ts_ms=1700000000000,
+        capture_meta=capture_meta,
+    )
+
+    # assert
+    assert len(saved) == 1
+    meta = saved[0]["meta"]
+    assert meta["model"]["version"] == "trt-fp16"
+    assert meta["source"]["w"] == 1280
+    assert meta["gear"] == "active"

@@ -18,6 +18,7 @@ if _DETECT_DIR not in sys.path:
 from face_recog.capture import (  # noqa: E402
     _sanitize_name,
     save_face_capture,
+    save_person_capture,
 )
 
 
@@ -192,12 +193,15 @@ def test_when_save_called_with_confidence_then_sidecar_json_is_written(tmp_path)
     assert os.path.exists(sidecar_path)
     with open(sidecar_path) as f:
         meta = json.load(f)
-    assert meta == {
-        "predicted_name": "alice",
-        "confidence": 0.73,
-        "event_id": "evt-123",
-        "ts_ms": 1700000000000,
-    }
+    # iter-356.62 (slice 1): sidecar bumped to schema_version=2 with
+    # always-present `kind`. v1 keys (predicted_name, confidence,
+    # event_id, ts_ms) still pinned for back-compat readers.
+    assert meta["predicted_name"] == "alice"
+    assert meta["confidence"] == 0.73
+    assert meta["event_id"] == "evt-123"
+    assert meta["ts_ms"] == 1700000000000
+    assert meta["schema_version"] == 2
+    assert meta["kind"] == "face"
 
 
 def test_given_no_confidence_when_save_called_then_sidecar_has_nulls(tmp_path):
@@ -287,3 +291,235 @@ def test_given_event_id_with_unsafe_chars_when_save_called_then_sanitized(
     filename = os.path.basename(written)
     assert "/" not in filename
     assert "passwd" in filename  # the literal chars survive as letters
+
+
+# --- iter-356.62 (slice 1): sidecar v2 + person crop save ------------------
+
+
+def _read_sidecar(jpeg_path):
+    """Helper: load the JSON sidecar that lives next to a written jpeg."""
+    import json
+    sidecar_path = jpeg_path[:-4] + ".json"
+    with open(sidecar_path) as f:
+        return json.load(f)
+
+
+def test_when_save_face_capture_then_sidecar_schema_version_is_2(tmp_path):
+    # arrange
+    capture_dir = str(tmp_path / "captures")
+
+    # act
+    written = save_face_capture(
+        capture_dir=capture_dir,
+        name="alice",
+        event_id="evt-v2",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+        confidence=0.5,
+    )
+
+    # assert
+    meta = _read_sidecar(written)
+    assert meta["schema_version"] == 2
+    assert meta["kind"] == "face"
+
+
+def test_given_meta_when_save_face_capture_then_sidecar_includes_source_resolution(
+    tmp_path,
+):
+    # arrange
+    capture_dir = str(tmp_path / "captures")
+    capture_meta = {
+        "source": {"w": 1280, "h": 720, "camera_id": "cam1"},
+    }
+
+    # act
+    written = save_face_capture(
+        capture_dir=capture_dir,
+        name="alice",
+        event_id="evt-src",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+        confidence=0.8,
+        meta=capture_meta,
+    )
+
+    # assert
+    meta = _read_sidecar(written)
+    assert meta["source"] == {"w": 1280, "h": 720, "camera_id": "cam1"}
+
+
+def test_given_meta_when_save_face_capture_then_sidecar_includes_model_version(
+    tmp_path,
+):
+    # arrange
+    capture_dir = str(tmp_path / "captures")
+    capture_meta = {
+        "model": {
+            "name": "ssd-mobilenet-v2",
+            "version": "trt-fp16",
+            "floor": 0.05,
+        },
+    }
+
+    # act
+    written = save_face_capture(
+        capture_dir=capture_dir,
+        name="alice",
+        event_id="evt-model",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+        meta=capture_meta,
+    )
+
+    # assert
+    meta = _read_sidecar(written)
+    assert meta["model"]["version"] == "trt-fp16"
+    assert meta["model"]["name"] == "ssd-mobilenet-v2"
+    assert meta["model"]["floor"] == 0.05
+
+
+def test_given_meta_when_save_face_capture_then_sidecar_includes_detection_bbox_pixels_and_norm(
+    tmp_path,
+):
+    # arrange
+    capture_dir = str(tmp_path / "captures")
+    capture_meta = {
+        "detection": {
+            "label": "person",
+            "score": 0.92,
+            "bbox_pixels": [10, 20, 110, 220],
+            "bbox_norm": [0.01, 0.02, 0.11, 0.22],
+        },
+    }
+
+    # act
+    written = save_face_capture(
+        capture_dir=capture_dir,
+        name="alice",
+        event_id="evt-det",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+        meta=capture_meta,
+    )
+
+    # assert
+    meta = _read_sidecar(written)
+    assert meta["detection"]["bbox_pixels"] == [10, 20, 110, 220]
+    assert meta["detection"]["bbox_norm"] == [0.01, 0.02, 0.11, 0.22]
+    assert meta["detection"]["score"] == 0.92
+
+
+def test_given_meta_overwrite_attempt_when_save_then_pinned_keys_unchanged(
+    tmp_path,
+):
+    # arrange — caller maliciously (or sloppily) tries to override the
+    # bookkeeping primitives the review UI relies on.
+    capture_dir = str(tmp_path / "captures")
+    evil_meta = {
+        "event_id": "evil",
+        "schema_version": 99,
+        "kind": "spoof",
+        "predicted_name": "spoofed",
+        "ts_ms": 0,
+        "confidence": 9.9,
+    }
+
+    # act
+    written = save_face_capture(
+        capture_dir=capture_dir,
+        name="alice",
+        event_id="evt-real",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+        confidence=0.42,
+        meta=evil_meta,
+    )
+
+    # assert — pinned keys reflect the function args, NOT the meta dict.
+    meta = _read_sidecar(written)
+    assert meta["event_id"] == "evt-real"
+    assert meta["schema_version"] == 2
+    assert meta["kind"] == "face"
+    assert meta["ts_ms"] == 1700000000000
+    assert meta["confidence"] == 0.42
+    # predicted_name falls back to name when not explicitly passed.
+    assert meta["predicted_name"] == "alice"
+
+
+def test_when_save_person_capture_called_then_writes_under_person_root(
+    tmp_path,
+):
+    # arrange — separate roots so a misrouted write is detectable.
+    face_dir = str(tmp_path / "face_captures")
+    person_dir = str(tmp_path / "person_captures")
+
+    # act
+    written = save_person_capture(
+        capture_dir=person_dir,
+        name="alice",
+        event_id="evt-person",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+    )
+
+    # assert — file under person root, NOT face root.
+    assert written is not None
+    assert os.path.exists(written)
+    abs_written = os.path.abspath(written)
+    assert abs_written.startswith(os.path.abspath(person_dir) + os.sep)
+    assert not abs_written.startswith(os.path.abspath(face_dir) + os.sep)
+
+
+def test_given_person_dir_at_cap_when_save_called_then_oldest_evicted(
+    tmp_path,
+):
+    # arrange — pre-fill alice/ under the person root with cap entries
+    # at distinct mtimes; LRU should drop the oldest on the next write.
+    person_dir = str(tmp_path / "person_captures")
+    cap = 3
+    alice_dir = os.path.join(person_dir, "alice")
+    os.makedirs(alice_dir)
+    paths = []
+    for i in range(1, cap + 1):
+        p = os.path.join(alice_dir, "{}_evt-pre{}.jpg".format(i * 1000, i))
+        with open(p, "wb") as f:
+            f.write(b"old")
+        os.utime(p, (i, i))
+        paths.append(p)
+
+    # act
+    written = save_person_capture(
+        capture_dir=person_dir,
+        name="alice",
+        event_id="evt-new",
+        ts_ms=999_999_999_999,
+        jpeg_bytes=b"new",
+        max_per_dir=cap,
+    )
+
+    # assert
+    assert written is not None
+    assert os.path.exists(written)
+    assert not os.path.exists(paths[0])
+    remaining = [e for e in os.listdir(alice_dir) if e.endswith(".jpg")]
+    assert len(remaining) == cap
+
+
+def test_given_save_person_capture_then_sidecar_kind_is_person(tmp_path):
+    # arrange
+    person_dir = str(tmp_path / "person_captures")
+
+    # act
+    written = save_person_capture(
+        capture_dir=person_dir,
+        name="alice",
+        event_id="evt-p-kind",
+        ts_ms=1700000000000,
+        jpeg_bytes=b"\xff\xd8\xff\xe0bytes",
+    )
+
+    # assert
+    meta = _read_sidecar(written)
+    assert meta["kind"] == "person"
+    assert meta["schema_version"] == 2

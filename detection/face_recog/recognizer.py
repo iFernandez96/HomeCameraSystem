@@ -102,7 +102,8 @@ class FaceRecognizer:
         return (self.names[best_idx], confidence)
 
     def recognize_in_crop(self, rgb_image, capture_dir=None,
-                          event_id=None, ts_ms=None):
+                          event_id=None, ts_ms=None,
+                          capture_meta=None, face_origin_xy=None):
         """Detect faces in `rgb_image` (HxWx3 uint8 numpy, RGB), match
         each (when encodings are loaded), and return the best matched
         name or None.
@@ -178,8 +179,31 @@ class FaceRecognizer:
 
         # Save each face crop + sidecar (best-effort). Lazy-imports PIL
         # only when capture is active.
+        # iter-356.62 (slice 1): per-face meta override layers
+        # `face_bbox_within_crop` (and, when face_origin_xy is supplied,
+        # `face_bbox_within_source`) on top of the worker-supplied
+        # capture_meta. The recognizer is the only caller that knows the
+        # face's coords inside the face-region crop, so it owns this
+        # field.
         if capture_dir and per_face:
             for idx, (box, name, conf) in enumerate(per_face):
+                # box is (top, right, bottom, left). Convert to
+                # [left, top, right, bottom] pixel-coords within the
+                # rgb_image (= face-region crop) the recognizer received.
+                top, right, bottom, left = box
+                bbox_in_crop = [int(left), int(top), int(right), int(bottom)]
+                per_face_meta = {}
+                if capture_meta:
+                    per_face_meta.update(capture_meta)
+                per_face_meta["face_bbox_within_crop"] = bbox_in_crop
+                if face_origin_xy is not None:
+                    ox, oy = face_origin_xy
+                    per_face_meta["face_bbox_within_source"] = [
+                        int(left) + int(ox),
+                        int(top) + int(oy),
+                        int(right) + int(ox),
+                        int(bottom) + int(oy),
+                    ]
                 try:
                     _save_face_capture(
                         rgb_image=rgb_image,
@@ -189,6 +213,7 @@ class FaceRecognizer:
                         capture_dir=capture_dir,
                         event_id=event_id or "unknown",
                         ts_ms=(ts_ms or 0) + idx,
+                        meta=per_face_meta,
                     )
                 except Exception as e:
                     log.debug("recognizer: capture save failed: %s", e)
@@ -214,7 +239,7 @@ _FACE_BBOX_PAD_FRAC = 0.30
 
 
 def _save_face_capture(rgb_image, box, name, confidence, capture_dir,
-                       event_id, ts_ms):
+                       event_id, ts_ms, meta=None):
     """Crop the face from `rgb_image` per `box` (top, right, bottom,
     left) WITH padding for retrain context, JPEG-encode it via PIL at
     quality 95, hand off to capture.save_face_capture with the iter-355a
@@ -254,4 +279,5 @@ def _save_face_capture(rgb_image, box, name, confidence, capture_dir,
         jpeg_bytes=buf.getvalue(),
         confidence=confidence,
         predicted_name=name,
+        meta=meta,
     )

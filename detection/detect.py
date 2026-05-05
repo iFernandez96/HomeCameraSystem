@@ -69,6 +69,11 @@ try:
     from face_recog.recognizer import FaceRecognizer  # noqa: E402
 except Exception:
     FaceRecognizer = None
+# iter-356.62 (slice 1): single read at import time. Worker boots
+# rarely, deploy script can stamp `HOMECAM_SW_REV` via systemd unit env;
+# absent → "unknown" so sidecars still record the field consistently.
+_SW_REV = os.getenv("HOMECAM_SW_REV", "unknown")
+
 from box_norm import normalize_box  # noqa: E402
 from mediamtx_watchdog import MediaMtxWatchdog  # noqa: E402
 from memory_guard import MemoryGuard, read_mem_available_mb  # noqa: E402
@@ -425,6 +430,24 @@ def crop_face_region(rgb, det):
     return crop
 
 
+def _clamped_person_bbox(rgb, det):
+    """iter-356.62 (slice 1): clamp the SSD person bbox to the rgb
+    array bounds and return `(left, top, right, bottom)` pixel coords.
+    Mirrors the clamping inside `crop_face_region` but returns the
+    FULL person box (not the upper-portion face slice). Returns None
+    when the box is degenerate. Worker uses this to slice a numpy
+    person crop for sidecar v2's full-person training capture.
+    """
+    h, w = rgb.shape[:2]
+    top = max(0, int(det.Top))
+    bot = min(h, int(det.Bottom))
+    left = max(0, int(det.Left))
+    right = min(w, int(det.Right))
+    if bot <= top or right <= left:
+        return None
+    return (left, top, right, bot)
+
+
 def restart_mediamtx():
     """Kick mediamtx via systemd. Runs as user `israel` which has
     passwordless sudo on the Jetson; a 10 s timeout keeps the worker
@@ -657,6 +680,15 @@ def main():
     # bind-mount.
     face_captures_dir = _env(
         "FACE_CAPTURES_DIR", "/home/israel/HomeCameraSystem/face_captures"
+    )
+    # iter-356.62 (slice 1): parallel root for full-person crops. NOT a
+    # subdir of face_captures_dir — the existing /face/captures listing
+    # walks face_captures_dir/<name>/ and would otherwise treat a
+    # _person subtree as a person bucket. Empty = person capture
+    # disabled (operator opt-out, mirrors RECORDINGS_DIR convention).
+    person_captures_dir = _env(
+        "PERSON_CAPTURES_DIR",
+        "/home/israel/HomeCameraSystem/person_captures",
     )
     clip_duration_s = _env("DETECT_CLIP_DURATION_S", 8.0, float)
     clip_max_concurrent = _env("DETECT_CLIP_MAX_CONCURRENT", 3, int)
@@ -1166,19 +1198,103 @@ def main():
                 rgb = cuda_to_rgb_numpy(img)
                 crop = crop_face_region(rgb, top_person)
                 if crop is not None:
-                    # iter-352: thread face_captures_dir + event_id +
-                    # ts_ms into the recognizer so the iter-351 capture
-                    # path actually fires. Empty FACE_CAPTURES_DIR =
-                    # capture disabled (operator opt-out). Mirrors the
-                    # RECORDINGS_DIR opt-out convention. ts_ms is the
-                    # current emit time in unix-epoch ms (worker uses
-                    # `now` floats elsewhere; convert here).
+                    # iter-356.62 (slice 1): build sidecar v2 capture
+                    # metadata once. Worker has the source-frame info
+                    # the recognizer can't see (camera_id, source res,
+                    # detection bbox + score). The recognizer layers
+                    # face-specific fields on top per face. The full
+                    # person crop is saved separately below with
+                    # kind="person".
+                    person_clamp = _clamped_person_bbox(rgb, top_person)
+                    src_w = int(w)
+                    src_h = int(h)
+                    if person_clamp is not None and src_w > 0 and src_h > 0:
+                        p_left, p_top, p_right, p_bot = person_clamp
+                        bbox_pixels = [p_left, p_top, p_right, p_bot]
+                        bbox_norm = [
+                            p_left / float(src_w),
+                            p_top / float(src_h),
+                            p_right / float(src_w),
+                            p_bot / float(src_h),
+                        ]
+                    else:
+                        bbox_pixels = None
+                        bbox_norm = None
+                    capture_meta = {
+                        "source": {
+                            "w": src_w,
+                            "h": src_h,
+                            "camera_id": camera_id,
+                        },
+                        "model": {
+                            "name": model,
+                            "version": os.getenv(
+                                "HOMECAM_MODEL_VERSION", "trt-fp16",
+                            ),
+                            "floor": RuntimeConfig.DETECT_FLOOR,
+                        },
+                        "detection": {
+                            "label": top_label,
+                            "score": float(top_person.Confidence),
+                            "bbox_pixels": bbox_pixels,
+                            "bbox_norm": bbox_norm,
+                        },
+                        "pad_frac": 0.30,
+                        "jpeg_quality": 95,
+                        "infer_ms": metrics.infer_ms_recent or None,
+                        "gear": metrics.gear,
+                        "sw_rev": _SW_REV,
+                    }
+                    # The face-region crop's origin within the source
+                    # frame is `(left, top)` — needed so the recognizer
+                    # can translate face bboxes back to source coords
+                    # for `face_bbox_within_source`. crop_face_region
+                    # uses `top` as the slice's row 0; pass the same
+                    # origin here.
+                    if person_clamp is not None:
+                        face_origin_xy = (person_clamp[0], person_clamp[1])
+                    else:
+                        face_origin_xy = None
                     person_name = recognizer.recognize_in_crop(
                         crop,
                         capture_dir=face_captures_dir or None,
                         event_id=event_id,
                         ts_ms=int(now * 1000),
+                        capture_meta=capture_meta,
+                        face_origin_xy=face_origin_xy,
                     )
+                    # iter-356.62 (slice 1): save the FULL person crop
+                    # alongside the face captures. PIL is already a
+                    # transitive dep of face_recog/recognizer.py — lazy
+                    # import keeps the worker boot-cost unchanged for
+                    # operators with PERSON_CAPTURES_DIR disabled.
+                    if person_captures_dir and person_clamp is not None:
+                        try:
+                            from PIL import Image as _PIL_Image
+                            import io as _io
+                            from face_recog.capture import (
+                                save_person_capture,
+                            )
+                            p_left, p_top, p_right, p_bot = person_clamp
+                            person_crop_arr = rgb[p_top:p_bot, p_left:p_right]
+                            if person_crop_arr.size > 0:
+                                _img = _PIL_Image.fromarray(person_crop_arr)
+                                _buf = _io.BytesIO()
+                                _img.save(_buf, format="JPEG", quality=95)
+                                save_person_capture(
+                                    capture_dir=person_captures_dir,
+                                    name=person_name,
+                                    event_id=event_id,
+                                    ts_ms=int(now * 1000),
+                                    jpeg_bytes=_buf.getvalue(),
+                                    predicted_name=person_name,
+                                    meta=dict(capture_meta, kind="person"),
+                                )
+                        except Exception as _pe:
+                            print(
+                                "[detect] person capture save failed: {}".format(_pe),
+                                flush=True,
+                            )
             except Exception as e:
                 # Don't let a face-recognition glitch block the event.
                 print("[detect] face match failed: {}".format(e), flush=True)

@@ -52,6 +52,15 @@ class Settings:
     face_captures_dir: Path = Path(
         os.getenv("FACE_CAPTURES_DIR", "./face_captures")
     )
+    # iter-356.62 (slice 1, tiered capture): parallel root for the
+    # full-person crop the worker now saves alongside each face crop.
+    # NOT a subdir of face_captures_dir — the existing /face/captures
+    # listing route walks face_captures_dir/<name>/ and would treat a
+    # nested _person subtree as a name bucket. Bind-mounted similarly
+    # for host worker → containerized server access.
+    person_captures_dir: Path = Path(
+        os.getenv("PERSON_CAPTURES_DIR", "./person_captures")
+    )
 
     # Persisted Web Push subscriptions. Lives next to the VAPID PEMs in the
     # `homecam-secrets` Docker volume so it survives container restarts.
