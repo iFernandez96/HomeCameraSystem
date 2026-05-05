@@ -52,13 +52,14 @@ class Settings:
     face_captures_dir: Path = Path(
         os.getenv("FACE_CAPTURES_DIR", "./face_captures")
     )
-    # iter-356.62 (tiered-capture slices 1+2): parallel root for the
+    # iter-356.62 (tiered-capture slices 1+2+3): parallel root for the
     # full-person crop the worker saves alongside each face crop. NOT a
     # subdir of face_captures_dir — the existing /face/captures listing
     # route walks face_captures_dir/<name>/ and would treat a nested
     # _person subtree as a name bucket. Same bind-mount + 0o600
     # conventions as face_captures_dir. Read by /api/training/export
-    # (slice 2) when `kind=person`.
+    # (slice 2) when `kind=person`. Slice 3 sweeps + purges via
+    # face_capture_sweeper + DELETE /api/training/captures.
     person_captures_dir: Path = Path(
         os.getenv("PERSON_CAPTURES_DIR", "./person_captures")
     )

@@ -87,6 +87,14 @@ def preset_clip_pre_roll_max(preset: str) -> float:
 def preset_retention_days(preset: str) -> int:
     p = RETENTION_PRESETS.get(preset, RETENTION_PRESETS[RETENTION_PRESET_DEFAULT])
     return int(p["retention_days"])
+# iter-356.62 slice 3 (privacy controls): face/person capture
+# retention bounds. 1 day is the minimum sane TTL (anything shorter
+# would race the daily sweep + bootstrap photo retention); 365 days
+# is the absolute ceiling (operator can manually export before that).
+FACE_CAPTURE_RETENTION_MIN = 1
+FACE_CAPTURE_RETENTION_MAX = 365
+FACE_CAPTURE_RETENTION_DEFAULT = 30
+
 CLASSES_MAX = 30  # cap to keep config files sane and validation cheap
 # Cap the length of any individual class name. Longest real COCO label
 # is "kitchen scissors" at 16 chars; 64 is generous. Without this, a
@@ -191,6 +199,20 @@ class DetectionConfig:
     # See memory/two_way_audio_plan_iter308.md for the WebRTC +
     # ALSA wiring design that lands when hardware arrives.
     audio_enabled: bool = False
+    # iter-356.62 slice 3 (privacy controls): operator toggle for
+    # face/person capture write-path. Worker reads this via the
+    # iter-244 unauth /api/_internal/detection/config poll; when
+    # false the worker skips the JPEG + sidecar write entirely so
+    # no biometric crops land on disk in the first place. Defaults
+    # to True because the existing iter-351 capture path was always
+    # on; switching this off is the privacy-conscious operator's
+    # opt-out without ripping the worker code.
+    face_capture_enabled: bool = True
+    # iter-356.62 slice 3: TTL (days) for files under
+    # face_captures_dir + person_captures_dir. Server-side sweeper
+    # in face_capture_sweeper.py honours this. Bounded
+    # [FACE_CAPTURE_RETENTION_MIN, FACE_CAPTURE_RETENTION_MAX].
+    face_capture_retention_days: int = FACE_CAPTURE_RETENTION_DEFAULT
 
 
 # Length cap for `camera_label`. iter-305: 32 chars covers
@@ -350,6 +372,24 @@ def in_schedule_off_window(
     return cur >= s_min or cur < e_min
 
 
+def _valid_face_capture_retention_days(value, fallback: int) -> int:
+    """iter-356.62 slice 3: clamp / coerce retention_days from disk
+    or PATCH. Rejects bool (Python `isinstance(True, int)` quirk),
+    non-numeric, NaN, sub-MIN, super-MAX. Bool intentionally rejected
+    so a stray `true` doesn't smuggle in as `1`."""
+    if isinstance(value, bool):
+        return fallback
+    try:
+        n = int(value)
+    except (ValueError, TypeError):
+        return fallback
+    if n < FACE_CAPTURE_RETENTION_MIN:
+        return FACE_CAPTURE_RETENTION_MIN
+    if n > FACE_CAPTURE_RETENTION_MAX:
+        return FACE_CAPTURE_RETENTION_MAX
+    return n
+
+
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -425,6 +465,18 @@ class DetectionConfigStore:
                 bool(data["audio_enabled"])
                 if data.get("audio_enabled") is not None
                 else self.config.audio_enabled
+            ),
+            face_capture_enabled=(
+                bool(data["face_capture_enabled"])
+                if data.get("face_capture_enabled") is not None
+                else self.config.face_capture_enabled
+            ),
+            face_capture_retention_days=_valid_face_capture_retention_days(
+                data.get(
+                    "face_capture_retention_days",
+                    self.config.face_capture_retention_days,
+                ),
+                self.config.face_capture_retention_days,
             ),
             clip_post_roll_s=_clamp(
                 _safe_float(
@@ -521,6 +573,21 @@ class DetectionConfigStore:
             if "audio_enabled" in patch and patch["audio_enabled"] is not None
             else cur.audio_enabled
         )
+        face_capture_enabled = (
+            bool(patch["face_capture_enabled"])
+            if "face_capture_enabled" in patch
+            and patch["face_capture_enabled"] is not None
+            else cur.face_capture_enabled
+        )
+        face_capture_retention_days = (
+            _valid_face_capture_retention_days(
+                patch["face_capture_retention_days"],
+                cur.face_capture_retention_days,
+            )
+            if "face_capture_retention_days" in patch
+            and patch["face_capture_retention_days"] is not None
+            else cur.face_capture_retention_days
+        )
         # iter-257: preset MUST be resolved before clip durations so
         # the durations clamp to the new preset's cap (not the
         # previous one). Same patch can change preset AND
@@ -557,6 +624,8 @@ class DetectionConfigStore:
             clip_retention_preset=clip_retention_preset,
             camera_label=camera_label,
             audio_enabled=audio_enabled,
+            face_capture_enabled=face_capture_enabled,
+            face_capture_retention_days=face_capture_retention_days,
         )
         self._save()
         return self.config

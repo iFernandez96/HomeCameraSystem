@@ -133,6 +133,10 @@ def test_get_returns_current_config(client: TestClient):
         # iter-308: two-way audio gating. Defaults false because most
         # deploys today don't have a mic + speaker wired to the Jetson.
         "audio_enabled": False,
+        # iter-356.62 slice 3 (privacy controls): face/person capture
+        # operator opt-out + TTL.
+        "face_capture_enabled": True,
+        "face_capture_retention_days": 30,
     }
 
 
@@ -784,3 +788,120 @@ def test_given_audio_enabled_set_when_store_reloaded_then_value_persists(tmp_pat
 
     # assert
     assert s2.get().audio_enabled is True
+
+
+# ---------- iter-356.62 slice 3 (privacy controls): face_capture fields ----------
+
+
+def test_when_loaded_default_then_face_capture_enabled_is_true_and_retention_30(
+    client: TestClient,
+):
+    # arrange / act
+    body = client.get("/api/detection/config").json()
+
+    # assert
+    assert body["face_capture_enabled"] is True
+    assert body["face_capture_retention_days"] == 30
+
+
+def test_given_patch_with_retention_15_when_save_then_persisted(client: TestClient):
+    # arrange / act
+    r = client.patch(
+        "/api/detection/config",
+        json={"face_capture_retention_days": 15},
+    )
+
+    # assert
+    assert r.status_code == 200, r.text
+    assert r.json()["face_capture_retention_days"] == 15
+    body = client.get("/api/detection/config").json()
+    assert body["face_capture_retention_days"] == 15
+
+
+def test_given_invalid_retention_when_patch_then_clamped_or_rejected(
+    client: TestClient,
+):
+    # arrange / act — way above the 365 cap → 422 from Pydantic Field
+    r_high = client.patch(
+        "/api/detection/config",
+        json={"face_capture_retention_days": 9999},
+    )
+    # below the floor (0) → 422
+    r_low = client.patch(
+        "/api/detection/config",
+        json={"face_capture_retention_days": 0},
+    )
+
+    # assert
+    assert r_high.status_code == 422
+    assert r_low.status_code == 422
+
+
+def test_given_face_capture_enabled_patch_when_get_then_value_round_trips(
+    client: TestClient,
+):
+    # arrange / act
+    r = client.patch(
+        "/api/detection/config",
+        json={"face_capture_enabled": False},
+    )
+
+    # assert
+    assert r.status_code == 200
+    body = client.get("/api/detection/config").json()
+    assert body["face_capture_enabled"] is False
+
+
+def test_given_face_capture_fields_when_store_reloaded_then_persist(tmp_path):
+    # arrange
+    from app.services.detection_config import DetectionConfigStore
+    path = tmp_path / "cfg.json"
+    s = DetectionConfigStore(path=path)
+    s.update(face_capture_enabled=False, face_capture_retention_days=45)
+
+    # act
+    s2 = DetectionConfigStore(path=path)
+
+    # assert
+    assert s2.get().face_capture_enabled is False
+    assert s2.get().face_capture_retention_days == 45
+
+
+def test_given_disk_load_with_out_of_range_retention_when_loaded_then_clamped(
+    tmp_path,
+):
+    # arrange — manually-edited config with crazy retention
+    from app.services.detection_config import (
+        DetectionConfigStore,
+        FACE_CAPTURE_RETENTION_MAX,
+        FACE_CAPTURE_RETENTION_MIN,
+    )
+    path = tmp_path / "cfg.json"
+    path.write_text('{"face_capture_retention_days": 99999}')
+
+    # act
+    s = DetectionConfigStore(path=path)
+
+    # assert
+    assert s.get().face_capture_retention_days == FACE_CAPTURE_RETENTION_MAX
+
+    path.write_text('{"face_capture_retention_days": -100}')
+    s2 = DetectionConfigStore(path=path)
+    assert s2.get().face_capture_retention_days == FACE_CAPTURE_RETENTION_MIN
+
+
+def test_given_internal_config_endpoint_when_get_then_face_capture_fields_present(
+    client_anon: TestClient,
+):
+    """The worker polls /api/_internal/detection/config (unauth) for
+    config every 30s. Slice 1 (worker hot path, parallel worktree)
+    will read face_capture_enabled here to gate the JPEG write —
+    surface it on the wire."""
+    # arrange / act
+    r = client_anon.get("/api/_internal/detection/config")
+
+    # assert
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "face_capture_enabled" in body
+    assert "face_capture_retention_days" in body

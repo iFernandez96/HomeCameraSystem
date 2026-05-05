@@ -21,6 +21,8 @@ from ..services.detection_config import (
     CLIP_PRE_ROLL_MIN,
     COOLDOWN_MAX,
     COOLDOWN_MIN,
+    FACE_CAPTURE_RETENTION_MAX,
+    FACE_CAPTURE_RETENTION_MIN,
     HHMM_PATTERN,
     THRESHOLD_MAX,
     THRESHOLD_MIN,
@@ -90,6 +92,16 @@ class DetectionConfigPatch(BaseModel):
     # iter-308: two-way audio gating. Owner-only flip; UI affordances
     # stay disabled with "Soon" caption until this is true.
     audio_enabled: bool | None = None
+    # iter-356.62 slice 3 (privacy controls): operator opt-out for
+    # the face/person capture write-path. The worker reads this via
+    # /api/_internal/detection/config and skips the JPEG + sidecar
+    # write entirely when false.
+    face_capture_enabled: bool | None = None
+    face_capture_retention_days: int | None = Field(
+        default=None,
+        ge=FACE_CAPTURE_RETENTION_MIN,
+        le=FACE_CAPTURE_RETENTION_MAX,
+    )
 
 
 @router.post("/capture")

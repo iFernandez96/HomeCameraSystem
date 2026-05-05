@@ -12,7 +12,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, clips, control, events, face, healthz, metrics_prom, push, training
+from .routes import _internal, auth, clips, control, events, face, healthz, metrics_prom, push, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -319,6 +319,17 @@ app.include_router(clips.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 # here. Keeps the route list close to the snapshots/timelapses pattern
 # (regex-validated filename, 2-tier path-traversal defense).
 settings.face_captures_dir.mkdir(parents=True, exist_ok=True)
+# iter-356.62 slice 3 (privacy controls): owner-only purge + consent
+# admin endpoints. Per-route gating via require_role("owner") inside
+# training_admin.py (mirrors face.py).
+#
+# Mounted BEFORE `face.router` so the static path
+# `/api/face/captures/{name}/consent` resolves to the consent handler
+# rather than face.py's catch-all `/face/captures/{name}/{filename}`
+# (which would treat "consent" as a filename and 404 via the
+# _FILENAME_RE regex check). FastAPI route resolution is order-based.
+settings.person_captures_dir.mkdir(parents=True, exist_ok=True)
+app.include_router(training_admin.router, prefix="/api")
 app.include_router(face.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
 # `/api/auth/*` gates itself (login is the way IN; me/refresh/logout
