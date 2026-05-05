@@ -12,7 +12,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, clips, control, events, face, healthz, metrics_prom, push
+from .routes import _internal, auth, clips, control, events, face, healthz, metrics_prom, push, training
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -320,6 +320,7 @@ app.include_router(clips.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 # (regex-validated filename, 2-tier path-traversal defense).
 settings.face_captures_dir.mkdir(parents=True, exist_ok=True)
 app.include_router(face.router, prefix="/api")
+app.include_router(training.router, prefix="/api")
 # `/api/auth/*` gates itself (login is the way IN; me/refresh/logout
 # read cookies directly). `/api/_internal/*` is loopback-trusted —
 # Charter lock-in, NEVER gate.

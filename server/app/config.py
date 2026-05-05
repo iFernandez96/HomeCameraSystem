@@ -52,6 +52,13 @@ class Settings:
     face_captures_dir: Path = Path(
         os.getenv("FACE_CAPTURES_DIR", "./face_captures")
     )
+    # iter-356.6X (tiered-inference slice 1/2): mirror of face_captures_dir
+    # for the larger "person crop" tier. Worker writes person-bbox JPEGs +
+    # sidecars here; server's /api/training/export reads from this when
+    # `kind=person`. Same bind-mount + 0o600 conventions as face_captures_dir.
+    person_captures_dir: Path = Path(
+        os.getenv("PERSON_CAPTURES_DIR", "./person_captures")
+    )
 
     # Persisted Web Push subscriptions. Lives next to the VAPID PEMs in the
     # `homecam-secrets` Docker volume so it survives container restarts.
