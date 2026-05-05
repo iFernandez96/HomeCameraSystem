@@ -5,6 +5,12 @@ import { VideoTile } from '../components/VideoTile'
 import { Button } from '../components/primitives/Button'
 import { captureSnapshot, HttpError, toggleDetection } from '../lib/api'
 import { formatAge } from '../lib/format'
+import {
+  type SentryCat,
+  sentryOffDutyLabel,
+  sentryOnWatchLabel,
+  useSentryCat,
+} from '../lib/sentryCat'
 import { useStatus } from '../lib/useStatus'
 import { useToast } from '../lib/toast'
 
@@ -38,6 +44,13 @@ export function Live() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const status = useStatus()
   const { showToast } = useToast()
+  // iter-356.64 / mobile-redesign Slice B: sentry-cat rotation. The
+  // "on watch" / "off duty" headline used to be hardcoded to Panther;
+  // now it cycles through Panther / Mushu / Coco on a 30-min slot
+  // (see lib/sentryCat.ts). One call at the page root so every
+  // surface that reads it (DetectionStatusToggle pill +
+  // CameraSubtitle gradient) renders the SAME cat for the slot.
+  const sentryCat = useSentryCat()
   // iter-313 (perf #3): camera_label + audio_enabled are inlined on
   // /api/status now. Read directly from the status poll instead of
   // a dedicated /api/detection/config mount-fetch. Saves 1 RTT per
@@ -162,7 +175,7 @@ export function Live() {
               <h1 className="font-display text-2xl sm:text-3xl font-bold text-white leading-none truncate">
                 {cameraLabel}
               </h1>
-              <CameraSubtitle status={status} onDark />
+              <CameraSubtitle status={status} sentryCat={sentryCat} onDark />
             </div>
             <div className="hidden sm:flex pointer-events-auto">
               <ArmedBadge status={status} />
@@ -178,6 +191,7 @@ export function Live() {
             detectionActive={detectionActive}
             onToggle={onToggleDetect}
             loading={busy === 'detect'}
+            sentryCat={sentryCat}
             compact
           />
           <div className="flex flex-row gap-2">
@@ -212,6 +226,7 @@ export function Live() {
           detectionActive={detectionActive}
           onToggle={onToggleDetect}
           loading={busy === 'detect'}
+          sentryCat={sentryCat}
         />
         <div className="grid grid-cols-2 gap-2">
           <ActionButton
@@ -301,11 +316,13 @@ function DetectionStatusToggle({
   detectionActive,
   onToggle,
   loading,
+  sentryCat,
   compact,
 }: {
   detectionActive: boolean | null
   onToggle: () => void
   loading: boolean
+  sentryCat: SentryCat
   compact?: boolean
 }) {
   const isActive = detectionActive === true
@@ -319,10 +336,15 @@ function DetectionStatusToggle({
     : isPaused
       ? 'bg-[var(--color-warning)]'
       : 'bg-white/40'
+  // iter-356.64 / Slice B: paused-state copy now follows the rotating
+  // sentry instead of the hardcoded Panther. Active-state stays the
+  // generic "On watch" pill — the cat-named "X on watch" line lives
+  // in the CameraSubtitle below the camera name (one cat-named
+  // headline per surface, not two).
   const stateLabel = isActive
     ? 'On watch'
     : isPaused
-      ? "Panther's off duty"
+      ? sentryOffDutyLabel(sentryCat)
       : 'Checking…'
   const actionLabel = loading
     ? isActive
@@ -514,9 +536,11 @@ function MicIcon() {
  */
 function CameraSubtitle({
   status,
+  sentryCat,
   onDark,
 }: {
   status: import('../lib/types').ServerStatus | null
+  sentryCat: SentryCat
   onDark?: boolean
 }) {
   // iter-356.58 (layout rebuild): onDark variant for the video-
@@ -533,10 +557,14 @@ function CameraSubtitle({
     )
   }
   const armed = status.detection_active === true && status.worker_alive === true
+  // iter-356.64 / Slice B: the armed-state headline cycles cats via
+  // sentry rotation. `key={sentryCat}` on the rendered span re-mounts
+  // on slot flip → the .sentry-sparkle class plays its 600ms intro
+  // (gated by prefers-reduced-motion in index.css).
   const armedLabel = !status.worker_alive
     ? 'Camera offline'
     : status.detection_active
-      ? "Panther on watch"
+      ? sentryOnWatchLabel(sentryCat)
       : 'Off duty'
   const armedDot = !status.worker_alive
     ? 'bg-[var(--color-danger)]'
@@ -564,7 +592,16 @@ function CameraSubtitle({
     >
       <span className="inline-flex items-center gap-1.5">
         <span aria-hidden="true" className={`w-2 h-2 rounded-full ${armedDot}`} />
-        <span className={armedTextClass}>{armedLabel}</span>
+        {/* iter-356.64 / Slice B: `key={sentryCat}` triggers a remount
+            on every slot flip so the sentry-sparkle class plays its
+            600ms intro on each cat handover. The keyframe is gated on
+            prefers-reduced-motion in index.css. */}
+        <span
+          key={armed ? sentryCat : 'static'}
+          className={`${armedTextClass} ${armed ? 'sentry-sparkle' : ''}`}
+        >
+          {armedLabel}
+        </span>
       </span>
       {lastFrameLabel && (
         <>
