@@ -44,10 +44,19 @@ export function DangerZone() {
     // need to manually Reconnect. Push subscriptions DO survive —
     // they're persisted in push_subs.json on disk.
     const ok = await confirm({
-      title: 'Reboot Jetson?',
+      // Premium-launch slice (Frank top-3 #3): "Reboot Jetson?"
+      // leaked the SoC brand into user-facing copy. The visible
+      // button below already reads "Restart camera box"; the
+      // confirm title now matches that vocabulary so a 72-year-old
+      // tapping the button doesn't second-guess whether they hit
+      // the right one.
+      title: 'Restart the camera box?',
       body:
         'The camera and detection will be unavailable for about 30 seconds. Any clip currently being recorded will be lost. Open Live tabs will need to tap Reconnect. Saved logins and push notification setup are preserved.',
-      confirmLabel: 'Reboot',
+      // Premium-launch slice: confirm action label tracks the
+      // surface vocabulary too — "Reboot" → "Restart" matches
+      // the button + title.
+      confirmLabel: 'Restart',
       cancelLabel: 'Cancel',
       destructive: true,
     })
@@ -110,10 +119,13 @@ export function DangerZone() {
     // tabs disconnect; logins and push subscriptions persist
     // because they're on disk (users.db + push_subs.json).
     const ok = await confirm({
-      title: 'Update server software?',
+      // Premium-launch slice (Frank top-3 #2): "Update server
+      // software" reads as datacenter copy. The button now reads
+      // "Install camera updates"; the confirm title matches.
+      title: 'Install camera updates?',
       body:
         'Installs the new version and restarts the server. The camera and detection are unavailable for about 30 seconds. Any clip currently being recorded will be lost. Open Live tabs will need to tap Reconnect. Saved logins and push notification setup are preserved.',
-      confirmLabel: 'Update',
+      confirmLabel: 'Install',
       cancelLabel: 'Cancel',
       destructive: true,
     })
@@ -181,33 +193,48 @@ export function DangerZone() {
           they're about to mess with. */}
       {/* iter-356.2: button primitive applied. Maintenance buttons
           = secondary variant; Restore + Reboot below = destructive. */}
+      {/* Premium-launch slice (Frank top-3 #2): the section header
+          + caveat paragraph were datacenter copy ("Maintenance",
+          "host-side helpers", "configured by whoever installed
+          your camera"). The replacement keeps the operator-honest
+          stub-with-note signal but speaks to the household user
+          who actually opens this tab. */}
       <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide mt-2">
-        Maintenance
+        Camera maintenance
       </h3>
-      {/* iter-356.x (feature audit P1-3 + Frank E4): pre-fix the
-          Backup / Update / Restore / Reboot buttons all looked fully
-          live but were operator-blocked stubs — clicking returned a
-          friendly "isn't set up yet" toast. Naming the dependency up
-          front sets expectations before the click instead of after. */}
       <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-2">
-        Backup, update, restore and reboot need host-side helpers
-        configured by whoever installed your camera. If they aren&apos;t
-        ready you&apos;ll see a notice instead of an action.
+        These options need a one-time setup on the camera box by
+        the person who first installed it. If that&apos;s not done
+        yet, tapping a button will tell you so — nothing will
+        break.
       </p>
+      {/* Premium-launch slice (Frank top-3 #2): button labels in
+          camera-product vocabulary. "Back up server state" → "Back
+          up camera settings"; "Update server software (~30 s
+          outage)" → "Install camera updates". The 30 s outage is
+          already in the confirm body — duplicating a truncated
+          warning on the button label trains the user to skip the
+          confirm dialog. */}
       <Button variant="secondary" size="lg" fullWidth onClick={onBackup}>
-        Back up server state
+        Back up camera settings
       </Button>
       <Button variant="secondary" size="lg" fullWidth onClick={onUpdate}>
-        Update server software (~30 s outage)
+        Install camera updates
       </Button>
       <div className="pt-3 mt-3 border-t border-[var(--color-border)]">
         <h3 className="text-sm font-semibold text-[var(--color-danger)] uppercase tracking-wide">
           Danger zone
         </h3>
+        {/* Premium-launch slice (Frank top-3): "interrupt service"
+            and "change disk state" / "backup snapshot" are
+            cable-company + datacenter language. Plain English
+            without softening the gravity. The "Danger zone"
+            heading itself stays — universal, dramatic in the
+            right way, deliberately loud. */}
         <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-3">
-          These actions can interrupt service or change disk state.
-          Restore overwrites current data with a backup snapshot;
-          Reboot restarts the camera box.
+          These actions are harder to undo. Restore replaces your
+          current settings with a saved backup. Restart takes the
+          camera offline for about 30 seconds.
         </p>
       </div>
       {/* iter-237 (Feature #12 slice 6): inline restore form.

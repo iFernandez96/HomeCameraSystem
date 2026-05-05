@@ -293,14 +293,93 @@ export function NotificationsSection({
           permission has been revoked. Without it, the toggle would
           stay in its last state but every togglePush() call would
           silently fail at ensurePushSubscription(). Banner is
-          role="alert" so SR users hear it on transition. */}
+          role="alert" so SR users hear it on transition.
+
+          Premium-launch slice (Frank top-3 #1 + general-audit
+          Critical): pre-fix the banner said only "Re-enable in
+          your device settings, then reload" — a dead-end
+          instruction. The user (often a non-technical family
+          member who tapped Block on the browser permission
+          dialog) was stranded: Android Chrome buries the per-
+          site notification permission under lock-icon →
+          Permissions → Notifications, iOS Safari needs a
+          homescreen-install reset, desktop differs again.
+          They'd call the household tech-help (Frank). Now: the
+          banner expands into a `<details>` disclosure with one
+          short ordered list per platform. The user picks the
+          section that matches them; no UA sniffing needed (kept
+          deliberately simple — no inline platform detection
+          dependency). The role="alert" headline stays so SR
+          users still hear the diagnosis on permission flip. */}
       {pushAvailable && permissionDenied && (
         <div
           role="alert"
-          className="mx-4 mt-3 mb-2 px-3 py-2 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-sm text-[var(--color-text-primary)]"
+          className="mx-4 mt-3 mb-2 px-3 py-2.5 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-sm text-[var(--color-text-primary)]"
         >
-          Browser blocked HomeCam alerts. Re-enable in your device
-          settings, then reload.
+          <p className="font-semibold">Browser blocked HomeCam alerts.</p>
+          <p className="mt-1 text-[var(--color-text-secondary)]">
+            The toggle below stays off until you allow alerts in
+            your browser.
+          </p>
+          <details className="mt-2 group">
+            <summary className="cursor-pointer text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded font-semibold list-none [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex items-center gap-1">
+                <ChevronIcon />
+                <span>How do I re-enable alerts?</span>
+              </span>
+            </summary>
+            <div className="mt-3 space-y-3 text-[var(--color-text-secondary)]">
+              <div>
+                <h3 className="font-semibold text-sm text-[var(--color-text-primary)]">
+                  On iPhone or iPad
+                </h3>
+                <ol className="mt-1 list-decimal pl-5 space-y-1">
+                  <li>
+                    Open the iOS Settings app, then tap{' '}
+                    <strong>Notifications</strong>.
+                  </li>
+                  <li>
+                    Scroll to the apps list, find{' '}
+                    <strong>HomeCam</strong>, tap it, and turn{' '}
+                    <strong>Allow Notifications</strong> on.
+                  </li>
+                  <li>Come back here and pull down to refresh.</li>
+                </ol>
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-[var(--color-text-primary)]">
+                  On Android
+                </h3>
+                <ol className="mt-1 list-decimal pl-5 space-y-1">
+                  <li>
+                    Tap the lock icon (or info circle) in your
+                    browser&apos;s address bar.
+                  </li>
+                  <li>
+                    Tap <strong>Permissions</strong> →{' '}
+                    <strong>Notifications</strong> →{' '}
+                    <strong>Allow</strong>.
+                  </li>
+                  <li>Come back here and refresh the page.</li>
+                </ol>
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-[var(--color-text-primary)]">
+                  On a computer
+                </h3>
+                <ol className="mt-1 list-decimal pl-5 space-y-1">
+                  <li>
+                    Click the lock icon next to the address bar.
+                  </li>
+                  <li>
+                    Find <strong>Notifications</strong> and switch
+                    it to <strong>Allow</strong>.
+                  </li>
+                  <li>Refresh the page (⌘R or F5).</li>
+                </ol>
+              </div>
+            </div>
+          </details>
         </div>
       )}
       <Row
@@ -487,3 +566,29 @@ export function NotificationsSection({
 
 // iter-290: Toggle moved to ./parts.tsx as a shared primitive.
 // NotificationsSection imports the canonical version above.
+
+// Premium-launch slice — small chevron used by the permission-
+// denied disclosure summary. The default <details> triangle is
+// browser-dependent (iOS Safari renders a tiny grey arrow that
+// doesn't track the page's text color); this is a controllable
+// SVG so the open/closed state animates via the parent
+// `<details>[open]` selector. `aria-hidden` because the
+// surrounding <summary> already carries the toggle role.
+function ChevronIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="transition-transform duration-150 group-open:rotate-90"
+    >
+      <polyline points="9 6 15 12 9 18" />
+    </svg>
+  )
+}

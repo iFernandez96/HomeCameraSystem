@@ -178,3 +178,93 @@ describe('NotificationsSection — push permission revocation (iter-356.C)', () 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+describe('NotificationsSection — permission-denied recovery disclosure (premium-launch slice — Frank top-3 #1)', () => {
+  beforeEach(() => {
+    setNotificationPermission('denied')
+    fakeStatus = makeFakeStatus('denied')
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: vi.fn().mockResolvedValue(fakeStatus) },
+    })
+  })
+
+  it('Given permission is denied, When the banner renders, Then a "How do I re-enable alerts?" disclosure summary is present (no longer a dead-end one-liner)', async () => {
+    // arrange — Frank top-3 #1: pre-fix the banner said only
+    // "Re-enable in your device settings, then reload" — a
+    // dead-end. Now the banner expands into platform-aware
+    // recovery steps.
+    render(<NotificationsSection pushSubsCount={0} />)
+
+    // assert — disclosure summary is present.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/how do i re-enable alerts\?/i),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  it('Given the disclosure expands, When the user reads, Then it covers iPhone, Android, and computer paths so a non-technical user can recover without external help', async () => {
+    // arrange / act — render in denied state. The <details>
+    // contents render in jsdom regardless of the open attribute
+    // (jsdom doesn't gate visibility on it), so the platform
+    // headings are queryable.
+    render(<NotificationsSection pushSubsCount={0} />)
+
+    // assert — three platform-specific headings.
+    await waitFor(() =>
+      expect(screen.getByText(/^On iPhone or iPad$/)).toBeInTheDocument(),
+    )
+    expect(screen.getByText(/^On Android$/)).toBeInTheDocument()
+    expect(screen.getByText(/^On a computer$/)).toBeInTheDocument()
+  })
+
+  it('Given the disclosure renders, When the user looks for instruction lists, Then each platform section has an ordered list of recovery steps (no platform stranded with vague advice)', async () => {
+    // arrange / act
+    const { container } = render(<NotificationsSection pushSubsCount={0} />)
+
+    // assert — disclosure has at least 3 ordered lists, one per
+    // platform, with at least one step each.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/how do i re-enable alerts\?/i),
+      ).toBeInTheDocument(),
+    )
+    const banner = container.querySelector('[role="alert"]')!
+    const ols = banner.querySelectorAll('ol')
+    expect(ols.length).toBe(3)
+    for (const ol of ols) {
+      expect(ol.querySelectorAll('li').length).toBeGreaterThanOrEqual(2)
+    }
+  })
+
+  it('Given the headline renders, When the role="alert" element is queried, Then it still contains "Browser blocked HomeCam alerts" so existing AT and pinned tests keep working', async () => {
+    // arrange / act
+    render(<NotificationsSection pushSubsCount={0} />)
+
+    // assert — preservation sentinel: the slice expanded the
+    // banner with a disclosure but the role="alert" headline is
+    // unchanged so iter-356.C contract holds. Existing tests
+    // earlier in this file pin this exact substring.
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /browser blocked homecam alerts/i,
+      ),
+    )
+  })
+
+  it('Given the disclosure renders, When the user reads recovery copy, Then "Re-enable in your device settings, then reload." dead-end copy is GONE (regression sentinel for the slice)', async () => {
+    // arrange / act
+    render(<NotificationsSection pushSubsCount={0} />)
+
+    // assert — old text removed.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/how do i re-enable alerts\?/i),
+      ).toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByText(/re-enable in your device settings, then reload/i),
+    ).not.toBeInTheDocument()
+  })
+})

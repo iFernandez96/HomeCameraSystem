@@ -65,10 +65,13 @@ describe('DangerZone confirm bodies (iter-356.C)', () => {
     // arrange
     const user = userEvent.setup()
 
-    // act
+    // act — premium-launch slice (Frank top-3 #2): button label
+    // de-IT-ified to "Install camera updates" (was "Update
+    // server software (~30 s outage)"). Confirm body still
+    // explains the disruption.
     render(<DangerZone />)
     await user.click(
-      screen.getByRole('button', { name: /update server software/i }),
+      screen.getByRole('button', { name: /install camera updates/i }),
     )
 
     // assert
@@ -78,5 +81,100 @@ describe('DangerZone confirm bodies (iter-356.C)', () => {
     expect(body).toMatch(/clip currently being recorded will be lost/i)
     expect(body).toMatch(/reconnect/i)
     expect(body).toMatch(/preserved/i)
+  })
+})
+
+describe('DangerZone copy de-IT-ification (premium-launch slice — Frank top-3)', () => {
+  it('Given the Maintenance section renders, When the user reads the button labels, Then they speak camera-product vocabulary (NOT datacenter vocabulary)', () => {
+    // arrange — Frank top-3 #2: "Back up server state" /
+    // "Update server software (~30 s outage)" read as
+    // datacenter copy. Replaced with "Back up camera settings"
+    // / "Install camera updates".
+    render(<DangerZone />)
+
+    // assert — new copy is present.
+    expect(
+      screen.getByRole('button', { name: /back up camera settings/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /install camera updates/i }),
+    ).toBeInTheDocument()
+    // assert — old copy is gone (regression sentinel).
+    expect(
+      screen.queryByRole('button', { name: /server state/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /server software/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('Given the user taps Restart camera box, When the confirm dialog opens, Then the title says "Restart the camera box?" — NOT "Reboot Jetson?" (Frank top-3 #3: drop hardware-brand leak)', async () => {
+    // arrange
+    const user = userEvent.setup()
+
+    // act
+    render(<DangerZone />)
+    await user.click(screen.getByRole('button', { name: /restart camera box/i }))
+
+    // assert — confirm payload uses the new title + action.
+    expect(confirmFn).toHaveBeenCalled()
+    const args = confirmFn.mock.calls[0][0] as {
+      title: string
+      confirmLabel: string
+    }
+    expect(args.title).toBe('Restart the camera box?')
+    expect(args.confirmLabel).toBe('Restart')
+    expect(args.title).not.toMatch(/jetson/i)
+  })
+
+  it('Given the user taps Install camera updates, When the confirm dialog opens, Then the title says "Install camera updates?" — matching the button vocabulary', async () => {
+    // arrange
+    const user = userEvent.setup()
+
+    // act
+    render(<DangerZone />)
+    await user.click(
+      screen.getByRole('button', { name: /install camera updates/i }),
+    )
+
+    // assert
+    expect(confirmFn).toHaveBeenCalled()
+    const args = confirmFn.mock.calls[0][0] as {
+      title: string
+      confirmLabel: string
+    }
+    expect(args.title).toBe('Install camera updates?')
+    expect(args.confirmLabel).toBe('Install')
+    expect(args.title).not.toMatch(/server software/i)
+  })
+
+  it('Given the section renders, When the user reads the section header, Then it says "Camera maintenance" (not just "Maintenance" — datacenter-eyebrow language)', () => {
+    // arrange / act
+    render(<DangerZone />)
+
+    // assert
+    expect(
+      screen.getByText(/^camera maintenance$/i),
+    ).toBeInTheDocument()
+  })
+
+  it('Given the section renders, When the user reads the danger-zone caveat, Then "interrupt service" / "change disk state" / "backup snapshot" datacenter phrases are GONE in favor of plain English (Frank top-3)', () => {
+    // arrange / act
+    render(<DangerZone />)
+
+    // assert — preserved + new copy present.
+    expect(
+      screen.getByText(/these actions are harder to undo/i),
+    ).toBeInTheDocument()
+    // assert — old jargon is gone (regression sentinel).
+    expect(
+      screen.queryByText(/interrupt service/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/change disk state/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/backup snapshot/i),
+    ).not.toBeInTheDocument()
   })
 })

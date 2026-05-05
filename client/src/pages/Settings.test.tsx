@@ -273,8 +273,12 @@ describe('Settings page', () => {
     render(<Settings />)
     await user.click(screen.getByRole('button', { name: /restart camera box/i }))
     await waitFor(() => expect(confirmFn).toHaveBeenCalled())
+    // Premium-launch slice (Frank top-3 #3): confirm title was
+    // "Reboot Jetson?" and is now "Restart the camera box?". The
+    // user-facing button has been "Restart camera box" since the
+    // iter-356.C work; the title now matches.
     expect(confirmFn.mock.calls[0][0]).toMatchObject({
-      title: expect.stringMatching(/reboot/i),
+      title: expect.stringMatching(/restart the camera box/i),
       destructive: true,
     })
     expect(rebootJetson).not.toHaveBeenCalled()
@@ -976,8 +980,13 @@ describe('Settings page', () => {
     await waitFor(() => expect(startInput).not.toBeDisabled())
     await user.type(startInput, '09:00')
     // End left blank — Save must be disabled, error shown.
+    // Premium-launch slice: the schedule alert dropped its
+    // overriding `aria-label="Schedule window validation error"`
+    // (the override masked the visible help text from VO).
+    // The alert is now queryable by visible text — that IS its
+    // accessible name now that no aria-label overrides it.
     expect(
-      screen.getByLabelText(/schedule window validation error/i),
+      await screen.findByText(/both from and to must be hh:mm/i),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /save notification filters/i }),
@@ -1063,7 +1072,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /back up server state/i }),
+      screen.getByRole('button', { name: /back up camera settings/i }),
     )
     await waitFor(() => expect(confirmFn).toHaveBeenCalled())
     expect(confirmFn.mock.calls[0][0]).toMatchObject({
@@ -1078,7 +1087,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /back up server state/i }),
+      screen.getByRole('button', { name: /back up camera settings/i }),
     )
     await waitFor(() => expect(triggerBackup).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -1100,7 +1109,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /back up server state/i }),
+      screen.getByRole('button', { name: /back up camera settings/i }),
     )
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
@@ -1116,7 +1125,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /back up server state/i }),
+      screen.getByRole('button', { name: /back up camera settings/i }),
     )
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
@@ -1131,7 +1140,7 @@ describe('Settings page', () => {
     render(<Settings />)
     await screen.findByText(/kid/)
     expect(
-      screen.queryByRole('button', { name: /back up server state/i }),
+      screen.queryByRole('button', { name: /back up camera settings/i }),
     ).not.toBeInTheDocument()
   })
 
@@ -1139,7 +1148,7 @@ describe('Settings page', () => {
     _authUser = { username: 'alice', role: 'admin' }
     render(<Settings />)
     expect(
-      await screen.findByRole('button', { name: /back up server state/i }),
+      await screen.findByRole('button', { name: /back up camera settings/i }),
     ).toBeInTheDocument()
   })
 
@@ -1320,7 +1329,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /update server software/i }),
+      screen.getByRole('button', { name: /install camera updates/i }),
     )
     await waitFor(() => expect(confirmFn).toHaveBeenCalled())
     expect(confirmFn.mock.calls[0][0]).toMatchObject({
@@ -1336,7 +1345,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /update server software/i }),
+      screen.getByRole('button', { name: /install camera updates/i }),
     )
     await waitFor(() => expect(triggerUpdate).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -1356,7 +1365,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /update server software/i }),
+      screen.getByRole('button', { name: /install camera updates/i }),
     )
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
@@ -1372,7 +1381,7 @@ describe('Settings page', () => {
     const user = userEvent.setup()
     render(<Settings />)
     await user.click(
-      screen.getByRole('button', { name: /update server software/i }),
+      screen.getByRole('button', { name: /install camera updates/i }),
     )
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
@@ -1387,7 +1396,7 @@ describe('Settings page', () => {
     render(<Settings />)
     await screen.findByText(/kid/)
     expect(
-      screen.queryByRole('button', { name: /update server software/i }),
+      screen.queryByRole('button', { name: /install camera updates/i }),
     ).not.toBeInTheDocument()
   })
 
@@ -1395,7 +1404,7 @@ describe('Settings page', () => {
     _authUser = { username: 'alice', role: 'admin' }
     render(<Settings />)
     expect(
-      await screen.findByRole('button', { name: /update server software/i }),
+      await screen.findByRole('button', { name: /install camera updates/i }),
     ).toBeInTheDocument()
   })
 
