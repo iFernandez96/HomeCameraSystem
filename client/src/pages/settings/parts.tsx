@@ -117,7 +117,11 @@ export function TimeInput({
         if (e.target.value) onChange(e.target.value)
       }}
       aria-label={ariaLabel}
-      className="bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-1.5 rounded-lg text-sm tabular-nums border border-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
+      // iter-356.66 (iOS oddities sweep): time inputs at text-sm
+      // (14 px after Slice-A bump) under iOS Safari's 16-px floor
+      // trigger zoom-on-focus. Schedule editing on a phone reflowed
+      // the whole settings page on every tap. Bumped to text-base.
+      className="bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base tabular-nums border border-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
     />
   )
 }

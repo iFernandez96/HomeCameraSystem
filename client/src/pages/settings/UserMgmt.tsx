@@ -486,7 +486,12 @@ function InlineResetPasswordForm(props: {
         placeholder="New password (8+ characters)"
         autoComplete="new-password"
         aria-label={`New password for ${props.username}`}
-        className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-sm border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        // iter-356.66 (iOS oddities sweep): was text-sm (14 px), which
+        // triggers iOS Safari's auto-zoom-on-focus (anything < 16 px
+        // pixel-sizes the input and reflows the page). Bumped to
+        // text-base so the inline reset form stops jumping the page
+        // when the operator focuses it on a phone.
+        className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       />
       <div className="flex gap-2">
         <button

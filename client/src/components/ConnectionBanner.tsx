@@ -99,7 +99,14 @@ export function ConnectionBanner() {
     <div
       role={isDisconnected ? 'alert' : 'status'}
       aria-live={isDisconnected ? undefined : 'polite'}
-      className={`fixed top-0 inset-x-0 lg:left-16 z-30 px-3 py-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
+      // iter-356.66 (iOS oddities sweep): fixed top-0 without
+      // safe-area-top padding put the banner text behind the iOS
+      // status bar's clock/icons in PWA standalone mode.
+      // pt-[env(safe-area-inset-top)] pushes the message below the
+      // notch; on Android (zero inset) collapses to the original
+      // py-1.5 padding cleanly.
+      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)' }}
+      className={`fixed top-0 inset-x-0 lg:left-16 z-30 px-3 pb-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
     >
       {label}
     </div>

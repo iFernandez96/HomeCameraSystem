@@ -211,7 +211,12 @@ function CaptureRetentionSection() {
               commit({ face_capture_retention_days: v })
             }
           }}
-          className="w-24 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-sm text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          inputMode="numeric"
+          // iter-356.66 (iOS oddities sweep): text-sm + type=number
+          // triggers iOS Safari auto-zoom on focus; inputMode=numeric
+          // surfaces the digit pad on Android. Bumped to text-base
+          // so retention-input focus doesn't reflow the page.
+          className="w-24 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1.5 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         />
       </div>
       <p className="text-xs text-[var(--color-text-secondary)]">
@@ -880,7 +885,12 @@ function ActionPanel({
               onChange={(e) => setMoveTarget(e.target.value)}
               placeholder="Add a name"
               autoComplete="off"
-              className="mt-1 w-full px-2 py-2 min-h-[44px] bg-[var(--color-bg)] border border-[var(--color-border-strong)] rounded text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+              // iter-356.66 (iOS oddities sweep): text-sm = 14 px after
+              // the Slice-A token bump, still under iOS Safari's 16-px
+              // zoom-on-focus threshold. Bumped to text-base so the
+              // training-page name input doesn't reflow the gallery
+              // grid the moment the operator taps it on a phone.
+              className="mt-1 w-full px-2 py-2 min-h-[44px] bg-[var(--color-bg)] border border-[var(--color-border-strong)] rounded text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             />
           </label>
           {/* iter-356.3c: Move via Button primitive (size=sm fits the
