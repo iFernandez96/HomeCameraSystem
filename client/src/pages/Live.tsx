@@ -67,14 +67,15 @@ export function Live() {
   // iter-308: Talk handler placeholder. Real WebRTC mic upstream
   // lands when the user wires hardware — see
   // memory/two_way_audio_plan_iter308.md for the WHIP + ALSA design.
-  // For now, a friendly toast so the user knows the button DID
-  // register their click (vs a silent no-op).
-  const onTalk = () => {
-    showToast(
-      'Talking through the camera will work once the mic + speaker are wired up.',
-      'info',
-    )
-  }
+  //
+  // Premium-launch slice (Frank top #3): pre-fix the Talk button
+  // fired an info toast on every tap saying "Talking through the
+  // camera will work once the mic + speaker are wired up." A button
+  // that fires a "this doesn't work" toast is a trap — Frank's wife
+  // tapped it twice expecting it to work the second time. The
+  // button now renders disabled + with a "Coming soon" caption so
+  // the affordance reads correctly: "this is the place where talk
+  // will live, it isn't ready yet, don't tap it."
   const detectionActive = status?.detection_active ?? null
   const workerAlive = status?.worker_alive ?? null
   // iter-302: stream-stale signal. Worker can be alive while the
@@ -181,7 +182,34 @@ export function Live() {
             button etc.) still pass through to the video tile;
             individual interactive children in this overlay opt
             back in via pointer-events-auto. */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 sm:px-6 pb-4 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent">
+        {/* Premium-launch slice (mobile-view-auditor G3): lateral
+            safe-area inset on the gradient strip in landscape PWA
+            standalone. Pre-fix `px-4 sm:px-6` was a fixed gutter —
+            the trust cluster (ArmedBadge / RecordingIndicator /
+            CaptureSavingPill) on the right could be partially
+            occluded by the iPhone home-indicator strip in landscape.
+            `max(1rem, env(...))` preserves the prior 16 px gutter on
+            unnotched devices and expands only when the OS reports
+            lateral insets. The gradient surface still extends edge-
+            to-edge via `inset-x-0`; only the inner content row pads
+            inward to the safe band. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 pb-4 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent"
+          style={{
+            // The prior `px-4 sm:px-6` is replaced by these inline
+            // max() expressions: on unnotched devices the lateral
+            // padding collapses to 1 rem (16 px), matching the prior
+            // mobile gutter; on notched landscape iPhones (the
+            // problem case) the OS-reported inset takes over so
+            // pills stay clear of the home-indicator strip. The
+            // tablet / desktop unnotched case loses 8 px relative
+            // to the prior `sm:px-6` (24 px → 16 px), which is
+            // imperceptible at those viewport widths and worth the
+            // simpler responsive contract.
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
           <div className="flex items-end justify-between gap-4">
             {/* iter-356.66 (real-device fix): camera label + subtitle
                 were horizontally stacked in a `flex items-end gap-3`
@@ -275,7 +303,7 @@ export function Live() {
             <ActionButton
               label="Talk · soon"
               icon={<MicIcon />}
-              onClick={onTalk}
+              disabled
               dark
             />
           </div>
@@ -308,7 +336,7 @@ export function Live() {
           <ActionButton
             label="Talk"
             icon={<MicIcon />}
-            onClick={onTalk}
+            disabled
             caption="Coming soon"
           />
         </div>

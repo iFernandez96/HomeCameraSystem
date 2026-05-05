@@ -37,6 +37,21 @@ const TIMEOUT_MS: Record<ToastKind, number> = {
   error: 5000,
 }
 
+// Premium-launch slice (Frank D2): the longest toast in the app is the
+// notifications-setup info — 21 words at ~120 characters. The fixed
+// 3.5s timeout vanishes the message before a typical reading pace
+// (200 wpm) gets through it. Floor each toast's display time at
+// roughly 60 ms per character, capped at 9 s so a runaway error
+// payload doesn't park forever. The cap keeps the sub-Sonner feel
+// for short toasts while letting long sentences breathe.
+const PER_CHAR_MS = 60
+const MAX_TIMEOUT_MS = 9_000
+
+function timeoutFor(kind: ToastKind, message: string): number {
+  const proportional = Math.min(message.length * PER_CHAR_MS, MAX_TIMEOUT_MS)
+  return Math.max(TIMEOUT_MS[kind], proportional)
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const idRef = useRef(0)
@@ -61,7 +76,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const handle = setTimeout(() => {
         timersRef.current.delete(id)
         setToasts((cur) => cur.filter((t) => t.id !== id))
-      }, TIMEOUT_MS[kind])
+      }, timeoutFor(kind, message))
       timersRef.current.set(id, handle)
     },
     [],

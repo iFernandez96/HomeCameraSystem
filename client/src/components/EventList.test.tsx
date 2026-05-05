@@ -120,20 +120,33 @@ describe('EventList', () => {
     expect(screen.getByRole('img')).toBeInTheDocument()
   })
 
-  it('when score is below 50%, then the confidence pill uses the red tier (iter-249)', () => {
+  it('when score is below 50%, then the confidence pill uses the red tier and reads "low" via aria-label (iter-249 + premium-launch slice — Maya Major)', () => {
     // arrange / act
     render(<EventList events={[evt({ score: 0.42 })]} />)
 
-    // assert
-    // iter-356.56 (Frank E4): "Confidence" rewritten to "How sure
-    // the camera was" + tier label.
+    // assert — aria-label still spells out the tier word for SR
+    // users (Frank E4 + Dana F2). Visible surface is hue +
+    // percentage only after the premium-launch slice dropped the
+    // redundant L/M/H glyph (Maya Major: triple encoding).
     const pill = screen.getByLabelText(/how sure the camera was: 42%, low/i)
     expect(pill).toBeInTheDocument()
     // iter-356.65: tier fills migrated from raw `bg-red-500/85` to the
     // `--color-danger-bg-strong` token; assertion follows the move.
     expect(pill.className).toMatch(/color-danger/)
-    // iter-356.65: visible tier glyph for colorblind partial-sight users.
-    expect(pill.textContent).toMatch(/^L/)
+    // Visible content is the percentage alone — no L/M/H letter.
+    expect(pill.textContent?.trim()).toBe('42%')
+  })
+
+  it('Given a high-score event, When the confidence pill renders, Then visible content is the percentage only and no L/M/H letter clutters the thumbnail (premium-launch slice — Maya Major: drop triple encoding)', () => {
+    // arrange / act
+    render(<EventList events={[evt({ score: 0.93 })]} />)
+
+    // assert — pill text is just the percentage; aria-label gives
+    // SR users the tier word for non-color signaling.
+    const pill = screen.getByLabelText(/how sure the camera was: 93%, high/i)
+    expect(pill.textContent?.trim()).toBe('93%')
+    // No leading capital tier letter (L/M/H) before the percentage.
+    expect(pill.textContent).not.toMatch(/^[LMH]/)
   })
 
   it('when an event has label=person and camera_id=cam1, then the title reads "Person at the front door" (iter-249)', () => {

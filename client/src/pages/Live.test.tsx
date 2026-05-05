@@ -235,39 +235,77 @@ describe('Live page', () => {
     )
   })
 
-  it('Talk button is enabled but fires the iter-308 placeholder toast when audio not wired (iter-356.18 Maya MAJOR #1)', async () => {
-    // iter-356.18: Talk is no longer disabled when audio_enabled is
-    // false. Maya MAJOR: pre-iter-356.18 disabled-with-no-handler
-    // was a "dead button" — Frank's wife saw grey + no response on
-    // tap = "broken." Now: always wire onTalk; tap fires the
-    // explanatory toast when audio isn't wired.
+  it('Given the two-way audio feature is unfinished, When the Talk button renders, Then it is disabled with a "Coming soon" caption so it reads as a placeholder, not a trap (premium-launch slice — Frank top #3 supersedes iter-356.18)', async () => {
+    // arrange — premium-launch slice / Frank top #3: pre-fix the
+    // Talk button fired a "this won't work yet" toast on every tap;
+    // Frank's wife tapped it twice expecting it to work the second
+    // time. A button that fires a "doesn't work" toast is a trap.
+    // Now: disabled with a visible "Coming soon" caption so the
+    // affordance reads as "this is the future home for talk, it
+    // isn't ready, don't tap it" — the standard premium-SaaS
+    // pattern (Stripe / Linear / Cron disable + tooltip placeholder
+    // features rather than wiring them to apology toasts).
     const user = userEvent.setup()
     render(<Live />)
-    // iter-356.58: rendered twice; test the first.
-    const talk = screen.getAllByRole('button', { name: /talk/i })[0]
-    expect(talk).not.toBeDisabled()
-    await user.click(talk)
-    await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/talking through the camera will work/i),
-        'info',
-      ),
-    )
+
+    // act
+    // iter-356.58: rendered twice (mobile strip + desktop overlay).
+    const talkButtons = screen.getAllByRole('button', { name: /talk/i })
+    expect(talkButtons.length).toBeGreaterThan(0)
+
+    // assert — every Talk surface is disabled.
+    for (const btn of talkButtons) {
+      expect(btn).toBeDisabled()
+    }
+
+    // act — clicking the disabled button does nothing (browsers
+    // suppress click events on disabled buttons; userEvent respects
+    // that).
+    showToast.mockClear()
+    await user.click(talkButtons[0])
+
+    // assert — no toast fired (the trap that Frank flagged).
+    expect(showToast).not.toHaveBeenCalled()
   })
 
-  it('given Talk button without audio wired, when rendered, then no "Soon" caption is shown (iter-356.56 caption drop)', () => {
-    // arrange + act
+  it('Given the Talk button is disabled, When the user reads the surface, Then a "Coming soon" caption sits below the mobile strip variant so the affordance is honestly labeled', () => {
+    // arrange / act
     render(<Live />)
 
-    // assert: caption was dropped per Maya Major + Frank L3 — the
-    // toast on tap explains state. Button still tappable (not disabled);
-    // accessible name is still 'Talk'.
-    // iter-356.58: rendered twice (overlay + strip); first is the
-    // canonical accessible name for SR users.
-    const talkButton = screen.getAllByRole('button', { name: /talk/i })[0]
-    expect(talkButton).toBeInTheDocument()
-    expect(talkButton).not.toBeDisabled()
-    // No visible "Soon" tier under the button.
-    expect(screen.queryByText(/^Soon$/i)).not.toBeInTheDocument()
+    // assert — "Coming soon" caption is present (mobile strip
+    // variant). Aria-describedby ties the caption to the button so
+    // SR users get the same explanation sighted users do.
+    expect(screen.getByText(/coming soon/i)).toBeInTheDocument()
+  })
+
+  it('Given a notched landscape iPhone PWA, When the video gradient strip renders, Then it carries lateral safe-area-inset padding so the trust cluster never sits under the home-indicator (premium-launch slice — mobile-view-auditor G3)', () => {
+    // arrange — Pre-fix the strip used `px-4 sm:px-6` fixed
+    // gutters. In landscape PWA standalone the home-indicator
+    // strip eats ~21 px from the right; the trust cluster
+    // (ArmedBadge / RecordingIndicator / CaptureSavingPill) on
+    // the right could be partially occluded. The fix: inline
+    // max(1rem, env(safe-area-inset-{side})) so the gutter
+    // expands to clear OS-reported insets while preserving the
+    // 16 px gutter on unnotched devices.
+    const { container } = render(<Live />)
+
+    // act — find the gradient strip by its hallmark classes
+    // (gradient + absolute + inset-x-0 anchor).
+    const strips = container.querySelectorAll<HTMLElement>(
+      'div.absolute.inset-x-0.bottom-0.bg-gradient-to-t',
+    )
+    expect(strips.length).toBe(1)
+    const strip = strips[0]
+
+    // assert — read from the raw `style` attribute string. jsdom's
+    // CSSStyleDeclaration drops `env()` and `max(env(...))` values
+    // it can't parse; the attribute string preserves them.
+    const styleAttr = strip.getAttribute('style') ?? ''
+    expect(styleAttr).toMatch(
+      /padding-left:\s*max\(1rem,\s*env\(safe-area-inset-left\)\)/,
+    )
+    expect(styleAttr).toMatch(
+      /padding-right:\s*max\(1rem,\s*env\(safe-area-inset-right\)\)/,
+    )
   })
 })

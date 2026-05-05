@@ -351,7 +351,12 @@ describe('VideoTile', () => {
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('failed')
     await waitFor(() =>
-      expect(screen.getByText(/can.t reach your camera/i)).toBeInTheDocument(),
+      // Premium-launch slice (Maya Critical #4): VideoTile error
+      // overlay now uses the compact OfflineState variant ("Camera
+      // offline" heading + "Power-cycle…" hint) instead of the full-
+      // page body. Either visible string identifies the error
+      // surface; we query the stable heading.
+      expect(screen.getByText(/camera offline/i)).toBeInTheDocument(),
     )
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
@@ -363,7 +368,12 @@ describe('VideoTile', () => {
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('disconnected')
     await waitFor(() =>
-      expect(screen.getByText(/can.t reach your camera/i)).toBeInTheDocument(),
+      // Premium-launch slice (Maya Critical #4): VideoTile error
+      // overlay now uses the compact OfflineState variant ("Camera
+      // offline" heading + "Power-cycle…" hint) instead of the full-
+      // page body. Either visible string identifies the error
+      // surface; we query the stable heading.
+      expect(screen.getByText(/camera offline/i)).toBeInTheDocument(),
     )
   })
 
@@ -378,7 +388,7 @@ describe('VideoTile', () => {
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('connected')
     expect(screen.getByText('Live')).toBeInTheDocument()
-    expect(screen.queryByText(/can.t reach your camera/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/power-cycle the camera/i)).not.toBeInTheDocument()
   })
 
   it('Retry after mid-stream failure triggers a new WHEP connect (iter-162)', async () => {
@@ -411,7 +421,12 @@ describe('VideoTile', () => {
     const video = screen.getByLabelText('Live camera feed')
     fireEvent.error(video)
     await waitFor(() =>
-      expect(screen.getByText(/can.t reach your camera/i)).toBeInTheDocument(),
+      // Premium-launch slice (Maya Critical #4): VideoTile error
+      // overlay now uses the compact OfflineState variant ("Camera
+      // offline" heading + "Power-cycle…" hint) instead of the full-
+      // page body. Either visible string identifies the error
+      // surface; we query the stable heading.
+      expect(screen.getByText(/camera offline/i)).toBeInTheDocument(),
     )
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
@@ -432,12 +447,13 @@ describe('VideoTile', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2900)
       })
-      expect(screen.queryByText(/can.t reach your camera/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/power-cycle the camera/i)).not.toBeInTheDocument()
       // Cross the threshold.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(200)
       })
-      expect(screen.getByText(/can.t reach your camera/i)).toBeInTheDocument()
+      // Premium-launch slice (Maya Critical #4): compact variant.
+      expect(screen.getByText(/camera offline/i)).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -466,7 +482,7 @@ describe('VideoTile', () => {
         await vi.advanceTimersByTimeAsync(5000)
       })
       expect(screen.getByText('Live')).toBeInTheDocument()
-      expect(screen.queryByText(/can.t reach your camera/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/power-cycle the camera/i)).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -637,5 +653,150 @@ describe('VideoTile', () => {
     unmount()
     expect(disconnect).toHaveBeenCalled()
     window.ResizeObserver = RealRO
+  })
+
+  it('Given the pill cluster needs to announce status transitions, When VideoTile renders, Then the role="status" wrapper is a real positioned div (NOT className="contents") so iOS VoiceOver and NVDA + Chrome on Android receive the live-region updates (premium-launch slice — Dana #3 critical)', async () => {
+    // arrange — Dana #3 critical: pre-fix the wrapper carried
+    // `className="contents"` which strips the element from the box
+    // tree. WebKit + Blink both treat `display: contents` elements
+    // as if they had no role for accessibility — the live-region
+    // announcement was dropped on iOS VoiceOver and on NVDA +
+    // Chrome on Android, leaving SR users without any signal that
+    // the camera flipped from live → "Camera offline."
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act
+    render(<VideoTile src="http://test/cam/whep" workerAlive={true} />)
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+
+    // assert — the role="status" element is the (single) one inside
+    // VideoTile that drives pill-cluster announcements. Its
+    // className must NOT carry `contents`; it must be a positioned
+    // div with pointer-events:none so video clicks pass through.
+    const statuses = screen.getAllByRole('status')
+    const pillRegion = statuses.find(
+      (el) => el.className.includes('absolute') && el.className.includes('top-3'),
+    )
+    expect(pillRegion).toBeDefined()
+    expect(pillRegion!.className).not.toMatch(/\bcontents\b/)
+    expect(pillRegion!.className).toMatch(/pointer-events-none/)
+  })
+
+  it('Given the camera is unreachable, When the error overlay renders, Then it uses the compact OfflineState variant (premium-launch slice — Maya Critical #4)', async () => {
+    // arrange — Maya Critical #4: pre-fix the full-page OfflineState
+    // overflowed inside a 16:9 video tile. The compact variant
+    // shows a tight actionable hint instead of the multi-line
+    // full-page body.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    connectWhep.mockRejectedValue(new Error('boom'))
+
+    // act
+    render(<VideoTile src="http://test/cam/whep" />)
+
+    // assert — the compact body ("Power-cycle the camera, then tap
+    // Retry.") is present; the full-size body ("powered on and
+    // connected") is NOT.
+    await waitFor(() =>
+      expect(screen.getByText(/power-cycle the camera/i)).toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByText(/powered on and connected/i),
+    ).not.toBeInTheDocument()
+
+    errorSpy.mockRestore()
+  })
+
+  it('Given the stream goes stale, When the pill renders, Then a stream-stale severity glyph is present alongside the colored dot (premium-launch slice — Dana #2 partial-sight redundancy)', async () => {
+    // arrange — Dana #2 partial-sight redundancy: each precedence-
+    // ladder pill carries a distinctive glyph in addition to the
+    // colored dot so tritan-deficient + low-vision users have a
+    // redundant signal channel.
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act — workerAlive=true + streamStaleSeconds > 60 → STREAM
+    // STALE pill takes precedence.
+    render(
+      <VideoTile
+        src="http://test/cam/whep"
+        workerAlive={true}
+        streamStaleSeconds={120}
+      />,
+    )
+
+    // assert — the kind-specific glyph is rendered, aria-hidden so
+    // it's pure visual reinforcement (the parent pill's aria-label
+    // carries the accessible meaning).
+    await waitFor(() =>
+      expect(screen.getByTestId('pill-icon-stream-stale')).toBeInTheDocument(),
+    )
+    expect(screen.getByTestId('pill-icon-stream-stale')).toHaveAttribute(
+      'aria-hidden',
+      'true',
+    )
+  })
+
+  it('Given the camera is offline + no recent frames, When the camera-offline pill renders, Then a camera-offline severity glyph is present (Dana #2)', async () => {
+    // arrange / act
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(<VideoTile src="http://test/cam/whep" workerAlive={false} />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByTestId('pill-icon-camera-offline')).toBeInTheDocument(),
+    )
+  })
+
+  it('Given the worker has died but the stream is fine, When the worker-offline pill renders, Then a worker-offline severity glyph is present (Dana #2)', async () => {
+    // arrange — workerAlive=false + streamStaleSeconds present (recent
+    // frame counter cached server-side) → DETECTION PAUSED — WORKER
+    // OFFLINE pill takes precedence over CAMERA OFFLINE.
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act
+    render(
+      <VideoTile
+        src="http://test/cam/whep"
+        workerAlive={false}
+        streamStaleSeconds={20}
+      />,
+    )
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByTestId('pill-icon-worker-offline')).toBeInTheDocument(),
+    )
+  })
+
+  it('Given memory pressure, When the low-memory pill renders, Then a memory-chip severity glyph is present (Dana #2)', async () => {
+    // arrange / act
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(<VideoTile src="http://test/cam/whep" workerAlive={true} lowMemory={true} />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByTestId('pill-icon-low-memory')).toBeInTheDocument(),
+    )
+  })
+
+  it('Given thermal throttle, When the thermal pill renders, Then a thermometer severity glyph is present (Dana #2)', async () => {
+    // arrange / act
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(<VideoTile src="http://test/cam/whep" workerAlive={true} thermal={true} />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByTestId('pill-icon-thermal')).toBeInTheDocument(),
+    )
+  })
+
+  it('Given detection is deliberately paused, When the paused pill renders, Then a pause-bars severity glyph is present (Dana #2 — distinct from the slashed-glyph failure pills so users can tell deliberate-pause from system-failure at a glance)', async () => {
+    // arrange / act
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(<VideoTile src="http://test/cam/whep" workerAlive={true} detectionActive={false} />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByTestId('pill-icon-paused')).toBeInTheDocument(),
+    )
   })
 })

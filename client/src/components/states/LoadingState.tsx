@@ -1,16 +1,16 @@
 import { EventListSkeleton } from '../Skeleton'
 
 /**
- * iter-356.63 (mobile redesign Slice F): route-shaped skeleton loader.
+ * Shape-aware route-loading skeleton. Renders the geometry of the
+ * resolved content so the user sees the layout settle before data
+ * arrives — no "blank → spinner → pop" flicker.
  *
- * Pre-Slice-F: Suspense fallbacks were a centered <PawSpinner> — a
- * gray puck on an empty background, then the page popped in. The
- * shape change from "nothing" → "list" caused content reflow that
- * read as "something broke and reloaded."
- *
- * Each shape returns a Skeleton composition that matches the geometry
- * of the resolved content so the user sees the layout settle before
- * data arrives.
+ * iter-356.63 introduced the four shapes; the premium-launch slice
+ * tightened each variant's tone so the placeholder reads as warm
+ * resolving content rather than a cooler-tinted "broken theme"
+ * rectangle (Maya Critical). All blocks use `--color-skeleton` (a
+ * tobacco hue between `--color-bg` and `--color-surface`) instead of
+ * the cooler `--color-surface-raised` pine.
  */
 export type LoadingShape = 'list' | 'grid' | 'video' | 'form'
 
@@ -20,12 +20,11 @@ export interface LoadingStateProps {
 
 export function LoadingState({ shape }: LoadingStateProps) {
   if (shape === 'list') {
-    return (
-      <div className="px-4 py-3" role="status" aria-busy="true" aria-label="Loading">
-        <span className="sr-only">Loading</span>
-        <EventListSkeleton rows={6} />
-      </div>
-    )
+    // EventListSkeleton renders its own role="status" + aria-busy on
+    // the timeline-shaped wrapper. No extra outer wrapper — the
+    // skeleton owns the geometry end-to-end so first paint matches
+    // the resolved timeline pixel-for-pixel.
+    return <EventListSkeleton rows={6} />
   }
   if (shape === 'grid') {
     return (
@@ -39,7 +38,8 @@ export function LoadingState({ shape }: LoadingStateProps) {
         {Array.from({ length: 8 }).map((_, i) => (
           <div
             key={i}
-            className="aspect-square rounded-xl bg-[var(--color-surface-raised)] border border-[var(--color-border)] animate-pulse"
+            className="aspect-square rounded-xl bg-[var(--color-skeleton)] border border-[var(--color-border)] animate-pulse"
+            style={{ animationDelay: `${i * 60}ms` }}
           />
         ))}
       </div>
@@ -54,7 +54,7 @@ export function LoadingState({ shape }: LoadingStateProps) {
         aria-label="Loading video"
       >
         <span className="sr-only">Loading video</span>
-        <div className="aspect-video w-full rounded-xl bg-[var(--color-surface-raised)] border border-[var(--color-border)] animate-pulse" />
+        <div className="aspect-video w-full rounded-xl bg-[var(--color-skeleton)] border border-[var(--color-border)] animate-pulse" />
       </div>
     )
   }
@@ -67,15 +67,15 @@ export function LoadingState({ shape }: LoadingStateProps) {
       aria-label="Loading"
     >
       <span className="sr-only">Loading</span>
-      <div className="h-7 w-40 bg-[var(--color-surface-raised)] rounded animate-pulse" />
+      <div className="h-7 w-40 bg-[var(--color-skeleton)] rounded animate-pulse" />
       <div className="space-y-3">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="space-y-1.5">
-            <div className="h-4 w-24 bg-[var(--color-surface-raised)] rounded animate-pulse" />
-            <div className="h-10 w-full bg-[var(--color-surface-raised)] rounded-lg animate-pulse" />
+            <div className="h-4 w-24 bg-[var(--color-skeleton)] rounded animate-pulse" />
+            <div className="h-10 w-full bg-[var(--color-skeleton)] rounded-lg animate-pulse" />
           </div>
         ))}
-        <div className="h-11 w-full bg-[var(--color-surface-raised)] rounded-xl animate-pulse" />
+        <div className="h-11 w-full bg-[var(--color-skeleton)] rounded-xl animate-pulse" />
       </div>
     </div>
   )

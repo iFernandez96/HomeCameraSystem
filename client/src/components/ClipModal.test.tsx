@@ -674,4 +674,70 @@ describe('ClipModal', () => {
     expect(screen.getAllByText(/alice/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/face match: 87%/i)).toBeInTheDocument()
   })
+
+  it('Given the modal opens, When the dialog mounts, Then the wrapper carries the animate-modal-in entrance class so the heaviest modal in the app scales+fades on open instead of popping (premium-launch slice — Maya Major)', () => {
+    // arrange — Maya Major: pre-fix the heaviest modal in the app
+    // popped onto the screen on a single render frame while toasts
+    // already slid via animate-toast-in. Pin the entrance class so
+    // a later refactor can't silently strip the polish move.
+    const ev = makeEvent({ label: 'person', score: 0.5 })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — role="dialog" wrapper carries the entrance class.
+    // Reduced-motion users still see the final state thanks to the
+    // global @media block in index.css that clamps animation
+    // duration to 0.01 ms × 1 iteration.
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className).toMatch(/animate-modal-in/)
+  })
+
+  it('Given a medium-confidence event, When the How-sure pane renders, Then the percentage and the tier word stack vertically as primary value + caption (NOT baseline-aligned siblings) — premium-launch slice (Maya Critical: drop "87% Medium" sentence-fragment competition)', () => {
+    // arrange — Maya Critical: pre-fix the percentage was
+    // `text-3xl font-bold` and the tier word ("Medium") was
+    // `text-sm` on the SAME baseline via `flex items-baseline
+    // gap-2`. Read as a sentence fragment with two competing
+    // visual tiers encoding the same fact. Now the percentage
+    // owns its own row (primary numeric display) and the tier
+    // drops to a small uppercase caption — same vocabulary as
+    // the WHO/WHEN/WHERE eyebrow labels in the same evidence
+    // pane.
+    const ev = makeEvent({ label: 'person', score: 0.6 })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — copy upgrade: tier word is suffixed " confidence"
+    // so the caption is a self-contained label rather than a
+    // bare adjective.
+    expect(screen.getByText(/medium confidence/i)).toBeInTheDocument()
+    // The percentage is still present in its prior format.
+    expect(screen.getByText('60%')).toBeInTheDocument()
+    // No baseline competition: the percentage's parent does NOT
+    // carry `flex items-baseline` (the prior layout) — it is its
+    // own block-level row.
+    const pct = screen.getByText('60%')
+    expect(pct.parentElement?.className).not.toMatch(/flex.*items-baseline/)
+  })
+
+  it('Given a high-confidence event, When the How-sure pane renders, Then the caption reads "High confidence" (preserves SR-friendly tier signal — non-color non-numeric channel)', () => {
+    // arrange / act
+    const ev = makeEvent({ label: 'person', score: 0.92 })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByText(/high confidence/i)).toBeInTheDocument()
+    expect(screen.getByText('92%')).toBeInTheDocument()
+  })
+
+  it('Given a low-confidence event, When the How-sure pane renders, Then the caption reads "Low confidence"', () => {
+    // arrange / act
+    const ev = makeEvent({ label: 'person', score: 0.42 })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByText(/low confidence/i)).toBeInTheDocument()
+    expect(screen.getByText('42%')).toBeInTheDocument()
+  })
 })

@@ -58,13 +58,11 @@ describe('ConnectionBanner', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/connecting to camera/i)
   })
 
-  it('shows a disconnected banner with retry hint when closed', () => {
-    // arrange — iter-356.48 added a 2 s post-auth grace period that
-    // suppresses the closed-state banner so a normal handshake doesn't
-    // flash red on every page load. Fake timers advance past it.
-    // iter-356.63 (Slice D a11y): disconnected is role="alert" (was
-    // role="status" — alert matches the urgency sighted users get
-    // from the red banner).
+  it('Given the socket goes closed past the post-auth grace, When the first 10 s have not yet elapsed, Then a soft amber "Trying to reconnect" status is announced via role="status" (premium-launch slice)', () => {
+    // arrange — premium-launch slice tightened ConnectionBanner
+    // cadence: amber for the first ESCALATE_AFTER_MS (10 s) of
+    // sustained closed, red role="alert" only after sustained
+    // outage. Grace period swallows the first 2 s on cold load.
     vi.useFakeTimers()
     try {
       subscribeWsState.mockImplementation((cb) => {
@@ -75,17 +73,18 @@ describe('ConnectionBanner', () => {
       // act
       render(<ConnectionBanner />)
       act(() => {
-        vi.advanceTimersByTime(2100)
+        vi.advanceTimersByTime(2_100) // past grace, well before escalation
       })
 
-      // assert
-      expect(screen.getByRole('alert')).toHaveTextContent(/disconnected — retrying/i)
+      // assert — soft state is polite role="status", not alert.
+      expect(screen.getByRole('status')).toHaveTextContent(/trying to reconnect/i)
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('given the socket transitions to closed, when AT users perceive the banner, then it is announced via role="alert" not "status" (iter-356.63: Slice D a11y — split scope by severity)', () => {
+  it('Given the socket stays closed past the escalation window, When the user lingers on a sustained outage, Then the banner escalates to a red role="alert" with plain-English copy (premium-launch slice)', () => {
     // arrange
     vi.useFakeTimers()
     try {
@@ -94,27 +93,67 @@ describe('ConnectionBanner', () => {
         return () => {}
       })
 
-      // act
+      // act — past grace AND past the 10-s escalation timer.
       render(<ConnectionBanner />)
       act(() => {
-        vi.advanceTimersByTime(2100)
+        vi.advanceTimersByTime(13_000)
       })
 
-      // assert — connecting (transient handshake) keeps polite
-      // status; disconnected (real outage) is assertive alert.
-      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      // assert — red alert, plain-English copy that explains what
+      // still works (Frank E1: "I don't know what 'Realtime' means").
       const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent(/live alerts paused/i)
+      expect(alert).toHaveTextContent(/past events still work/i)
+      // role="alert" implies aria-live="assertive" — explicit attr
+      // would double-up the announcement.
       expect(alert.getAttribute('aria-live')).toBeNull()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('updates when the WS state transitions', () => {
-    // arrange — same iter-356.48 grace gating; the open→closed
-    // transition path is real-disconnect (banner SHOULD render
-    // synchronously), but we still advance past the initial 2 s
-    // gate to keep the test deterministic.
+  it('Given a real outage was visible to the user, When the socket recovers to open, Then a brief success "Reconnected" status is announced before the banner unmounts (Dana #4 critical)', () => {
+    // arrange — Dana #4: pre-fix the recovery was silent because
+    // the alerting node simply unmounted. Sighted users saw the red
+    // banner vanish; SR users were left thinking the outage
+    // continued. Now the banner briefly renders a green
+    // "Reconnected" status, then unmounts on its own.
+    vi.useFakeTimers()
+    try {
+      let push: (s: string) => void = () => {}
+      subscribeWsState.mockImplementation((cb) => {
+        push = cb
+        cb('closed')
+        return () => {}
+      })
+
+      const { container } = render(<ConnectionBanner />)
+      // Render the soft outage first so `outageShown` flips true.
+      act(() => {
+        vi.advanceTimersByTime(2_100)
+      })
+      expect(screen.getByText(/trying to reconnect/i)).toBeInTheDocument()
+
+      // act — socket recovers.
+      act(() => {
+        push('open')
+      })
+
+      // assert — recovered status is rendered, then auto-clears.
+      expect(screen.getByRole('status')).toHaveTextContent(/reconnected/i)
+      act(() => {
+        vi.advanceTimersByTime(2_000) // past RECOVERY_LINGER_MS (1.8 s)
+      })
+      expect(container).toBeEmptyDOMElement()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Given the socket only ever flickered through connecting → open, When auth resolves, Then no green Reconnected banner appears (no spurious success on healthy cold-load)', () => {
+    // arrange — the recovery announcement should only fire if the
+    // user was actually exposed to a real outage banner. A normal
+    // cold-load (connecting → open) shouldn't celebrate.
     vi.useFakeTimers()
     try {
       let push: (s: string) => void = () => {}
@@ -123,20 +162,37 @@ describe('ConnectionBanner', () => {
         cb('connecting')
         return () => {}
       })
-      const { rerender } = render(<ConnectionBanner />)
 
-      // act + assert — connecting renders unconditionally.
-      expect(screen.getByRole('status')).toHaveTextContent(/connecting/i)
-      push('open')
-      rerender(<ConnectionBanner />)
-      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      // act
+      const { container } = render(<ConnectionBanner />)
       act(() => {
-        vi.advanceTimersByTime(2100)
+        push('open')
       })
-      push('closed')
-      rerender(<ConnectionBanner />)
-      // iter-356.63: closed-state is now role="alert".
-      expect(screen.getByRole('alert')).toHaveTextContent(/disconnected/i)
+
+      // assert — no Reconnected banner, just nothing.
+      expect(container).toBeEmptyDOMElement()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('renders nothing during the post-auth grace window', () => {
+    // arrange — grace window swallows the first ~2 s of closed so a
+    // cold-load handshake doesn't flash the outage banner.
+    vi.useFakeTimers()
+    try {
+      subscribeWsState.mockImplementation((cb) => {
+        cb('closed')
+        return () => {}
+      })
+
+      // act + assert — at 1.5 s post-mount, still inside grace, no
+      // banner.
+      const { container } = render(<ConnectionBanner />)
+      act(() => {
+        vi.advanceTimersByTime(1_500)
+      })
+      expect(container).toBeEmptyDOMElement()
     } finally {
       vi.useRealTimers()
     }

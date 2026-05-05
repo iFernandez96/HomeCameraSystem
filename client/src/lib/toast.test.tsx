@@ -85,6 +85,61 @@ describe('toast', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('Given a long info toast (~120 chars), When rendered, Then it persists past the 3.5 s floor proportional to message length (premium-launch slice — Frank D2)', () => {
+    // arrange — Frank D2: the longest toast in the app is the
+    // notification-setup info ("No devices are set up to receive
+    // alerts yet — flip the toggle on each phone you want to
+    // notify, then try again") at ~120 characters. The previous
+    // 3.5 s timeout vanished it before a typical reading pace
+    // (200 wpm) could finish. Now: per-character floor at 60 ms,
+    // capped at 9 s.
+    const long =
+      'No devices are set up to receive alerts yet — flip the toggle on each phone you want to notify, then try again'
+
+    render(
+      <ToastProvider>
+        <Trigger msg={long} />
+      </ToastProvider>,
+    )
+
+    // act
+    fireEvent.click(screen.getByText('fire'))
+
+    // assert — toast is present at the old 3.5 s floor (would have
+    // unmounted under the pre-slice constant timeout).
+    expect(screen.getByRole('status')).toHaveTextContent(long.slice(0, 24))
+    act(() => {
+      vi.advanceTimersByTime(4_000)
+    })
+    expect(screen.getByRole('status')).toBeInTheDocument()
+
+    // assert — caps at 9 s (long.length * 60 = 6720 ms, but with
+    // some slack the absolute cap holds even on monster strings).
+    act(() => {
+      vi.advanceTimersByTime(6_000) // total 10 s
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('Given a short message and the per-char floor would compute below the kind floor, When rendered, Then the kind floor still applies', () => {
+    // arrange — verify the Math.max preserves the per-kind floor
+    // for short messages (most common case).
+    render(
+      <ToastProvider>
+        <Trigger msg="hi" />
+      </ToastProvider>,
+    )
+
+    // act
+    fireEvent.click(screen.getByText('fire'))
+
+    // assert — at 3 s (under the 3.5 s floor) the toast is still up.
+    act(() => {
+      vi.advanceTimersByTime(3_000)
+    })
+    expect(screen.getByRole('status')).toBeInTheDocument()
+  })
+
   it('stacks multiple toasts', () => {
     function Multi() {
       const { showToast } = useToast()

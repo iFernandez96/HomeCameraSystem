@@ -429,7 +429,12 @@ export function VideoTile({
         onClick={() => setBoxesVisible((v) => !v)}
         aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
         aria-pressed={boxesVisible}
-        className={`absolute bottom-3 right-16 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-[var(--color-text-primary)] hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+        // Premium-launch slice (Dana #13): bottom inset honors iOS
+        // PWA standalone safe-area in landscape; without it the
+        // overlay sits behind the home-indicator strip on iPhone
+        // notched devices.
+        style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        className={`absolute right-16 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-[var(--color-text-primary)] hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
           boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
         }`}
       >
@@ -453,7 +458,11 @@ export function VideoTile({
         type="button"
         onClick={onFullscreen}
         aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        className="absolute bottom-3 right-3 flex items-center justify-center w-11 h-11 bg-black/60 backdrop-blur rounded-full text-[var(--color-text-primary)] hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        // Premium-launch slice (Dana #13): same safe-area-inset
+        // treatment as the bbox toggle so neither button hides
+        // behind the iOS home indicator in landscape PWA mode.
+        style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        className="absolute right-3 flex items-center justify-center w-11 h-11 bg-black/60 backdrop-blur rounded-full text-[var(--color-text-primary)] hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       >
         {isFullscreen ? (
           <svg
@@ -508,11 +517,22 @@ export function VideoTile({
           announcements. Without it, only the newly-inserted pill is
           announced — exactly what iter-271 intended. The pills are
           mutually exclusive by guard, so there's never more than one
-          DOM child to mis-announce. */}
+          DOM child to mis-announce.
+
+          Premium-launch slice (Dana #3 critical): pre-fix this wrapper
+          carried `className="contents"` which strips the element from
+          the box tree. WebKit + Blink both treat `display: contents`
+          elements as if they had no role for accessibility — the
+          live-region announcement was dropped on iOS VoiceOver and on
+          NVDA + Chrome on Android. Now a real positioned <div> hosts
+          the role; pill children stack inside via absolute positioning
+          relative to the same top-right anchor they always used.
+          pointer-events:none on the wrapper preserves click-through to
+          the video element underneath when no pill is rendered. */}
       <div
         role="status"
         aria-live="polite"
-        className="contents"
+        className="absolute top-3 right-3 pointer-events-none"
       >
         {/* iter-302: stream-stale takes precedence — see comment block
             on `streamStale` derivation above. The label is plain English
@@ -530,12 +550,23 @@ export function VideoTile({
             Reconnect hint; the precise seconds count moves to the
             aria-label only so SR users still hear how long it's been
             stale, and the visible UI stays calm. */}
+        {/* Premium-launch slice (Dana #2 partial-sight redundancy):
+            each precedence-ladder pill carries a distinctive glyph
+            in addition to its severity color. Pre-fix all five pills
+            shared one shell shape (rounded-* + colored 8 px dot) and
+            differed only by hue + copy. Tritan-deficient and low-
+            vision users couldn't reliably distinguish red-on-black
+            from amber-on-black on the colored dot at that size.
+            Now: glyph distinguishes the kind regardless of color
+            perception, and the colored dot is reused at 8 px so the
+            pre-existing iter-356.C visual contract is preserved. */}
         {streamStale && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
             aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
           >
             <span className="inline-flex items-center gap-2">
+              <PillSeverityIcon kind="stream-stale" tone="warning" />
               <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" />
               Stream stalled
             </span>
@@ -550,10 +581,11 @@ export function VideoTile({
             because the recovery tool runs on the host). */}
         {cameraOffline && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
             aria-label="Camera offline. Restart the camera service."
           >
             <span className="inline-flex items-center gap-2">
+              <PillSeverityIcon kind="camera-offline" tone="danger" />
               <span className="w-2 h-2 rounded-full bg-[var(--color-danger)]" />
               Camera offline
             </span>
@@ -568,50 +600,56 @@ export function VideoTile({
             the worker auto-recovers within a heartbeat cycle. */}
         {detectionPausedWorker && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused — worker offline"
           >
+            <PillSeverityIcon kind="worker-offline" tone="warning" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
             Detection paused — worker offline
           </div>
         )}
         {lowMem && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused due to low memory"
           >
+            <PillSeverityIcon kind="low-memory" tone="danger" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-danger)]" />
             Low memory — paused
           </div>
         )}
         {therm && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection rate-limited by GPU thermal"
           >
+            <PillSeverityIcon kind="thermal" tone="warning" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
             Camera too hot — slowed down
           </div>
         )}
         {paused && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused"
           >
+            <PillSeverityIcon kind="paused" tone="warning" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
             Detection paused
           </div>
         )}
       </div>
       {status === 'error' && (
-        // iter-356.63 (mobile redesign Slice F): swap inline overlay
-        // copy for the shared <OfflineState kind="camera"> primitive
-        // so the camera-offline surface matches the one used on
-        // EventList / People / etc. The dim backdrop wrapper stays —
-        // it’s a video-overlay specific affordance.
+        // Premium-launch slice (Maya Critical #4): use the new
+        // `compact` size so the camera-offline overlay fits inside
+        // a 16:9 video tile without overflowing on landscape phones.
+        // The full-size variant is sized for full-page error
+        // surfaces and pushed the Retry button below the fold on a
+        // 16:9 tile at typical mobile heights.
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <OfflineState
             kind="camera"
+            size="compact"
             retry={() => setRetryNonce((n) => n + 1)}
           />
         </div>
@@ -649,5 +687,119 @@ function StatusPill({ status }: { status: Status }) {
       <span className={`w-2 h-2 rounded-full ${dot}`} />
       {label}
     </div>
+  )
+}
+
+/**
+ * Premium-launch slice (Dana #2) — distinctive glyph per pill kind so
+ * partial-sight + colorblind users get a redundant signal alongside
+ * the colored severity dot. Pre-fix the five precedence-ladder pills
+ * shared one shell shape and differed only by hue + copy.
+ *
+ * Each glyph is a 12 px outlined SVG drawn with currentColor so the
+ * `tone` className on the wrapper picks the right severity color
+ * (warning amber or danger red). Aria-hidden because the pill's
+ * parent element already carries an accessible name (aria-label) and
+ * the glyph is purely visual reinforcement.
+ *
+ * Glyph vocabulary, picked to read at 12 px on a glassy dark backdrop:
+ *  - stream-stale  → broken-signal (3 ascending bars, last one slashed)
+ *  - camera-offline → camera body with a diagonal slash through it
+ *  - worker-offline → eye with a diagonal slash through it
+ *  - low-memory    → memory-chip outline with a center dot
+ *  - thermal       → thermometer column with a bulb
+ *  - paused        → two parallel pause bars
+ */
+type PillKind =
+  | 'stream-stale'
+  | 'camera-offline'
+  | 'worker-offline'
+  | 'low-memory'
+  | 'thermal'
+  | 'paused'
+
+function PillSeverityIcon({
+  kind,
+  tone,
+}: {
+  kind: PillKind
+  tone: 'warning' | 'danger'
+}) {
+  const colorClass =
+    tone === 'danger'
+      ? 'text-[var(--color-danger)]'
+      : 'text-[var(--color-warning)]'
+  return (
+    <span
+      aria-hidden="true"
+      data-testid={`pill-icon-${kind}`}
+      className={`flex-shrink-0 inline-flex ${colorClass}`}
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {kind === 'stream-stale' && (
+          // Three ascending bars + a slash — "signal interrupted".
+          <>
+            <line x1="6" y1="20" x2="6" y2="16" />
+            <line x1="12" y1="20" x2="12" y2="11" />
+            <line x1="18" y1="20" x2="18" y2="6" />
+            <line x1="3" y1="3" x2="21" y2="21" />
+          </>
+        )}
+        {kind === 'camera-offline' && (
+          // Camera body + slash — "the camera is unreachable".
+          <>
+            <path d="M23 7l-7 5 7 5V7z" />
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+            <line x1="3" y1="3" x2="21" y2="21" />
+          </>
+        )}
+        {kind === 'worker-offline' && (
+          // Eye + slash — "the watcher is offline" (worker is the
+          // detection eye on the camera; iter-356 idiom).
+          <>
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+            <line x1="3" y1="3" x2="21" y2="21" />
+          </>
+        )}
+        {kind === 'low-memory' && (
+          // Memory-chip outline with a center dot — "system pressure".
+          <>
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <line x1="9" y1="2" x2="9" y2="4" />
+            <line x1="15" y1="2" x2="15" y2="4" />
+            <line x1="9" y1="20" x2="9" y2="22" />
+            <line x1="15" y1="20" x2="15" y2="22" />
+            <line x1="2" y1="9" x2="4" y2="9" />
+            <line x1="2" y1="15" x2="4" y2="15" />
+            <line x1="20" y1="9" x2="22" y2="9" />
+            <line x1="20" y1="15" x2="22" y2="15" />
+          </>
+        )}
+        {kind === 'thermal' && (
+          // Thermometer with bulb — "running too hot".
+          <>
+            <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4 4 0 1 0 5 0z" />
+          </>
+        )}
+        {kind === 'paused' && (
+          // Pair of pause bars — "deliberately paused" (distinct
+          // from the slashed glyphs above which all signal failure).
+          <>
+            <line x1="9" y1="6" x2="9" y2="18" />
+            <line x1="15" y1="6" x2="15" y2="18" />
+          </>
+        )}
+      </svg>
+    </span>
   )
 }

@@ -526,7 +526,15 @@ function EventCardImpl({
             onDelete(e)
           }}
           aria-label={`Delete event from ${absoluteTime(e.ts)}`}
-          className="absolute top-1/2 -translate-y-1/2 -right-2 min-w-[44px] min-h-[44px] rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity active:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
+          // Premium-launch slice (Frank top #1): pre-fix the delete
+          // ✕ was `opacity-0 group-hover:opacity-100`. On touch
+          // devices `:hover` doesn't fire, so the only delete path
+          // on mobile was the hidden swipe-left gesture — Frank's
+          // wife will never find that. Now: visible by default on
+          // mobile (touch-first), still hover-revealed on desktop
+          // (lg+) so the row card stays uncluttered for the
+          // pointer-precise reviewer flow.
+          className="absolute top-1/2 -translate-y-1/2 -right-2 min-w-[44px] min-h-[44px] rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-90 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
         >
           ✕
         </button>
@@ -542,40 +550,37 @@ function ConfidencePill({ score }: { score: number }) {
   // iter-356.56 (Frank E4 + Dana F2): aria-label spells out "How
   // sure the camera was: 87%, high" — engineer-vocab "Confidence"
   // is not a word non-technical users map to camera certainty, and
-  // the tier text gives colorblind users the same signal sighted
-  // users get from the green/amber/red fill.
-  const pct = (score * 100).toFixed(0)
-  // iter-356.65 (Mira critic blocker #4): tokenized fills + visible
-  // tier letter so the pill survives a colorblind partial-sight scan.
-  // Pre-fix the L/M/H signal lived only in aria-label; the visible
-  // surface was hue-only.
+  // the tier text gives screen-reader users the tier word.
   //
-  // iter-356.66 (real-device fix): the token `*-bg` variants are
-  // ~20%-mix-with-transparent — fine on a flat dark surface but
-  // illegible over the thumbnail image (the pill sat mid-thumbnail
-  // and read as a tinted blur, not a confidence chip). Switched to
-  // SOLID base tokens with `text-white` (or text against the bg)
-  // plus `ring-1 ring-black/30` for definition against varied
-  // photographic backgrounds. Brings legibility back to the pre-
-  // iter-356.65 `bg-amber-500/85` shape while keeping the token
-  // contract. Also bumped the pill weight to `font-bold` and added
-  // `shadow-sm` so the corner-of-image overlay reads as a label
-  // pasted on top of a photo, not a tint baked into the photo.
+  // iter-356.66 (real-device fix): SOLID base tokens (not the *-bg
+  // tinted variants) + ring-1 + shadow-sm so the corner-of-image
+  // pill reads as a label pasted on top of the photo, not a tint
+  // baked into the photo.
+  //
+  // Premium-launch slice (Maya Major) — drop the L/M/H letter.
+  // Pre-fix the pill triple-encoded confidence with hue + L/M/H
+  // glyph + percentage. Maya: "engineer paranoia" — the percentage
+  // alone is a universal numeric signal (no English needed); hue
+  // is the second redundant channel; the aria-label still spells
+  // out "low/medium/high" for screen readers; and the lightness
+  // contrast between red-strong / amber / green is distinguishable
+  // even when hue perception is impaired (deuter/protan/tritan).
+  // The L/M/H glyph at 11 px italic-bold inside a 32 px pill on a
+  // photographic backdrop was visual clutter, not signal.
+  const pct = (score * 100).toFixed(0)
   const tier =
     score < 0.5
       ? 'bg-[var(--color-danger-strong)] text-white'
       : score < 0.75
         ? 'bg-[var(--color-warning)] text-[var(--color-bg)]'
         : 'bg-[var(--color-success)] text-[var(--color-bg)]'
-  const tierGlyph = score < 0.5 ? 'L' : score < 0.75 ? 'M' : 'H'
   const tierLabel =
     score < 0.5 ? 'low' : score < 0.75 ? 'medium' : 'high'
   return (
     <span
-      className={`absolute top-1 right-1 px-1.5 py-0.5 rounded-md text-[11px] font-bold tabular-nums inline-flex items-center gap-0.5 ring-1 ring-black/30 shadow-sm ${tier}`}
+      className={`absolute top-1 right-1 px-1.5 py-0.5 rounded-md text-[11px] font-bold tabular-nums ring-1 ring-black/30 shadow-sm ${tier}`}
       aria-label={`How sure the camera was: ${pct}%, ${tierLabel}`}
     >
-      <span aria-hidden="true" className="opacity-90">{tierGlyph}</span>
       {pct}%
     </span>
   )

@@ -90,7 +90,8 @@ export function SnapshotPreview({
           }
         }
       }}
-      className="fixed inset-0 z-40 flex flex-col bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      // Premium-launch slice (Maya Major): match ClipModal entrance.
+      className="fixed inset-0 z-40 flex flex-col bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
     >
       {/* iter-356.63: backdrop is a div+onClick (aria-hidden so SR
           and keyboard skip it). Pre-iter-356.63 was a <button> —

@@ -125,6 +125,19 @@
   --color-accent-bg:       color-mix(in srgb, var(--color-accent-default) 22%, transparent);
   --color-accent-border:   color-mix(in srgb, var(--color-accent-default) 55%, transparent);
 
+  /* === Skeleton surface (premium-launch slice, Maya Critical) =====
+   * Pre-fix: skeleton blocks painted `--color-surface-raised` (#3a2e1f,
+   * pine) on top of the `--color-bg` page (#1e1710, charred oak). Cards
+   * use `--color-surface` (#2c2318, tobacco). On every cold load the
+   * skeletons therefore read as a *cooler* set of stripes than the cards
+   * that replace them — Maya: "instant 'broken theme' smell." Define a
+   * dedicated token between bg and card so the skeleton sits a hair
+   * brighter than the page (visible) but darker than the card it stands
+   * in for (no flash on resolve). animate-pulse opacity-cycles this
+   * single value, so the surface doesn't shift hue mid-pulse. */
+  --color-skeleton:        #2c2419;
+  --color-skeleton-strong: #38301f;
+
   /* === Pre-iter-356.0 aliases (DO NOT REMOVE during migration) */
   --color-surface-2: var(--color-surface-raised);
   --color-accent:    var(--color-accent-default);
@@ -295,6 +308,41 @@
   animation: toast-in var(--duration-base, 160ms) var(--ease-out, cubic-bezier(0.0, 0.0, 0.2, 1.0)) both;
 }
 
+/* Premium-launch slice (Maya Major): modal entrance. Pre-fix ClipModal
+ * + SnapshotPreview popped onto the screen on a single render frame —
+ * Maya: "the heaviest modal in the app pops while toasts slide." 160ms
+ * scale 0.96→1 plus opacity 0→1 is the Linear/Cron/Things pattern.
+ * prefers-reduced-motion global suppresses to 0.01 ms automatically.
+ */
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-modal-in {
+  animation: modal-in var(--duration-base, 160ms) var(--ease-out, cubic-bezier(0.0, 0.0, 0.2, 1.0)) both;
+}
+
+/* Premium-launch slice (Dana #2): ConnectionBanner cadence shift —
+ * the banner softly pulses while in the "trying to reconnect" amber
+ * state so AT users notice the persistent live region animating, but
+ * the pulse is gentle (0.7 → 1) so partial-sight users with
+ * photophobia don't get a strobe. Reduced-motion suppresses to a
+ * static fully-opaque element. */
+@keyframes banner-soft-pulse {
+  0%, 100% { opacity: 0.92; }
+  50%      { opacity: 1; }
+}
+.animate-banner-soft {
+  animation: banner-soft-pulse 2.4s ease-in-out infinite;
+}
+
 html,
 body,
 #root {
@@ -389,25 +437,32 @@ h3 { letter-spacing: -0.014em; }
   background: var(--color-accent-default);
   color: #ffffff;
 }
+/* Premium-launch slice (Maya Critical #5): scrollbar tame.
+ * Pre-fix the scrollbar thumb painted saturated ember-orange (
+ * `--color-accent-default`) at 12 px — every scrollable surface
+ * (Events timeline, Settings, ClipModal evidence pane) showed a
+ * glowing orange bar that competed with the brand accent reserved
+ * for primary actions and the sentry-cat sparkle. Maya: "premium
+ * apps use neutral or hidden scrollbars." Now a leather-stitch
+ * thumb that brightens to brass on hover — still on-brand, calm. */
 html {
   accent-color: var(--color-accent-default);
-  scrollbar-color: var(--color-accent-default) var(--color-surface-raised);
+  scrollbar-color: var(--color-border-strong) transparent;
   scrollbar-width: thin;
 }
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-surface-raised);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-accent-default);
-  border: 3px solid var(--color-surface-raised);
-  border-radius: 8px;
+  background: var(--color-border-strong);
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-accent-bright);
+  background: var(--color-brass-default);
 }
 
 * {

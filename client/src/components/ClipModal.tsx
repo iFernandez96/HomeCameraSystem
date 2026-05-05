@@ -555,7 +555,13 @@ export function ClipModal({
           }
         }
       }}
-      className="fixed inset-0 z-40 flex flex-col lg:flex-row bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      // Premium-launch slice (Maya Major): 160 ms scale 0.96 → 1 +
+      // opacity 0 → 1 entrance. Pre-fix the heaviest modal in the
+      // app popped onto the screen on a single render frame —
+      // toasts slide, modals shouldn't. prefers-reduced-motion
+      // global at index.css clamps to 0.01 ms × 1 iteration so
+      // vestibular-sensitive users see the final state instantly.
+      className="fixed inset-0 z-40 flex flex-col lg:flex-row bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
     >
       {/* iter-270 (accessibility-auditor A top-3): backdrop is a
           DIV with onClick + aria-hidden, NOT a button. Pre-iter-270
@@ -815,20 +821,29 @@ export function ClipModal({
           <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
             How sure
           </div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-display text-3xl font-bold tabular-nums">
-              {Math.round(event.score * 100)}%
-            </span>
-            <span className="text-sm text-white/70 lg:text-[var(--color-text-secondary)]">
-              {event.score < 0.5
-                ? 'Low'
-                : event.score < 0.75
-                  ? 'Medium'
-                  : 'High'}
-            </span>
+          {/* Premium-launch slice (Maya Critical): pre-fix the
+              percentage + tier label sat on the same baseline via
+              `flex items-baseline gap-2` — read as a sentence
+              fragment ("87% Medium") with two competing visual
+              tiers encoding the same fact. Now the percentage
+              owns the prominent display row and the tier word
+              drops into a small uppercase caption below — same
+              vocabulary as the WHO / WHEN / WHERE eyebrow labels
+              in this same evidence pane, so the tier reads as a
+              QUALIFIER for the percentage rather than a sibling
+              competing with it. */}
+          <div className="mt-1 font-display text-3xl font-bold tabular-nums leading-none">
+            {Math.round(event.score * 100)}%
+          </div>
+          <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-text-tertiary)] font-semibold">
+            {event.score < 0.5
+              ? 'Low confidence'
+              : event.score < 0.75
+                ? 'Medium confidence'
+                : 'High confidence'}
           </div>
           {personLabel && matchConfidence != null && (
-            <div className="text-xs text-white/55 lg:text-[var(--color-text-tertiary)] mt-1">
+            <div className="text-xs text-white/55 lg:text-[var(--color-text-tertiary)] mt-2">
               Face match: {matchConfidence}%
             </div>
           )}
