@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { CaptureSavingPill } from '../components/CaptureSavingPill'
 import { LiveStats } from '../components/LiveStats'
+import { RecordingIndicator } from '../components/RecordingIndicator'
 import { SnapshotPreview } from '../components/SnapshotPreview'
 import { VideoTile } from '../components/VideoTile'
 import { Button } from '../components/primitives/Button'
@@ -188,8 +190,19 @@ export function Live() {
               </h2>
               <CameraSubtitle status={status} sentryCat={sentryCat} onDark />
             </div>
-            <div className="hidden sm:flex pointer-events-auto">
+            {/* iter-356.C (mobile-redesign Slice C — security clarity):
+                ArmedBadge + RecordingIndicator + CaptureSavingPill
+                co-locate as a single trust-cluster on the bottom-right
+                of the video. ArmedBadge = "is detection looking?",
+                RecordingIndicator = "is video being saved right now?",
+                CaptureSavingPill = "are face crops being saved for
+                training?". Three independent signals; each pill
+                self-gates so the cluster only crowds when there's
+                something to say. */}
+            <div className="hidden sm:flex pointer-events-auto items-center gap-2 flex-wrap justify-end">
               <ArmedBadge status={status} />
+              <RecordingIndicator status={status} />
+              <CaptureSavingPill />
             </div>
           </div>
         </div>

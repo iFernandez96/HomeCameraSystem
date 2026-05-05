@@ -80,6 +80,54 @@ export function NotificationsSection({
   // and PushManager APIs, returns false.
   const pushAvailable = pushSupported()
 
+  // iter-356.C (mobile-redesign Slice C — security clarity): if the
+  // user revokes the browser's notification permission outside the
+  // app (Settings → Notifications → block), our toggle stops
+  // working but the previous state lingered as "on". Listen for
+  // the permission flip and surface a banner that points to the
+  // OS-level fix.
+  const [permissionDenied, setPermissionDenied] = useState<boolean>(
+    () =>
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'denied',
+  )
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.permissions) return
+    let cancelled = false
+    let status: PermissionStatus | null = null
+    const onChange = () => {
+      if (cancelled) return
+      // Re-read Notification.permission directly — `status.state`
+      // mirrors it but reading the source-of-truth keeps the
+      // banner in sync if some other tab also flipped it.
+      if (typeof Notification === 'undefined') return
+      setPermissionDenied(Notification.permission === 'denied')
+    }
+    navigator.permissions
+      .query({ name: 'notifications' as PermissionName })
+      .then((s) => {
+        if (cancelled) return
+        status = s
+        // Sync once on subscribe in case the state diverged before
+        // the listener was attached.
+        if (typeof Notification !== 'undefined') {
+          setPermissionDenied(Notification.permission === 'denied')
+        }
+        s.addEventListener('change', onChange)
+      })
+      .catch(() => {
+        // Some browsers (older Safari) don't support the
+        // 'notifications' permission name in the Permissions API —
+        // silently fall back to the initial Notification.permission
+        // read above.
+      })
+    return () => {
+      cancelled = true
+      if (status) status.removeEventListener('change', onChange)
+    }
+  }, [])
+
   useEffect(() => {
     getPushState().then(setPushEnabled)
   }, [])
@@ -240,14 +288,29 @@ export function NotificationsSection({
         Get a buzz on your phone or computer when the camera spots
         someone.
       </div>
+      {/* iter-356.C (mobile-redesign Slice C — security clarity):
+          banner above the toggle when the OS-level notification
+          permission has been revoked. Without it, the toggle would
+          stay in its last state but every togglePush() call would
+          silently fail at ensurePushSubscription(). Banner is
+          role="alert" so SR users hear it on transition. */}
+      {pushAvailable && permissionDenied && (
+        <div
+          role="alert"
+          className="mx-4 mt-3 mb-2 px-3 py-2 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-sm text-[var(--color-text-primary)]"
+        >
+          Browser blocked HomeCam alerts. Re-enable in your device
+          settings, then reload.
+        </div>
+      )}
       <Row
         label="Alert this device"
         right={
           pushAvailable ? (
             <Toggle
-              checked={pushEnabled}
+              checked={pushEnabled && !permissionDenied}
               onChange={togglePush}
-              disabled={busy}
+              disabled={busy || permissionDenied}
               ariaLabel="Enable push notifications"
             />
           ) : (

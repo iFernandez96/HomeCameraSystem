@@ -36,9 +36,17 @@ export function DangerZone() {
   const [backupList, setBackupList] = useState<BackupItem[] | null>(null)
 
   const onReboot = async () => {
+    // iter-356.C (mobile-redesign Slice C — security clarity): be
+    // specific about what reboot disrupts. Pre-356.C the body said
+    // "unavailable for about 30 seconds", which is true but doesn't
+    // warn that an in-flight clip recording is lost (the post-roll
+    // ffmpeg dies with the host) or that any open Live tab will
+    // need to manually Reconnect. Push subscriptions DO survive —
+    // they're persisted in push_subs.json on disk.
     const ok = await confirm({
       title: 'Reboot Jetson?',
-      body: 'The camera and detection will be unavailable for about 30 seconds.',
+      body:
+        'The camera and detection will be unavailable for about 30 seconds. Any clip currently being recorded will be lost. Open Live tabs will need to tap Reconnect. Saved logins and push notification setup are preserved.',
       confirmLabel: 'Reboot',
       cancelLabel: 'Cancel',
       destructive: true,
@@ -96,9 +104,15 @@ export function DangerZone() {
   // services) so confirm dialog warns about ~30 s service
   // unavailability.
   const onUpdate = async () => {
+    // iter-356.C (mobile-redesign Slice C — security clarity):
+    // expand on what's disrupted so the operator isn't surprised.
+    // In-flight clips die with the server restart; existing Live
+    // tabs disconnect; logins and push subscriptions persist
+    // because they're on disk (users.db + push_subs.json).
     const ok = await confirm({
       title: 'Update server software?',
-      body: 'The camera and detection will be unavailable for about 30 seconds while the new version installs.',
+      body:
+        'Installs the new version and restarts the server. The camera and detection are unavailable for about 30 seconds. Any clip currently being recorded will be lost. Open Live tabs will need to tap Reconnect. Saved logins and push notification setup are preserved.',
       confirmLabel: 'Update',
       cancelLabel: 'Cancel',
       destructive: true,
