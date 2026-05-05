@@ -70,10 +70,18 @@ export function ConnectionBanner() {
       ? 'bg-[var(--color-warning-bg)] text-[var(--color-warning)] border-[var(--color-warning-border)]'
       : 'bg-[var(--color-danger-bg)] text-[var(--color-danger)] border-[var(--color-danger-border)]'
 
+  // iter-356.63 (Slice D a11y): split the live-region scope by
+  // severity. 'connecting' is a transient handshake — polite is
+  // accurate, the user can keep typing without interruption. The
+  // 'disconnected — retrying' state is the one that means the
+  // realtime channel actually broke; bumping it to role="alert"
+  // (implicitly assertive) so AT users get the same urgency
+  // sighted users get from the red banner.
+  const isDisconnected = state !== 'connecting'
   return (
     <div
-      role="status"
-      aria-live="polite"
+      role={isDisconnected ? 'alert' : 'status'}
+      aria-live={isDisconnected ? undefined : 'polite'}
       className={`fixed top-0 inset-x-0 lg:left-56 z-30 px-3 py-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
     >
       {label}

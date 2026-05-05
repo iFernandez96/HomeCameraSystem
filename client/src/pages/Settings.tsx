@@ -239,7 +239,7 @@ function SettingsTabs({
             aria-selected={isActive}
             tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(t.id)}
-            className={`whitespace-nowrap px-3 py-2 text-sm font-medium rounded-lg lg:rounded-xl lg:text-left lg:py-2.5 lg:px-3 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${itemClassExtra} ${
+            className={`whitespace-nowrap px-3 py-3 min-h-[44px] text-sm font-medium rounded-lg lg:rounded-xl lg:text-left lg:py-2.5 lg:px-3 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${itemClassExtra} ${
               isActive
                 ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] lg:ring-1 lg:ring-[var(--color-accent-default)]/40'
                 : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)]'

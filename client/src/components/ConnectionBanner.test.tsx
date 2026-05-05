@@ -62,6 +62,9 @@ describe('ConnectionBanner', () => {
     // arrange — iter-356.48 added a 2 s post-auth grace period that
     // suppresses the closed-state banner so a normal handshake doesn't
     // flash red on every page load. Fake timers advance past it.
+    // iter-356.63 (Slice D a11y): disconnected is role="alert" (was
+    // role="status" — alert matches the urgency sighted users get
+    // from the red banner).
     vi.useFakeTimers()
     try {
       subscribeWsState.mockImplementation((cb) => {
@@ -76,7 +79,32 @@ describe('ConnectionBanner', () => {
       })
 
       // assert
-      expect(screen.getByRole('status')).toHaveTextContent(/disconnected — retrying/i)
+      expect(screen.getByRole('alert')).toHaveTextContent(/disconnected — retrying/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('given the socket transitions to closed, when AT users perceive the banner, then it is announced via role="alert" not "status" (iter-356.63: Slice D a11y — split scope by severity)', () => {
+    // arrange
+    vi.useFakeTimers()
+    try {
+      subscribeWsState.mockImplementation((cb) => {
+        cb('closed')
+        return () => {}
+      })
+
+      // act
+      render(<ConnectionBanner />)
+      act(() => {
+        vi.advanceTimersByTime(2100)
+      })
+
+      // assert — connecting (transient handshake) keeps polite
+      // status; disconnected (real outage) is assertive alert.
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      const alert = screen.getByRole('alert')
+      expect(alert.getAttribute('aria-live')).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -107,7 +135,8 @@ describe('ConnectionBanner', () => {
       })
       push('closed')
       rerender(<ConnectionBanner />)
-      expect(screen.getByRole('status')).toHaveTextContent(/disconnected/i)
+      // iter-356.63: closed-state is now role="alert".
+      expect(screen.getByRole('alert')).toHaveTextContent(/disconnected/i)
     } finally {
       vi.useRealTimers()
     }

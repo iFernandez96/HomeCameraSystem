@@ -33,12 +33,74 @@ describe('SnapshotPreview', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('closes via backdrop click', async () => {
+  it('closes via backdrop click', () => {
+    // iter-356.63 (Slice D a11y): backdrop is now a div+onClick
+    // (aria-hidden + no button role), so AT users skip it but
+    // mouse/touch users still get backdrop-click-to-close.
     const onClose = vi.fn()
-    const user = userEvent.setup()
     render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={onClose} />)
-    await user.click(screen.getByRole('button', { name: /dismiss snapshot/i }))
+    fireEvent.click(screen.getByTestId('snapshot-backdrop'))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('given the dialog renders, when AT users query the backdrop, then it has no accessible role and is aria-hidden (iter-356.63: Slice D a11y — was a Button that VO swipe landed on first)', () => {
+    // arrange
+    render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
+
+    // act
+    const backdrop = screen.getByTestId('snapshot-backdrop')
+
+    // assert
+    expect(backdrop.getAttribute('aria-hidden')).toBe('true')
+    expect(backdrop.getAttribute('role')).toBeNull()
+    expect(backdrop.tagName).toBe('DIV')
+    expect(
+      screen.queryByRole('button', { name: /dismiss snapshot/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('given the dialog opens, when focus management runs, then the Close button is focused (iter-356.63: Slice D a11y — focus capture)', () => {
+    // arrange / act
+    render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
+
+    // assert
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: /^close$/i }),
+    )
+  })
+
+  it('given the dialog closes, when the component unmounts, then focus is restored to the previously-focused element (iter-356.63: Slice D a11y — focus restore)', () => {
+    // arrange — simulate the Capture button as the trigger that
+    // owned focus before opening the preview.
+    const trigger = document.createElement('button')
+    trigger.textContent = 'Capture'
+    document.body.appendChild(trigger)
+    trigger.focus()
+    expect(document.activeElement).toBe(trigger)
+
+    // act
+    const { unmount } = render(
+      <SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />,
+    )
+    expect(document.activeElement).not.toBe(trigger) // moved into dialog
+    unmount()
+
+    // assert
+    expect(document.activeElement).toBe(trigger)
+    document.body.removeChild(trigger)
+  })
+
+  it('given the Save and Close buttons render, when measured, then both meet the 44 px touch-target floor (iter-356.63: Slice D a11y — hit-target bumps)', () => {
+    // arrange / act
+    render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByRole('link', { name: /save/i }).className).toMatch(
+      /min-h-\[44px\]/,
+    )
+    expect(screen.getByRole('button', { name: /^close$/i }).className).toMatch(
+      /min-h-\[44px\]/,
+    )
   })
 
   it('uses dialog semantics', () => {

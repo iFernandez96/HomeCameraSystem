@@ -726,6 +726,11 @@ export function Events() {
               act as the section anchor for content. The Events
               page now opens directly into the filter chips +
               timeline, no decorative title row. */}
+          {/* iter-356.63 (Slice D a11y): sr-only <h1> sibling so AT
+              users get a level-1 heading per route. The visible
+              "Watch log" stays aria-hidden + decorative (WatchRibbon
+              already carries identity). */}
+          <h1 className="sr-only">Watch log</h1>
           <span className="font-display text-xl font-semibold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
             Watch log
           </span>
@@ -1193,9 +1198,12 @@ function FilterChip({
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div
+      // iter-356.63 (Slice D a11y): role="alert" already implies
+      // aria-live="assertive" — pinning aria-live="polite" alongside
+      // it is contradictory and AT-engine-dependent. Drop the
+      // explicit aria-live so the implicit assertive wins.
       className="text-center py-16 px-6 space-y-4"
       role="alert"
-      aria-live="polite"
     >
       {/* iter-355ae (Maya Critical 1): the literal "!" character at
           text-4xl read as a missing glyph or unloaded font. Replaced
@@ -1234,18 +1242,62 @@ function CalendarOverlay({
   onClose: () => void
   children: React.ReactNode
 }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+  // iter-356.63 (Slice D a11y): focus capture/restore. The trigger
+  // (the Show calendar button in the header rail) is whatever was
+  // focused at mount; on close we restore focus there so the
+  // keyboard user picks back up where they left off instead of
+  // being dumped at the document root.
   useEffect(() => {
+    const previouslyFocused =
+      typeof document !== 'undefined'
+        ? (document.activeElement as HTMLElement | null)
+        : null
+    closeRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      if (previouslyFocused && document.contains(previouslyFocused)) {
+        previouslyFocused.focus()
+      }
+    }
   }, [onClose])
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Detection calendar"
+      // iter-356.63 (Slice D a11y): focus trap — Tab cycles inside
+      // the dialog, doesn't escape to the muted page behind. Same
+      // shape as ClipModal::iter-336.
+      onKeyDown={(e) => {
+        if (e.key !== 'Tab') return
+        if (!dialogRef.current) return
+        const sel =
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        const focusables = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(sel),
+        ).filter((el) => el.getAttribute('tabindex') !== '-1')
+        if (focusables.length === 0) return
+        const active = document.activeElement as HTMLElement | null
+        const idx = active ? focusables.indexOf(active) : -1
+        if (e.shiftKey) {
+          if (idx <= 0) {
+            e.preventDefault()
+            focusables[focusables.length - 1].focus()
+          }
+        } else {
+          if (idx === focusables.length - 1) {
+            e.preventDefault()
+            focusables[0].focus()
+          }
+        }
+      }}
       className="fixed inset-0 z-40 flex items-start justify-center pt-[env(safe-area-inset-top)] bg-black/60 backdrop-blur-sm lg:hidden"
     >
       <button
@@ -1261,6 +1313,7 @@ function CalendarOverlay({
             Calendar
           </h2>
           <button
+            ref={closeRef}
             type="button"
             onClick={onClose}
             aria-label="Close calendar"

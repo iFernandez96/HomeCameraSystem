@@ -450,7 +450,7 @@ function EventCardImpl({
             onDelete(e)
           }}
           aria-label={`Delete event from ${absoluteTime(e.ts)}`}
-          className="absolute top-1/2 -translate-y-1/2 -right-2 w-9 h-9 rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity active:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
+          className="absolute top-1/2 -translate-y-1/2 -right-2 min-w-[44px] min-h-[44px] rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity active:opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
         >
           ✕
         </button>

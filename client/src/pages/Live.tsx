@@ -139,6 +139,10 @@ export function Live() {
     //     right edge of the video, and a horizontal recent-events
     //     strip below the video.
     <div className="flex flex-col h-[calc(100vh-3.5rem-5rem)] lg:h-[calc(100vh-3.5rem)]">
+      {/* iter-356.63 (Slice D a11y): sr-only <h1> per route. The
+          visible page identity is owned by the WatchRibbon and the
+          on-video badge; AT users still need a level-1 heading. */}
+      <h1 className="sr-only">Live camera</h1>
       <div className="relative flex-1 min-h-0 bg-black overflow-hidden lg:rounded-tl-2xl">
         {/* The cinematic video field. fills 100% of this region. */}
         <VideoTile
@@ -159,9 +163,16 @@ export function Live() {
         <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 sm:px-6 pb-4 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent">
           <div className="flex items-end justify-between gap-4">
             <div className="flex items-end gap-3 min-w-0">
-              <h1 className="font-display text-2xl sm:text-3xl font-bold text-white leading-none truncate">
+              {/* iter-356.63 (Slice D a11y): demoted from <h1> to
+                  <h2>. The route-level <h1 className="sr-only"> at
+                  the top of the page is the single level-1 anchor;
+                  the visible camera-label is a section heading
+                  (which camera you're looking at), which is an h2
+                  job. Two-h1-per-route was confusing the AT
+                  document outline. */}
+              <h2 className="font-display text-2xl sm:text-3xl font-bold text-white leading-none truncate">
                 {cameraLabel}
-              </h1>
+              </h2>
               <CameraSubtitle status={status} onDark />
             </div>
             <div className="hidden sm:flex pointer-events-auto">

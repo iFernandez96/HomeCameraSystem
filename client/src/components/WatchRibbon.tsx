@@ -90,14 +90,20 @@ export function WatchRibbon() {
       </button>
 
       {/* CENTER: live-watch state cluster. This is the always-visible
-          security signal. dot + state + camera + last-frame. */}
-      <div
-        className="flex-1 flex items-center justify-start lg:justify-center gap-2.5 min-w-0 ml-2 lg:ml-0"
-        role="status"
-        aria-live="polite"
-      >
+          security signal. dot + state + camera + last-frame.
+          iter-356.63 (Slice D a11y): role="status" + aria-live moved
+          OFF the wrapper and DOWN to the smaller status-pill scope.
+          Pre-fix the entire cluster was a live region, so every
+          5-second status poll re-announced the camera-name AND the
+          last-frame age ("On watch · Front Door · 4s ago" → "On
+          watch · Front Door · 5s ago" repeatedly). Now only the
+          armed-state pill is announced; camera + age are static
+          surface details for sighted users. */}
+      <div className="flex-1 flex items-center justify-start lg:justify-center gap-2.5 min-w-0 ml-2 lg:ml-0">
         <span aria-hidden="true" className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${dotClass}`} />
         <span
+          role="status"
+          aria-live="polite"
           className={`text-sm font-semibold flex-shrink-0 ${
             offline
               ? 'text-[var(--color-danger)]'
