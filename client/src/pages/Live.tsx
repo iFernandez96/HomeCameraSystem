@@ -183,7 +183,16 @@ export function Live() {
             back in via pointer-events-auto. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 sm:px-6 pb-4 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent">
           <div className="flex items-end justify-between gap-4">
-            <div className="flex items-end gap-3 min-w-0">
+            {/* iter-356.66 (real-device fix): camera label + subtitle
+                were horizontally stacked in a `flex items-end gap-3`
+                row, which split the available width and forced "Front
+                Door" to truncate to "Fr…" on a 390-px iPhone whenever
+                the trust cluster on the right wrapped to two lines.
+                Vertical stack (the original design intent — heading
+                with a subtitle BELOW it) gives the heading the full
+                column width. The subtitle drops to its own row and
+                still fits at the smaller font size. */}
+            <div className="flex flex-col gap-1 min-w-0 flex-1">
               {/* iter-356.63 (Slice D a11y): demoted from <h1> to
                   <h2>. The route-level <h1 className="sr-only"> at
                   the top of the page is the single level-1 anchor;
@@ -205,7 +214,7 @@ export function Live() {
                 training?". Three independent signals; each pill
                 self-gates so the cluster only crowds when there's
                 something to say. */}
-            <div className="flex pointer-events-auto items-center gap-2 flex-wrap justify-end">
+            <div className="flex pointer-events-auto items-center gap-2 flex-wrap justify-end max-w-[55%]">
               {/* iter-356.65 (Mira critic blocker #3): trust-cluster
                   pills must render at every viewport, not gated to
                   sm+. A guest on a 360-px Pixel needs to see "is
