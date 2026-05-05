@@ -61,6 +61,14 @@ services:
       # FACE_CAPTURES_DIR env var defaults to /app/face_captures so
       # this matches without any extra config.
       - ../face_captures:/app/face_captures
+      # iter-356.62 (tiered-capture slices 1+2+3): parallel root for
+      # full-person crops the worker saves alongside each face crop.
+      # Same bind-mount + 0o600 pattern as face_captures. NOT a subdir
+      # of face_captures because the existing /face/captures listing
+      # route walks face_captures/<name>/ and would treat a nested
+      # _person subtree as a name bucket. Read by /api/training/export
+      # (kind=person) and swept by face_capture_sweeper.
+      - ../person_captures:/app/person_captures
       - ../client/dist:/app/client_dist:ro
     environment:
       - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
