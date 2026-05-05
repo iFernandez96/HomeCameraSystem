@@ -183,3 +183,31 @@ def test_infer_per_s_uses_started_timestamp():
     m.inferences = 10
     m.started = time.time() - 2.0
     assert 4.5 < m.infer_per_s() < 5.5
+
+
+# --- p95 wire pin (iter-356.62 pre-YOLO win 2) -------------------------------
+
+
+def test_given_warmed_up_p95_when_snapshot_then_field_carries_real_value():
+    """Worker-side pin for the p95 wire: once we've cleared the
+    cold-cache skip + warmup floor, `snapshot()` must surface the
+    live `infer_ms_p95()` value under the SAME key the server
+    whitelist (`_internal.py::_ALLOWED_METRIC_FIELDS`) expects.
+
+    If anyone renames the snapshot key or accidentally drops it from
+    the dict, this fails here BEFORE the field silently disappears
+    from `/api/status.worker_metrics` in the UI."""
+    # arrange — push WARMUP+1 raw samples so the buffer hits warmup
+    # (first call is the cold-cache skip).
+    m = Metrics()
+    for _ in range(Metrics.INFER_HISTORY_WARMUP + 1):
+        m.record_infer_ms(57.0)
+
+    # act
+    snap = m.snapshot()
+
+    # assert — key is present AND carries the live percentile, not 0.
+    assert "infer_ms_p95" in snap
+    assert snap["infer_ms_p95"] == 57.0
+    # And it matches the live method — the snapshot must not lag.
+    assert snap["infer_ms_p95"] == m.infer_ms_p95()

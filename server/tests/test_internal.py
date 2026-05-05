@@ -708,6 +708,38 @@ def test_heartbeat_passes_infer_ms_p95_through(client: TestClient):
     assert metrics["infer_ms_p95"] == 65.5
 
 
+def test_given_p95_in_heartbeat_when_status_polled_then_field_round_trips(
+    client: TestClient,
+):
+    """iter-356.62 (camera-algorithm-auditor pre-YOLO win 2): pin
+    that `infer_ms_p95` survives the full wire path
+    heartbeat → WorkerHealth → /api/status.worker_metrics.
+
+    Distinct from the WorkerHealth-only sibling above: this hits the
+    user-facing `/api/status` endpoint so any silent strip in the
+    status route or response model fails here. Single dedicated pin
+    so a regression bisects to ONE assertion, not the
+    every-field round-trip test."""
+    # arrange — heartbeat with p95 = 123.4 (the spec's exemplar value).
+    payload = {"fps": 4.0, "infer_ms_recent": 50.0, "infer_ms_p95": 123.4}
+
+    # act — post the heartbeat, then ask /api/status what it sees.
+    r = client.post("/api/_internal/heartbeat", json=payload)
+    assert r.status_code == 200
+    body = client.get("/api/status").json()
+
+    # assert — field present AND value preserved end-to-end. Neither
+    # the whitelist nor the status route nor any response coercion
+    # is allowed to drop it.
+    assert body["worker_alive"] is True
+    metrics = body["worker_metrics"]
+    assert metrics is not None
+    assert "infer_ms_p95" in metrics, (
+        "infer_ms_p95 missing from /api/status.worker_metrics — wire dropped it"
+    )
+    assert metrics["infer_ms_p95"] == 123.4
+
+
 def test_heartbeat_passes_infer_ms_recent_through(client: TestClient):
     from app.services.health import worker_health
 
