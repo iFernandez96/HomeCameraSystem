@@ -737,9 +737,22 @@ export function Events() {
           but we adjust `--day-header-top` to safe-area-inset-top so
           day labels pin to the actual viewport top instead of
           beneath the now-gone sticky page header. */}
+      {/* iter-356.66 (real-device user feedback): swap the sticky
+          target. Pre-fix the DayHeader ("Today's log 100 ENTRIES")
+          pinned to the top of the viewport while the page header
+          containing the calendar icon scrolled away, so a user
+          deep in the event list had to scroll back up to filter by
+          day. The DayHeader is a LABEL, not a control — pinning
+          the label was decorative; pinning the calendar icon is
+          functional. Inverting: this <header> now sticks just
+          below the WatchRibbon (calc(56px + env(safe-area-inset-top)))
+          and the DayHeader (EventList.tsx:DayHeader) scrolls
+          naturally with the events. z-10 keeps the header above
+          the event-list content but below modals (z-30+) and the
+          WatchRibbon. */}
       <header
         ref={headerRef}
-        className="pt-[env(safe-area-inset-top)] bg-[var(--color-bg)] border-b border-[var(--color-border)]"
+        className="sticky top-[calc(56px+env(safe-area-inset-top))] z-10 bg-[var(--color-bg)] border-b border-[var(--color-border)]"
       >
         <div className="px-4 pt-4 pb-3">
         <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">

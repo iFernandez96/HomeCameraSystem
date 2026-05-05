@@ -199,8 +199,17 @@ function DayHeader({ label, count }: { label: string; count: number }) {
       : label === 'Yesterday'
         ? "Yesterday's log"
         : label
+  // iter-356.66 (real-device user feedback): dropped sticky.
+  // Pre-fix this label pinned to the viewport top (with the page
+  // header scrolled away), so the calendar icon got unreachable
+  // while the user was deep in events. User explicitly asked:
+  // "calendar icon needs to follow scroll, not the today's log."
+  // The Events page-header now owns sticky; the DayHeader scrolls
+  // naturally with the events it labels — appearing once at the
+  // start of each day group and sliding off-screen as the user
+  // reads past it.
   return (
-    <div className="px-4 py-3 flex items-baseline gap-3 bg-[var(--color-bg)]/95 backdrop-blur border-b border-[var(--color-border-subtle)] sticky top-[var(--day-header-top,0px)] z-[1]">
+    <div className="px-4 py-3 flex items-baseline gap-3 border-b border-[var(--color-border-subtle)]">
       <h2 className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
         {logSuffix}
       </h2>
