@@ -31,7 +31,20 @@ Restart=on-failure
 RestartSec=5
 # nvarguscamerasrc/jetson-utils touches /tmp; don't enable PrivateTmp (same
 # trap mediamtx.service hit — see deploy/systemd/mediamtx.service).
-NoNewPrivileges=yes
+#
+# iter-356.63 (camera-recovery sharp edge): NoNewPrivileges INTENTIONALLY
+# REMOVED. The iter-302 auto-recovery (`escalate_argus_recovery` in
+# detect.py:493) shells `sudo -n systemctl restart {nvargus-daemon,
+# mediamtx}` when the libargus broker wedges. With NNP=yes the kernel
+# blocks setuid elevation in this unit's process group; sudo fails with
+# the misleading "is /usr/bin/sudo on a file system with the 'nosuid'
+# option set" error and the auto-recovery silently drops — the live
+# feed stays broken until an operator SSHes in. Defense-in-depth cost
+# of dropping NNP is small: `israel ALL NOPASSWD: ALL` is already on
+# the host (see /etc/sudoers.d), so any process that can replace this
+# unit's binary already has full root via that path. The defense bar
+# is "user israel doesn't get tricked into running foreign code under
+# this unit," not "this unit is sandboxed."
 
 [Install]
 WantedBy=multi-user.target
