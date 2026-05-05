@@ -3,6 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <!-- iter-356.66 (iOS edge-cases audit A1): apple-touch-icon. iOS
+         IGNORES the Web Manifest `icons` array for the home-screen
+         tile — without an apple-touch-icon link tag, install gets a
+         generic letter glyph or a screenshot. Pointing at the
+         existing icon-192.png (192x192) works; iOS scales to 180.
+         An ideal 180×180 source would land at /apple-touch-icon.png
+         later. -->
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png" />
     <!-- iter-262 (mobile-view-auditor A1): dropped `user-scalable=no` —
          WCAG 2.1 SC 1.4.4 (Resize Text) requires zoom. Inputs use 16 px
          font-size to suppress iOS auto-zoom-on-focus instead.

@@ -376,6 +376,17 @@ export function ClipModal({
           src={clipUrl}
           controls
           playsInline
+          // iter-356.66 (iOS edge-cases audit #3): preload="metadata"
+          // commits iOS Safari to fetching the moov atom even on
+          // Low-Power Mode, where the default `auto` is opportunistically
+          // downgraded to `none`. Without it, the modal opens to a
+          // black void with no scrubber, indistinguishable from "clip
+          // unavailable." disableRemotePlayback suppresses the AirPlay
+          // pill on the native controlbar — mirroring a 5-second
+          // detection clip from a self-hosted box is a confusing
+          // affordance that the camera audio mute can't explain.
+          preload="metadata"
+          disableRemotePlayback
           loop={loop}
           onError={() => setErroredClipUrl(clipUrl)}
           aria-label={`Clip of ${event.person_name ?? event.label} event from ${humanCameraName(event.camera_id)}`}

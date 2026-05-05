@@ -316,6 +316,28 @@ body {
   font-optical-sizing: auto;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: contain;
+  /* iter-356.66 (iOS edge-cases audit J): cream parchment text on a
+   * charred-oak page renders heavier than necessary on iOS Retina
+   * without subpixel-AA hint. antialiased thins body text to match
+   * desktop Chrome / Firefox rendering — measurably lighter at 16
+   * px Inter. Firefox/macOS counterpart for parity. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* iter-356.66 (iOS edge-cases audit H): suppress iOS Safari's long-
+ * press image-action-sheet ("Save image / Copy / Share") on every
+ * <img> in the app. The sheet was intercepting swipe-to-delete on
+ * EventList thumbnails when a user hesitated mid-swipe, and offered
+ * "Save Mushu" on the ambient cat sprites — neither is wanted on a
+ * security app. If a future surface needs save-image (e.g. a
+ * shareable evidence frame), opt back in via inline style or a
+ * specific class. -webkit-user-select: none paired so the OS
+ * "Copy" pill doesn't appear either. */
+img {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* iter-356.55 (visual polish): tightened heading typography across
