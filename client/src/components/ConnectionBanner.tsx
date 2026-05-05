@@ -106,7 +106,7 @@ export function ConnectionBanner() {
       // notch; on Android (zero inset) collapses to the original
       // py-1.5 padding cleanly.
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)' }}
-      className={`fixed top-0 inset-x-0 lg:left-16 z-30 px-3 pb-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
+      className={`fixed top-0 inset-x-0 lg:left-[var(--sidenav-width,4rem)] z-30 px-3 pb-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
     >
       {label}
     </div>

@@ -135,6 +135,36 @@ export function ClipModal({
       setDownloading(false)
     }
   }
+  // iter-356.x (feature audit P1-5): copy a deep-link to this event for
+  // sharing. The clip URL itself is auth-gated so a raw link won't work
+  // for un-authed recipients, but copying /events?event=<id> lets a
+  // household member paste it into the same authed PWA on the other
+  // person's phone — which is the common case (e.g., "look at this
+  // delivery"). navigator.share is preferred where available (Android
+  // Chrome, iOS Safari 16.4+ standalone) so the OS share sheet handles
+  // routing; falls back to clipboard.
+  const onShare = async () => {
+    const path = `/events?event=${encodeURIComponent(event.id)}`
+    const url = `${window.location.origin}${path}`
+    const title = personLabel ?? event.label
+    const text = `HomeCam event: ${title}`
+    try {
+      const nav = navigator as Navigator & {
+        share?: (data: ShareData) => Promise<void>
+      }
+      if (typeof nav.share === 'function') {
+        await nav.share({ title, text, url })
+        return
+      }
+      await navigator.clipboard.writeText(url)
+      showToast('Link copied — paste it into a chat to share', 'success')
+    } catch (e) {
+      // AbortError is the user dismissing the share sheet — silent.
+      const name = (e as Error)?.name
+      if (name === 'AbortError') return
+      showToast('Could not share link — try copy/paste', 'error')
+    }
+  }
   useEffect(() => {
     const previouslyFocused =
       typeof document !== 'undefined'
@@ -442,7 +472,7 @@ export function ClipModal({
             Pre-iter-347 the amber-on-black 12px text was barely
             readable AND ambiguous about user action ("loading?
             broken? wait?"). */}
-        <p className="text-sm text-amber-300">
+        <p className="text-sm text-amber-200">
           Video not ready yet — here&apos;s a still photo from the event.
           Check back in a few seconds.
         </p>
@@ -696,6 +726,14 @@ export function ClipModal({
           Major: "this is exactly what the primitive was built for"). */}
       <div className="relative px-4 pb-4 flex items-center justify-end gap-3">
         <Button
+          variant="ghost"
+          size="md"
+          onClick={onShare}
+          aria-label="Share or copy link to this event"
+        >
+          Share
+        </Button>
+        <Button
           variant="secondary"
           size="md"
           onClick={onDownload}
@@ -718,7 +756,7 @@ export function ClipModal({
           with a close button. */}
       <aside
         aria-label="Incident details"
-        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 bg-black/40 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto"
+        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 bg-black/40 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto overscroll-contain"
       >
         <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
           <div>

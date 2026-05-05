@@ -153,15 +153,15 @@ function InferenceLatency({ metrics }: { metrics: WorkerMetrics | null }) {
   const colorBasis = p95 != null && p95 > 0 ? p95 : ms
   const color =
     colorBasis >= 150
-      ? 'text-red-400'
+      ? 'text-[var(--color-danger)]'
       : colorBasis >= 80
-        ? 'text-yellow-400'
+        ? 'text-[var(--color-warning)]'
         : 'text-[var(--color-text-secondary)]'
   return (
     <span className={`tabular-nums text-sm ${color}`}>
       {ms.toFixed(1)} ms
       {p95 != null && p95 > 0 ? (
-        <span className="text-neutral-600 ml-1">(p95 {p95.toFixed(1)})</span>
+        <span className="text-[var(--color-text-tertiary)] ml-1">(p95 {p95.toFixed(1)})</span>
       ) : null}
     </span>
   )
@@ -174,7 +174,7 @@ function CpuFreqPct({ pct }: { pct: number | null }) {
   // red at < 75 % (significant throttle).
   if (pct == null) return <Mono>—</Mono>
   const color =
-    pct < 75 ? 'text-red-400' : pct < 95 ? 'text-yellow-400' : 'text-[var(--color-text-secondary)]'
+    pct < 75 ? 'text-[var(--color-danger)]' : pct < 95 ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-secondary)]'
   return (
     <span className={`tabular-nums text-sm ${color}`}>
       {pct.toFixed(1)} %
@@ -190,7 +190,7 @@ function StreamRecoveries({ metrics }: { metrics: WorkerMetrics | null }) {
   const n = metrics?.mediamtx_restarts
   if (n == null) return <Mono>—</Mono>
   const color =
-    n >= 3 ? 'text-red-400' : n >= 1 ? 'text-yellow-400' : 'text-[var(--color-text-secondary)]'
+    n >= 3 ? 'text-[var(--color-danger)]' : n >= 1 ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-secondary)]'
   return <span className={`tabular-nums text-sm ${color}`}>{n}</span>
 }
 
@@ -205,12 +205,12 @@ function DroppedFrames({ metrics }: { metrics: WorkerMetrics | null }) {
   const total = dropped + frames
   const pct = total > 0 ? (dropped / total) * 100 : 0
   const color =
-    pct >= 5 ? 'text-red-400' : pct >= 1 ? 'text-yellow-400' : 'text-[var(--color-text-secondary)]'
+    pct >= 5 ? 'text-[var(--color-danger)]' : pct >= 1 ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-secondary)]'
   return (
     <span className={`tabular-nums text-sm ${color}`}>
       {dropped.toLocaleString()}
       {total > 0 && (
-        <span className="text-neutral-600 ml-1">({pct.toFixed(2)}%)</span>
+        <span className="text-[var(--color-text-tertiary)] ml-1">({pct.toFixed(2)}%)</span>
       )}
     </span>
   )
@@ -231,7 +231,7 @@ function FaceRecogStatus({ names }: { names: string[] | undefined }) {
       {names.slice(0, 4).map((n) => (
         <span
           key={n}
-          className="px-2 py-0.5 text-[11px] rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 capitalize"
+          className="px-2 py-0.5 text-[11px] rounded-full bg-[var(--color-success-bg)] text-[var(--color-success)] border border-[var(--color-success-border)] capitalize"
         >
           {n}
         </span>

@@ -271,7 +271,7 @@ describe('Settings page', () => {
     confirmFn.mockReset().mockResolvedValue(false)
     const user = userEvent.setup()
     render(<Settings />)
-    await user.click(screen.getByRole('button', { name: /reboot jetson/i }))
+    await user.click(screen.getByRole('button', { name: /restart camera box/i }))
     await waitFor(() => expect(confirmFn).toHaveBeenCalled())
     expect(confirmFn.mock.calls[0][0]).toMatchObject({
       title: expect.stringMatching(/reboot/i),
@@ -285,7 +285,7 @@ describe('Settings page', () => {
     rebootJetson.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
     render(<Settings />)
-    await user.click(screen.getByRole('button', { name: /reboot jetson/i }))
+    await user.click(screen.getByRole('button', { name: /restart camera box/i }))
     await waitFor(() => expect(rebootJetson).toHaveBeenCalledTimes(1))
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
@@ -306,7 +306,7 @@ describe('Settings page', () => {
     })
     const user = userEvent.setup()
     render(<Settings />)
-    await user.click(screen.getByRole('button', { name: /reboot jetson/i }))
+    await user.click(screen.getByRole('button', { name: /restart camera box/i }))
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
         expect.stringMatching(/isn't set up yet/i),
@@ -428,13 +428,13 @@ describe('Settings page', () => {
     getStatus.mockResolvedValue(statusWith({ infer_ms_recent: 95 }))
     const { unmount } = render(<Settings />)
     await waitFor(() => expect(screen.getByText('95.0 ms')).toBeInTheDocument())
-    expect(screen.getByText('95.0 ms')).toHaveClass('text-yellow-400')
+    expect(screen.getByText('95.0 ms')).toHaveClass('text-[var(--color-warning)]')
     unmount()
 
     getStatus.mockResolvedValue(statusWith({ infer_ms_recent: 175 }))
     render(<Settings />)
     await waitFor(() => expect(screen.getByText('175.0 ms')).toBeInTheDocument())
-    expect(screen.getByText('175.0 ms')).toHaveClass('text-red-400')
+    expect(screen.getByText('175.0 ms')).toHaveClass('text-[var(--color-danger)]')
   })
 
   it('uses p95 (not recent) to color the inference row when available', async () => {
@@ -461,40 +461,40 @@ describe('Settings page', () => {
     getStatus.mockResolvedValue(statusWith({ dropped: 6, frames: 594 }))
     const { unmount } = render(<Settings />)
     await waitFor(() => expect(screen.getByText('6')).toBeInTheDocument())
-    expect(screen.getByText('6')).toHaveClass('text-yellow-400')
+    expect(screen.getByText('6')).toHaveClass('text-[var(--color-warning)]')
     unmount()
 
     // 60 of 1000 = 6% → red.
     getStatus.mockResolvedValue(statusWith({ dropped: 60, frames: 940 }))
     render(<Settings />)
     await waitFor(() => expect(screen.getByText('60')).toBeInTheDocument())
-    expect(screen.getByText('60')).toHaveClass('text-red-400')
+    expect(screen.getByText('60')).toHaveClass('text-[var(--color-danger)]')
   })
 
   it('paints stream-recovery count yellow at 1 and red at 3', async () => {
     getStatus.mockResolvedValue(statusWith({ mediamtx_restarts: 2 }))
     const { unmount } = render(<Settings />)
     await waitFor(() => expect(screen.getByText('2')).toBeInTheDocument())
-    expect(screen.getByText('2')).toHaveClass('text-yellow-400')
+    expect(screen.getByText('2')).toHaveClass('text-[var(--color-warning)]')
     unmount()
 
     getStatus.mockResolvedValue(statusWith({ mediamtx_restarts: 5 }))
     render(<Settings />)
     await waitFor(() => expect(screen.getByText('5')).toBeInTheDocument())
-    expect(screen.getByText('5')).toHaveClass('text-red-400')
+    expect(screen.getByText('5')).toHaveClass('text-[var(--color-danger)]')
   })
 
   it('paints CPU clock yellow below 95% and red below 75%', async () => {
     getStatus.mockResolvedValue(statusWith({}, { cpu_freq_pct: 88 }))
     const { unmount } = render(<Settings />)
     await waitFor(() => expect(screen.getByText('88.0 %')).toBeInTheDocument())
-    expect(screen.getByText('88.0 %')).toHaveClass('text-yellow-400')
+    expect(screen.getByText('88.0 %')).toHaveClass('text-[var(--color-warning)]')
     unmount()
 
     getStatus.mockResolvedValue(statusWith({}, { cpu_freq_pct: 60 }))
     render(<Settings />)
     await waitFor(() => expect(screen.getByText('60.0 %')).toBeInTheDocument())
-    expect(screen.getByText('60.0 %')).toHaveClass('text-red-400')
+    expect(screen.getByText('60.0 %')).toHaveClass('text-[var(--color-danger)]')
   })
 
   it('renders face_recog names as emerald chips when present', async () => {
@@ -684,32 +684,32 @@ describe('Settings page', () => {
     expect(await screen.findByText(/mom \(Family\)/)).toBeInTheDocument()
   })
 
-  it('hides Reboot Jetson button for non-owner role (iter-198)', async () => {
+  it('hides Restart camera box button for non-owner role (iter-198)', async () => {
     _authUser = { username: 'mom', role: 'family' }
     render(<Settings />)
     // Wait for status to load so the page renders fully.
     await screen.findByText(/mom/)
     expect(
-      screen.queryByRole('button', { name: /reboot jetson/i }),
+      screen.queryByRole('button', { name: /restart camera box/i }),
     ).not.toBeInTheDocument()
   })
 
-  it('shows Reboot Jetson button for owner role (iter-198)', async () => {
+  it('shows Restart camera box button for owner role (iter-198)', async () => {
     _authUser = { username: 'alice', role: 'owner' }
     render(<Settings />)
     expect(
-      await screen.findByRole('button', { name: /reboot jetson/i }),
+      await screen.findByRole('button', { name: /restart camera box/i }),
     ).toBeInTheDocument()
   })
 
-  it('shows Reboot Jetson button for legacy admin role (iter-198 carve-out)', async () => {
+  it('shows Restart camera box button for legacy admin role (iter-198 carve-out)', async () => {
     // iter-197 transitional: server's `require_role("owner")` accepts
     // `admin` via the carve-out for iter-178/179 seeded users. Client
     // mirrors. Drop when the cleanup iter migrates seeded users.
     _authUser = { username: 'alice', role: 'admin' }
     render(<Settings />)
     expect(
-      await screen.findByRole('button', { name: /reboot jetson/i }),
+      await screen.findByRole('button', { name: /restart camera box/i }),
     ).toBeInTheDocument()
   })
 

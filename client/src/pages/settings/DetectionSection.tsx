@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Slider } from '../../components/Slider'
+import { ErrorState } from '../../components/states/ErrorState'
 import { ZoneEditor } from '../../components/ZoneEditor'
 import { getDetectionConfig, patchDetectionConfig } from '../../lib/api'
 import { useToast } from '../../lib/toast'
@@ -42,12 +43,29 @@ function formatClipDuration(seconds: number): string {
 export function DetectionSection() {
   const { showToast } = useToast()
   const [config, setConfig] = useState<DetectionConfig | null>(null)
+  // iter-356.x (Frank E2 + feature audit): pre-fix a transient
+  // getDetectionConfig() failure put every field into a permanent
+  // disabled state with no error message + no retry — looked like a
+  // permission problem, was actually a network blip.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
+    let cancelled = false
     getDetectionConfig()
-      .then(setConfig)
-      .catch(() => setConfig(null))
-  }, [])
+      .then((c) => {
+        if (cancelled) return
+        setConfig(c)
+        setLoadError(null)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setLoadError(e instanceof Error ? e.message : 'Could not load settings')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [reloadKey])
 
   const commitConfig = (patch: Partial<DetectionConfig>) => {
     patchDetectionConfig(patch)
@@ -59,6 +77,20 @@ export function DetectionSection() {
         showToast('Could not save settings', 'error')
         console.error(e)
       })
+  }
+
+  if (loadError) {
+    return (
+      <ErrorState
+        title="Could not load detection settings"
+        message="Check your connection and try again."
+        retry={() => {
+          setLoadError(null)
+          setReloadKey((k) => k + 1)
+        }}
+        technicalDetail={loadError}
+      />
+    )
   }
 
   return (
@@ -309,7 +341,7 @@ export function DetectionSection() {
           the configured polygons. Live-commits via the existing
           `commitConfig` patch flow. */}
       <Section title="Detection zones">
-        <p className="px-1 text-xs text-zinc-500">
+        <p className="px-1 text-xs text-[var(--color-text-secondary)]">
           Draw polygons over the live frame to limit where detections
           fire. No zones = whole frame is active (default).
         </p>

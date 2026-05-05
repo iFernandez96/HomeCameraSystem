@@ -339,13 +339,14 @@ export function NotificationsSection({
         <Row
           label="Send a test alert"
           right={
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={onTestPush}
-              className="text-[var(--color-accent-default)] text-sm focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
               aria-label="Send test notification"
             >
               Send
-            </button>
+            </Button>
           }
         />
       )}

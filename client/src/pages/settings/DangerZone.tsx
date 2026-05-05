@@ -184,14 +184,24 @@ export function DangerZone() {
       <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide mt-2">
         Maintenance
       </h3>
+      {/* iter-356.x (feature audit P1-3 + Frank E4): pre-fix the
+          Backup / Update / Restore / Reboot buttons all looked fully
+          live but were operator-blocked stubs — clicking returned a
+          friendly "isn't set up yet" toast. Naming the dependency up
+          front sets expectations before the click instead of after. */}
+      <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-2">
+        Backup, update, restore and reboot need host-side helpers
+        configured by whoever installed your camera. If they aren&apos;t
+        ready you&apos;ll see a notice instead of an action.
+      </p>
       <Button variant="secondary" size="lg" fullWidth onClick={onBackup}>
         Back up server state
       </Button>
       <Button variant="secondary" size="lg" fullWidth onClick={onUpdate}>
-        Update server software
+        Update server software (~30 s outage)
       </Button>
       <div className="pt-3 mt-3 border-t border-[var(--color-border)]">
-        <h3 className="text-sm font-semibold text-red-400 uppercase tracking-wide">
+        <h3 className="text-sm font-semibold text-[var(--color-danger)] uppercase tracking-wide">
           Danger zone
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-3">
@@ -296,7 +306,7 @@ export function DangerZone() {
         fullWidth
         onClick={onReboot}
       >
-        Reboot Jetson
+        Restart camera box
       </Button>
     </>
   )

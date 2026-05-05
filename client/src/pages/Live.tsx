@@ -273,7 +273,7 @@ export function Live() {
               dark
             />
             <ActionButton
-              label="Talk"
+              label="Talk · soon"
               icon={<MicIcon />}
               onClick={onTalk}
               dark
@@ -309,6 +309,7 @@ export function Live() {
             label="Talk"
             icon={<MicIcon />}
             onClick={onTalk}
+            caption="Coming soon"
           />
         </div>
       </div>

@@ -230,6 +230,16 @@ export function TimelapsesSection() {
             Pick a date in the calendar above.
           </p>
         )}
+        {/* iter-356.x (feature audit P1-3): name the host-helper
+            dependency before the click. Pre-fix users tapped Build
+            video on a freshly-installed system and got a "isn't set
+            up yet" toast — the friendliness of the toast hid the
+            structural fact that this is operator-installer territory. */}
+        <p className="text-xs text-[var(--color-text-secondary)] -mt-1">
+          Building a timelapse needs a small helper script on the
+          camera box. If your installer hasn&apos;t set it up,
+          you&apos;ll see a notice instead of a video.
+        </p>
       </div>
 
       {sortedTimelapses === null ? (

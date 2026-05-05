@@ -23,6 +23,7 @@ import { useAuth } from '../../lib/auth'
 import { useConfirm } from '../../lib/confirm'
 import { formatError } from '../../lib/format'
 import { useToast } from '../../lib/toast'
+import { Button } from '../../components/primitives/Button'
 import { Row } from './parts'
 
 // iter-268: extracted from Settings.tsx (1969 → ~1480 lines after this
@@ -80,13 +81,13 @@ export function ChangePasswordRow() {
       <Row
         label="Password"
         right={
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setOpen(true)}
-            className="text-sm text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
           >
             Change
-          </button>
+          </Button>
         }
       />
     )
@@ -122,24 +123,28 @@ export function ChangePasswordRow() {
         className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       />
       <div className="flex gap-2 pt-1">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          loading={submitting}
+          loadingText="Saving…"
           onClick={onSubmit}
-          disabled={submitting || !current || !next || !confirmPw}
-          className="flex-1 py-2 bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-default)] disabled:bg-[var(--color-border-strong)] disabled:text-[var(--color-text-secondary)] rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          disabled={!current || !next || !confirmPw}
         >
-          {submitting ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          type="button"
+          Save
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          fullWidth
           onClick={() => {
             reset()
             setOpen(false)
           }}
-          className="flex-1 py-2 bg-[var(--color-surface-raised)] hover:bg-[var(--color-border-strong)] rounded-lg text-sm focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -245,7 +250,7 @@ export function ManageUsersPanel() {
         <AddUserForm onCreated={onCreated} onCancel={() => setAddOpen(false)} />
       ) : null}
       {loadError ? (
-        <p className="text-xs text-rose-400">
+        <p className="text-xs text-[var(--color-danger)]">
           Could not load users: {loadError}
         </p>
       ) : users === null ? (
@@ -311,7 +316,7 @@ export function ManageUsersPanel() {
                           ? `delete-disabled-${u.username}`
                           : undefined
                       }
-                      className="text-xs text-rose-300 hover:text-rose-200 underline disabled:text-neutral-600 disabled:no-underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded px-3 py-2 -my-1 lg:px-1 lg:py-0.5 lg:my-0"
+                      className="text-xs text-[var(--color-danger)] hover:text-[var(--color-danger)] hover:opacity-80 underline disabled:text-[var(--color-text-tertiary)] disabled:no-underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded px-3 py-2 -my-1 lg:px-1 lg:py-0.5 lg:my-0"
                       title={
                         isSelf
                           ? "You can't delete your own account"
@@ -427,21 +432,25 @@ function AddUserForm(props: {
         </select>
       </label>
       <div className="flex gap-2 pt-1">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          loading={submitting}
+          loadingText="Creating…"
           onClick={onSubmit}
-          disabled={submitting || !username || !password}
-          className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-[var(--color-border-strong)] disabled:text-[var(--color-text-secondary)] rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          disabled={!username || !password}
         >
-          {submitting ? 'Creating…' : 'Create user'}
-        </button>
-        <button
-          type="button"
+          Create user
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          fullWidth
           onClick={props.onCancel}
-          className="flex-1 py-2 bg-[var(--color-surface-raised)] hover:bg-[var(--color-border-strong)] rounded-lg text-sm focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -494,21 +503,25 @@ function InlineResetPasswordForm(props: {
         className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       />
       <div className="flex gap-2">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          loading={submitting}
+          loadingText="Saving…"
           onClick={onSubmit}
-          disabled={submitting || !next}
-          className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-[var(--color-border-strong)] disabled:text-[var(--color-text-secondary)] rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          disabled={!next}
         >
-          {submitting ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          type="button"
+          Save
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          fullWidth
           onClick={props.onCancel}
-          className="flex-1 py-2.5 bg-[var(--color-surface-raised)] hover:bg-[var(--color-border-strong)] rounded-lg text-sm focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   )

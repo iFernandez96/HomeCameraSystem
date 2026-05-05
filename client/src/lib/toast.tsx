@@ -89,7 +89,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         // iter-356.3a (Maya Minor): z-30 → z-[--z-sheet] token.
         // bottom-24 → bottom-[5.5rem] preserved as a magic number for now;
         // bottom-nav-height token would require touching BottomNav too.
-        className="fixed bottom-24 lg:bottom-6 inset-x-0 lg:left-56 z-[20] flex flex-col items-center gap-2 px-4 pointer-events-none"
+        className="fixed bottom-24 lg:bottom-6 inset-x-0 lg:left-16 z-[20] flex flex-col items-center gap-2 px-4 pointer-events-none"
         style={{ zIndex: 'var(--z-sheet, 30)' }}
         aria-live="polite"
         aria-atomic="true"

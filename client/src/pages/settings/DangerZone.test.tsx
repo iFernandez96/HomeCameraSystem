@@ -51,7 +51,7 @@ describe('DangerZone confirm bodies (iter-356.C)', () => {
 
     // act
     render(<DangerZone />)
-    await user.click(screen.getByRole('button', { name: /reboot jetson/i }))
+    await user.click(screen.getByRole('button', { name: /restart camera box/i }))
 
     // assert
     expect(confirmFn).toHaveBeenCalled()
