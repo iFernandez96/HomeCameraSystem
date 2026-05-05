@@ -218,6 +218,15 @@ async def _add_security_headers(request: Request, call_next):
     # crop bytes themselves.
     elif request.url.path.startswith("/api/face/"):
         response.headers["Cache-Control"] = "no-store"
+    # iter-356.x (security audit D1): snapshots and timelapses are the
+    # same data-sensitivity tier as face crops — captured frames of the
+    # household. Without Cache-Control: no-store a Tailscale Serve proxy
+    # or a shared browser can serve cached media to a session that no
+    # longer carries the auth cookie.
+    elif request.url.path.startswith("/api/snapshots/") or request.url.path.startswith(
+        "/api/timelapses/"
+    ):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 

@@ -117,7 +117,28 @@ async def subscribe(
 
 
 @router.post("/push/unsubscribe")
-async def unsubscribe(payload: Unsubscribe) -> dict[str, bool]:
+async def unsubscribe(
+    payload: Unsubscribe,
+    user: str = Depends(get_current_user),
+) -> dict[str, bool]:
+    # iter-356.x (security audit A2): authed callers can only unsubscribe
+    # endpoints they own. Pre-fix any authed device on the tailnet could
+    # silently remove the owner's push subscription, blinding them to all
+    # detection events. Match by endpoint AND user_id; legacy subs with
+    # user_id is None can be removed by anyone (back-compat for any pre-
+    # iter-205 records still on disk; remove this carve-out once
+    # _is_valid_loaded_sub stops accepting them).
+    target = next(
+        (s for s in push_service.subs if s.get("endpoint") == payload.endpoint),
+        None,
+    )
+    if target is None:
+        # idempotent — already gone
+        return {"ok": False}
+    owner = target.get("user_id")
+    if owner is not None and owner != user:
+        # Don't leak the existence of another user's sub via 404 vs 403.
+        return {"ok": False}
     return {"ok": push_service.remove(payload.endpoint)}
 
 
@@ -238,7 +259,7 @@ async def get_known_filter_options(
     }
 
 
-@router.post("/push/test")
+@router.post("/push/test", dependencies=[Depends(require_role("owner"))])
 async def test_push() -> dict[str, object]:
     sent = await push_service.send_all(
         {

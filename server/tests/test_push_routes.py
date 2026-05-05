@@ -159,6 +159,63 @@ def test_test_push_with_no_keys_returns_zero(client: TestClient, monkeypatch):
     assert body["sent"] == 0
 
 
+def test_given_authed_caller_when_unsubscribing_anothers_endpoint_then_no_op(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """iter-356.x security audit A2 — pin the unsubscribe ownership check.
+
+    Given a subscription owned by 'someone-else' was registered server-
+    side, when the default authed test user (testuser) tries to remove
+    it by endpoint, then the unsubscribe is rejected (returns ok:False)
+    and the subscription remains in push_service.subs.
+    """
+    from app.services.push_service import push_service
+
+    # arrange — seed a sub owned by another user, bypassing the route
+    # so we can simulate the cross-user case directly.
+    push_service.subs.append(
+        {
+            "endpoint": "https://push.example/owned-by-alice",
+            "keys": {"p256dh": "a", "auth": "b"},
+            "user_id": "alice",
+        }
+    )
+    assert any(s["endpoint"] == "https://push.example/owned-by-alice" for s in push_service.subs)
+
+    # act — testuser tries to remove alice's sub
+    r = client.post(
+        "/api/push/unsubscribe",
+        json={"endpoint": "https://push.example/owned-by-alice"},
+    )
+
+    # assert — request succeeded but did NOT remove the foreign sub
+    assert r.status_code == 200
+    assert r.json() == {"ok": False}
+    assert any(
+        s["endpoint"] == "https://push.example/owned-by-alice"
+        for s in push_service.subs
+    ), "foreign sub must still be present"
+
+
+def test_given_authed_caller_when_unsubscribing_own_endpoint_then_removed(
+    client: TestClient,
+):
+    """iter-356.x — happy path: the owner of a sub can still remove it.
+    The /subscribe handler stamps user_id=testuser server-side."""
+    sub = {
+        "endpoint": "https://push.example/mine",
+        "keys": {"p256dh": "a", "auth": "b"},
+    }
+    client.post("/api/push/subscribe", json=sub)
+
+    r = client.post(
+        "/api/push/unsubscribe",
+        json={"endpoint": "https://push.example/mine"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+
 # --- iter-207 (Feature #4 slice 3a): per-user filter routes -----
 
 

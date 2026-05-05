@@ -34,7 +34,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import settings
 from ..services import events_db, recording_service
@@ -123,7 +123,12 @@ class _ExportBody(BaseModel):
     Select-all would exhaust the thread pool). Each id matches the
     `_VALID_EVENT_ID` charset enforced by `recording_service` — same
     regex as the path-param validation on `GET /api/events/{id}/clip`.
+
+    iter-356.x (security audit B1): forbid extras to match every other
+    request-body schema in the codebase — silent acceptance of unknown
+    keys would be a future foot-gun once a second field lands here.
     """
+    model_config = ConfigDict(extra="forbid")
     event_ids: List[str] = Field(..., min_length=1, max_length=_EXPORT_MAX_IDS)
 
 

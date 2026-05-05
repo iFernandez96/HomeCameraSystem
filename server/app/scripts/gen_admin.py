@@ -98,10 +98,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--role",
         choices=users_db.ROLE_VOCAB,
-        default="admin",
+        # iter-356.x (security audit C1): default to viewer (least
+        # privilege). Pre-fix, omitting --role silently created an
+        # admin-equivalent-of-owner account, which made it trivial for
+        # an operator to hand a household member destructive privileges
+        # (reboot / backup / delete events). Force the operator to opt
+        # IN to elevated roles.
+        default="viewer",
         help=(
-            "Role for the created user. owner/family/viewer per "
-            "Feature #3 RBAC; admin retained for legacy compat."
+            "Role for the created user. Defaults to viewer (least "
+            "privilege). Use --role=owner for the first household "
+            "account, family/viewer for everyone else."
         ),
     )
     args = parser.parse_args(argv)
