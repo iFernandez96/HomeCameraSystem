@@ -505,4 +505,19 @@ describe('People page', () => {
     await screen.findByRole('button', { name: /alice/i })
     expect(screen.queryByText(/showing.*of/i)).not.toBeInTheDocument()
   })
+
+  it('given the People page renders, when AT users query for the page heading, then a level-1 sr-only heading is present (iter-356.63: Slice D a11y — sr-only h1 per route)', () => {
+    // arrange
+    listPeople.mockResolvedValue({ people: [] })
+
+    // act
+    renderPeople()
+
+    // assert — the visible "Familiar faces" title is a <p> for
+    // visual reasons (the WatchRibbon owns identity), but AT users
+    // still need a level-1 heading per route.
+    expect(
+      screen.getByRole('heading', { level: 1, name: /familiar faces/i }),
+    ).toBeInTheDocument()
+  })
 })

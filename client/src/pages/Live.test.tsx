@@ -122,6 +122,18 @@ describe('Live page', () => {
     expect(screen.getByTestId('video-tile')).toBeInTheDocument()
   })
 
+  it('given the Live page renders, when AT users query for the page heading, then a level-1 sr-only "Live camera" heading is present (iter-356.63: Slice D a11y — sr-only h1 per route)', () => {
+    // arrange / act
+    render(<Live />)
+
+    // assert — the visible camera-label is now h2 (section heading
+    // "which camera am I looking at"); the route-level h1 is the
+    // sr-only "Live camera" anchor for AT document outline.
+    expect(
+      screen.getByRole('heading', { level: 1, name: /live camera/i }),
+    ).toBeInTheDocument()
+  })
+
   it('snapshot button calls captureSnapshot and opens the preview modal', async () => {
     captureSnapshot.mockResolvedValue({ url: '/snapshots/snap_123.jpg' })
     const user = userEvent.setup()

@@ -122,7 +122,12 @@ export function People() {
             carries identity universally. People opens with a
             directional subhead instead of repeating where you are. */}
         <div className="flex-1 min-w-0">
-          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
+          {/* iter-356.63 (Slice D a11y): sr-only <h1> per route. The
+              visible title is a <p> for visual-rebuild reasons (the
+              WatchRibbon owns identity), but AT users still need a
+              level-1 heading to land on. */}
+          <h1 className="sr-only">Familiar faces</h1>
+          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
             Familiar faces
           </p>
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">

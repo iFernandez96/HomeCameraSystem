@@ -541,7 +541,12 @@ export function ClipModal({
           video region so the user has context before the player even
           renders. Translucent so it doesn't fight the black-backdrop
           aesthetic of the modal. */}
-      <header className="relative flex items-start justify-between gap-3 px-4 pt-3 pb-2 border-b border-white/10 bg-black/30">
+      {/* iter-356.63 (Slice D a11y): was a <header> landmark, but
+          this dialog is itself a landmark — nesting <header> inside
+          role="dialog" makes the dismiss-X read as a "header banner"
+          to AT users. Plain <div> + the visible <h2> below carry the
+          same heading semantics without the bonus landmark. */}
+      <div className="relative flex items-start justify-between gap-3 px-4 pt-3 pb-2 border-b border-white/10 bg-black/30">
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-semibold text-[var(--color-text-primary)] truncate">
             {title}
@@ -565,6 +570,7 @@ export function ClipModal({
           </div>
         </div>
         <button
+          ref={closeRef}
           type="button"
           onClick={onClose}
           aria-label="Close clip viewer"
@@ -575,7 +581,7 @@ export function ClipModal({
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
-      </header>
+      </div>
       {/* iter-342 (mobile G1 from iter-333 broad audit):
           overflow-hidden hard-caps the video region in landscape
           iOS Safari so the iter-331 control row is never pushed
@@ -668,12 +674,13 @@ export function ClipModal({
         </div>
       )}
       {/* iter-356.3b (Maya iter-356.2 Critical 3 deferred): action-bar
-          inversion fix. Pre-iter-356.3b Close was filled brand-blue =
-          "panic button" UX (Maya: "Close is dismissal, never primary
-          action. A primary blue screams 'do this thing.'"). On a
-          non-destructive viewer, no button should be primary — both
-          Close and Save clip are secondary now. closeRef stays so
-          modal-open focus lands on Close (iter-336 a11y). Save clip
+          inversion fix.
+          iter-356.63 (Slice D a11y): the duplicate "Close" button at
+          the bottom (and the desktop-only X in the evidence pane)
+          were both dropped. The header X (top-right) is now the
+          single dismiss surface and receives focus on open via
+          closeRef. AT users no longer encounter "Close clip viewer,
+          Close clip viewer, Close" three times in a row. Save clip
           uses Button primitive's loading state (Maya iter-356.2
           Major: "this is exactly what the primitive was built for"). */}
       <div className="relative px-4 pb-4 flex items-center justify-end gap-3">
@@ -690,15 +697,6 @@ export function ClipModal({
           }
         >
           Save clip
-        </Button>
-        <Button
-          ref={closeRef}
-          variant="secondary"
-          size="md"
-          onClick={onClose}
-          className="flex-1 max-w-xs"
-        >
-          Close
         </Button>
       </div>
       </div>
@@ -720,17 +718,10 @@ export function ClipModal({
               {personLabel ?? 'Unknown person'}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close clip viewer"
-            className="hidden lg:inline-flex shrink-0 items-center justify-center w-9 h-9 rounded-full text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          {/* iter-356.63 (Slice D a11y): dropped the desktop-only X
+              that lived in the evidence pane. The header X is the
+              single close surface; multiple "Close clip viewer"
+              labels confused VoiceOver swipe order. */}
         </div>
         <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] space-y-3">
           <div>

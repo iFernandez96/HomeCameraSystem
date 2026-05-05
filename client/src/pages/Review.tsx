@@ -159,8 +159,12 @@ export function Review() {
       <header className="flex items-baseline justify-between gap-3 mb-4">
         <div>
           {/* iter-356.58: dropped paw-mark H1 in favor of the
-              shell-level WatchRibbon identity. */}
-          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
+              shell-level WatchRibbon identity.
+              iter-356.63 (Slice D a11y): re-add an sr-only <h1> so
+              AT users still get a level-1 heading per route — the
+              visible title remains a <p>. */}
+          <h1 className="sr-only">Review queue</h1>
+          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
             Review queue
           </p>
           {/* iter-356.14 (Frank Round-3 D2): copy rewritten human-

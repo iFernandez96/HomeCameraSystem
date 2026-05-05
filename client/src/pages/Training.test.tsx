@@ -724,6 +724,19 @@ describe('Training page', () => {
     })
   })
 
+  it('given the Training page renders, when AT users query for the page heading, then a level-1 sr-only heading is present (iter-356.63: Slice D a11y — sr-only h1 per route)', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })
+
+    // act
+    renderTraining()
+
+    // assert
+    expect(
+      await screen.findByRole('heading', { level: 1, name: /teach mushu/i }),
+    ).toBeInTheDocument()
+  })
+
   it('test_when_user_cancels_delete_then_no_api_call', async () => {
     // arrange
     listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })

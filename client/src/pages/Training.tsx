@@ -52,7 +52,11 @@ export function Training() {
       <header className="flex items-baseline justify-between gap-3 flex-wrap">
         {/* iter-356.58: dropped page-title H1 + paw mark. */}
         <div>
-          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
+          {/* iter-356.63 (Slice D a11y): sr-only <h1> for AT users.
+              Visible "Teach Mushu" stays a <p> since the WatchRibbon
+              owns the page identity. */}
+          <h1 className="sr-only">Teach Mushu</h1>
+          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
             Teach Mushu
           </p>
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">
@@ -744,7 +748,7 @@ function GalleryView({
                           `/events?person=${encodeURIComponent(f.predicted_name ?? name)}`,
                         )
                       }
-                      className="flex-shrink-0 w-8 h-8 inline-flex items-center justify-center text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] rounded focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+                      className="flex-shrink-0 min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] rounded focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
                       aria-label={`View events from ${f.predicted_name ?? name}`}
                       title={`View events from ${f.predicted_name ?? name}`}
                     >
@@ -841,7 +845,7 @@ function ActionPanel({
                 type="button"
                 disabled={actionInflight}
                 onClick={() => onMoveChip(d.name)}
-                className="px-2 py-1 min-h-[36px] text-xs font-medium bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] disabled:bg-[var(--color-surface)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+                className="px-2 py-1 min-h-[44px] text-xs font-medium bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] disabled:bg-[var(--color-surface)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
               >
                 {_displayName(d.name)}
               </button>
@@ -857,7 +861,7 @@ function ActionPanel({
                 type="button"
                 disabled={actionInflight}
                 onClick={() => setShowNewPersonInput(true)}
-                className="px-2 py-1 min-h-[36px] text-xs font-medium border border-dashed border-[var(--color-border-strong)] hover:border-neutral-500 hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+                className="px-2 py-1 min-h-[44px] text-xs font-medium border border-dashed border-[var(--color-border-strong)] hover:border-neutral-500 hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text-primary)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
               >
                 + New person
               </button>

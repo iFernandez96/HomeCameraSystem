@@ -147,9 +147,14 @@ describe('Events page', () => {
     // iter-356.58 (LAYOUT REBUILD): Events page-title H1 is gone.
     // The shell-level WatchRibbon carries identity. The page now
     // opens with a "Watch log" subhead in the sticky filter bar.
+    // iter-356.63 (Slice D a11y): "Watch log" appears twice now —
+    // once as the visible aria-hidden span and once as the sr-only
+    // <h1>. Match by heading level so we pin the route-anchor h1.
     fetchEvents.mockResolvedValue([])
     render(<Events />)
-    expect(screen.getByText(/watch log/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: /watch log/i }),
+    ).toBeInTheDocument()
   })
 
   it('shows a skeleton loading state then the fetched events', async () => {
@@ -416,8 +421,10 @@ describe('Events page', () => {
       'src',
       '/api/events/1/clip',
     )
-    // Close it.
-    await user.click(screen.getByRole('button', { name: /^close$/i }))
+    // Close it. iter-356.63 (Slice D a11y): the bottom "Close"
+    // button was dropped — only the header X with aria-label
+    // "Close clip viewer" remains.
+    await user.click(screen.getByRole('button', { name: /close clip viewer/i }))
     await waitFor(() =>
       expect(
         screen.queryByRole('dialog', { name: /at the front door/i }),
@@ -1274,6 +1281,60 @@ describe('Events page', () => {
     const radios = group.querySelectorAll('[role="radio"]')
     const labels = Array.from(radios).map((r) => r.textContent?.trim())
     expect(labels).toEqual(['All types', 'Person'])
+  })
+
+  it('given the Events page renders, when AT users query for the page heading, then a level-1 sr-only "Watch log" heading is present (iter-356.63: Slice D a11y — sr-only h1 per route)', async () => {
+    // arrange
+    fetchEvents.mockResolvedValue([])
+
+    // act
+    render(<Events />)
+
+    // assert — the visible "Watch log" span is aria-hidden; AT
+    // users land on the sr-only h1 instead.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: /watch log/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('given the calendar overlay opens, when the user closes it via the X button, then focus returns to the calendar trigger (iter-356.63: Slice D a11y — focus restore)', async () => {
+    // arrange — start with calendar closed, then user opens it via
+    // the trigger; on close focus must return to the trigger so a
+    // keyboard-only user can keep working.
+    window.localStorage.removeItem('homecam:calendarOpen')
+    fetchEvents.mockResolvedValue([])
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    render(<Events />)
+    await waitFor(() =>
+      expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
+    )
+    const trigger = screen.getByRole('button', { name: /show calendar/i })
+
+    // act — open then close.
+    trigger.focus()
+    expect(document.activeElement).toBe(trigger)
+    await user.click(trigger)
+    // The overlay's inner X button (aria-label "Close calendar") is
+    // visible inside the dialog. There's also a div backdrop with
+    // the same aria-label sitting outside, so query inside the
+    // dialog scope.
+    const dialog = await screen.findByRole('dialog', { name: /detection calendar/i })
+    const closeBtn = Array.from(
+      dialog.querySelectorAll('button'),
+    ).find((b) => b.getAttribute('aria-label') === 'Close calendar')
+    expect(closeBtn).toBeTruthy()
+    await user.click(closeBtn!)
+
+    // assert — overlay gone, focus returned to the (re-rendered)
+    // trigger button. Look it up afresh; React may have re-rendered.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /detection calendar/i }),
+      ).not.toBeInTheDocument(),
+    )
+    const triggerAfter = screen.getByRole('button', { name: /show calendar/i })
+    expect(document.activeElement).toBe(triggerAfter)
   })
 })
 

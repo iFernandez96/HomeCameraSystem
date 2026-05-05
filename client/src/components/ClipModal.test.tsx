@@ -70,11 +70,31 @@ describe('ClipModal', () => {
     expect(screen.getByText(/clip unavailable/i)).toBeInTheDocument()
   })
 
-  it('Close button calls onClose', () => {
+  it('given the header X is clicked, when the modal is open, then onClose fires (iter-356.63: single close surface)', () => {
+    // arrange
     const onClose = vi.fn()
     render(<ClipModal event={makeEvent()} onClose={onClose} />)
-    fireEvent.click(screen.getByRole('button', { name: /^close$/i }))
+
+    // act
+    fireEvent.click(screen.getByRole('button', { name: /close clip viewer/i }))
+
+    // assert
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('given the modal is open, when AT users query for close buttons, then exactly one is reachable (iter-356.63: a11y hygiene — was 3, now 1)', () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // act
+    const closes = screen.getAllByRole('button', { name: /close clip viewer/i })
+
+    // assert — pre-iter-356.63 this returned 2 (header X + lg-only
+    // evidence-pane X) plus a "Close" footer button. Now there is
+    // exactly one dismiss surface, which avoids confusing
+    // VoiceOver swipe order ("Close clip viewer, Close clip viewer,
+    // Close").
+    expect(closes).toHaveLength(1)
   })
 
   it('given the backdrop is clicked, when the modal is open, then onClose fires (iter-270)', () => {

@@ -322,11 +322,17 @@ export function Login() {
             // the dark→light bulk migration). White on calico-orange
             // is the readable pair (~5:1 AA); warm-dark on orange
             // rendered the button invisible.
+            // iter-356.63 (Slice D a11y): focus ring color was
+            // accent-default on a bg of accent-default — invisible.
+            // Switched to text-primary (a contrasting dark calico)
+            // so the keyboard-focus indicator actually renders.
+            // outline-offset-2 keeps the ring detached from the
+            // button fill. Pinned by Login.test.tsx.
             `w-full bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-bright)] active:bg-[var(--color-accent-muted)] ` +
             `disabled:opacity-60 disabled:cursor-not-allowed ` +
             `rounded-xl px-4 py-3 min-h-[48px] text-base font-semibold text-white ` +
             `transition-colors duration-150 ` +
-            `focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2`
+            `focus-visible:outline-2 focus-visible:outline-[var(--color-text-primary)] focus-visible:outline-offset-2`
           }
         >
           {submitting ? (

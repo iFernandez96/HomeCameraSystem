@@ -183,6 +183,24 @@ describe('Login page', () => {
     expect(slot.getAttribute('aria-live')).toBe('polite')
   })
 
+  it('given the submit button renders, when AT users tab to it, then the focus-visible outline color differs from the button background (iter-356.63: Slice D a11y — invisible focus ring fix)', () => {
+    // arrange — pre-fix the button had bg-accent-default AND
+    // focus-visible:outline-accent-default, so the keyboard-focus
+    // ring rendered as the same orange as the fill (zero contrast).
+    renderLogin()
+    const submit = screen.getByRole('button', { name: /sign in/i })
+    const cls = submit.className
+
+    // act / assert — focus-ring color must NOT be the same token as
+    // the button bg. The bg uses accent-default; the ring now uses
+    // text-primary.
+    expect(cls).toMatch(/bg-\[var\(--color-accent-default\)\]/)
+    expect(cls).toMatch(/focus-visible:outline-\[var\(--color-text-primary\)\]/)
+    expect(cls).not.toMatch(
+      /focus-visible:outline-\[var\(--color-accent-default\)\]/,
+    )
+  })
+
   // iter-356.1a (Frank #4): error slot reserves height so the submit
   // button doesn't jump up by ~80 px when an error appears mid-tap.
   it('given a wrong-password error renders, then the error slot has min-height so layout stays stable (iter-356.1a)', async () => {
