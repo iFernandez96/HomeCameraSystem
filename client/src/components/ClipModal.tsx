@@ -756,18 +756,19 @@ export function ClipModal({
           with a close button. */}
       <aside
         aria-label="Incident details"
-        // iter-356.67 (iPhone "horrible space at the bottom"): on
-        // mobile the aside was `shrink-0` content-sized while the
-        // sibling video column was `flex-1`. With short evidence
-        // content the aside ended above the modal's pb-safe-area,
-        // exposing modal `bg-black/95` for ~120 px below the last
-        // section — read as dead space. Switched to `flex-1` on
-        // mobile so the aside grows to fill remaining height and
-        // reads as one continuous evidence pane; dropped the
-        // mobile-only `bg-black/40` so empty area inside the aside
-        // blends with the modal backdrop. Desktop keeps shrink-0 +
-        // 320 px column + surface bg via lg: overrides.
-        className="relative flex-1 lg:flex-initial lg:shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto overscroll-contain"
+        // iter-356.67 (iPhone "horrible space at the bottom"):
+        // measured via browser-harness on a 393×852 viewport — the
+        // visible empty band below the last evidence section was
+        // ~430 px aside vs ~250 px of content. Root cause: both
+        // <aside> and the video column carried `flex-1`, so the
+        // modal's flex-col container split 50/50 regardless of
+        // content. The aside grew past its content and exposed the
+        // gap. Fix: aside stays `shrink-0` (content-sized) so the
+        // video column's `flex-1` consumes the remainder, leaving
+        // the aside flush against the modal's pb-safe-area with no
+        // internal dead space. Mobile bg dropped (was `bg-black/40`)
+        // so the modal backdrop reads as one continuous surface.
+        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto overscroll-contain"
       >
         {personLabel && (
           <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
