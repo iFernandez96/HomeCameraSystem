@@ -16,7 +16,7 @@ import {
 } from '../../lib/push'
 import { useToast } from '../../lib/toast'
 import type { PushFilters } from '../../lib/types'
-import { Mono, Row, Section, Toggle } from './parts'
+import { Mono, Row, Section, TimeInput, Toggle } from './parts'
 
 // iter-289: extracted from Settings.tsx (~165 lines of inline JSX +
 // 7 state hooks + 3 handlers + 2 effects). Pre-iter-289 the
@@ -493,48 +493,72 @@ export function NotificationsSection({
           {/* iter-209 (slice 4): time-of-day window. HH:MM 24h local.
               Both blank = no time gating. The Save button disables
               when only one bound is set or either is malformed — UX
-              gate before the route's regex 422s. */}
+              gate before the route's regex 422s.
+
+              Premium-launch slice — Settings accessibility:
+                - Replaced raw `<input type="time">` with the shared
+                  `TimeInput` primitive so this surface inherits the
+                  same iOS-zoom guard, focus-ring tokens, and
+                  disabled-style as DetectionSection.
+                - `allowEmpty` lets the user clear a time field —
+                  empty schedule_start/_end = "no time gating"
+                  (matches the iter-209 wire contract that empty
+                  strings → null on the wire).
+                - `aria-describedby` ties each input to the
+                  schedule alert below so when validation fails,
+                  VO/NVDA users hear the error context whenever
+                  focus returns to the input.
+                - `aria-invalid` flips when the schedule is
+                  malformed so AT announces "invalid entry"
+                  alongside the input. */}
           <div className="flex gap-2">
-            <label className="flex-1">
+            {/* Visible "From" / "To" text + the TimeInput primitive
+                itself. We use a sibling-text + aria-labeled control
+                pattern instead of a `<label>` wrapper because the
+                jsx-a11y/label-has-associated-control rule's heuristic
+                doesn't traverse into custom components — TimeInput
+                renders its own <input> with `aria-label` set, which
+                IS the canonical accessible name. The visible "From"
+                text is paired by spatial locality alone for sighted
+                users, which matches DetectionSection's pattern. */}
+            <div className="flex-1 flex flex-col gap-1">
               <span className="text-sm text-[var(--color-text-primary)]">From</span>
-              <input
-                type="time"
+              <TimeInput
                 value={filtersInput.schedule_start}
-                onChange={(e) =>
-                  setFiltersInput({
-                    ...filtersInput,
-                    schedule_start: e.target.value,
-                  })
+                onChange={(v) =>
+                  setFiltersInput({ ...filtersInput, schedule_start: v })
                 }
-                placeholder="HH:MM"
-                aria-label="Schedule window start time"
-                className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 disabled={!filtersLoaded || filtersSaving}
+                ariaLabel="Schedule window start time"
+                ariaDescribedBy={
+                  !scheduleValid ? 'notifications-schedule-error' : undefined
+                }
+                ariaInvalid={!scheduleValid}
+                allowEmpty
               />
-            </label>
-            <label className="flex-1">
+            </div>
+            <div className="flex-1 flex flex-col gap-1">
               <span className="text-sm text-[var(--color-text-primary)]">To</span>
-              <input
-                type="time"
+              <TimeInput
                 value={filtersInput.schedule_end}
-                onChange={(e) =>
-                  setFiltersInput({
-                    ...filtersInput,
-                    schedule_end: e.target.value,
-                  })
+                onChange={(v) =>
+                  setFiltersInput({ ...filtersInput, schedule_end: v })
                 }
-                placeholder="HH:MM"
-                aria-label="Schedule window end time"
-                className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 disabled={!filtersLoaded || filtersSaving}
+                ariaLabel="Schedule window end time"
+                ariaDescribedBy={
+                  !scheduleValid ? 'notifications-schedule-error' : undefined
+                }
+                ariaInvalid={!scheduleValid}
+                allowEmpty
               />
-            </label>
+            </div>
           </div>
           {!scheduleValid && (
             <p
+              id="notifications-schedule-error"
               className="px-1 text-xs text-[var(--color-danger)]"
               role="alert"
-              aria-label="Schedule window validation error"
             >
               Both From and To must be HH:MM (24-hour). Leave both blank
               for no time gating.

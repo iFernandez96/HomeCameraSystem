@@ -2050,4 +2050,203 @@ describe('Settings page', () => {
     ).toHaveAttribute('aria-selected', 'true')
     expect(window.localStorage.getItem('homecam:settingsTab')).toBe('camera')
   })
+
+  // ─── Premium-launch slice — Settings accessibility ──────────────
+  // Pre-fix the tab list declared role="tab" + aria-selected but had
+  // no `id` or `aria-controls`; panels were raw <section>s with no
+  // role / aria-labelledby. SR rotor heard "tab, 1 of 3, selected"
+  // but jumping to the panel landed on disconnected content. The
+  // slice wires the WAI-ARIA Tabs structural pattern + lifts the
+  // sr-only h1 into a real <main aria-labelledby> landmark.
+
+  it('Given an owner mounts Settings, When the Detection tab renders, Then it carries id="settings-tab-camera" + aria-controls="settings-panel-camera" pointing at a matching role="tabpanel" with aria-labelledby back at the tab (premium-launch slice — Dana #1: complete WAI-ARIA Tabs pattern)', async () => {
+    // arrange
+    _authUser = { username: 'alice', role: 'admin' }
+
+    // act
+    render(<Settings />)
+    await screen.findByRole('tablist', { name: /settings sections/i })
+
+    // assert — tab carries the linkage attributes.
+    const detectionTab = screen.getByRole('tab', { name: /^detection$/i })
+    expect(detectionTab.getAttribute('id')).toBe('settings-tab-camera')
+    expect(detectionTab.getAttribute('aria-controls')).toBe(
+      'settings-panel-camera',
+    )
+
+    // assert — the matching panel exists, has the right role, and
+    // points back at the tab.
+    const panel = document.getElementById('settings-panel-camera')
+    expect(panel).not.toBeNull()
+    expect(panel!.getAttribute('role')).toBe('tabpanel')
+    expect(panel!.getAttribute('aria-labelledby')).toBe('settings-tab-camera')
+    // tabpanel should be focusable so AT users can tab into it.
+    expect(panel!.getAttribute('tabindex')).toBe('0')
+  })
+
+  it('Given the Notifications tab renders, When the panel mounts, Then aria-controls + tabpanel id linkage holds for that tab (every tab gets its own panel — three pairs total)', async () => {
+    // arrange / act
+    render(<Settings />)
+    await screen.findByRole('tablist', { name: /settings sections/i })
+
+    // assert
+    const tab = screen.getByRole('tab', { name: /^notifications$/i })
+    expect(tab.getAttribute('aria-controls')).toBe(
+      'settings-panel-notifications',
+    )
+    const panel = document.getElementById('settings-panel-notifications')
+    expect(panel).not.toBeNull()
+    expect(panel!.getAttribute('role')).toBe('tabpanel')
+    expect(panel!.getAttribute('aria-labelledby')).toBe(
+      'settings-tab-notifications',
+    )
+  })
+
+  it('Given the System tab renders, When the panel mounts, Then aria-controls + tabpanel linkage holds (the system panel consolidates AccountSection + JetsonSection cluster into a single labelled region)', async () => {
+    // arrange — owner so cluster + AccountSection both render.
+    _authUser = { username: 'alice', role: 'admin' }
+
+    // act
+    render(<Settings />)
+    await screen.findByRole('tablist', { name: /settings sections/i })
+
+    // assert
+    const tab = screen.getByRole('tab', { name: /account & system/i })
+    expect(tab.getAttribute('aria-controls')).toBe('settings-panel-system')
+    const panel = document.getElementById('settings-panel-system')
+    expect(panel).not.toBeNull()
+    expect(panel!.getAttribute('role')).toBe('tabpanel')
+    // The consolidated panel hosts both AccountSection AND the
+    // health/maintenance cluster — pin both via descendant content.
+    expect(panel!.querySelector('section')).not.toBeNull()
+  })
+
+  it('Given the Settings page renders, When AT users query landmarks, Then a <section> labelled "Settings" is present (premium-launch slice — Dana #2: SR rotor "Regions" jump anchored to the page title)', async () => {
+    // arrange / act
+    render(<Settings />)
+
+    // assert — App.tsx already provides the route-level <main>
+    // landmark, so Settings uses a <section aria-labelledby> to
+    // avoid nesting two <main> elements. The section is queryable
+    // via role="region" with the h1's text as its accessible name.
+    const region = await screen.findByRole('region', {
+      name: /^settings$/i,
+    })
+    expect(region).toBeInTheDocument()
+    expect(region.tagName.toLowerCase()).toBe('section')
+    // The h1 it references must exist with a matching id.
+    const h1 = document.getElementById('settings-h1')
+    expect(h1).not.toBeNull()
+    expect(h1!.tagName.toLowerCase()).toBe('h1')
+    expect(h1!.textContent?.trim()).toBe('Settings')
+  })
+
+  // ─── Schedule time inputs accessibility (Dana #3 + #4) ─────────
+
+  it('Given push is enabled, When the schedule From/To inputs render, Then they use the shared TimeInput primitive (inputMode="numeric" + same focus-ring + iOS-zoom guard as DetectionSection)', async () => {
+    // arrange — Dana #3: pre-fix NotificationsSection used raw
+    // `<input type="time">` instead of the shared TimeInput
+    // primitive that DetectionSection uses. Replacing them
+    // inherits inputMode="numeric" so mobile NVDA + TalkBack read
+    // the field as a numeric entry surface, plus the same iOS-
+    // zoom guard + focus-ring tokens.
+    getPushState.mockResolvedValue(true)
+    getMyPushFilters.mockResolvedValue({ filters: null })
+
+    // act
+    render(<Settings />)
+    const startInput = await screen.findByLabelText(
+      /schedule window start time/i,
+    )
+    const endInput = await screen.findByLabelText(
+      /schedule window end time/i,
+    )
+
+    // assert — both inputs are <input type="time" inputMode="numeric">.
+    expect(startInput.tagName.toLowerCase()).toBe('input')
+    expect(startInput.getAttribute('type')).toBe('time')
+    expect(startInput.getAttribute('inputmode')).toBe('numeric')
+    expect(endInput.getAttribute('inputmode')).toBe('numeric')
+  })
+
+  it('Given the schedule is malformed (only one bound set), When the validation alert renders, Then both time inputs carry aria-describedby pointing at the alert id (premium-launch slice — Dana #4: SR users hear error context on focus return)', async () => {
+    // arrange
+    getPushState.mockResolvedValue(true)
+    getMyPushFilters.mockResolvedValue({ filters: null })
+    const user = userEvent.setup()
+    render(<Settings />)
+    const startInput = await screen.findByLabelText(
+      /schedule window start time/i,
+    )
+    await waitFor(() => expect(startInput).not.toBeDisabled())
+
+    // act — type only into start; leave end blank → invalid.
+    await user.type(startInput, '09:00')
+
+    // assert — alert has the predictable id, and BOTH inputs
+    // point at it via aria-describedby. jsdom doesn't compute the
+    // accessible name for `<p role="alert">` from text content the
+    // way browsers do, so we query by visible text first then
+    // assert the id on the matched node.
+    const alert = await screen.findByText(
+      /both from and to must be hh:mm/i,
+    )
+    expect(alert.getAttribute('id')).toBe('notifications-schedule-error')
+
+    const start = screen.getByLabelText(/schedule window start time/i)
+    const end = screen.getByLabelText(/schedule window end time/i)
+    expect(start.getAttribute('aria-describedby')).toBe(
+      'notifications-schedule-error',
+    )
+    expect(end.getAttribute('aria-describedby')).toBe(
+      'notifications-schedule-error',
+    )
+    // aria-invalid flips so VO/NVDA announce "invalid entry"
+    // alongside the input.
+    expect(start.getAttribute('aria-invalid')).toBe('true')
+    expect(end.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('Given the schedule is valid (both bounds blank), When the inputs render, Then aria-describedby is NOT set (no false-error description; SR users only hear the linkage when there IS an error)', async () => {
+    // arrange / act — pre-typing state: both blank → valid (no
+    // gating).
+    getPushState.mockResolvedValue(true)
+    getMyPushFilters.mockResolvedValue({ filters: null })
+    render(<Settings />)
+    const start = await screen.findByLabelText(/schedule window start time/i)
+    await waitFor(() => expect(start).not.toBeDisabled())
+
+    // assert — no aria-describedby pointer + no aria-invalid.
+    expect(start.getAttribute('aria-describedby')).toBeNull()
+    expect(start.getAttribute('aria-invalid')).toBeNull()
+  })
+
+  it('Given the user clears a previously-set start time, When the empty change fires, Then the input passes the empty value through (allowEmpty prop — fixes the "user can never clear a time" bug for the schedule consumer)', async () => {
+    // arrange — pre-fix the TimeInput primitive ignored empty
+    // change events (`if (e.target.value) onChange(...)`) so a
+    // user could never clear a previously-set schedule time.
+    // The new `allowEmpty` prop opts the schedule consumer into
+    // empty-pass-through. Test by typing then clearing.
+    getPushState.mockResolvedValue(true)
+    getMyPushFilters.mockResolvedValue({
+      filters: {
+        cameras: null,
+        person_names: null,
+        schedule_window: { start: '21:00', end: '06:00' },
+      },
+    })
+    const user = userEvent.setup()
+    render(<Settings />)
+    const start = (await screen.findByLabelText(
+      /schedule window start time/i,
+    )) as HTMLInputElement
+    await waitFor(() => expect(start.value).toBe('21:00'))
+
+    // act — clear the input.
+    await user.clear(start)
+
+    // assert — the value updated to empty (would have stayed
+    // "21:00" pre-fix because empty changes were swallowed).
+    await waitFor(() => expect(start.value).toBe(''))
+  })
 })

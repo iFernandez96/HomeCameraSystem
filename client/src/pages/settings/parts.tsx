@@ -110,33 +110,65 @@ export function Toggle({
   )
 }
 
-// HH:MM time input. Used by the iter-209 Schedule window block.
+// HH:MM time input. Used by the iter-209 Schedule window block in
+// DetectionSection AND by the NotificationsSection per-user schedule
+// (iter-209 + premium-launch slice).
 // iter-356.3d: tokens applied (was bg-[var(--color-surface-raised)] / border-[var(--color-border-strong)]).
+//
+// Premium-launch slice — accessibility extensions for the
+// NotificationsSection schedule consumer:
+//   - `ariaDescribedBy` ties the input to a sibling validation
+//     message (the Notifications schedule alert at line ~454)
+//     so SR users hear the error context when focus returns.
+//   - `ariaInvalid` flips on validation failure so VO/NVDA
+//     announce "invalid entry" alongside the input.
+//   - `allowEmpty` lets the consumer treat empty input as a
+//     value (NotificationsSection schedule semantics: empty =
+//     no time gating). DetectionSection leaves this unset
+//     because its schedule UI gates on a separate toggle, not
+//     on emptying the time inputs.
+//   - `inputMode="numeric"` so mobile NVDA / TalkBack reads the
+//     field as a number entry surface, not plain text.
 export function TimeInput({
   value,
   onChange,
   disabled,
   ariaLabel,
+  ariaDescribedBy,
+  ariaInvalid,
+  allowEmpty,
 }: {
   value: string
   onChange: (v: string) => void
   disabled?: boolean
   ariaLabel?: string
+  ariaDescribedBy?: string
+  ariaInvalid?: boolean
+  /**
+   * When true, an empty input triggers `onChange('')` so the
+   * consumer can clear the value. Default false preserves the
+   * iter-209 DetectionSection behaviour (ignore empty change
+   * events; clearing is handled by a separate toggle).
+   */
+  allowEmpty?: boolean
 }) {
   return (
     <input
       type="time"
+      inputMode="numeric"
       value={value}
       disabled={disabled}
       onChange={(e) => {
-        if (e.target.value) onChange(e.target.value)
+        if (allowEmpty || e.target.value) onChange(e.target.value)
       }}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
+      aria-invalid={ariaInvalid || undefined}
       // iter-356.66 (iOS oddities sweep): time inputs at text-sm
       // (14 px after Slice-A bump) under iOS Safari's 16-px floor
       // trigger zoom-on-focus. Schedule editing on a phone reflowed
       // the whole settings page on every tap. Bumped to text-base.
-      className="bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base tabular-nums border border-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
+      className="bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base tabular-nums border border-[var(--color-border)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50 aria-[invalid=true]:border-[var(--color-danger)]"
     />
   )
 }

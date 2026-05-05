@@ -127,12 +127,37 @@ export function Settings() {
     // The 3-tab data model (`SettingsTab` = camera | notifications
     // | system) is preserved verbatim so the 92-test suite stays
     // green. Only the rendering shape changes.
-    <div className="lg:flex lg:gap-6 lg:max-w-5xl lg:mx-auto lg:px-6 lg:py-6">
+    // Premium-launch slice — Settings accessibility:
+    //   - Tabs get `aria-controls` + `id` to point at panels.
+    //   - Each panel block becomes a `<div role="tabpanel"
+    //     id="settings-panel-X" aria-labelledby="settings-tab-X"
+    //     tabIndex={0}>` so AT users get a labelled region they
+    //     can focus + jump to from the matching tab.
+    //   - The system panel's two pieces (AccountSection + the
+    //     JetsonSection/TimelapsesSection/DebugSection/DangerZone
+    //     cluster) consolidate into ONE tabpanel block. In
+    //     production only one tab's content renders at a time, so
+    //     this re-orders only the test-mode (`_renderAllTabs`)
+    //     view. Existing tests query by role+name, not by
+    //     position, so order changes are safe.
+    //   - The outer wrapper is a `<section aria-labelledby>` (NOT
+    //     a nested `<main>`) — App.tsx already provides the
+    //     route-level `<main id="main">` landmark. A second
+    //     `<main>` would create a nested-landmark violation. The
+    //     section pattern still gives Dana an anchored region the
+    //     SR rotor announces by name.
+    <section
+      aria-labelledby="settings-h1"
+      className="lg:flex lg:gap-6 lg:max-w-5xl lg:mx-auto lg:px-6 lg:py-6"
+    >
       {/* iter-356.65 (Mira critic): per-route sr-only h1 was added
           on Live/Events/People/Training/Review in Slice D but Settings
           was missed. Without it the SR rotor jumps from the tab nav
-          straight to section h2s with no level-1 anchor. */}
-      <h1 className="sr-only">Settings</h1>
+          straight to section h2s with no level-1 anchor. The
+          surrounding `<section aria-labelledby>` lifts this h1
+          into a labelled region — Dana's "Settings" rotor jump
+          (or "Regions" rotor) now lands here. */}
+      <h1 id="settings-h1" className="sr-only">Settings</h1>
       <SettingsTabs
         active={activeTab}
         onChange={onTabChange}
@@ -140,26 +165,49 @@ export function Settings() {
       />
 
       <div className="flex-1 min-w-0 space-y-6 px-4 pb-8 pt-4 lg:px-0 lg:pt-0">
-        {showSystemPanel && <AccountSection />}
-
-        {showNotificationsPanel && (
-          <NotificationsSection
-            pushSubsCount={status?.push_subs_count ?? null}
-          />
+        {showCameraPanel && isOwner && (
+          <div
+            role="tabpanel"
+            id="settings-panel-camera"
+            aria-labelledby="settings-tab-camera"
+            tabIndex={0}
+            className="focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
+          >
+            <DetectionSection />
+          </div>
         )}
 
-        {showCameraPanel && isOwner && <DetectionSection />}
+        {showNotificationsPanel && (
+          <div
+            role="tabpanel"
+            id="settings-panel-notifications"
+            aria-labelledby="settings-tab-notifications"
+            tabIndex={0}
+            className="focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
+          >
+            <NotificationsSection
+              pushSubsCount={status?.push_subs_count ?? null}
+            />
+          </div>
+        )}
 
         {showSystemPanel && (
-          <>
+          <div
+            role="tabpanel"
+            id="settings-panel-system"
+            aria-labelledby="settings-tab-system"
+            tabIndex={0}
+            className="space-y-6 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
+          >
+            <AccountSection />
             <JetsonSection status={status} />
             {isOwner && <TimelapsesSection />}
             <DebugSection />
             {isOwner && <DangerZone />}
-          </>
+          </div>
         )}
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -271,6 +319,16 @@ function SettingsTabs({
             }}
             type="button"
             role="tab"
+            // Premium-launch slice — Settings tabs ARIA wiring.
+            // Pre-fix tabs declared role="tab" + aria-selected
+            // but had no `id` or `aria-controls`. SR rotor heard
+            // "tab, 1 of 3, selected" but jumping to panel
+            // content landed on raw <section>s with no announced
+            // relationship to the tab. The matching panels
+            // (settings-panel-{id}) are wrapped in role="tabpanel"
+            // + aria-labelledby below.
+            id={`settings-tab-${t.id}`}
+            aria-controls={`settings-panel-${t.id}`}
             aria-selected={isActive}
             tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(t.id)}
