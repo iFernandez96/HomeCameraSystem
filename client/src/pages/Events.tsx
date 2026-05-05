@@ -990,24 +990,29 @@ export function Events() {
           </div>
         ) : null}
       </header>
-      {/* iter-356.66 (real-device user feedback round 2): floating
-          calendar button. Mobile-only (lg:hidden) — desktop has the
-          permanent heatmap in the right rail. Position fixed at
-          calc(56px + safe-area-top + 8px) below the WatchRibbon,
-          right: 16px from edge. z-30 sits above content, below
-          modals (z-40+). The button takes itself out of normal
-          flow so the title row in the header above no longer needs
-          to balance it; user sees "Watch log + Last 100" naturally
-          left-aligned and the calendar floats top-right always. */}
+      {/* iter-356.66 (real-device user feedback round 3): top-right
+          floating position overlapped the in-header "Last 100" text
+          ("L..." peeking from behind the calendar circle). Moved to
+          a bottom-right FAB pattern instead:
+            - sits above the BottomNav (5rem + safe-area-bottom)
+            - right: 12 px from edge
+            - 56-px round button with elevated shadow + accent fill
+              when the calendar overlay is open
+            - mobile-only (lg:hidden) — desktop heatmap lives in the
+              right rail, no toggle needed
+          Bottom-right is the conventional mobile FAB position
+          (Gmail / Instagram / Inbox) and lands directly under the
+          right thumb's natural arc on a 6.7" phone. No overlap with
+          any header content; visible at all scroll positions. */}
       <button
         type="button"
         onClick={() => setCalendarOpen((v) => !v)}
         aria-label={calendarOpen ? 'Hide calendar' : 'Show calendar'}
         aria-pressed={calendarOpen}
-        className={`lg:hidden fixed top-[calc(56px+env(safe-area-inset-top)+8px)] right-3 z-30 inline-flex items-center justify-center w-11 h-11 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+        className={`lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+12px)] right-3 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
           calendarOpen
-            ? 'bg-[var(--color-accent-default)] text-white ring-1 ring-[var(--color-accent-default)]'
-            : 'bg-[var(--color-surface)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
+            ? 'bg-[var(--color-accent-default)] text-white ring-2 ring-[var(--color-accent-default)]'
+            : 'bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
         }`}
       >
         <CalendarIcon />
