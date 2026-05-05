@@ -142,17 +142,21 @@ function AppShell() {
         // sticky-top now starts BELOW the ribbon (56px) instead of
         // the old generic 64px.
         // iter-356.66 (user "can you just let me scroll a bit downward
-        // to show them please?"): pb extended by ~120 px (the
-        // CatLayer strip height = SPRITE_HEIGHT + 56 + the 80-px
-        // bottom offset). Pre-fix, main's pb was just 5rem +
-        // safe-area-bottom so content scrolled flush against the
-        // BottomNav, leaving zero room for cats to peek out when the
-        // user reached the end of a list. Now: scrolling all the way
-        // to the bottom reveals the ambient cats walking ABOVE the
-        // BottomNav, making them feel like part of the page rather
-        // than an overlay. Desktop (lg+) keeps the original pb-6
-        // because lg has no BottomNav and the SideRail handles nav.
-        className={`flex-1 overflow-y-auto overscroll-y-contain pb-[calc(5rem+env(safe-area-inset-bottom)+7.5rem)] lg:pb-6 w-full ${
+        // to show them please?"): on /live the pb is extended by
+        // ~120 px (the CatLayer strip height = SPRITE_HEIGHT + 56 +
+        // the 80-px bottom offset) so scrolling to the end reveals
+        // the ambient cats walking ABOVE the BottomNav. CatLayer
+        // only mounts on /live (see isLiveRoute below), so other
+        // routes use the base nav-clearance pb only — pre-gating
+        // they got 120 px of empty cream on iPhone with no cats to
+        // fill it, the "horrible bottom space" report. Desktop (lg+)
+        // keeps the original pb-6 because lg has no BottomNav and
+        // the SideRail handles nav.
+        className={`flex-1 overflow-y-auto overscroll-y-contain ${
+          isLiveRoute
+            ? 'pb-[calc(5rem+env(safe-area-inset-bottom)+7.5rem)]'
+            : 'pb-[calc(5rem+env(safe-area-inset-bottom))]'
+        } lg:pb-6 w-full ${
           showShell ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)]' : ''
         }`}
         style={
