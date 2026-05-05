@@ -240,6 +240,70 @@ class DetectionPayload(BaseModel):
     # within tolerance — otherwise it stays null and the UI just shows the
     # generic label. Trimmed and length-capped to keep label rendering sane.
     person_name: str | None = Field(default=None, min_length=1, max_length=64)
+    # iter-357 (multi-person face-recog): list of every recognized
+    # face in the frame, in detection-confidence order. Worker fans
+    # out the face-recog pass over up to `HOMECAM_MAX_PERSONS_FACE_RECOG`
+    # (default 4) person bboxes and aggregates the matches. The
+    # legacy `person_name` above remains the FIRST match (or null
+    # when the list is empty) so old clients/tests + the iter-216
+    # SQLite `events.person_name` indexed column don't change shape.
+    # Cap at 16 names (matches the worker-side ceiling) × 64 chars
+    # per name — same per-name bounds as `person_name`.
+    person_names: list[str] | None = Field(
+        default=None, max_length=16,
+    )
+
+    @model_validator(mode="after")
+    def _normalize_person_fields(self) -> "DetectionPayload":
+        """Pin three invariants on the person_name / person_names pair:
+
+        1. Every entry in `person_names` must satisfy the same
+           per-name bounds as `person_name` (1..64 chars, non-empty).
+           Pydantic's `max_length=16` only caps the LIST length;
+           per-item validation is done here so a malformed worker
+           can't inject zero-length / oversized strings via the
+           list path.
+
+        2. If both `person_name` and `person_names` are set, the
+           legacy field must equal `person_names[0]` (worker
+           convention: first match = legacy name). Mismatched values
+           reject as 422 — the alternative is silently picking one
+           which would mask a worker bug.
+
+        3. If only `person_names` is set, derive
+           `person_name = person_names[0]` so the iter-216 SQLite
+           write path + every search-by-name code path keeps working
+           without each consumer needing to also read `person_names`.
+
+        4. If only `person_name` is set, leave `person_names = None`
+           — old workers shouldn't get a synthetic single-element
+           list inserted into their events. The UI normalizes via
+           `event.person_names ?? (event.person_name ? [event.person_name] : null)`.
+        """
+        if self.person_names is not None:
+            for name in self.person_names:
+                if not isinstance(name, str) or not name:
+                    raise ValueError(
+                        "person_names entries must be non-empty strings",
+                    )
+                if len(name) > 64:
+                    raise ValueError(
+                        "person_names entries must be <= 64 chars",
+                    )
+            if self.person_name is None and self.person_names:
+                # Bypass model_config frozen-ness via __dict__ assignment;
+                # post-validation mutation is the standard Pydantic v2
+                # idiom inside model_validator(mode="after").
+                object.__setattr__(self, "person_name", self.person_names[0])
+            elif (
+                self.person_name is not None
+                and self.person_names
+                and self.person_names[0] != self.person_name
+            ):
+                raise ValueError(
+                    "person_name must equal person_names[0] when both are set",
+                )
+        return self
 
 
 @router.get("/detection/config")
@@ -339,6 +403,7 @@ async def publish_detection(payload: DetectionPayload) -> dict[str, object]:
         camera_id=payload.camera_id,
         thumb_url=payload.thumb_url,
         person_name=payload.person_name,
+        person_names=payload.person_names,
         clip_url=payload.clip_url,
         event_id=payload.id,
     )
@@ -365,14 +430,33 @@ async def _send_push(evt: dict) -> None:
     # When the worker matched a known face, surface the name in the
     # notification title — "Israel detected" reads better than "Person
     # detected" on the lock-screen.
+    #
+    # iter-357 (multi-person face-recog): when several known faces
+    # were matched in the same event, the lock-screen title fans
+    # out as "Israel & Sheenal detected" (2 names) or "Israel +2
+    # others detected" (3+ names) — preserves the iter-188
+    # name-first scanability without overflowing the lock-screen
+    # title cap on Android (~65 chars). The legacy single-person
+    # path is unchanged when `person_names` is absent or has only
+    # one entry.
     person_name = evt.get("person_name")
+    person_names = evt.get("person_names") or []
     label = evt.get("label", "")
     score = float(evt.get("score", 0.0))
-    title = (
-        "{} detected".format(person_name.title())
-        if person_name
-        else "{} detected".format(label.title())
-    )
+    if person_names and len(person_names) > 1:
+        if len(person_names) == 2:
+            who = "{} & {}".format(
+                person_names[0].title(), person_names[1].title(),
+            )
+        else:
+            who = "{} +{} others".format(
+                person_names[0].title(), len(person_names) - 1,
+            )
+        title = "{} detected".format(who)
+    elif person_name:
+        title = "{} detected".format(person_name.title())
+    else:
+        title = "{} detected".format(label.title())
     # iter-188 (Feature #7): include the detection thumbnail URL as
     # `image` in the push payload so Chrome/Edge/Firefox render it
     # as the notification's hero image. Lets the user decide "is this

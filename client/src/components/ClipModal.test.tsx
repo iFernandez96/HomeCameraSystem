@@ -740,4 +740,58 @@ describe('ClipModal', () => {
     expect(screen.getByText(/low confidence/i)).toBeInTheDocument()
     expect(screen.getByText('42%')).toBeInTheDocument()
   })
+
+  // ─── iter-357 multi-person face-recognition rendering ────────────
+
+  it('Given a multi-person event, When the WHO panel renders, Then the first matched name takes the prominent display row and the rest appear under "with"', () => {
+    // arrange — iter-357: 3-person event. First name keeps the
+    // iter-356 display-3xl treatment so a single-person event
+    // reads identically; remaining names render as a calmer
+    // secondary line so the "Who" panel doesn't blow out the
+    // 320 px desktop aside.
+    const ev = makeEvent({
+      label: 'person',
+      person_name: 'israel',
+      person_names: ['israel', 'sheenal', 'coco'],
+    })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — primary name is in the prominent display row.
+    // (use getAllByText because the title also contains the
+    // names; we just need to confirm presence.)
+    const israels = screen.getAllByText(/israel/i)
+    expect(israels.length).toBeGreaterThan(0)
+    // Secondary line lists the other names with the "with" prefix.
+    expect(screen.getByText(/with sheenal & coco/i)).toBeInTheDocument()
+  })
+
+  it('Given a single-person event, When the WHO panel renders, Then NO "with" secondary line appears (single-person path is unchanged from pre-iter-357)', () => {
+    // arrange / act — backward-compat sentinel. A pre-iter-357
+    // event with only `person_name` set must render the same
+    // shape as before; the secondary line only appears when
+    // `person_names.length > 1`.
+    const ev = makeEvent({ label: 'person', person_name: 'alice' })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.queryByText(/^with /i)).not.toBeInTheDocument()
+  })
+
+  it('Given a multi-person event, When the dialog aria-label is queried, Then the title fans out to multiple names so the SR announcement is "Israel & Sheenal at the front door, ..."', () => {
+    // arrange / act
+    const ev = makeEvent({
+      label: 'person',
+      person_name: 'israel',
+      person_names: ['israel', 'sheenal'],
+    })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — the role="dialog" element carries the multi-name
+    // title via aria-label so VO announces "Israel & Sheenal at
+    // the front door" on dialog open instead of just "Israel".
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.getAttribute('aria-label')).toMatch(
+      /israel & sheenal at the front door/i,
+    )
+  })
 })

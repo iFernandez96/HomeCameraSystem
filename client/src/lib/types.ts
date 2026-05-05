@@ -56,8 +56,29 @@ export type DetectionEvent = {
    * Face-recognition match for the top person bbox, when the worker has
    * a known-faces database loaded. Absent / null when no face was matched
    * within tolerance.
+   *
+   * iter-357 (multi-person face-recog): when the event matched
+   * multiple people, this field stays as the FIRST matched name
+   * for backward compat (the iter-216 SQLite indexed column +
+   * every pre-iter-357 client read path keeps working). The full
+   * match list is in `person_names` below.
    */
   person_name?: string | null
+  /**
+   * iter-357 — full list of recognized faces for this event, in
+   * detection-confidence order, deduped case-insensitively. Set
+   * by the worker only when face recognition matched at least one
+   * person; absent / null on legacy single-person events and on
+   * events with no recognized faces. When present and non-empty,
+   * `person_names[0]` always equals `person_name` (server-side
+   * Pydantic invariant — see `_internal.py::DetectionPayload`).
+   *
+   * Consumers that just want to render "every name on this event"
+   * should normalize via:
+   *   const names = event.person_names ??
+   *                 (event.person_name ? [event.person_name] : [])
+   */
+  person_names?: string[] | null
   /**
    * URL of the per-event MP4 clip, when the host-side recorder
    * (iter-202 `detection/recording.py`) wrote one for this event_id.

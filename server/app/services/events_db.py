@@ -62,18 +62,19 @@ from .event_bus import DetectionEventDict
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
-    id            TEXT PRIMARY KEY,
-    ts            REAL NOT NULL,
-    camera_id     TEXT NOT NULL,
-    label         TEXT NOT NULL,
-    score         REAL NOT NULL,
-    person_name   TEXT,
-    thumb_url     TEXT,
-    clip_url      TEXT,
-    boxes_json    TEXT NOT NULL DEFAULT '[]',
-    v             INTEGER NOT NULL DEFAULT 1,
-    type          TEXT NOT NULL DEFAULT 'detection',
-    seen          INTEGER NOT NULL DEFAULT 0
+    id                 TEXT PRIMARY KEY,
+    ts                 REAL NOT NULL,
+    camera_id          TEXT NOT NULL,
+    label              TEXT NOT NULL,
+    score              REAL NOT NULL,
+    person_name        TEXT,
+    thumb_url          TEXT,
+    clip_url           TEXT,
+    boxes_json         TEXT NOT NULL DEFAULT '[]',
+    v                  INTEGER NOT NULL DEFAULT 1,
+    type               TEXT NOT NULL DEFAULT 'detection',
+    seen               INTEGER NOT NULL DEFAULT 0,
+    person_names_json  TEXT
 );
 CREATE INDEX IF NOT EXISTS events_ts_desc ON events(ts DESC);
 CREATE INDEX IF NOT EXISTS events_camera_ts ON events(camera_id, ts DESC);
@@ -86,6 +87,27 @@ CREATE INDEX IF NOT EXISTS events_person_ts ON events(person_name, ts DESC);
 -- Idempotent CREATE INDEX IF NOT EXISTS — safe on re-init.
 CREATE INDEX IF NOT EXISTS events_label_ts ON events(label, ts DESC);
 """
+
+
+# iter-357 (multi-person face-recog): legacy installs pre-date the
+# `person_names_json` column. SQLite's `ALTER TABLE ADD COLUMN` is
+# non-conditional, so we PRAGMA-check before issuing it (same shape
+# as `_ensure_seen_column` at iter-248). The new column is nullable
+# (no DEFAULT) — events written by a pre-iter-357 worker / older
+# row store NULL there, and `_row_to_event` reads NULL back as the
+# `person_names: None` legacy semantic. No backfill needed: the
+# existing `person_name` column still serves the iter-22 single-
+# match case for old rows. The indexed `events_person_ts` covers
+# search by FIRST matched name without an extra index on
+# person_names_json — secondary names in a multi-person event are
+# searchable only via post-filter today (acceptable bound: in a
+# 2-user household a multi-person event is the rare case).
+def _ensure_person_names_column(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "person_names_json" not in cols:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN person_names_json TEXT"
+        )
 
 
 # iter-248: schema migration for installs that pre-date the `seen`
@@ -133,6 +155,7 @@ def init_db(path: Path) -> None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
         _ensure_seen_column(conn)
+        _ensure_person_names_column(conn)
         conn.commit()
     # Belt-and-braces chmod for legacy installs where the file
     # already exists with looser perms. No-op on read-only mounts.
@@ -164,11 +187,23 @@ def insert_event(path: Path, event: DetectionEventDict) -> bool:
     (the indexable filters are camera_id, person_name, ts).
     """
     with _connect(path) as conn:
+        # iter-357: `person_names_json` carries the multi-person
+        # match list (if any) as JSON. Stored as NULL when the
+        # event has no list (legacy single-person semantic) so
+        # `_row_to_event` reads it back as `person_names: None`.
+        # JSON-encoded only when non-empty so we don't store the
+        # noisy `"[]"` for every single-person event.
+        person_names = event.get("person_names")
+        if person_names:
+            person_names_json: str | None = json.dumps(person_names)
+        else:
+            person_names_json = None
         cur = conn.execute(
             "INSERT OR IGNORE INTO events "
             "(id, ts, camera_id, label, score, person_name, "
-            "thumb_url, clip_url, boxes_json, v, type) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "thumb_url, clip_url, boxes_json, v, type, "
+            "person_names_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event["id"],
                 event["ts"],
@@ -181,6 +216,7 @@ def insert_event(path: Path, event: DetectionEventDict) -> bool:
                 json.dumps(event.get("boxes", [])),
                 event.get("v", 1),
                 event.get("type", "detection"),
+                person_names_json,
             ),
         )
         conn.commit()
@@ -196,6 +232,33 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
         # crash the listing — empty boxes is a cleaner degradation
         # than a 500 on /api/events.
         boxes = []
+    # iter-357: row may not carry `person_names_json` at all on
+    # SQLite Row objects from a CONNECTION whose read predates the
+    # column migration (rare — `_ensure_person_names_column` runs
+    # on every init_db) OR rows from a row factory that doesn't
+    # know the new column. `try/except KeyError` covers both legacy
+    # paths cleanly. NULL column or empty/malformed JSON → None
+    # (legacy single-person semantic).
+    try:
+        pn_raw = row["person_names_json"]
+    except (KeyError, IndexError):
+        pn_raw = None
+    person_names: list[str] | None
+    if pn_raw:
+        try:
+            decoded = json.loads(pn_raw)
+            if (
+                isinstance(decoded, list)
+                and decoded
+                and all(isinstance(n, str) and n for n in decoded)
+            ):
+                person_names = decoded
+            else:
+                person_names = None
+        except (TypeError, ValueError):
+            person_names = None
+    else:
+        person_names = None
     return {
         "v": int(row["v"]),
         "type": row["type"],
@@ -207,6 +270,7 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
         "boxes": boxes,
         "thumb_url": row["thumb_url"],
         "person_name": row["person_name"],
+        "person_names": person_names,
         "clip_url": row["clip_url"],
     }
 

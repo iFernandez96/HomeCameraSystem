@@ -74,6 +74,77 @@ except Exception:
 # absent → "unknown" so sidecars still record the field consistently.
 _SW_REV = os.getenv("HOMECAM_SW_REV", "unknown")
 
+# iter-357 (multi-person face-recog): bounded fan-out over the
+# person bboxes for face recognition. Pre-iter-357 only the
+# single highest-confidence person bbox got the face-region +
+# recognize_in_crop pass; other people in frame contributed zero
+# face captures and zero recognized names. The cap protects the
+# Nano: each HOG face-locate is ~200 ms on a 720 p crop, so an
+# unbounded loop on a frame with 10 detected people would burn
+# ~2 s of CPU before the cooldown gate clears. With the default
+# cap of 4 the worst-case is ~800 ms once per cooldown period (5 s
+# default) which holds the worker under one full frame's slack.
+# Setting `HOMECAM_MAX_PERSONS_FACE_RECOG=1` reverts to the
+# single-person path. Setting `=0` disables face recognition for
+# multi-person events entirely (useful if an operator hits a
+# thermal cliff and wants to keep people-as-overlay-only). The
+# value is read once at startup — no per-frame env lookup.
+def _read_max_persons():
+    """Read HOMECAM_MAX_PERSONS_FACE_RECOG at startup. Default 4.
+    Negative values clamp to 0; non-integer strings fall back to 4.
+    Returns int."""
+    raw = os.getenv("HOMECAM_MAX_PERSONS_FACE_RECOG", "4")
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return 4
+    if v < 0:
+        return 0
+    # Hard ceiling at 16 to keep an over-eager operator from
+    # accidentally setting "999" and stalling the worker on a
+    # crowd scene. The SSD model itself caps at 32 boxes via
+    # detectNet, but face-recog cost is the bound that matters.
+    return min(v, 16)
+
+
+_MAX_PERSONS_FACE_RECOG = _read_max_persons()
+
+
+def _bbox_iou(a_left, a_top, a_right, a_bot, b_left, b_top, b_right, b_bot):
+    """Pixel-coord IoU between two axis-aligned bboxes. Returns
+    0.0 when either box is degenerate. Used in the multi-person
+    face-recog loop to skip a candidate person bbox that overlaps
+    heavily with one we've already processed (SSD occasionally
+    returns two bboxes for the same physical person, especially
+    when the person is partially occluded — those duplicates would
+    otherwise produce duplicate face captures with the same face).
+    Pure-Python; no numpy import needed (caller has integers
+    already from `_clamped_person_bbox`)."""
+    inter_left = max(a_left, b_left)
+    inter_top = max(a_top, b_top)
+    inter_right = min(a_right, b_right)
+    inter_bot = min(a_bot, b_bot)
+    iw = inter_right - inter_left
+    ih = inter_bot - inter_top
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    inter = float(iw * ih)
+    a_area = float(max(0, a_right - a_left) * max(0, a_bot - a_top))
+    b_area = float(max(0, b_right - b_left) * max(0, b_bot - b_top))
+    union = a_area + b_area - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+# 0.5 IoU threshold for the duplicate-person check. Picked because
+# legitimate two-people-side-by-side detections IoU at ~0.1-0.2
+# (clear horizontal separation), whereas the SSD double-detect of
+# a partially-occluded person typically lands at IoU > 0.7 (same
+# bounding region with sub-pixel jitter). 0.5 is the standard
+# COCO-style "match" threshold and gives clear margin both ways.
+_PERSON_DEDUP_IOU = 0.5
+
 from box_norm import normalize_box  # noqa: E402
 from mediamtx_watchdog import MediaMtxWatchdog  # noqa: E402
 from memory_guard import MemoryGuard, read_mem_available_mb  # noqa: E402
@@ -1240,115 +1311,204 @@ def main():
         # a known-faces database loaded, try to put a name on them. We run
         # this only after the cooldown gate (~once per emit) so the CPU
         # cost (~200ms hog detect + encode) is bounded.
+        #
+        # iter-357 (multi-person): instead of picking only the
+        # highest-confidence person bbox, iterate the top-N person
+        # detections (sorted by confidence desc, capped at
+        # `_MAX_PERSONS_FACE_RECOG`, IoU-deduped at 0.5 against
+        # already-processed boxes). Each box gets its own face-region
+        # crop + recognize_in_crop pass, so a family of four standing
+        # apart in the FOV all get face captures + matched names —
+        # not just the closest one. `person_name` (legacy single-name
+        # field) becomes the FIRST matched name for backward compat;
+        # `person_names` (new list field) carries every matched name
+        # in detection-confidence order, deduped case-insensitively.
         person_name = None
-        if recognizer is not None and top_label == "person":
+        person_names = []
+        if (
+            recognizer is not None
+            and top_label == "person"
+            and _MAX_PERSONS_FACE_RECOG > 0
+        ):
             person_dets = [d for d, l in kept if l == "person"]
-            top_person = max(person_dets, key=lambda d: d.Confidence)
+            # Sort by confidence DESC so we process the strongest
+            # detections first — both for the IoU dedup (the kept
+            # box is the higher-confidence twin) and for the legacy
+            # `person_name = person_names[0]` semantic (first name
+            # = first-detected person).
+            person_dets_sorted = sorted(
+                person_dets, key=lambda d: d.Confidence, reverse=True,
+            )
             try:
                 rgb = cuda_to_rgb_numpy(img)
-                crop = crop_face_region(rgb, top_person)
-                if crop is not None:
-                    # iter-356.62 (slice 1): build sidecar v2 capture
-                    # metadata once. Worker has the source-frame info
-                    # the recognizer can't see (camera_id, source res,
-                    # detection bbox + score). The recognizer layers
-                    # face-specific fields on top per face. The full
-                    # person crop is saved separately below with
-                    # kind="person".
-                    person_clamp = _clamped_person_bbox(rgb, top_person)
-                    src_w = int(w)
-                    src_h = int(h)
-                    if person_clamp is not None and src_w > 0 and src_h > 0:
-                        p_left, p_top, p_right, p_bot = person_clamp
-                        bbox_pixels = [p_left, p_top, p_right, p_bot]
-                        bbox_norm = [
-                            p_left / float(src_w),
-                            p_top / float(src_h),
-                            p_right / float(src_w),
-                            p_bot / float(src_h),
-                        ]
-                    else:
-                        bbox_pixels = None
-                        bbox_norm = None
-                    capture_meta = {
-                        "source": {
-                            "w": src_w,
-                            "h": src_h,
-                            "camera_id": camera_id,
-                        },
-                        "model": {
-                            "name": model,
-                            "version": os.getenv(
-                                "HOMECAM_MODEL_VERSION", "trt-fp16",
-                            ),
-                            "floor": RuntimeConfig.DETECT_FLOOR,
-                        },
-                        "detection": {
-                            "label": top_label,
-                            "score": float(top_person.Confidence),
-                            "bbox_pixels": bbox_pixels,
-                            "bbox_norm": bbox_norm,
-                        },
-                        "pad_frac": 0.30,
-                        "jpeg_quality": 95,
-                        "infer_ms": metrics.infer_ms_recent or None,
-                        "gear": metrics.gear,
-                        "sw_rev": _SW_REV,
-                    }
-                    # The face-region crop's origin within the source
-                    # frame is `(left, top)` — needed so the recognizer
-                    # can translate face bboxes back to source coords
-                    # for `face_bbox_within_source`. crop_face_region
-                    # uses `top` as the slice's row 0; pass the same
-                    # origin here.
-                    if person_clamp is not None:
-                        face_origin_xy = (person_clamp[0], person_clamp[1])
-                    else:
-                        face_origin_xy = None
-                    person_name = recognizer.recognize_in_crop(
-                        crop,
-                        capture_dir=face_captures_dir or None,
-                        event_id=event_id,
-                        ts_ms=int(now * 1000),
-                        capture_meta=capture_meta,
-                        face_origin_xy=face_origin_xy,
-                    )
-                    # iter-356.62 (slice 1): save the FULL person crop
-                    # alongside the face captures. PIL is already a
-                    # transitive dep of face_recog/recognizer.py — lazy
-                    # import keeps the worker boot-cost unchanged for
-                    # operators with PERSON_CAPTURES_DIR disabled.
-                    if person_captures_dir and person_clamp is not None:
-                        try:
-                            from PIL import Image as _PIL_Image
-                            import io as _io
-                            from face_recog.capture import (
-                                save_person_capture,
+                src_w = int(w)
+                src_h = int(h)
+                # Pre-compute clamped bboxes for the whole batch so
+                # the IoU dedup can compare candidates against the
+                # already-accepted set without re-clamping each time.
+                # Each entry: (det, clamp) where clamp is the (left,
+                # top, right, bot) tuple OR None for degenerate boxes.
+                with_clamps = [
+                    (d, _clamped_person_bbox(rgb, d)) for d in person_dets_sorted
+                ]
+                # Greedy selection: walk in confidence order, accept
+                # if (a) bbox is non-degenerate, (b) IoU < 0.5 with
+                # every already-accepted bbox, (c) we haven't hit
+                # the per-event cap.
+                selected_clamps = []
+                selected_dets = []
+                for det, clamp in with_clamps:
+                    if clamp is None:
+                        continue
+                    is_dup = False
+                    for prev in selected_clamps:
+                        if (
+                            _bbox_iou(
+                                clamp[0], clamp[1], clamp[2], clamp[3],
+                                prev[0], prev[1], prev[2], prev[3],
                             )
-                            p_left, p_top, p_right, p_bot = person_clamp
-                            person_crop_arr = rgb[p_top:p_bot, p_left:p_right]
-                            if person_crop_arr.size > 0:
-                                _img = _PIL_Image.fromarray(person_crop_arr)
-                                _buf = _io.BytesIO()
-                                _img.save(_buf, format="JPEG", quality=95)
-                                save_person_capture(
-                                    capture_dir=person_captures_dir,
-                                    name=person_name,
-                                    event_id=event_id,
-                                    ts_ms=int(now * 1000),
-                                    jpeg_bytes=_buf.getvalue(),
-                                    predicted_name=person_name,
-                                    meta=dict(capture_meta, kind="person"),
+                            >= _PERSON_DEDUP_IOU
+                        ):
+                            is_dup = True
+                            break
+                    if is_dup:
+                        continue
+                    selected_dets.append(det)
+                    selected_clamps.append(clamp)
+                    if len(selected_dets) >= _MAX_PERSONS_FACE_RECOG:
+                        break
+
+                # Per-person face-recog + capture pass. Each
+                # iteration is best-effort: a single failed
+                # recognize_in_crop must NOT abort the loop or drop
+                # other people from the event. `seen_lower` dedups
+                # matched names case-insensitively across persons
+                # (two SSD bboxes both matching "Alice" produce one
+                # "Alice" in person_names).
+                seen_lower = set()
+                for idx, (det, clamp) in enumerate(
+                    zip(selected_dets, selected_clamps)
+                ):
+                    try:
+                        crop = crop_face_region(rgb, det)
+                        if crop is None:
+                            continue
+                        p_left, p_top, p_right, p_bot = clamp
+                        if src_w > 0 and src_h > 0:
+                            bbox_pixels = [p_left, p_top, p_right, p_bot]
+                            bbox_norm = [
+                                p_left / float(src_w),
+                                p_top / float(src_h),
+                                p_right / float(src_w),
+                                p_bot / float(src_h),
+                            ]
+                        else:
+                            bbox_pixels = None
+                            bbox_norm = None
+                        # iter-357: per-person capture_meta carries
+                        # `person_index` so a downstream operator
+                        # auditing /face_captures/<event_id>_*.json
+                        # can tell whether two crops came from the
+                        # same physical person (same event, two
+                        # face crops in one face-region) or two
+                        # different people (different person_index).
+                        capture_meta = {
+                            "source": {
+                                "w": src_w,
+                                "h": src_h,
+                                "camera_id": camera_id,
+                            },
+                            "model": {
+                                "name": model,
+                                "version": os.getenv(
+                                    "HOMECAM_MODEL_VERSION", "trt-fp16",
+                                ),
+                                "floor": RuntimeConfig.DETECT_FLOOR,
+                            },
+                            "detection": {
+                                "label": top_label,
+                                "score": float(det.Confidence),
+                                "bbox_pixels": bbox_pixels,
+                                "bbox_norm": bbox_norm,
+                            },
+                            "pad_frac": 0.30,
+                            "jpeg_quality": 95,
+                            "infer_ms": metrics.infer_ms_recent or None,
+                            "gear": metrics.gear,
+                            "sw_rev": _SW_REV,
+                            "person_index": idx,
+                        }
+                        face_origin_xy = (p_left, p_top)
+                        # ts_ms offset by `idx * 1000` so concurrent
+                        # captures across persons in the SAME event
+                        # don't collide on the recognizer's
+                        # `(ts_ms or 0) + idx` filename suffix
+                        # (which dedups WITHIN one person's face
+                        # crops but not ACROSS persons).
+                        per_person_ts_ms = int(now * 1000) + (idx * 1000)
+                        matched = recognizer.recognize_in_crop(
+                            crop,
+                            capture_dir=face_captures_dir or None,
+                            event_id=event_id,
+                            ts_ms=per_person_ts_ms,
+                            capture_meta=capture_meta,
+                            face_origin_xy=face_origin_xy,
+                        )
+                        if matched:
+                            lo = matched.lower()
+                            if lo not in seen_lower:
+                                seen_lower.add(lo)
+                                person_names.append(matched)
+                        # Save the FULL person crop alongside the
+                        # face captures (iter-356.62 slice 1
+                        # contract preserved). One full-body crop
+                        # PER selected person bbox.
+                        if person_captures_dir:
+                            try:
+                                from PIL import Image as _PIL_Image
+                                import io as _io
+                                from face_recog.capture import (
+                                    save_person_capture,
                                 )
-                        except Exception as _pe:
-                            print(
-                                "[detect] person capture save failed: {}".format(_pe),
-                                flush=True,
-                            )
+                                person_crop_arr = rgb[p_top:p_bot, p_left:p_right]
+                                if person_crop_arr.size > 0:
+                                    _img = _PIL_Image.fromarray(person_crop_arr)
+                                    _buf = _io.BytesIO()
+                                    _img.save(_buf, format="JPEG", quality=95)
+                                    save_person_capture(
+                                        capture_dir=person_captures_dir,
+                                        name=matched,
+                                        event_id=event_id,
+                                        ts_ms=per_person_ts_ms,
+                                        jpeg_bytes=_buf.getvalue(),
+                                        predicted_name=matched,
+                                        meta=dict(capture_meta, kind="person"),
+                                    )
+                            except Exception as _pe:
+                                print(
+                                    "[detect] person capture save failed: {}".format(_pe),
+                                    flush=True,
+                                )
+                    except Exception as _per_e:
+                        # Per-person glitch must NOT drop other
+                        # selected people. Log and continue.
+                        print(
+                            "[detect] per-person face match failed (idx={}): {}".format(
+                                idx, _per_e,
+                            ),
+                            flush=True,
+                        )
+                        continue
+                # Legacy single-name field = first matched name
+                # (or None when nobody recognized). Preserves the
+                # iter-22..iter-356 wire shape for old clients/tests
+                # that read `event.person_name` directly.
+                person_name = person_names[0] if person_names else None
             except Exception as e:
                 # Don't let a face-recognition glitch block the event.
                 print("[detect] face match failed: {}".format(e), flush=True)
                 person_name = None
+                person_names = []
 
         # iter-284 (camera-library-usage-auditor A2): release the
         # cudaImage dmabuf BEFORE the network-I/O-heavy emit path.
@@ -1424,13 +1584,32 @@ def main():
             payload["thumb_url"] = thumb_url
         if person_name:
             payload["person_name"] = person_name
+        # iter-357 (multi-person): emit `person_names` only when a
+        # match was made — null/absent = "no recognized faces" stays
+        # consistent with the iter-22 person_name semantics. The
+        # field is omitted (not sent as []) when empty so older
+        # server validators that don't recognize the key still
+        # accept the payload (Pydantic `extra='forbid'` rejects
+        # unknown KEYS, but missing-default-None on the new field
+        # accepts payloads that don't carry it).
+        if person_names:
+            payload["person_names"] = person_names
         if clip_url:
             payload["clip_url"] = clip_url
         post_event(event_url, payload)
         metrics.emitted += 1
 
         elapsed = max(time.time() - started, 0.001)
-        name_suffix = " (face={})".format(person_name) if person_name else ""
+        # iter-357: log line surfaces the full match list when
+        # multi-person — operator running `journalctl -u homecam-detect
+        # -f` sees the actual fan-out happen, not just the first name.
+        if person_names:
+            if len(person_names) > 1:
+                name_suffix = " (faces={})".format(",".join(person_names))
+            else:
+                name_suffix = " (face={})".format(person_names[0])
+        else:
+            name_suffix = ""
         print(
             "[detect] {} score={:.2f} count={}{} | frames={} infer={} ({:.1f}/s) emitted={} gear={}".format(
                 top_label,

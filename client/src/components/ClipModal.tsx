@@ -7,6 +7,7 @@ import {
   clockTime,
   eventTitle,
   humanCameraName,
+  recognizedNames,
 } from '../lib/eventLabel'
 import { useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
@@ -515,7 +516,14 @@ export function ClipModal({
   const title = eventTitle(event)
   const timeLabel = `${clockTime(event.ts)} · ${humanCameraName(event.camera_id)}`
   const dialogLabel = `${title}, ${absoluteTime(event.ts)}`
-  const personLabel = event.person_name ? event.person_name : null
+  // iter-357 (multi-person face-recog): collapse the legacy
+  // `person_name` + new `person_names` into one ordered list so
+  // the WHO panel + header chip can fan out gracefully when the
+  // event matched several people. Single-person events go through
+  // the same path with `recognizedNames` returning [name] — the
+  // length-1 branch below renders identically to pre-iter-357.
+  const matchedNames = recognizedNames(event)
+  const personLabel = matchedNames.length > 0 ? matchedNames[0] : null
   const matchConfidence =
     typeof event.score === 'number' && event.score > 0 ? Math.round(event.score * 100) : null
 
@@ -782,9 +790,24 @@ export function ClipModal({
               <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
                 Who
               </div>
-              <div className="font-display text-xl font-bold mt-0.5">
+              {/* iter-357 (multi-person face-recog): when the event
+                  matched several known faces, render every name
+                  on its own line under the WHO eyebrow. The first
+                  name keeps the iter-356 prominent display
+                  treatment (font-display 3xl) so a single-person
+                  event reads identically to pre-iter-357; extra
+                  names render as a comma-separated subline so a
+                  3-person event reads "Israel / & Sheenal & Coco"
+                  (display weight + secondary line) without
+                  overflowing the 320 px aside on desktop. */}
+              <div className="font-display text-xl font-bold mt-0.5 capitalize">
                 {personLabel}
               </div>
+              {matchedNames.length > 1 ? (
+                <div className="mt-1 text-sm text-white/65 lg:text-[var(--color-text-secondary)] capitalize">
+                  with {matchedNames.slice(1).join(' & ')}
+                </div>
+              ) : null}
             </div>
           </div>
         )}

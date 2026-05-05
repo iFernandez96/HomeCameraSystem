@@ -38,6 +38,7 @@ import {
   absoluteTime,
   clockTime,
   eventTitle,
+  recognizedNames,
   relativeTime,
 } from '../lib/eventLabel'
 
@@ -256,6 +257,24 @@ const EventCard = memo(EventCardImpl, (prev, next) => {
   //   to keep these stable across renders)
   if (prev.event.id !== next.event.id) return false
   if (prev.event.person_name !== next.event.person_name) return false
+  // iter-357 (multi-person face-recog): the new `person_names`
+  // list can change in the same backfill scenarios as the legacy
+  // `person_name` field (worker re-runs face-recog on a clip
+  // that was indecisive at detection time). Cheap structural
+  // compare via JSON.stringify is bounded: list is capped at 16
+  // names × 64 chars per server validation, so worst case ~1 KiB
+  // per call. 99% of events are single-person where both sides
+  // are null and the cheap === short-circuit fires before the
+  // serialize.
+  const prevNames = prev.event.person_names
+  const nextNames = next.event.person_names
+  if (prevNames !== nextNames) {
+    if (
+      JSON.stringify(prevNames ?? null) !== JSON.stringify(nextNames ?? null)
+    ) {
+      return false
+    }
+  }
   if (prev.event.clip_url !== next.event.clip_url) return false
   if (prev.event.thumb_url !== next.event.thumb_url) return false
   // iter-343 (perf A1 from iter-333 broad audit): label may
@@ -310,7 +329,13 @@ function EventCardImpl({
     | 'div'
   const hasClip = !!e.clip_url
   const title = eventTitle(e)
-  const isRecognized = !!e.person_name
+  // iter-357 (multi-person face-recog): defense in depth — the
+  // server-side Pydantic invariant guarantees `person_name` is set
+  // when `person_names` is, but the client predicate covers both
+  // shapes so a future server / pathological wire payload that
+  // skips the derive step still surfaces the chip + recognized-
+  // event aria treatment.
+  const isRecognized = !!e.person_name || !!(e.person_names && e.person_names.length > 0)
 
   // iter-356.62 (bug #2 — user "no way to delete any of the logs"):
   // swipe-left-to-reveal-delete. Touch only — pointer/mouse users
@@ -509,11 +534,44 @@ function EventCardImpl({
             {relativeTime(e.ts, now)}
           </div>
           {isRecognized ? (
-            <div className="mt-auto pt-1.5">
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-success-bg)] text-[var(--color-success)] border border-[var(--color-success-border)]">
-                <FaceMatchIcon />
-                {e.person_name}
-              </span>
+            <div className="mt-auto pt-1.5 flex items-center gap-1 flex-wrap">
+              {/* iter-357 (multi-person face-recog): when several
+                  known faces matched the event, render one chip
+                  per name (capped at 3 visible + a "+N" overflow
+                  pill so the card height stays bounded on dense
+                  rows). The matched-face icon stays only on the
+                  first chip — repeating it next to every name is
+                  visual noise. The chip stack is queryable by
+                  role/name for VO + NVDA so a SR user hears
+                  "Israel, button. Sheenal, button." instead of
+                  the pre-iter-357 single name. */}
+              {(() => {
+                const names = recognizedNames(e)
+                const VISIBLE = 3
+                const visible = names.slice(0, VISIBLE)
+                const overflow = names.length - visible.length
+                return (
+                  <>
+                    {visible.map((name, i) => (
+                      <span
+                        key={name}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-success-bg)] text-[var(--color-success)] border border-[var(--color-success-border)]"
+                      >
+                        {i === 0 ? <FaceMatchIcon /> : null}
+                        {name}
+                      </span>
+                    ))}
+                    {overflow > 0 ? (
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)] border border-[var(--color-border)] tabular-nums"
+                        aria-label={`${overflow} more ${overflow === 1 ? 'person' : 'people'} matched`}
+                      >
+                        +{overflow}
+                      </span>
+                    ) : null}
+                  </>
+                )
+              })()}
             </div>
           ) : null}
         </div>

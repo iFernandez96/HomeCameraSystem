@@ -483,4 +483,121 @@ describe('EventList', () => {
       screen.queryByRole('button', { name: /delete event from/i }),
     ).not.toBeInTheDocument()
   })
+
+  // ─── iter-357 multi-person face-recognition rendering ────────────
+
+  it('Given a multi-person event with two recognized names, When the card renders, Then both names render as separate chips next to the matched-face icon', () => {
+    // arrange — iter-357: a family of two arrives; both faces matched.
+    render(
+      <EventList
+        events={[
+          evt({
+            label: 'person',
+            person_name: 'israel',
+            person_names: ['israel', 'sheenal'],
+            score: 0.92,
+            thumb_url: '/snapshots/x.jpg',
+          }),
+        ]}
+      />,
+    )
+
+    // assert — both names appear in the chip row. The title also
+    // renders the names (eventTitle path), so use the chip-only
+    // class signature to disambiguate.
+    const chips = screen.getAllByText(/^(israel|sheenal)$/)
+    expect(chips.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('Given a multi-person event with FOUR recognized names, When the card renders, Then the first three render as chips and a "+1" overflow pill summarizes the rest', () => {
+    // arrange — iter-357 chip cap at 3 visible. Card height stays
+    // bounded; full list is in the title + ClipModal "Who" panel.
+    render(
+      <EventList
+        events={[
+          evt({
+            label: 'person',
+            person_name: 'israel',
+            person_names: ['israel', 'sheenal', 'coco', 'mushu'],
+            score: 0.92,
+            thumb_url: '/snapshots/x.jpg',
+          }),
+        ]}
+      />,
+    )
+
+    // assert — first 3 names visible as chips.
+    expect(screen.getAllByText(/^israel$/)[0]).toBeInTheDocument()
+    expect(screen.getAllByText(/^sheenal$/)[0]).toBeInTheDocument()
+    expect(screen.getAllByText(/^coco$/)[0]).toBeInTheDocument()
+    // 4th name NOT rendered as a chip.
+    expect(screen.queryByText(/^mushu$/)).not.toBeInTheDocument()
+    // Overflow pill present with accessible name for SR users.
+    expect(
+      screen.getByLabelText(/1 more person matched/i),
+    ).toBeInTheDocument()
+  })
+
+  it('Given a multi-person event with FIVE recognized names, When the card renders, Then the overflow pill announces "2 more people matched" (plural)', () => {
+    // arrange
+    render(
+      <EventList
+        events={[
+          evt({
+            label: 'person',
+            person_name: 'israel',
+            person_names: ['israel', 'sheenal', 'coco', 'mushu', 'panther'],
+          }),
+        ]}
+      />,
+    )
+
+    // assert — plural noun in the SR-only overflow label.
+    expect(
+      screen.getByLabelText(/2 more people matched/i),
+    ).toBeInTheDocument()
+  })
+
+  it('Given a multi-person event title is built, When rendered, Then the card title fans out to "Name1 & Name2 at the front door"', () => {
+    // arrange / act
+    render(
+      <EventList
+        events={[
+          evt({
+            label: 'person',
+            person_name: 'israel',
+            person_names: ['israel', 'sheenal'],
+          }),
+        ]}
+      />,
+    )
+
+    // assert — fan-out title format pinned at the integration level
+    // (EventList consumes eventTitle which has its own unit tests).
+    expect(
+      screen.getByText(/israel & sheenal at the front door/i),
+    ).toBeInTheDocument()
+  })
+
+  it('Given an event with person_names but no legacy person_name (server-side normalization gap), When rendered, Then the chip + title still render correctly via recognizedNames fallback', () => {
+    // arrange — defense in depth: even if a future server skips
+    // the derive step, the client-side helper covers the case.
+    render(
+      <EventList
+        events={[
+          evt({
+            label: 'person',
+            person_name: null,
+            person_names: ['israel'],
+          }),
+        ]}
+      />,
+    )
+
+    // assert — chip renders and title fans through the names branch.
+    expect(screen.getAllByText(/^israel$/).length).toBeGreaterThanOrEqual(1)
+    expect(
+      screen.getByText(/israel at the front door/i),
+    ).toBeInTheDocument()
+  })
 })

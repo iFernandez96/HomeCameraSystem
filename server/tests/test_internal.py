@@ -394,6 +394,62 @@ async def test_push_title_falls_back_to_label_when_no_person_name(
     assert payload["title"] == "Person detected"
 
 
+async def test_push_title_combines_two_names_with_ampersand_when_multi_person(
+    client: TestClient,
+):
+    """iter-357 multi-person push title: when the worker matched two
+    known faces, the lock-screen title fans out as 'Israel & Sheenal
+    detected' — preserves the iter-188 name-first scanability without
+    hiding the second match behind a generic label."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    captured = AsyncMock(return_value=0)
+    with patch("app.services.push_service.push_service.send_matching", captured):
+        client.post(
+            "/api/_internal/event",
+            json=_payload(
+                person_name="israel", person_names=["israel", "sheenal"],
+            ),
+        )
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+        assert captured.called
+
+    payload = captured.call_args.args[1]
+    assert payload["title"] == "Israel & Sheenal detected"
+
+
+async def test_push_title_uses_plus_others_when_three_or_more_people(
+    client: TestClient,
+):
+    """iter-357 multi-person push title: 3+ names → 'Israel +2 others
+    detected'. Caps the lock-screen title length on Android (~65 chars)
+    while still surfacing the most-confident match by name."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    captured = AsyncMock(return_value=0)
+    with patch("app.services.push_service.push_service.send_matching", captured):
+        client.post(
+            "/api/_internal/event",
+            json=_payload(
+                person_name="israel",
+                person_names=["israel", "sheenal", "coco"],
+            ),
+        )
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+        assert captured.called
+
+    payload = captured.call_args.args[1]
+    assert payload["title"] == "Israel +2 others detected"
+
+
 async def test_push_payload_includes_image_when_thumb_url_set(
     client: TestClient,
 ):
@@ -1377,3 +1433,177 @@ def test_internal_event_dropped_when_detection_paused(client: TestClient):
     # Restore for any later tests in this module.
     if initial_active:
         client.post("/api/detection/toggle")
+
+
+# ─── iter-357 multi-person face-recognition payload tests ────────────────
+
+
+def test_given_legacy_single_person_name_only_when_event_posted_then_accepted_and_person_names_is_none(
+    client: TestClient,
+):
+    """Backward compat sentinel: a worker that emits ONLY the iter-22
+    `person_name` field (no `person_names`) must continue to round-trip
+    cleanly. The new `person_names` column reads back as None — old
+    clients reading only `person_name` see no shape change."""
+    # arrange
+    payload = _payload(person_name="alice")
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 200, r.text
+    history = client.get("/api/events?limit=1").json()
+    assert history[0]["person_name"] == "alice"
+    # Field IS present in the wire shape (for clients that already
+    # support it) but is null on legacy events.
+    assert history[0].get("person_names") is None
+
+
+def test_given_multi_person_names_only_when_event_posted_then_legacy_field_derived_from_first(
+    client: TestClient,
+):
+    """Server-side normalization invariant: when the worker emits ONLY
+    `person_names` (without setting `person_name`), the route fills
+    `person_name = person_names[0]` so the iter-216 SQLite indexed
+    column + every search-by-name code path keeps working."""
+    # arrange
+    payload = _payload(person_names=["israel", "sheenal"])
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 200, r.text
+    items = client.get("/api/events?limit=1").json()
+    assert items[0]["person_name"] == "israel"
+    assert items[0]["person_names"] == ["israel", "sheenal"]
+
+
+def test_given_multi_person_payload_when_event_posted_then_round_trips_through_db(
+    client: TestClient,
+):
+    """The iter-357 person_names_json column round-trips a multi-person
+    list through INSERT + SELECT cleanly — proves the schema migration
+    + JSON encode/decode + _row_to_event path are wired end to end."""
+    # arrange
+    names = ["alice", "bob", "charlie"]
+    payload = _payload(person_name="alice", person_names=names)
+
+    # act
+    post = client.post("/api/_internal/event", json=payload)
+    history = client.get("/api/events?limit=1")
+
+    # assert
+    assert post.status_code == 200, post.text
+    assert history.status_code == 200
+    items = history.json()
+    assert items[0]["person_names"] == names
+
+
+def test_given_payload_with_person_name_mismatching_first_of_person_names_when_posted_then_rejected_422(
+    client: TestClient,
+):
+    """The Pydantic model_validator rejects payloads where the legacy
+    `person_name` doesn't match `person_names[0]`. Silently picking
+    one would mask a worker bug — 422 is the right loudness."""
+    # arrange — worker bug: legacy field disagrees with list head.
+    payload = _payload(person_name="alice", person_names=["bob", "alice"])
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+def test_given_person_names_with_empty_string_entry_when_posted_then_rejected_422(
+    client: TestClient,
+):
+    """Per-item bound: each entry in person_names must be 1..64 chars
+    non-empty. Pydantic's `max_length=16` only caps the LIST; the
+    model_validator enforces per-item bounds so a malformed worker
+    can't inject zero-length names that render as a blank chip."""
+    # arrange
+    payload = _payload(person_names=["alice", ""])
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+def test_given_person_names_with_too_long_entry_when_posted_then_rejected_422(
+    client: TestClient,
+):
+    # arrange — 65-char name exceeds the per-entry 64-char bound.
+    long_name = "a" * 65
+    payload = _payload(person_names=[long_name])
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+def test_given_person_names_list_over_cap_when_posted_then_rejected_422(
+    client: TestClient,
+):
+    """List-level bound: 16 entries max. A worker that ignores its own
+    HOMECAM_MAX_PERSONS_FACE_RECOG cap (or a malicious payload over a
+    forged loopback) can't pump arbitrary lists into the bus."""
+    # arrange — 17 entries (cap + 1).
+    too_many = ["p{}".format(i) for i in range(17)]
+    payload = _payload(person_names=too_many)
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+def test_given_multi_person_event_when_published_then_websocket_carries_person_names(
+    client: TestClient,
+):
+    """The new field flows over the WebSocket too — clients listening
+    to `/api/events/ws` see person_names on the live event payload, not
+    just on the REST history endpoint."""
+    # arrange — iter-168 origin-gate requires the same-origin
+    # `Origin: http://testserver` header on WS upgrades.
+    same_origin = {"origin": "http://testserver"}
+    with client.websocket_connect("/api/events/ws", headers=same_origin) as ws:
+        payload = _payload(
+            person_name="alice", person_names=["alice", "bob"],
+        )
+        post = client.post("/api/_internal/event", json=payload)
+        assert post.status_code == 200, post.text
+
+        # act — receive the broadcast.
+        evt = ws.receive_json()
+
+    # assert
+    assert evt["person_name"] == "alice"
+    assert evt["person_names"] == ["alice", "bob"]
+
+
+def test_given_event_with_no_face_match_when_posted_then_both_fields_absent_or_null(
+    client: TestClient,
+):
+    """The iter-22 / iter-357 dormant case: worker had no match. Both
+    fields end up null (or absent) in the stored event — the UI
+    `recognizedNames` helper returns [] and renders the generic label
+    branch."""
+    # arrange — no person fields set.
+    payload = _payload()
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 200, r.text
+    items = client.get("/api/events?limit=1").json()
+    assert items[0].get("person_name") in (None, "")
+    assert items[0].get("person_names") is None

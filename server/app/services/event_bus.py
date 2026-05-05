@@ -38,6 +38,16 @@ class DetectionEventDict(TypedDict):
     boxes: list[BoxDict]
     thumb_url: str | None
     person_name: str | None
+    # iter-357 (multi-person face-recog): full match list for events
+    # where the worker fanned out face-recognition across multiple
+    # person bboxes. `person_name` above stays the FIRST match for
+    # backward compat with the iter-22 wire shape and the iter-216
+    # SQLite indexed column. `person_names` carries every match (in
+    # detection-confidence order, deduped case-insensitively). When
+    # the worker is single-person OR didn't match anyone, this is
+    # None — older clients reading only `person_name` keep working
+    # unchanged.
+    person_names: list[str] | None
     # iter-204 (Feature #1 slice 4): URL of the per-event MP4 clip
     # (iter-201 storage + iter-202 host-side recorder). Null when
     # the recorder isn't deployed yet OR the event_id wasn't picked
@@ -207,6 +217,7 @@ def make_detection_event(
     camera_id: str = "cam1",
     thumb_url: str | None = None,
     person_name: str | None = None,
+    person_names: list[str] | None = None,
     clip_url: str | None = None,
     event_id: str | None = None,
 ) -> DetectionEventDict:
@@ -226,6 +237,13 @@ def make_detection_event(
     None (legacy / non-recording call paths like the simulator), fall
     back to a server-generated uuid — preserves the pre-iter-247
     behaviour for the 99% of callers that don't care.
+
+    iter-357 (multi-person face-recog): `person_names` is the optional
+    full match list. None when the call site is single-person or
+    didn't match anyone (legacy semantic). When set, the FIRST entry
+    matches `person_name` (validated upstream by DetectionPayload's
+    model_validator). Sample-data factories in tests can pass either
+    field; the route handler at /api/_internal/event normalizes both.
     """
     return {
         "v": 1,
@@ -238,5 +256,6 @@ def make_detection_event(
         "boxes": boxes,  # type: ignore[typeddict-item]
         "thumb_url": thumb_url,
         "person_name": person_name,
+        "person_names": person_names,
         "clip_url": clip_url,
     }
