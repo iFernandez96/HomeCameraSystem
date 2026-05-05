@@ -14,7 +14,19 @@ export function BottomNav() {
       // iter-356.25 (light theme): white surface + warm-tan top border.
       // 95% opacity backdrop-blur for glass-on-cream effect against
       // the page bg as the user scrolls content under it.
-      className="fixed bottom-0 inset-x-0 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] pb-[env(safe-area-inset-bottom)] z-10 shadow-[var(--shadow-card)]"
+      //
+      // iter-356.66 (real-device user feedback "on iOS the bottom is
+      // too lifted"): the iOS home-indicator inset (env(safe-area-
+      // inset-bottom) ≈ 34 px on a notched iPhone) was being padded
+      // FULLY beneath the nav icons, leaving a 34-px empty bg band
+      // between labels and the home indicator. Apple's HIG only asks
+      // for tap-targets to stay clear of the gesture zone, not for
+      // the full inset to be reserved as empty padding. Subtract
+      // ~14 px so the icons sit closer to the screen edge while still
+      // leaving ~20 px clearance for the swipe-up gesture. On Android
+      // (zero safe-area-inset-bottom) max(0, …) collapses to zero so
+      // the nav touches the screen edge as before. */}
+      className="fixed bottom-0 inset-x-0 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] pb-[max(0px,calc(env(safe-area-inset-bottom)-14px))] z-10 shadow-[var(--shadow-card)]"
     >
       <div className="flex">
         {tabs.map((t) => (
