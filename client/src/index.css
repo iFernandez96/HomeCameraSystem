@@ -545,3 +545,22 @@ html {
 .slider:disabled::-webkit-slider-thumb {
   cursor: not-allowed;
 }
+
+/* iter-356.64 / mobile-redesign Slice B: sentry-cat handover sparkle.
+   When the rotating sentry flips slot (every 30 min) the headline
+   span remounts with a fresh `key={cat}` — this 600ms intro plays
+   once on each handover so the user catches the change as a quick
+   shimmer rather than a silent text swap. The global
+   prefers-reduced-motion @media block above clamps the duration to
+   0.01ms × 1 iteration, leaving the final keyframe state (opacity 1,
+   no transform) — i.e. reduced-motion users see the new cat name
+   appear instantly with no animation. */
+@keyframes sentry-sparkle {
+  0% { opacity: 0.35; transform: translateY(2px) scale(0.97); }
+  60% { opacity: 1; transform: translateY(0) scale(1.03); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.sentry-sparkle {
+  animation: sentry-sparkle 600ms ease-out 1;
+  display: inline-block;
+}

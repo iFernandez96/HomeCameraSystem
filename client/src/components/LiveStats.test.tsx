@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { LiveStats } from './LiveStats'
+import { sentryCatAt, sentryCatName } from '../lib/sentryCat'
 import type { ServerStatus } from '../lib/types'
 
 function status(over: Partial<ServerStatus> = {}): ServerStatus {
@@ -138,8 +139,13 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       expect(screen.getByText('Camera running warm')).toBeInTheDocument()
     })
 
-    it('given gear=off (manually paused), when rendered, then summary is "Detection paused" with action hint', () => {
+    it('given gear=off (manually paused), when rendered, then primary line is plain "Detection paused" and the cat name lives in the hint (Slice B F1/F2)', () => {
       // arrange + act
+      // iter-356.64 / Slice B (security UX brief F1/F2): primary line
+      // is plain English; the cat-themed micro-copy is the SECONDARY
+      // line / hint, not the only label. Cat name follows the rotating
+      // sentry helper — assertion uses sentryCatAt(Date.now()) so the
+      // test stays robust as the slot flips across runs.
       render(
         <LiveStats
           status={status({
@@ -156,17 +162,28 @@ describe('LiveStats System Health card (iter-356.15)', () => {
         />,
       )
 
-      // assert
-      expect(screen.getByText("Panther's off duty")).toBeInTheDocument()
-      // iter-356.57: hint copy now points to "Resume on the action
-      // panel to bring her back on watch" — names Panther's role.
+      // assert — primary line is plain English; cat name appears
+      // only in the secondary hint.
+      expect(screen.getByText('Detection paused')).toBeInTheDocument()
+      expect(screen.queryByText("Panther's off duty")).not.toBeInTheDocument()
+      const cat = sentryCatAt(Date.now())
+      const expectedName = sentryCatName(cat)
       expect(
-        screen.getByText(/tap resume on the action panel/i),
+        screen.getByText(
+          new RegExp(
+            `tap resume on the action panel to bring ${expectedName} back on watch`,
+            'i',
+          ),
+        ),
       ).toBeInTheDocument()
     })
 
-    it('given gear=scheduled-off, when rendered, then summary is "Detection paused on schedule"', () => {
+    it('given gear=scheduled-off, when rendered, then primary line is "Detection paused (quiet hours)" with the resume hint as secondary line (Slice B F1/F2)', () => {
       // arrange + act
+      // iter-356.64 / Slice B: scheduled-off primary line is plain
+      // English. Cat-themed micro-copy is intentionally absent here —
+      // this state isn't about a single sentry going off duty; it's
+      // a household-wide quiet window.
       render(
         <LiveStats
           status={status({
@@ -183,12 +200,13 @@ describe('LiveStats System Health card (iter-356.15)', () => {
         />,
       )
 
-      // assert — iter-356.57 (cat-brand brief): scheduled-off
-      // resolves to "Coco's hours" — Coco is the Peacekeeper, her
-      // dominant activity IS sleep, mapping cleanly to a quiet
-      // window.
+      // assert
       expect(
-        screen.getByText("Coco's hours"),
+        screen.getByText('Detection paused (quiet hours)'),
+      ).toBeInTheDocument()
+      expect(screen.queryByText("Coco's hours")).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/detection resumes automatically/i),
       ).toBeInTheDocument()
     })
 

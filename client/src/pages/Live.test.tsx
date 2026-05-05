@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { HttpError } from '../lib/api'
+import { sentryCatAt, sentryOnWatchLabel } from '../lib/sentryCat'
+import type { ServerStatus } from '../lib/types'
 
 const captureSnapshot = vi.fn()
 const toggleDetection = vi.fn()
@@ -19,8 +21,13 @@ vi.mock('../components/SnapshotPreview', () => ({
   ),
 }))
 
+// iter-356.64 / Slice B: useStatus returns a mutable ref so individual
+// tests can swap a real ServerStatus in without re-mocking the
+// module. Default = null (matches pre-Slice-B behavior so existing
+// tests don't drift).
+const statusRef: { current: ServerStatus | null } = { current: null }
 vi.mock('../lib/useStatus', () => ({
-  useStatus: () => null,
+  useStatus: () => statusRef.current,
 }))
 
 const showToast = vi.fn()
@@ -64,9 +71,49 @@ describe('Live page', () => {
     captureSnapshot.mockReset()
     toggleDetection.mockReset()
     showToast.mockReset()
+    statusRef.current = null
   })
   afterEach(() => {
     vi.clearAllMocks()
+  })
+
+  describe('sentry rotation (iter-356.64 / Slice B)', () => {
+    it('given armed status, when rendered, then armed headline matches sentryOnWatchLabel for the current slot', () => {
+      // arrange — fully armed status: worker alive + detection active.
+      statusRef.current = {
+        ok: true,
+        uptime_s: 600,
+        camera: 'ok',
+        detection_active: true,
+        worker_alive: true,
+        worker_last_seen_s: 1,
+        worker_metrics: null,
+        cpu_temp_c: 50,
+        gpu_temp_c: 47,
+        cpu_freq_pct: 100,
+        load_avg: [0.5, 0.6, 0.7],
+        memory_used_mb: 1400,
+        memory_total_mb: 1979,
+        disk_free_gb: 28,
+        fps: 5.0,
+        push_subs_count: 0,
+        seconds_since_last_frame: 1,
+        camera_label: 'Front Door',
+        audio_enabled: false,
+      } as ServerStatus
+
+      // act
+      render(<Live />)
+
+      // assert — the cat-named "X on watch" headline renders. Use the
+      // shared sentryOnWatchLabel helper so the test stays correct as
+      // the slot rotates between Panther / Mushu / Coco.
+      const expected = sentryOnWatchLabel(sentryCatAt(Date.now()))
+      // The label appears inside CameraSubtitle. It can occur in
+      // multiple surfaces (overlay + future placements); use
+      // getAllByText so we don't break if a second mount is added.
+      expect(screen.getAllByText(expected).length).toBeGreaterThan(0)
+    })
   })
 
   it('renders the heading and video tile', () => {

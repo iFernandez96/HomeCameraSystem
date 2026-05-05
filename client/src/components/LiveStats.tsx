@@ -1,5 +1,10 @@
 import { useState } from 'react'
 import { formatAge, formatUptime } from '../lib/format'
+import {
+  type SentryCat,
+  sentryCatName,
+  useSentryCat,
+} from '../lib/sentryCat'
 import type { ServerStatus } from '../lib/types'
 
 /**
@@ -36,7 +41,7 @@ type HealthSummary = {
   hint?: string
 }
 
-function computeHealth(status: ServerStatus): HealthSummary {
+function computeHealth(status: ServerStatus, sentryCat: SentryCat): HealthSummary {
   const gear = status.worker_metrics?.gear
   const isManuallyOff = gear === 'off'
   const isScheduledOff = gear === 'scheduled-off'
@@ -86,21 +91,24 @@ function computeHealth(status: ServerStatus): HealthSummary {
   }
 
   // 4. Manual / scheduled detection pauses are notable but not bad.
+  // iter-356.64 / Slice B (security UX brief F1/F2): primary line is
+  // PLAIN ENGLISH ("Detection paused", "Detection paused (quiet
+  // hours)"). The cat-themed micro-copy moves to the secondary hint
+  // line so the at-a-glance scan reads as a security state, not a
+  // mascot quip. Cat name follows the rotating sentry instead of
+  // hardcoded Panther.
   if (isManuallyOff) {
+    const name = sentryCatName(sentryCat)
     return {
       level: 'warn',
-      // iter-356.57 (cat-brand brief): Panther is the Sentry; her
-      // off-duty state IS the manual-pause state.
-      label: "Panther's off duty",
-      hint: 'Tap Resume on the action panel to bring her back on watch.',
+      label: 'Detection paused',
+      hint: `Tap Resume on the action panel to bring ${name} back on watch.`,
     }
   }
   if (isScheduledOff) {
     return {
       level: 'warn',
-      // iter-356.57: scheduled quiet hours = Coco's hours (her
-      // dominant activity is sleep — coherent role mapping).
-      label: "Coco's hours",
+      label: 'Detection paused (quiet hours)',
       hint: 'Detection resumes automatically at the end of your quiet window.',
     }
   }
@@ -126,6 +134,9 @@ function computeHealth(status: ServerStatus): HealthSummary {
 
 export function LiveStats({ status, compact }: { status: ServerStatus | null; compact?: boolean }) {
   const [detailsOpen, setDetailsOpen] = useState(false)
+  // iter-356.64 / Slice B: rotating sentry feeds the paused-state
+  // hint so it names whichever cat is on watch right now.
+  const sentryCat = useSentryCat()
 
   if (!status) {
     return (
@@ -142,7 +153,7 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
     )
   }
 
-  const health = computeHealth(status)
+  const health = computeHealth(status, sentryCat)
   const dotColor =
     health.level === 'ok'
       ? 'bg-[var(--color-success)]'
