@@ -27,3 +27,7 @@ pyjwt>=2.8.0
 # `RuntimeError: Form data requires "python-multipart" to be
 # installed.` Pinned to the current stable, no native build cost.
 python-multipart>=0.0.20,<1
+# iter-356.6X (tiered-inference slice 2): Pillow for the export-time
+# letterbox normalizer in services/training_export.py. Pure-Python
+# image resize + paste; no native build cost on the manylinux wheel.
+Pillow>=10.0.0,<13
