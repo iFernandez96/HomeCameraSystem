@@ -154,7 +154,7 @@ export function EventList({
               an absolutely-positioned 1px brass-tinted line at
               left: 4.25rem (matches the right edge of the time
               column). Each entry gets a 0.5rem-wide axis tick. */}
-          <ol className="relative list-none px-4 pt-4 pb-6">
+          <ol className="relative list-none px-4 pt-2 pb-3">
             <span
               aria-hidden="true"
               className="absolute left-[4.25rem] top-2 bottom-2 w-px bg-[var(--color-border-subtle)]"
@@ -209,7 +209,7 @@ function DayHeader({ label, count }: { label: string; count: number }) {
   // start of each day group and sliding off-screen as the user
   // reads past it.
   return (
-    <div className="px-4 py-3 flex items-baseline gap-3 border-b border-[var(--color-border-subtle)]">
+    <div className="px-4 pt-3 pb-2 flex items-baseline gap-3 border-b border-[var(--color-border-subtle)]">
       <h2 className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight">
         {logSuffix}
       </h2>

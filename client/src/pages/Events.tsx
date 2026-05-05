@@ -747,11 +747,20 @@ export function Events() {
           at top-right of the viewport (rendered separately below).
           The header (Watch log title + filter chips) scrolls away
           naturally; the calendar icon alone follows the user. */}
+      {/* iter-356.66 (round 4 — user feedback "too much padding on
+          bottom and top"): dropped the pt-[env(safe-area-inset-top)]
+          from this <header>. The WatchRibbon at the top of the App
+          shell already pads for the iOS notch via its own safe-area
+          inset; the page <main> sits below the ribbon, so adding
+          another safe-area-top here was double-padding (~44 px of
+          dead space on a notched iPhone before the title). Reduced
+          inner padding from pt-4/pb-3 (16/12) to pt-2/pb-2 (8/8) so
+          the title row sits closer to the top edge of the page. */}
       <header
         ref={headerRef}
-        className="pt-[env(safe-area-inset-top)] bg-[var(--color-bg)] border-b border-[var(--color-border)]"
+        className="bg-[var(--color-bg)] border-b border-[var(--color-border)]"
       >
-        <div className="px-4 pt-4 pb-3">
+        <div className="px-4 pt-2 pb-2">
         <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">
           {/* iter-356.58 (LAYOUT REBUILD): killed the page-title
               H1 with PawMark. The WatchRibbon already says where
