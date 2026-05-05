@@ -659,7 +659,17 @@ export function CatLayer() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none fixed z-[15] overflow-hidden"
+      // iter-356.66 (real-device fix): on a 390-px iPhone the Live page's
+      // LiveStats card "Home is calm" sits at the bottom of the visible
+      // viewport — exactly where the ambient cats walk. At z-[15] the
+      // cat sprites + habitat tile rendered ON TOP of the dropped-frames
+      // count and other stats text. Negative z keeps the cats decorative
+      // (visible behind the page chrome) without overlaying content
+      // cards. Page background is `var(--color-bg)` on body; cats sit
+      // above it but behind anything with the default auto/0 z-index.
+      // Modals, ConnectionBanner (z-30), BottomNav (z-30), and the
+      // WatchRibbon all stay above the cats; content cards now do too.
+      className="pointer-events-none fixed -z-10 overflow-hidden"
       style={{
         height: `${SPRITE_HEIGHT + 56}px`,
         bottom: `var(--cat-layer-bottom, ${LAYER_BOTTOM_OFFSET}px)`,

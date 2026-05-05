@@ -221,12 +221,22 @@ export function Live() {
         {/* Floating action cluster — bottom-right edge of the video.
             Compact pill column on lg+, horizontal row on mobile.
             pointer-events-auto so taps register. */}
-        {/* iter-356.65 (Mira critic blocker #3): action cluster
-            (DetectionStatusToggle + Snapshot/Talk) used to be
-            hidden < sm; that hid the primary thumb-controls on
-            every phone in landscape and on portrait below 640 px.
-            Always render. Fullscreen action stays inside VideoTile. */}
-        <div className="pointer-events-auto absolute bottom-4 right-3 sm:right-4 flex flex-col gap-2 items-end">
+        {/* iter-356.66 (real-device fix): the iter-356.65 fix dropped
+            `hidden sm:` from this cluster, which doubled the mobile
+            UI — phones already render a card-style action strip
+            below the video (`<div className="sm:hidden ...">` with
+            DetectionStatusToggle + Snapshot + Talk). With the
+            overlay also visible, mobile users saw THREE copies of
+            "On watch / Pause / Snapshot / Talk" stacked vertically
+            AND the overlay overlapped the camera-label text on the
+            video gradient strip ("Front Door" → "Fr..." truncated).
+            Restoring `hidden sm:flex` here keeps the overlay as a
+            DESKTOP affordance only; the mobile strip below remains
+            the thumb surface. Mira's blocker #3 was about the
+            TRUST cluster (ArmedBadge / RecordingIndicator /
+            CaptureSavingPill) — that one stays always-visible
+            (the row above this comment). */}
+        <div className="pointer-events-auto absolute bottom-4 right-3 sm:right-4 hidden sm:flex flex-col gap-2 items-end">
           <DetectionStatusToggle
             detectionActive={detectionActive}
             onToggle={onToggleDetect}
