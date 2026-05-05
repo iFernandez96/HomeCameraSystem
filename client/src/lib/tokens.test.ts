@@ -9,12 +9,10 @@
 // bans new client deps for slice A. The 8-line formula here is
 // self-contained and matches the standard WCAG implementation.
 import { describe, it, expect } from 'vitest'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error — node:fs/url/path are available in the vitest
-// process (jsdom env still runs on Node) but `node` isn't in
-// tsconfig.app.json's `types` array (Vite-side typings only). The
-// dynamic require keeps the test self-contained without polluting
-// the app's type surface.
+// `@types/node` is now an installed devDependency (added when the
+// crypto.hash polyfill landed in vite.config.ts) so node:* imports
+// type-check natively. The previous `createRequire` + ts-expect-
+// error workaround is no longer needed.
 import { createRequire } from 'module'
 const req = createRequire(import.meta.url)
 const fs = req('node:fs') as { readFileSync(p: string, enc: string): string }

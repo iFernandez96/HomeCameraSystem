@@ -1,5 +1,43 @@
 @import "tailwindcss";
 
+/* Premium-launch slice — self-hosted variable fonts.
+ *
+ * Originally these declarations were routed through a static
+ * /public/fonts.css to sidestep a Node-18 + Vite-7 build crash
+ * (`crypto.hash is not a function` from vite-plugin-pwa hashing
+ * CSS `url()` refs). The crypto.hash polyfill in vite.config.ts
+ * resolves that, so @font-face now lives where it belongs —
+ * processed through the canonical CSS asset pipeline.
+ *
+ * The variable woff2 files are preloaded from index.html so the
+ * network round-trip happens in parallel with the JS shell. No
+ * third-party request → no IP/UA leak to Google → aligns with the
+ * project's local-first / private-by-design contract. unicode-range
+ * mirrors Google's latin subset declaration so any non-latin glyph
+ * (e.g. pasted CJK) falls back to the system stack rather than
+ * rendering as a missing-glyph box. The wght range covers every
+ * weight the app uses (Inter 400/500/600/700; Fraunces 400/500/600/
+ * 700/800 for display sizes). */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-variable-latin.woff2') format('woff2-variations'),
+       url('/fonts/inter-variable-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('/fonts/fraunces-variable-latin.woff2') format('woff2-variations'),
+       url('/fonts/fraunces-variable-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* iter-356.0 — design-system token foundation. Per the iter-356
  * mega-overhaul brief (memory/mega_overhaul_iter356.md). All tokens
  * additive — pre-iter-356.0 names (--color-bg, --color-surface,

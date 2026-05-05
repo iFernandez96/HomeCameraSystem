@@ -3,6 +3,55 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+// Default import (mutable module object) rather than `import * as`
+// (frozen namespace object) — see polyfill block below: we need to
+// install `hash` as a property if the running Node version doesn't
+// already expose it.
+import nodeCrypto from 'node:crypto'
+
+// Premium-launch slice — `crypto.hash` polyfill for Node 18.
+//
+// Vite 7 + vite-plugin-pwa call the synchronous one-shot
+// `crypto.hash(algorithm, data, encoding)` API that landed in
+// Node 20.12+. The build host still ships Node 18 because the repo
+// lives on exFAT and `nvm install` cannot create the
+// `~/.nvm/.../bin/node` symlink. Production runs PRE-BUILT dist/
+// output, so this shim runs on the build machine only and has no
+// production footprint.
+//
+// Without it, any new `url('/path')` reference in src/index.css or
+// inline `<style>` in index.html crashes vite-plugin-pwa's hashing
+// pass with `crypto.hash is not a function` — the prior loop had
+// to route font @font-face declarations through a static
+// /public/fonts.css to sidestep this. With the shim in place, future
+// CSS asset references work normally.
+//
+// The shim mirrors Node 20+'s synchronous one-shot signature
+// exactly: `(algorithm, data, encoding = 'hex') => string`. On
+// Node 20.12+ the `if (!hash)` guard is false and the shim is a
+// no-op, preserving native behavior. On Node 18 the shim installs
+// itself via the createHash → update → digest chain.
+//
+// `@types/node` is installed as a devDependency (type-only, no bin
+// scripts → no symlink required, exFAT-safe) so `node:crypto` types
+// resolve cleanly. We avoid mirroring Node's full polymorphic
+// `crypto.hash` overload set — Vite/Workbox only need the simple
+// 2-arg / 3-arg `(algo, data, enc)` shape, so the polyfill exposes
+// just that. The cast to `unknown as { hash?: ... }` lets us assign
+// without fighting Node's own conditional-type `hash` declaration.
+type SimpleHash = (
+  algorithm: string,
+  data: string | NodeJS.ArrayBufferView,
+  outputEncoding?: nodeCrypto.BinaryToTextEncoding,
+) => string
+const _cryptoSlot = nodeCrypto as unknown as { hash?: SimpleHash }
+if (typeof _cryptoSlot.hash !== 'function') {
+  _cryptoSlot.hash = (algorithm, data, outputEncoding = 'hex') => {
+    const h = nodeCrypto.createHash(algorithm)
+    h.update(data)
+    return h.digest(outputEncoding)
+  }
+}
 
 // iter-356.37: build-time stamp injected as `__BUILD_ID__` so the
 // debug-reload UI in Settings can show "Bundle: <id>" — operator can
