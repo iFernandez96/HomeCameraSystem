@@ -52,6 +52,13 @@ class Settings:
     face_captures_dir: Path = Path(
         os.getenv("FACE_CAPTURES_DIR", "./face_captures")
     )
+    # iter-356.62 slice 3 (privacy controls): the dir the worker's
+    # tiered capture path saves person crops into, organized by
+    # what the classifier matched (mirrors face_captures_dir layout).
+    # Slice 1 (worker hot path) writes here; Slice 3 sweeps + purges.
+    person_captures_dir: Path = Path(
+        os.getenv("PERSON_CAPTURES_DIR", "./person_captures")
+    )
 
     # Persisted Web Push subscriptions. Lives next to the VAPID PEMs in the
     # `homecam-secrets` Docker volume so it survives container restarts.
