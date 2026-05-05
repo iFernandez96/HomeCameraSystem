@@ -202,7 +202,14 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
   return (
     <section
       aria-label="System health"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3 shadow-[var(--shadow-subtle)]"
+      // iter-356.66 (kittens-back fix): explicit `relative z-10`
+      // sits this card above the CatLayer (z-[5]) so the ambient
+      // walking cats can't bisect the dropped-frames count or the
+      // FRAME RATE / INFERENCE rows. CatLayer renders ambient
+      // walkers across the bottom of every page; this card opts
+      // into the higher stacking-context layer so its text stays
+      // legible while cats walk freely on the rest of the surface.
+      className="relative z-10 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3 shadow-[var(--shadow-subtle)]"
     >
       {/* Summary row: dot + label + optional sub-line. */}
       <div role="status" aria-live="polite">
