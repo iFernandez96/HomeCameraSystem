@@ -47,22 +47,23 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="HomeCam" />
-    <!-- iter-356.57 (radical redesign): typography shift. Inter
-         stays as the body/UI face — readability is non-negotiable
-         on a security-status surface. The shift is the addition of
-         Fraunces as a DISPLAY serif for h1/h2 + brand wordmark.
-         Fraunces is a variable font with optical sizing — at large
-         sizes its terminals open up and it reads as something
-         someone CHOSE rather than the Linear/Vercel/Stripe Inter
-         default. Subset axes to wght 400-800 + opsz 9-72 so the
-         payload stays under 80 KB. display=swap keeps first paint
-         on the system fallback so no FOIT. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap"
-    />
+    <!-- Premium-launch slice (Mobile-perf F#1 + privacy): self-host
+         Inter + Fraunces. Pre-fix the typography pipeline went
+         through fonts.googleapis.com (~80 KB CSS over 2 RTTs of
+         Tailscale) which (a) blocked first paint on cold cellular,
+         (b) leaked the user's IP + UA to a third-party origin —
+         both incompatible with this app's local-first / private-by-
+         design contract. Now: variable woff2 files served from the
+         app's own origin (~115 KB total), no third-party request,
+         full offline support after first install. These two preload
+         hints lift the woff2 fetches into the discovery phase so
+         the network round-trip runs alongside the JS bundle. The
+         @font-face declarations live in src/index.css (the previous
+         /public/fonts.css workaround was lifted once the Node 18
+         crypto.hash polyfill in vite.config.ts let CSS url() refs
+         flow through Vite's normal asset pipeline). -->
+    <link rel="preload" href="/fonts/inter-variable-latin.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="/fonts/fraunces-variable-latin.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
     <!-- iter-356.65 (mobile slice A) TODO: Vite emits hash-based
          per-route chunk filenames (e.g. `Live-DEADBEEF.js`), so
          a static `<link rel="modulepreload" href="/assets/Live-*.js">`

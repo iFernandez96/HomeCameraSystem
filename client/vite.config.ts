@@ -38,7 +38,13 @@ export default defineConfig({
         // initial install payload drops by ~28 entries / hundreds of
         // KB. The runtime rule still caches them on first hit with a
         // 30-day expiration, so offline behaviour is preserved.
-        globPatterns: ['**/*.{js,css,html,svg,ico,webmanifest}'],
+        // Premium-launch slice: include woff2 so the self-hosted
+        // Inter + Fraunces variable fonts are available offline (the
+        // PWA precache adds ~115 KB but pays off the first time the
+        // user opens the app on a flaky cellular connection — the
+        // /fonts.css link in index.html resolves from the cache
+        // instead of a network round-trip and there is no FOIT).
+        globPatterns: ['**/*.{js,css,html,svg,ico,webmanifest,woff2}'],
         globIgnores: ['**/cats/**', '**/*-cat-*.png'],
       },
       includeAssets: ['icon.svg', 'icon-maskable.svg'],
