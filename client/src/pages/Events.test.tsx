@@ -935,6 +935,123 @@ describe('Events page', () => {
     )
   })
 
+  // iter-356.C (mobile-redesign Slice C — security clarity):
+  // single-event confirm body must identify WHICH event (clock time
+  // + person/label) to defang the mid-scroll mis-click footgun.
+
+  it('given owner clicks delete, when confirm opens, then body cites clock time + person_name + clip-removal warning (iter-356.C)', async () => {
+    // arrange
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    confirmFn.mockReset()
+    confirmFn.mockResolvedValue(false)
+    deleteEvent.mockReset()
+    // Pin a deterministic timestamp — 1700000000 is 2023-11-14
+    // 22:13:20 UTC, but clockTime is locale-formatted; assert on
+    // the digits in the body without forcing the locale.
+    const e = {
+      v: 1, type: 'detection' as const,
+      id: 'a1', ts: 1700000000, label: 'person', score: 0.9,
+      boxes: [], thumb_url: '/thumb.jpg', clip_url: null,
+      person_name: 'Alice',
+    }
+    fetchEvents.mockResolvedValue([e])
+
+    // act
+    render(<Events />)
+    const delBtn = await screen.findByRole('button', {
+      name: /delete event from/i,
+    })
+    await user.click(delBtn)
+
+    // assert
+    await waitFor(() => expect(confirmFn).toHaveBeenCalled())
+    const body = (confirmFn.mock.calls[0][0] as { body: string }).body
+    expect(body).toMatch(/Alice/) // person_name
+    expect(body).toMatch(/clip will be removed/i)
+    expect(body).toMatch(/cannot be undone/i)
+    // Clock time has at least one digit grouping (e.g. "10:13 PM"
+    // or "22:13"). Match a digit followed by colon followed by digits
+    // somewhere in the body.
+    expect(body).toMatch(/\d+:\d+/)
+  })
+
+  it('given person_name is null, when delete confirmed, then body falls back to label (iter-356.C)', async () => {
+    // arrange
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    confirmFn.mockReset()
+    confirmFn.mockResolvedValue(false)
+    const e = {
+      v: 1, type: 'detection' as const,
+      id: 'a1', ts: 1700000000, label: 'package', score: 0.9,
+      boxes: [], thumb_url: '/thumb.jpg', clip_url: null,
+      person_name: null,
+    }
+    fetchEvents.mockResolvedValue([e])
+
+    // act
+    render(<Events />)
+    const delBtn = await screen.findByRole('button', {
+      name: /delete event from/i,
+    })
+    await user.click(delBtn)
+
+    // assert
+    await waitFor(() => expect(confirmFn).toHaveBeenCalled())
+    const body = (confirmFn.mock.calls[0][0] as { body: string }).body
+    expect(body).toMatch(/package/)
+  })
+
+  // iter-356.C: "Delete day" disabled when a person/label filter is
+  // active — wording is dishonest otherwise (user sees subset, API
+  // deletes everything for the day). Lower-blast-radius option per
+  // the slice plan.
+
+  it('given a day filter + a label filter, when day group renders, then Delete day is disabled with a tooltip (iter-356.C)', async () => {
+    // arrange
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    // Two events with two distinct labels so the label-filter chip
+    // row renders (it only appears when 2+ classes are present).
+    searchEvents.mockResolvedValue({
+      items: [
+        { v: 1, type: 'detection', id: 'a', ts: today.getTime() / 1000, label: 'person',
+          score: 0.9, boxes: [], thumb_url: '/t.jpg', clip_url: null,
+          person_name: null },
+        { v: 1, type: 'detection', id: 'b', ts: today.getTime() / 1000 + 60, label: 'dog',
+          score: 0.9, boxes: [], thumb_url: '/t.jpg', clip_url: null,
+          person_name: null },
+      ],
+      next_cursor: null,
+    })
+    fetchEvents.mockResolvedValue([])
+    getEventCountsByDay.mockResolvedValue({ counts: { [todayStr]: 2 } })
+
+    // act
+    render(<Events />)
+    await waitFor(() => expect(getEventCountsByDay).toHaveBeenCalled())
+    const dayBtn = await screen.findByRole('button', {
+      name: /\(today\)/i,
+    })
+    await user.click(dayBtn)
+    // Apply a label filter — click the "Dog" chip to narrow.
+    // ChipRadiogroup renders chips as role="radio" with a capitalized
+    // label.
+    const dogChip = await screen.findByRole('radio', {
+      name: /^dog$/i,
+    })
+    await user.click(dogChip)
+
+    // assert
+    const deleteDayBtn = await screen.findByRole('button', {
+      name: /clear the filter to delete a whole day/i,
+    })
+    expect(deleteDayBtn).toBeDisabled()
+  })
+
   it('given user cancels the confirm dialog, when delete ✕ clicked, then deleteEvent does NOT fire (iter-307)', async () => {
     // arrange — `mockReset` clears any `mockResolvedValueOnce`
     // queue from prior tests (vi.clearAllMocks in afterEach only

@@ -80,18 +80,36 @@ export function VideoTile({
   const [boxes, setBoxes] = useState<DetectionEvent['boxes']>([])
   const [personName, setPersonName] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
-  const offline = workerAlive === false
-  // iter-302: stream-stale takes precedence over the detection-status
-  // pill ladder. Worker can be alive (heartbeating) AND have detection
-  // active AND have plenty of memory while the actual video stream is
-  // dead — that's the iter-300 outage signature exactly. 60-second
-  // threshold matches the systems-engineering-auditor B1 alert
-  // recommendation; below that, transient blips during legitimate
-  // recovery (mediamtx restart) shouldn't flap the pill.
+  // iter-356.C (mobile-redesign Slice C — security clarity): the
+  // single "Detection offline" pill split into three honest cases.
+  // `cameraOffline`: worker has never heartbeated AND we've never
+  //   seen a frame — the camera box itself is unreachable. RED. The
+  //   user should restart the camera service (operator action).
+  // `streamStale`: worker is heartbeating, but the stream has gone
+  //   silent for >60s — iter-300 outage signature. YELLOW. The
+  //   existing Retry button is the natural recovery (it tears down
+  //   WHEP and reconnects).
+  // `detectionPausedWorker`: worker is dead but we have a recent
+  //   frame counter (server caches the last value across worker
+  //   restarts). YELLOW. The video may still play from MediaMTX
+  //   while detection is offline. Plain text only — no operator
+  //   action recommended; the worker auto-recovers.
+  const cameraOffline =
+    workerAlive === false &&
+    (streamStaleSeconds === null || streamStaleSeconds === undefined)
   const streamStale =
+    workerAlive === true &&
     streamStaleSeconds !== null &&
     streamStaleSeconds !== undefined &&
     streamStaleSeconds > 60
+  const detectionPausedWorker =
+    workerAlive === false &&
+    streamStaleSeconds !== null &&
+    streamStaleSeconds !== undefined
+  // Carry the legacy `offline` derivation for the bbox-clear logic
+  // below — both cameraOffline AND detectionPausedWorker are
+  // worker-dead scenarios where the boxes array is stale.
+  const offline = cameraOffline || detectionPausedWorker
   const lowMem = !offline && !streamStale && lowMemory === true
   const therm = !offline && !streamStale && !lowMem && thermal === true
   const paused =
@@ -491,21 +509,55 @@ export function VideoTile({
             text said "No video — stream stalled" — VoiceOver read the
             label, NVDA read the text, two users got two different
             messages. One string for both channels. */}
+        {/* iter-356.C: stream-stale = yellow (worker alive, video
+            silent — Reconnect via the existing error-overlay Retry
+            below). Visible text now reads "Stream stalled" with the
+            Reconnect hint; the precise seconds count moves to the
+            aria-label only so SR users still hear how long it's been
+            stale, and the visible UI stays calm. */}
         {streamStale && status === 'live' && (
           <div
-            className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
+            className="absolute top-3 right-3 flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white"
+            aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
           >
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            No video for {Math.round((streamStaleSeconds ?? 0) / 10) * 10}s
+            <span className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+              Stream stalled
+            </span>
+            <span className="text-[10px] text-white/80 font-normal">
+              Reconnect
+            </span>
           </div>
         )}
-        {offline && status === 'live' && (
+        {/* iter-356.C: camera-offline = red. The Jetson + camera box
+            isn't reachable; restart the camera service (an operator
+            action; the suggestion is plain text — no in-app button
+            because the recovery tool runs on the host). */}
+        {cameraOffline && status === 'live' && (
+          <div
+            className="absolute top-3 right-3 flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white"
+            aria-label="Camera offline. Restart the camera service."
+          >
+            <span className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[var(--color-danger)]" />
+              Camera offline
+            </span>
+            <span className="text-[10px] text-white/80 font-normal">
+              Restart the camera service
+            </span>
+          </div>
+        )}
+        {/* iter-356.C: detection-paused (worker offline) = yellow,
+            plain text. Worker died but the video stream is fine — the
+            user is not blind. We don't recommend an action because
+            the worker auto-recovers within a heartbeat cycle. */}
+        {detectionPausedWorker && status === 'live' && (
           <div
             className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white"
-            aria-label="Detection offline"
+            aria-label="Detection paused — worker offline"
           >
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            Detection offline
+            <span className="w-2 h-2 rounded-full bg-yellow-500" />
+            Detection paused — worker offline
           </div>
         )}
         {lowMem && status === 'live' && (

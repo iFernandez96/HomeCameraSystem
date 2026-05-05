@@ -17,6 +17,7 @@ import {
   searchEvents,
 } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
+import { clockTime } from '../lib/eventLabel'
 import { useAuth } from '../lib/auth'
 import { useConfirm } from '../lib/confirm'
 import { formatError } from '../lib/format'
@@ -611,9 +612,15 @@ export function Events() {
   // dep array can stay narrow.
   const onDeleteOne = useCallback(async (e: DetectionEvent) => {
     if (!isOwner) return
+    // iter-356.C (mobile-redesign Slice C — security clarity):
+    // confirm body identifies WHICH event will be deleted. Pre-356.C
+    // body said "The event and its recorded clip…" — generic enough
+    // that a user mid-scroll couldn't tell which row their click
+    // had armed.
+    const personOrLabel = e.person_name || e.label
     const ok = await confirm({
       title: 'Delete this event?',
-      body: 'The event and its recorded clip will be removed. This cannot be undone.',
+      body: `Delete the ${clockTime(e.ts)} ${personOrLabel} event? The clip will be removed. This cannot be undone.`,
       confirmLabel: 'Delete',
       cancelLabel: 'Cancel',
       destructive: true,
@@ -875,14 +882,35 @@ export function Events() {
                   </Button>
                 )}
                 {isOwner && events.length > 0 && (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={onDeleteDay}
-                    aria-label={`Delete all events for ${selectedDay}`}
-                  >
-                    Delete day
-                  </Button>
+                  // iter-356.C (mobile-redesign Slice C — security
+                  // clarity): when a person or label filter is
+                  // active, the "Delete day" wording is dishonest —
+                  // the user sees a filtered subset but the API
+                  // deletes the whole day. Smaller blast radius:
+                  // disable + tooltip telling them to clear the
+                  // filter first. (deleteEventsByDay has no filter
+                  // param on the wire, so we'd have to either grow
+                  // the API or grow client-side enumeration; both
+                  // are out of slice C scope.)
+                  (() => {
+                    const filterActive =
+                      filter !== 'all' || labelFilter !== null
+                    const deleteDayHint = filterActive
+                      ? 'Clear the filter to delete a whole day.'
+                      : `Delete all events for ${selectedDay}`
+                    return (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={onDeleteDay}
+                        disabled={filterActive}
+                        aria-label={deleteDayHint}
+                        title={deleteDayHint}
+                      >
+                        Delete day
+                      </Button>
+                    )
+                  })()
                 )}
                 <Button
                   variant="ghost"

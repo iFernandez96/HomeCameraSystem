@@ -122,8 +122,17 @@ describe('VideoTile', () => {
     expect(screen.queryByLabelText(/detection paused/i)).not.toBeInTheDocument()
   })
 
-  it('shows DETECTION OFFLINE when worker is dead', async () => {
+  // iter-356.C (mobile-redesign Slice C): the single "Detection
+  // offline" pill split into three honest cases — Camera offline
+  // (worker dead, no recent frame), Stream stalled (worker alive,
+  // video silent), Detection paused — worker offline (worker dead
+  // but video still playing). Old tests migrated to the new copy.
+
+  it('given workerAlive=false and no recent frame, when rendered, then shows CAMERA OFFLINE pill with restart hint (iter-356.C)', async () => {
+    // arrange
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act
     render(
       <VideoTile
         src="http://test/cam/whep"
@@ -131,11 +140,39 @@ describe('VideoTile', () => {
         workerAlive={false}
       />,
     )
+
+    // assert
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.getByLabelText(/detection offline/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/camera offline/i)).toBeInTheDocument()
+    expect(screen.getByText(/restart the camera service/i)).toBeInTheDocument()
   })
 
-  it('OFFLINE takes precedence over PAUSED when worker is dead', async () => {
+  it('given workerAlive=false and a recent frame counter, when rendered, then shows DETECTION PAUSED — WORKER OFFLINE pill (iter-356.C)', async () => {
+    // arrange — server cached `seconds_since_last_frame` across the
+    // worker restart, so the video is still playing while detection
+    // is offline. Plain text only, no recovery prompt.
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act
+    render(
+      <VideoTile
+        src="http://test/cam/whep"
+        detectionActive={true}
+        workerAlive={false}
+        streamStaleSeconds={5}
+      />,
+    )
+
+    // assert
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+    expect(
+      screen.getByLabelText(/detection paused — worker offline/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^camera offline/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/restart the camera service/i)).not.toBeInTheDocument()
+  })
+
+  it('CAMERA OFFLINE takes precedence over PAUSED when worker is dead', async () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(
       <VideoTile
@@ -145,14 +182,17 @@ describe('VideoTile', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.getByLabelText(/detection offline/i)).toBeInTheDocument()
-    expect(screen.queryByLabelText(/detection paused/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/camera offline/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^detection paused$/i)).not.toBeInTheDocument()
   })
 
   it('treats workerAlive=null as "unknown" and does not flash OFFLINE', () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" workerAlive={null} />)
-    expect(screen.queryByLabelText(/detection offline/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/camera offline/i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(/detection paused — worker offline/i),
+    ).not.toBeInTheDocument()
   })
 
   // iter-302a/b (test-coverage-auditor D2): the stream-stale pill is
@@ -174,7 +214,13 @@ describe('VideoTile', () => {
 
     // assert
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.getByText(/no video for 90s/i)).toBeInTheDocument()
+    // iter-356.C: visible text "Stream stalled"; the "no video for Ns"
+    // detail moved into the aria-label so SR users still hear it but
+    // the visible UI stays calm.
+    expect(screen.getByText(/stream stalled/i)).toBeInTheDocument()
+    expect(
+      screen.getByLabelText(/no video for 90s/i),
+    ).toBeInTheDocument()
   })
 
   it('given streamStaleSeconds <= 60, when rendered, then no STREAM STALE pill (iter-302)', async () => {
@@ -193,7 +239,7 @@ describe('VideoTile', () => {
     // assert — give the LIVE pill time to render so we know the
     // status branch is "live" (when stale would be eligible).
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.queryByText(/no video for/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
   })
 
   it('given streamStaleSeconds > 60 and worker alive, when stale and offline conflict, then STREAM STALE wins over OFFLINE (iter-302)', async () => {
@@ -214,12 +260,14 @@ describe('VideoTile', () => {
 
     // assert
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.getByText(/no video for 120s/i)).toBeInTheDocument()
+    // iter-356.C: stream-stale aria-label collapses seconds + Reconnect
+    // hint into a single string; visible text says "Stream stalled".
+    expect(screen.getByText(/stream stalled/i)).toBeInTheDocument()
     expect(
-      screen.queryByLabelText(/detection offline/i),
+      screen.queryByLabelText(/^camera offline/i),
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByLabelText(/detection paused/i),
+      screen.queryByLabelText(/^detection paused$/i),
     ).not.toBeInTheDocument()
   })
 
@@ -291,7 +339,7 @@ describe('VideoTile', () => {
       />,
     )
     await waitFor(() =>
-      expect(screen.getByLabelText(/detection offline/i)).toBeInTheDocument(),
+      expect(screen.getByLabelText(/camera offline/i)).toBeInTheDocument(),
     )
     expect(screen.queryByText(/Low memory/i)).not.toBeInTheDocument()
   })
