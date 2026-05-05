@@ -30,7 +30,16 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.ts',
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,svg,ico,png,webmanifest}'],
+        // iter-356.65 (mobile slice A): cat PNG sprites are heavy
+        // (Panther/Mushu/Coco bodies + variants) and only render on
+        // empty-state surfaces / ambient CatLayer — not on the
+        // critical path. Ship them out of the precache and into a
+        // runtime CacheFirst rule (configured in src/sw.ts) so the
+        // initial install payload drops by ~28 entries / hundreds of
+        // KB. The runtime rule still caches them on first hit with a
+        // 30-day expiration, so offline behaviour is preserved.
+        globPatterns: ['**/*.{js,css,html,svg,ico,webmanifest}'],
+        globIgnores: ['**/cats/**', '**/*-cat-*.png'],
       },
       includeAssets: ['icon.svg', 'icon-maskable.svg'],
       devOptions: {
@@ -48,8 +57,12 @@ export default defineConfig({
         name: 'HomeCam — Panther, Mushu & Coco',
         short_name: 'HomeCam',
         description: 'Self-hosted home camera, watched over by three cats.',
-        theme_color: '#faf6ee',
-        background_color: '#faf6ee',
+        // iter-356.65 (mobile slice A): manifest theme/bg flipped to
+        // the dark "watchpost" page bg so the iOS standalone splash
+        // and Android adaptive-icon background match the running app
+        // instead of the obsolete cream theme that was here before.
+        theme_color: '#1e1710',
+        background_color: '#1e1710',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',

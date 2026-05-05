@@ -74,7 +74,7 @@ export function ConnectionBanner() {
     <div
       role="status"
       aria-live="polite"
-      className={`fixed top-0 inset-x-0 lg:left-56 z-30 px-3 py-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
+      className={`fixed top-0 inset-x-0 lg:left-16 z-30 px-3 py-1.5 text-center text-xs font-semibold border-b backdrop-blur ${tone}`}
     >
       {label}
     </div>

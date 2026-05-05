@@ -144,7 +144,7 @@ function AppShell() {
         // ConnectionBanner) inherits the new offset. Day-header
         // sticky-top now starts BELOW the ribbon (56px) instead of
         // the old generic 64px.
-        className={`flex-1 overflow-y-auto overscroll-y-contain pb-20 lg:pb-6 w-full ${
+        className={`flex-1 overflow-y-auto overscroll-y-contain pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6 w-full ${
           showShell ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)]' : ''
         }`}
         style={
