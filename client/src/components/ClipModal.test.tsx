@@ -639,4 +639,39 @@ describe('ClipModal', () => {
       proto.cancelVideoFrameCallback = prevCancel
     }
   })
+
+  // Bug: non-person detections (e.g. cat) rendered the WHO panel as
+  // "Unknown person" with a stray border-b divider, and surfaced the
+  // object-detection score as "Face match: N%". Evidence pane should
+  // only show identity fields when there is an actual recognized
+  // person on the event.
+  it('given a cat event, when the modal renders, then no WHO header, no Face match, and no orphan divider show', () => {
+    // arrange
+    const ev = makeEvent({ label: 'cat', score: 0.59, person_name: null })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — identity surfaces are absent
+    expect(screen.queryByText(/^who$/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/unknown person/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/face match/i)).not.toBeInTheDocument()
+    // assert — object surfaces are present
+    expect(screen.getByText(/^what$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/^cat$/i).length).toBeGreaterThan(0)
+    expect(screen.getByText('59%')).toBeInTheDocument()
+  })
+
+  it('given a recognized-person event, when the modal renders, then WHO and Face match still surface', () => {
+    // arrange
+    const ev = makeEvent({ label: 'person', person_name: 'alice', score: 0.87 })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByText(/^who$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/alice/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/face match: 87%/i)).toBeInTheDocument()
+  })
 })

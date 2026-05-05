@@ -758,20 +758,18 @@ export function ClipModal({
         aria-label="Incident details"
         className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 bg-black/40 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto overscroll-contain"
       >
-        <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
-              Who
-            </div>
-            <div className="font-display text-xl font-bold mt-0.5">
-              {personLabel ?? 'Unknown person'}
+        {personLabel && (
+          <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+                Who
+              </div>
+              <div className="font-display text-xl font-bold mt-0.5">
+                {personLabel}
+              </div>
             </div>
           </div>
-          {/* iter-356.63 (Slice D a11y): dropped the desktop-only X
-              that lived in the evidence pane. The header X is the
-              single close surface; multiple "Close clip viewer"
-              labels confused VoiceOver swipe order. */}
-        </div>
+        )}
         <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] space-y-3">
           <div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
@@ -817,7 +815,7 @@ export function ClipModal({
                   : 'High'}
             </span>
           </div>
-          {matchConfidence != null && (
+          {personLabel && matchConfidence != null && (
             <div className="text-xs text-white/55 lg:text-[var(--color-text-tertiary)] mt-1">
               Face match: {matchConfidence}%
             </div>
