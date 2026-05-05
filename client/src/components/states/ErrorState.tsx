@@ -19,6 +19,23 @@ export interface ErrorStateProps {
   title: string
   message?: string
   retry?: () => void
+  /**
+   * Override label for the primary `retry` button. Defaults to
+   * "Retry". Premium-launch slice — added so ErrorBoundary can
+   * reuse this primitive with its own copy ("Reload app") instead
+   * of re-rolling a parallel button styling.
+   */
+  retryLabel?: string
+  /**
+   * Optional secondary action button rendered alongside `retry`.
+   * Premium-launch slice — added so ErrorBoundary can render BOTH
+   * a soft-reset button ("Try again") and the hard-reload button
+   * ("Reload app") through a single primitive instead of hand-
+   * rolled <button> elements with raw Tailwind reds. Visual order
+   * is `secondaryAction` first, `retry` second (matches the
+   * project pattern: primary action on the right).
+   */
+  secondaryAction?: { label: string; onClick: () => void }
   technicalDetail?: string
 }
 
@@ -26,6 +43,8 @@ export function ErrorState({
   title,
   message,
   retry,
+  retryLabel = 'Retry',
+  secondaryAction,
   technicalDetail,
 }: ErrorStateProps) {
   return (
@@ -34,7 +53,12 @@ export function ErrorState({
       role="alert"
       aria-live="polite"
     >
-      <div className="mx-auto w-16 h-16 rounded-full bg-[var(--color-warning-bg,_rgba(234,179,8,0.12))] flex items-center justify-center">
+      {/* Premium-launch slice (Mira #8): the rgba fallback on
+          --color-warning-bg was dead code — the token IS defined
+          in src/index.css (line 158). Carrying a fallback raw
+          rgba inside a token expression silently disables theming
+          if the token is ever renamed; just trust the token. */}
+      <div className="mx-auto w-16 h-16 rounded-full bg-[var(--color-warning-bg)] flex items-center justify-center">
         <svg
           width="32"
           height="32"
@@ -62,10 +86,23 @@ export function ErrorState({
           </p>
         )}
       </div>
-      {retry && (
-        <Button variant="primary" size="md" onClick={retry} className="mt-2">
-          Retry
-        </Button>
+      {(retry || secondaryAction) && (
+        <div className="flex justify-center gap-3 mt-2">
+          {secondaryAction && (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={secondaryAction.onClick}
+            >
+              {secondaryAction.label}
+            </Button>
+          )}
+          {retry && (
+            <Button variant="primary" size="md" onClick={retry}>
+              {retryLabel}
+            </Button>
+          )}
+        </div>
       )}
       {technicalDetail && (
         <details className="mt-2 text-sm text-[var(--color-text-tertiary)] text-left max-w-md mx-auto">

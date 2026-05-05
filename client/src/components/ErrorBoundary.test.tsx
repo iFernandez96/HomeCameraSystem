@@ -103,4 +103,89 @@ describe('ErrorBoundary', () => {
     )
     expect(matchingCall).toBeTruthy()
   })
+
+  // ─── Premium-launch slice — harmonization invariants ─────────────
+
+  it('Given the boundary fallback renders, When the DOM is inspected, Then NO raw red-XXX Tailwind classes are present (Mira #1 / Dana #1 — must use design-system tokens)', () => {
+    // arrange — pre-fix the boundary used `bg-red-500/10`,
+    // `border-red-500/30`, `text-red-400` — all violations of
+    // CLAUDE.md's "no raw red-XXX outside semantic tokens" rule
+    // AND `text-red-400` measured ~2.6:1 on the calico-cream
+    // theme (Dana flagged as WCAG 1.4.3 contrast fail).
+    const { container } = render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    )
+
+    // act / assert — sweep the rendered tree for the forbidden
+    // class fragments.
+    const html = container.innerHTML
+    expect(html).not.toMatch(/\bred-(?:300|400|500|600)\b/)
+    expect(html).not.toMatch(/\bbg-red-\d+\/\d+\b/)
+    expect(html).not.toMatch(/\bborder-red-\d+\/\d+\b/)
+  })
+
+  it('Given a Boom child throws "kaboom", When the boundary renders the fallback, Then "kaboom" lives inside the Technical-details <details> disclosure (NOT slammed onto the user as a top-level paragraph — Mira #2 / matches the ErrorState contract)', () => {
+    // arrange / act
+    const { container } = render(
+      <ErrorBoundary>
+        <Boom message="kaboom-disclosure-pin" />
+      </ErrorBoundary>,
+    )
+
+    // assert — the error message text is queryable (jsdom renders
+    // <details> contents regardless of the open attr) but lives
+    // inside a <details>.
+    const errorText = screen.getByText(/kaboom-disclosure-pin/)
+    const details = errorText.closest('details')
+    expect(details).not.toBeNull()
+    // The disclosure is closed by default — Frank doesn't see the
+    // raw exception on first paint.
+    expect(details).not.toHaveAttribute('open')
+    // The summary is the visible label.
+    const summary = container.querySelector('details > summary')
+    expect(summary?.textContent).toMatch(/technical details/i)
+  })
+
+  it('Given the fallback renders, When the action buttons are queried, Then they carry the Button-primitive base classes (min-h-[44px] tap target, focus-visible:outline-2, primitive bg tokens — proves we routed through <Button>, not hand-rolled <button>)', () => {
+    // arrange / act — primitive's BASE_CLASSES include the
+    // `focus-visible:outline-2` family and `font-semibold`; size="md"
+    // forces `min-h-[44px]`. Hand-rolled buttons in the pre-fix
+    // boundary used `py-2` (~32 px), `font-medium`, and a custom
+    // focus-ring style — none of which matched the primitive
+    // contract.
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    )
+
+    // assert — both buttons share the primitive shape.
+    for (const name of [/try again/i, /reload app/i]) {
+      const btn = screen.getByRole('button', { name })
+      // Primitive base contract.
+      expect(btn.className).toContain('font-semibold')
+      expect(btn.className).toMatch(/focus-visible:outline-2/)
+      expect(btn.className).toContain('min-h-[44px]')
+    }
+  })
+
+  it('Given the fallback renders, When the alert region is queried, Then the warning glyph + h2 title + technical disclosure all live inside one role="alert" container (Mira: harmonized vocabulary with inline ErrorState)', () => {
+    // arrange / act
+    render(
+      <ErrorBoundary>
+        <Boom message="alert-region-pin" />
+      </ErrorBoundary>,
+    )
+
+    // assert — single role="alert", h2 heading (NOT a plain <p>),
+    // technical details disclosure all nested inside it.
+    const alert = screen.getByRole('alert')
+    const heading = screen.getByRole('heading', { level: 2 })
+    expect(alert).toContainElement(heading)
+    expect(heading).toHaveTextContent(/something went wrong/i)
+    const details = alert.querySelector('details')
+    expect(details).not.toBeNull()
+  })
 })
