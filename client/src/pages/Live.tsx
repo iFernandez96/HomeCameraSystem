@@ -200,7 +200,18 @@ export function Live() {
                   (which camera you're looking at), which is an h2
                   job. Two-h1-per-route was confusing the AT
                   document outline. */}
-              <h2 className="font-display text-2xl sm:text-3xl font-bold text-white leading-none truncate">
+              {/* iter-356.66 (Samsung shot, round 3): camera label
+                  STILL truncated to "Front D..." at 411-px viewport
+                  even after the flex-col + max-w-55% fixes — Fraunces
+                  at 24 px is wider than typical sans, and the trust
+                  cluster's natural width (3 wrapping pills) plus the
+                  gradient strip's px-4 inner padding leaves the left
+                  column at ~140 px, just under what 'Front Door' at
+                  24-px serif needs. Drop to text-lg (18 px) on
+                  mobile + bump to text-2xl on sm+, and drop
+                  `truncate` so longer custom camera names wrap to a
+                  second line instead of getting amputated. */}
+              <h2 className="font-display text-lg sm:text-2xl font-bold text-white leading-tight">
                 {cameraLabel}
               </h2>
               <CameraSubtitle status={status} sentryCat={sentryCat} onDark />
