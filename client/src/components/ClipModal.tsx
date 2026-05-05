@@ -310,9 +310,12 @@ export function ClipModal({
       }
     }
 
-    if (hasRVFC && v.requestVideoFrameCallback) {
-      rvfcHandle = v.requestVideoFrameCallback(drawAndReschedule)
-    }
+    // iter-356.63 (mobile redesign Slice F): do NOT kick rVFC eagerly
+    // on effect-mount. iOS Safari rejects unmuted autoplay; the loop
+    // would draw onto a video with no first frame yet, sometimes
+    // pinning a stale snapshot frame in the canvas. Defer the rVFC
+    // start to the `play` event listener (`onPlay` above) so the
+    // overlay only kicks off after the first decoded frame.
 
     // Even with rVFC, keep timeupdate as a defensive net for the
     // seek-without-play case (browser may not fire rVFC if no new

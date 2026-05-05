@@ -581,4 +581,42 @@ describe('ClipModal', () => {
       window.localStorage.removeItem('homecam:boxesVisible')
     }
   })
+
+  it('Given the modal mounts, When the video has not fired play, Then requestVideoFrameCallback is not invoked yet (iter-356.63 Slice F)', () => {
+    // arrange — monkey-patch rVFC onto HTMLVideoElement.prototype so
+    // our spy is observed by the actual <video> the modal mounts.
+    const rVFC = vi.fn().mockReturnValue(1)
+    const cancelRVFC = vi.fn()
+    type VideoProto = HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number
+      cancelVideoFrameCallback?: (h: number) => void
+    }
+    const proto = HTMLVideoElement.prototype as VideoProto
+    const prevRVFC = proto.requestVideoFrameCallback
+    const prevCancel = proto.cancelVideoFrameCallback
+    proto.requestVideoFrameCallback = rVFC
+    proto.cancelVideoFrameCallback = cancelRVFC
+
+    try {
+      // act — give the event a bbox so the rVFC overlay loop is wired.
+      const ev = makeEvent({
+        boxes: [{ label: 'person', score: 0.9, x: 0.1, y: 0.1, w: 0.2, h: 0.2 }],
+      })
+      render(<ClipModal event={ev} onClose={() => {}} />)
+
+      // assert — pre-Slice-F the loop kicked off eagerly inside the
+      // useEffect body. After Slice F the loop only starts on `play`.
+      expect(rVFC).not.toHaveBeenCalled()
+
+      // act — fire the play event on the underlying <video>.
+      const video = screen.getByLabelText(/clip of person event/i) as HTMLVideoElement
+      fireEvent.play(video)
+
+      // assert — now the loop has been kicked.
+      expect(rVFC).toHaveBeenCalled()
+    } finally {
+      proto.requestVideoFrameCallback = prevRVFC
+      proto.cancelVideoFrameCallback = prevCancel
+    }
+  })
 })

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CatEmptyState } from '../components/CatEmptyState'
+import { ErrorState } from '../components/states/ErrorState'
+import { LoadingState } from '../components/states/LoadingState'
 import {
   type ConsentRecord,
   deleteFaceCapture,
@@ -320,51 +322,28 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
   }, [retryNonce])
 
   if (error) {
+    // iter-356.63 (mobile redesign Slice F): consolidated to shared
+    // <ErrorState> so this surface matches Events / People / etc.
     return (
-      <div
-        className="text-center py-12 px-6 space-y-3"
-        role="status"
-        aria-live="polite"
-      >
-        <p className="text-[var(--color-text-primary)] text-base">Could not load training photos.</p>
-        <p className="text-sm text-[var(--color-text-secondary)]">
-          You need to be signed in as the main account holder. Sign out and try
-          signing in as the owner if a different person set up your camera.
-        </p>
-        <Button
-          variant="primary"
-          size="md"
-          className="mt-2"
-          onClick={() => {
-            setError(null)
-            setDirs(null)
-            setRetryNonce((n) => n + 1)
-          }}
-        >
-          Retry
-        </Button>
-        {/* iter-356.3c (Maya Minor): wrap raw exception dump in
-            <details> so friendly copy stays clean above. */}
-        <details className="mt-2 text-sm text-[var(--color-text-tertiary)]">
-          <summary className="cursor-pointer hover:text-[var(--color-text-secondary)]">
-            Technical details
-          </summary>
-          <p className="mt-1 break-all">{formatError(error)}</p>
-        </details>
-      </div>
+      <ErrorState
+        title="Could not load training photos."
+        message="You need to be signed in as the main account holder. Sign out and try signing in as the owner if a different person set up your camera."
+        retry={() => {
+          setError(null)
+          setDirs(null)
+          setRetryNonce((n) => n + 1)
+        }}
+        technicalDetail={formatError(error)}
+      />
     )
   }
   if (dirs === null) {
+    // iter-356.63: route-shaped skeleton instead of a centered ring
+    // spinner. Training is a grid of person folders.
     return (
-      <div
-        role="status"
-        className="flex items-center justify-center py-12 gap-3 text-sm text-[var(--color-text-primary)]"
-      >
-        <span
-          aria-hidden="true"
-          className="w-5 h-5 rounded-full border-2 border-[var(--color-border-strong)] border-t-neutral-300 animate-spin"
-        />
-        Loading photos…
+      <div role="status">
+        <span className="sr-only">Loading photos…</span>
+        <LoadingState shape="grid" />
       </div>
     )
   }
@@ -685,41 +664,19 @@ function GalleryView({
       </button>
 
       {error ? (
-        <div
-          className="text-center py-12 px-6 space-y-3"
-          role="status"
-          aria-live="polite"
-        >
-          <p className="text-[var(--color-text-primary)] text-base">Could not load these photos.</p>
-          <Button
-            variant="primary"
-            size="md"
-            className="mt-2"
-            onClick={() => {
-              setError(null)
-              setFiles(null)
-              setRetryNonce((n) => n + 1)
-            }}
-          >
-            Retry
-          </Button>
-          <details className="mt-2 text-sm text-[var(--color-text-tertiary)]">
-            <summary className="cursor-pointer hover:text-[var(--color-text-secondary)]">
-              Technical details
-            </summary>
-            <p className="mt-1 break-all">{formatError(error)}</p>
-          </details>
-        </div>
+        <ErrorState
+          title="Could not load these photos."
+          retry={() => {
+            setError(null)
+            setFiles(null)
+            setRetryNonce((n) => n + 1)
+          }}
+          technicalDetail={formatError(error)}
+        />
       ) : files === null ? (
-        <div
-          role="status"
-          className="flex items-center justify-center py-12 gap-3 text-sm text-[var(--color-text-primary)]"
-        >
-          <span
-            aria-hidden="true"
-            className="w-5 h-5 rounded-full border-2 border-[var(--color-border-strong)] border-t-neutral-300 animate-spin"
-          />
-          Loading photos…
+        <div role="status">
+          <span className="sr-only">Loading photos…</span>
+          <LoadingState shape="grid" />
         </div>
       ) : files.length === 0 ? (
         // iter-356.24: per-person gallery empty state — distinct copy

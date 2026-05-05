@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listPeople, type PersonSummary } from '../lib/api'
-import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
+import { ErrorState } from '../components/states/ErrorState'
+import { LoadingState } from '../components/states/LoadingState'
 import { formatError } from '../lib/format'
 import { useTicker } from '../lib/useTicker'
 
@@ -150,36 +151,19 @@ export function People() {
       </header>
 
       {error ? (
-        <div
-          className="text-center py-12 px-6 space-y-3"
-          role="status"
-          aria-live="polite"
-        >
-          <p className="text-[var(--color-text-primary)] text-base">Could not load people.</p>
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            Check your connection and try again.
-          </p>
-          <Button variant="primary" size="md" onClick={onRetry} className="mt-2">
-            Retry
-          </Button>
-          {/* iter-347 (Frank #6): bumped from text-xs text-[var(--color-text-tertiary)]
-              to text-sm text-[var(--color-text-secondary)] — diagnostic text needs to
-              be readable when the user actually has to read it. */}
-          <p className="text-sm text-[var(--color-text-secondary)] break-all mt-2">
-            {formatError(error)}
-          </p>
-        </div>
+        // iter-356.63 (mobile redesign Slice F): swap the inline
+        // error block for the shared <ErrorState> primitive so this
+        // surface matches Events / Training / etc.
+        <ErrorState
+          title="Could not load people"
+          message="Check your connection and try again."
+          retry={onRetry}
+          technicalDetail={formatError(error)}
+        />
       ) : people === null ? (
-        <div
-          role="status"
-          className="flex items-center justify-center py-12 gap-3 text-sm text-[var(--color-text-primary)]"
-        >
-          <span
-            aria-hidden="true"
-            className="w-5 h-5 rounded-full border-2 border-[var(--color-border-strong)] border-t-neutral-300 animate-spin"
-          />
-          Loading people…
-        </div>
+        // iter-356.63: route-shaped skeleton instead of a centered
+        // ring spinner.
+        <LoadingState shape="grid" />
       ) : people.length === 0 ? (
         // iter-356.23 (Priya pattern propagation + Maya Major #2):
         // sibling adoption of <CatEmptyState>. Pre-iter-356.23 this

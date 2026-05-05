@@ -9,6 +9,7 @@ import { ClipModal } from '../components/ClipModal'
 const EventHeatmap = lazy(() => import('../components/EventHeatmap.lazy'))
 import { EventList } from '../components/EventList'
 import { EventListSkeleton, HeatmapSkeleton } from '../components/Skeleton'
+import { ErrorState } from '../components/states/ErrorState'
 import { Button } from '../components/primitives/Button'
 import {
   deleteEvent,
@@ -1000,7 +1001,12 @@ export function Events() {
           {loading ? (
             <EventListSkeleton />
           ) : error ? (
-            <ErrorState message={formatError(error)} onRetry={retry} />
+            <ErrorState
+              title="Could not load events"
+              message="Check your connection and try again."
+              retry={retry}
+              technicalDetail={formatError(error)}
+            />
           ) : (
             <>
               <EventList
@@ -1195,36 +1201,6 @@ function FilterChip({
     >
       {label}
     </button>
-  )
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div
-      className="text-center py-16 px-6 space-y-4"
-      role="alert"
-      aria-live="polite"
-    >
-      {/* iter-355ae (Maya Critical 1): the literal "!" character at
-          text-4xl read as a missing glyph or unloaded font. Replaced
-          with a stroked AlertCircle SVG matching the CalendarIcon /
-          EyeIcon style + danger-tinted backdrop circle for hierarchy. */}
-      <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-400" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="8" x2="12" y2="12" />
-          <line x1="12" y1="16" x2="12.01" y2="16" />
-        </svg>
-      </div>
-      <p className="text-[var(--color-text-secondary)]">Could not load events</p>
-      <p className="text-xs text-[var(--color-text-tertiary)] break-all">{message}</p>
-      <button
-        onClick={onRetry}
-        className="px-4 py-2 bg-[var(--color-surface-raised)] hover:bg-[var(--color-border-strong)] active:bg-[var(--color-border-strong)] rounded-full text-sm font-medium border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
-      >
-        Retry
-      </button>
-    </div>
   )
 }
 

@@ -3,7 +3,7 @@ import { drawBoxes } from '../lib/drawBoxes'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
-import { Button } from './primitives/Button'
+import { OfflineState } from './states/OfflineState'
 
 type Status = 'connecting' | 'live' | 'error' | 'idle'
 
@@ -537,25 +537,16 @@ export function VideoTile({
         )}
       </div>
       {status === 'error' && (
+        // iter-356.63 (mobile redesign Slice F): swap inline overlay
+        // copy for the shared <OfflineState kind="camera"> primitive
+        // so the camera-offline surface matches the one used on
+        // EventList / People / etc. The dim backdrop wrapper stays —
+        // it’s a video-overlay specific affordance.
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="text-center space-y-3 px-4">
-            <p className="text-sm text-[var(--color-text-primary)] font-medium">
-              We can&apos;t reach your camera right now
-            </p>
-            <p className="text-xs text-[var(--color-text-secondary)] max-w-xs">
-              Check that the camera is on and connected, then tap Retry.
-            </p>
-            {/* iter-356.3a: Button primitive (size=md → 44 px tap
-                target, was 36 px). secondary variant reads on the
-                dark video-overlay backdrop. */}
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setRetryNonce((n) => n + 1)}
-            >
-              Retry
-            </Button>
-          </div>
+          <OfflineState
+            kind="camera"
+            retry={() => setRetryNonce((n) => n + 1)}
+          />
         </div>
       )}
     </div>
