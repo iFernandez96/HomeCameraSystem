@@ -473,21 +473,33 @@ function ConfidencePill({ score }: { score: number }) {
   // tier letter so the pill survives a colorblind partial-sight scan.
   // Pre-fix the L/M/H signal lived only in aria-label; the visible
   // surface was hue-only.
+  //
+  // iter-356.66 (real-device fix): the token `*-bg` variants are
+  // ~20%-mix-with-transparent — fine on a flat dark surface but
+  // illegible over the thumbnail image (the pill sat mid-thumbnail
+  // and read as a tinted blur, not a confidence chip). Switched to
+  // SOLID base tokens with `text-white` (or text against the bg)
+  // plus `ring-1 ring-black/30` for definition against varied
+  // photographic backgrounds. Brings legibility back to the pre-
+  // iter-356.65 `bg-amber-500/85` shape while keeping the token
+  // contract. Also bumped the pill weight to `font-bold` and added
+  // `shadow-sm` so the corner-of-image overlay reads as a label
+  // pasted on top of a photo, not a tint baked into the photo.
   const tier =
     score < 0.5
-      ? 'bg-[var(--color-danger-bg-strong)] text-[var(--color-danger)]'
+      ? 'bg-[var(--color-danger-strong)] text-white'
       : score < 0.75
-        ? 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
-        : 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
+        ? 'bg-[var(--color-warning)] text-[var(--color-bg)]'
+        : 'bg-[var(--color-success)] text-[var(--color-bg)]'
   const tierGlyph = score < 0.5 ? 'L' : score < 0.75 ? 'M' : 'H'
   const tierLabel =
     score < 0.5 ? 'low' : score < 0.75 ? 'medium' : 'high'
   return (
     <span
-      className={`absolute top-2 right-2 px-2 py-1 rounded-md text-xs font-semibold tabular-nums inline-flex items-center gap-1 ${tier}`}
+      className={`absolute top-1 right-1 px-1.5 py-0.5 rounded-md text-[11px] font-bold tabular-nums inline-flex items-center gap-0.5 ring-1 ring-black/30 shadow-sm ${tier}`}
       aria-label={`How sure the camera was: ${pct}%, ${tierLabel}`}
     >
-      <span aria-hidden="true" className="opacity-80">{tierGlyph}</span>
+      <span aria-hidden="true" className="opacity-90">{tierGlyph}</span>
       {pct}%
     </span>
   )

@@ -686,9 +686,20 @@ export function Events() {
       // Header height is no longer subtracted since the title band
       // scrolls away. Keep the variable in scope for descendant
       // components that read --day-header-top.
+      //
+      // iter-356.66 (real-device fix — mobile-view-auditor A2): on
+      // iOS the WatchRibbon at the top of the shell is sticky AT 56
+      // px below the safe-area-top inset (App.tsx default
+      // `--day-header-top: calc(56px + env(safe-area-inset-top))`).
+      // This page-level override drops the 56-px addend, so the
+      // DayHeader pinned to `top: var(--day-header-top)` slides
+      // BEHIND the ribbon on scroll — visible in screenshots as a
+      // "Today's log" band sitting on top of an event row with no
+      // back-of-band over the row. Restore the 56-px clearance to
+      // match the App.tsx contract.
       style={
         {
-          '--day-header-top': `env(safe-area-inset-top)`,
+          '--day-header-top': `calc(56px + env(safe-area-inset-top))`,
         } as React.CSSProperties
       }
     >
