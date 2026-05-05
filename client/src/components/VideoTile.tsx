@@ -366,7 +366,22 @@ export function VideoTile({
       }
     }
     document.addEventListener('fullscreenchange', onChange)
-    return () => document.removeEventListener('fullscreenchange', onChange)
+    // iter-356.x (mobile audit C3): iOS Safari's webkitEnterFullscreen
+    // uses the native player instead of the standard fullscreen API.
+    // The standard `fullscreenchange` event never fires when iOS exits,
+    // leaving `isFullscreen` stuck at true and the toggle button stuck
+    // showing the "exit" icon. Bind to the webkit-specific events on
+    // the <video> element so state stays in sync.
+    const v = videoRef.current
+    const onWebkitBegin = () => setIsFullscreen(true)
+    const onWebkitEnd = () => setIsFullscreen(false)
+    v?.addEventListener('webkitbeginfullscreen', onWebkitBegin)
+    v?.addEventListener('webkitendfullscreen', onWebkitEnd)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      v?.removeEventListener('webkitbeginfullscreen', onWebkitBegin)
+      v?.removeEventListener('webkitendfullscreen', onWebkitEnd)
+    }
   }, [])
 
   const onFullscreen = () => {

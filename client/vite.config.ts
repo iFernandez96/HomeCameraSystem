@@ -80,6 +80,23 @@ export default defineConfig({
             type: 'image/svg+xml',
             purpose: 'maskable',
           },
+          // iter-356.x (mobile audit D1): Android Chrome 12+ adaptive-
+          // icon system applies a circular mask to maskable icons.
+          // SVG-only maskable can render without the safe-zone crop
+          // on some launchers, bleeding artwork to the edge. PNG
+          // raster fallbacks fix that.
+          {
+            src: '/icon-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any maskable',
+          },
+          {
+            src: '/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable',
+          },
         ],
         // Long-press home-screen icon on Android (and right-click on
         // most desktops) → quick action menu. Skip Settings — it's

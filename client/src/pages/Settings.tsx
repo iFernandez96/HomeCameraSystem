@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { nextRovingIndex } from '../lib/a11y'
 // iter-268..294: every section moved to ./settings/<Name>.tsx.
 // Settings.tsx is now a pure shell — tab state + section composition.
@@ -25,7 +25,15 @@ import { useStatus } from '../lib/useStatus'
 // (viewer) or "Account & Maintenance" (owner) per Frank: a viewer
 // who taps "System" expecting hardware controls finds 4 rows of
 // password / sign-out and thinks they're in the wrong place.
-type SettingsTab = 'camera' | 'notifications' | 'system'
+// iter-356.x (scalability F1): reserve a 'cameras' slot for the
+// future multi-camera deploy. Today only the per-deploy detection
+// config exists ('camera' singular, configured once); when a second
+// Jetson lands on the tailnet the operator picks-then-configures
+// flow lives behind 'cameras' (plural). Reserving the type slot
+// now means the localStorage key + tab guard already accept it
+// when the actual tab body lands. The only change today: type
+// signature accepts the value; nothing renders for it yet.
+type SettingsTab = 'camera' | 'cameras' | 'notifications' | 'system'
 const _SETTINGS_TAB_KEY = 'homecam:settingsTab'
 
 function _readInitialTab(isOwner: boolean): SettingsTab {
@@ -41,12 +49,16 @@ function _readInitialTab(isOwner: boolean): SettingsTab {
   const stored = window.localStorage.getItem(_SETTINGS_TAB_KEY)
   if (
     stored === 'camera' ||
+    stored === 'cameras' ||
     stored === 'notifications' ||
     stored === 'system'
   ) {
     // Family/viewer can't land on the Camera tab — its content is
     // entirely owner-gated. Fall through to Notifications.
     if (stored === 'camera' && !isOwner) return 'notifications'
+    // iter-356.x: 'cameras' slot reserved for multi-cam (today no
+    // tab body) — fall through to Notifications until the tab lands.
+    if (stored === 'cameras') return 'notifications'
     return stored
   }
   return 'notifications'
@@ -205,6 +217,19 @@ function SettingsTabs({
   // Authoring Practices Tabs pattern. ChipRadiogroup already uses
   // this (Events.tsx); we share the same `nextRovingIndex` util.
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  // iter-356.x (coherence C2): track viewport for aria-orientation. The
+  // tablist visually flips to vertical at lg+ (1024px) per the flex-col
+  // class on the wrapper. SSR-safe default 'false' so first paint is
+  // mobile orientation.
+  const [isDesktopTabs, setIsDesktopTabs] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const onChangeMq = () => setIsDesktopTabs(mq.matches)
+    onChangeMq()
+    mq.addEventListener('change', onChangeMq)
+    return () => mq.removeEventListener('change', onChangeMq)
+  }, [])
   const onKey = (e: React.KeyboardEvent) => {
     const idx = tabs.findIndex((t) => t.id === active)
     if (idx === -1) return
@@ -227,7 +252,12 @@ function SettingsTabs({
       role="tablist"
       tabIndex={-1}
       aria-label="Settings sections"
-      aria-orientation="horizontal"
+      // iter-356.x (coherence C2): tablist visually flips to vertical
+      // rail on lg+ via flex-col, but pre-fix aria-orientation stayed
+      // "horizontal" — AT users heard "horizontal tablist" and expected
+      // left/right keys while sighted users saw a column. Bind to the
+      // viewport.
+      aria-orientation={isDesktopTabs ? 'vertical' : 'horizontal'}
       onKeyDown={onKey}
       className="flex gap-1 lg:flex-col lg:gap-1.5 lg:w-48 lg:flex-none lg:sticky lg:top-20 lg:self-start lg:p-3 lg:rounded-2xl lg:bg-[var(--color-surface)] lg:border lg:border-[var(--color-border-subtle)] lg:shadow-[var(--shadow-subtle)] mx-4 mt-4 px-2 py-1 overflow-x-auto lg:mx-0 lg:mt-0 lg:overflow-visible scrollbar-hide"
     >

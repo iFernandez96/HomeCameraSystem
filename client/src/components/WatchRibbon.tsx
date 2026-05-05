@@ -71,7 +71,14 @@ export function WatchRibbon() {
       // inside <main> — it lives between the ConnectionBanner and
       // the rail+content row, so it's the authoritative "you are
       // here, the system is in state X" anchor.
-      className="flex items-center justify-between px-4 lg:px-6 h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface)]/95 backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
+      // iter-356.x (mobile audit A1): pre-fix the ribbon was a fixed
+      // 56px box with safe-area padding INSIDE that height. On a
+      // notched iPhone the inset (~44px) compressed the content row
+      // to ~12px, stacking text on top of the iOS clock. Now: min-h
+      // so the ribbon expands to host both the safe-area inset and
+      // the 56px content row. Android (zero inset) collapses to the
+      // original 56px exactly.
+      className="flex items-center justify-between px-4 lg:px-6 min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface)]/95 backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
       style={{ paddingTop: 'env(safe-area-inset-top)' }}
     >
       {/* LEFT: brand cluster (desktop only — on mobile the rail+nav
