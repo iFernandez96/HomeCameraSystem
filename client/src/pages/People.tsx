@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listPeople, type PersonSummary } from '../lib/api'
+import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
@@ -70,9 +71,17 @@ export function People() {
   // the user isn't actively searching.
   const partitioned = _partitionByRecency(filteredPeople)
 
+  // iter-356.x (scalability M1): pre-fix the page silently truncated
+  // at 100 (server default) and small businesses with 60+ enrolled
+  // staff hit the cap with no path to items 101..N. Track the
+  // currently-requested limit and let the user expand it in batches
+  // of 100. Server caps at higher limits gracefully via its own
+  // _LIST_PEOPLE_MAX, so this client-side ceiling is the friendly UI.
+  const [pageLimit, setPageLimit] = useState<number>(100)
+  const [loadingMore, setLoadingMore] = useState(false)
   useEffect(() => {
     let cancelled = false
-    listPeople()
+    listPeople({ limit: pageLimit })
       .then((r) => {
         if (cancelled) return
         setPeople(r.items)
@@ -86,7 +95,15 @@ export function People() {
     return () => {
       cancelled = true
     }
-  }, [retryNonce])
+  }, [retryNonce, pageLimit])
+
+  const onLoadMore = () => {
+    if (loadingMore) return
+    setLoadingMore(true)
+    setPageLimit((n) => n + 100)
+    // Reset on the next effect tick.
+    setTimeout(() => setLoadingMore(false), 250)
+  }
 
   // iter-326b: Retry click resets state synchronously (event-
   // handler context, NOT useEffect body — sharp edge from
@@ -235,16 +252,23 @@ export function People() {
             </div>
           )}
           {total > people.length ? (
-            // iter-328 (R2): truncation callout. Without this an
-            // operator with 200 enrolled faces would silently see
-            // only the first 100 most-recent and assume the rest
-            // are gone. Soft text (not an alert) — informational.
-            <p
-              className="text-sm text-[var(--color-text-secondary)] px-1"
-              role="status"
-            >
-              Showing {people.length} of {total} recognized people.
-            </p>
+            // iter-328 (R2): truncation callout. iter-356.x: paired
+            // with a "Load more" button so the operator isn't stuck
+            // at the first window. Soft text (not an alert).
+            <div className="flex items-center justify-between gap-3 px-1" role="status">
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Showing {people.length} of {total} recognized people.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onLoadMore}
+                loading={loadingMore}
+                loadingText="Loading…"
+              >
+                Load more
+              </Button>
+            </div>
           ) : null}
           {/* iter-341: when search narrows to zero matches, give
               the user a soft empty-state hint (NOT an error). */}

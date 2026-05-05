@@ -1,9 +1,15 @@
 import { NavLink } from 'react-router-dom'
 
+// iter-356.x (Frank P3-6): pre-fix Training and Review queue were
+// only reachable via the People page header link, which non-technical
+// users routinely missed. Adding Training as a peer BottomNav entry
+// surfaces the active-learning loop on mobile. 5 tabs at 390px ≈ 78px
+// each — comfortable for the 22px icons plus a single short label.
 const tabs = [
   { to: '/live', label: 'Live', icon: LiveIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },
   { to: '/people', label: 'People', icon: PeopleIcon },
+  { to: '/training', label: 'Train', icon: TrainingIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
@@ -88,6 +94,17 @@ function PeopleIcon({ active: _active }: { active: boolean }) {
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+}
+
+function TrainingIcon({ active: _active }: { active: boolean }) {
+  // Mortarboard glyph — matches the icon used in Training page header
+  // links so the visual identity is consistent.
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 10l10-5 10 5-10 5-10-5z" />
+      <path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" />
     </svg>
   )
 }

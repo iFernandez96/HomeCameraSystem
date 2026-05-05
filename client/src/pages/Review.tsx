@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
+import { ErrorState } from '../components/states/ErrorState'
+import { LoadingState } from '../components/states/LoadingState'
 import {
   deleteFaceCapture,
   getReviewQueue,
@@ -45,6 +47,13 @@ export function Review() {
   const confirm = useConfirm()
   const { showToast } = useToast()
 
+  const [reloadKey, setReloadKey] = useState(0)
+  const handleRetry = useCallback(() => {
+    setItems(null)
+    setError(null)
+    setReloadKey((k) => k + 1)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     getReviewQueue(50)
@@ -56,12 +65,11 @@ export function Review() {
       .catch((e) => {
         if (cancelled) return
         setError(e instanceof Error ? e.message : 'Could not load review queue.')
-        setItems([])
       })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reloadKey])
 
   function keyOf(item: ReviewQueueItem): string {
     return `${item.current_dir}:${item.filename}`
@@ -72,6 +80,32 @@ export function Review() {
       prev ? prev.filter((p) => keyOf(p) !== keyOf(item)) : prev,
     )
     setTotal((t) => Math.max(0, t - 1))
+    // iter-356.x (scalability V2 + feature audit): pre-fix the queue
+    // drained at 50 items and the operator hit a dead-end with no
+    // affordance to load items 51..N. Fetch a fresh window once the
+    // visible list is half-empty so the active-learning loop keeps
+    // refilling silently.
+    void maybeRefill()
+  }
+
+  async function maybeRefill() {
+    setItems((prev) => {
+      if (prev === null) return prev
+      // Only refill when there's still work on the server we haven't
+      // shown, AND the visible list is running low. The setItems update
+      // function is just a read here — return prev unchanged.
+      if (prev.length >= 25) return prev
+      void (async () => {
+        try {
+          const r = await getReviewQueue(50)
+          setItems(r.items)
+          setTotal(r.total_uncertain)
+        } catch {
+          // Silent — the next user action will retry naturally.
+        }
+      })()
+      return prev
+    })
   }
 
   async function handleApprove(item: ReviewQueueItem) {
@@ -173,7 +207,7 @@ export function Review() {
               recognized. Tell it if it got them right." */}
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">
             {items === null
-              ? 'Loading…'
+              ? 'Loading the review queue…'
               : total === 0
                 ? 'Your camera is confident about everyone it has seen lately.'
                 : `${total} photo${total === 1 ? '' : 's'} the camera wasn’t sure about — tell it if it got them right.`}
@@ -187,16 +221,16 @@ export function Review() {
         </Link>
       </header>
 
-      {error && (
-        <div
-          role="alert"
-          className="bg-[var(--color-danger-bg)] border border-[var(--color-danger-border)] rounded-lg px-3 py-3 text-sm text-[var(--color-danger)] mb-4"
-        >
-          {error}
-        </div>
-      )}
-
-      {items !== null && items.length === 0 && !error ? (
+      {error ? (
+        <ErrorState
+          title="Could not load review queue"
+          message="Check your connection and try again."
+          retry={handleRetry}
+          technicalDetail={error}
+        />
+      ) : items === null ? (
+        <LoadingState shape="grid" />
+      ) : items.length === 0 ? (
         // iter-356.24 (Maya iter-356.23 Major #1 carryover): migrated
         // from one-line plain-text shrug to <CatEmptyState> so this
         // surface matches Events / People / Timelapses / Training.

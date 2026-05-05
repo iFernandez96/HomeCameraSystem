@@ -333,6 +333,12 @@ export type PeopleListResponse = {
 // SQLite window-function query + body transfer + JSON parse on
 // every visibility-resume / nav-back to /people.
 const _ETAG_CACHE: Map<string, { etag: string; body: unknown }> = new Map()
+// iter-356.x (scalability A3): cap the ETag cache so 60 months of
+// heatmap navigation × multiple person filters can't grow this Map
+// without bound. JS Maps preserve insertion order, so deleting the
+// oldest key on overflow gives LRU-ish behavior (set re-inserts to
+// the tail on touch).
+const _ETAG_CACHE_MAX = 50
 
 // iter-346 (refactored from iter-340): generic GET wrapper that
 // echoes If-None-Match on subsequent calls + returns the cached
@@ -373,7 +379,13 @@ export async function getCachedJSON<T>(url: string): Promise<T> {
   const body = (await res.json()) as T
   const etag = res.headers.get('ETag') || res.headers.get('etag')
   if (etag) {
+    // Refresh insertion order so this URL isn't first to evict.
+    if (_ETAG_CACHE.has(url)) _ETAG_CACHE.delete(url)
     _ETAG_CACHE.set(url, { etag, body })
+    if (_ETAG_CACHE.size > _ETAG_CACHE_MAX) {
+      const oldest = _ETAG_CACHE.keys().next().value
+      if (oldest !== undefined) _ETAG_CACHE.delete(oldest)
+    }
   }
   return body
 }

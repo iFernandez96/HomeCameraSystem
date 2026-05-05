@@ -268,40 +268,58 @@ function ExportSection() {
       })
   }
 
+  // iter-356.x (Frank I1): pre-fix two prominent primary-orange buttons
+  // labeled "Export face crops (224×224)" sat at the top of the
+  // Training tab. Non-technical homeowners read this as "this is what
+  // I'm supposed to do" and tapped them. Now collapsed behind a
+  // disclosure with explicit "ML developers only" framing — the buttons
+  // are still one click away for power users, but homeowners aren't
+  // led into them.
   return (
     <section
       aria-labelledby="export-heading"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4"
     >
-      <h2
-        id="export-heading"
-        className="text-base font-semibold text-[var(--color-text-primary)]"
-      >
-        Export training data
-      </h2>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => onExport('face', 224)}
-          disabled={busy !== null}
-          aria-label="Export face crops (224×224)"
+      <details>
+        <summary
+          id="export-heading"
+          className="text-sm font-medium text-[var(--color-text-secondary)] cursor-pointer hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded list-none [&::-webkit-details-marker]:hidden flex items-center gap-2"
         >
-          {busy === 'face' ? 'Exporting…' : 'Export face crops (224×224)'}
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => onExport('person', 640)}
-          disabled={busy !== null}
-          aria-label="Export person crops (640×640)"
-        >
-          {busy === 'person' ? 'Exporting…' : 'Export person crops (640×640)'}
-        </Button>
-      </div>
-      <p className="text-xs text-[var(--color-text-secondary)]">
-        Letterboxed PNGs + manifest.csv. Capped at 5,000 entries per export.
-      </p>
+          <span aria-hidden="true">▸</span>
+          Advanced — export training data for ML
+        </summary>
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            For developers training a custom model on a separate machine.
+            If you don&apos;t know what that means, you can skip this
+            section — the camera trains itself from the photos it
+            captures.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onExport('face', 224)}
+              disabled={busy !== null}
+              aria-label="Export face crops (224×224)"
+            >
+              {busy === 'face' ? 'Exporting…' : 'Export face crops (224×224)'}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onExport('person', 640)}
+              disabled={busy !== null}
+              aria-label="Export person crops (640×640)"
+            >
+              {busy === 'person' ? 'Exporting…' : 'Export person crops (640×640)'}
+            </Button>
+          </div>
+          <p className="text-xs text-[var(--color-text-tertiary)]">
+            Letterboxed PNGs + manifest.csv. Capped at 5,000 entries per export.
+          </p>
+        </div>
+      </details>
     </section>
   )
 }
@@ -389,8 +407,19 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
   }
 
   return (
-    <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 list-none">
-      {dirs.map((d) => (
+    <>
+      {/* iter-356.x (Frank I2 + feature audit P2-2): pre-fix every
+          person card showed a "Consent required" amber badge with no
+          inline explanation of what consent means. Frank: "She doesn't
+          know what consent means in this context." A one-line section
+          explainer at the top of the gallery sets context once. */}
+      <p className="text-sm text-[var(--color-text-secondary)] px-1 -mt-1 mb-2">
+        Grant consent to include each person&apos;s photos in training-
+        data exports. The camera still recognizes everyone normally
+        either way — consent only affects exports.
+      </p>
+      <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 list-none">
+        {dirs.map((d) => (
         <li key={d.name}>
           <div className="flex flex-col gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">
           <button
@@ -430,13 +459,14 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
               onClick={() => onDeleteAll(d.name, d.count)}
               aria-label={`Delete all captures of ${_displayName(d.name)}`}
             >
-              Delete all captures of {_displayName(d.name)}
+              Delete all
             </Button>
           </div>
           </div>
         </li>
       ))}
-    </ul>
+      </ul>
+    </>
   )
 }
 

@@ -25,7 +25,7 @@ describe('BottomNav', () => {
     ).toBeInTheDocument()
   })
 
-  it('when rendered, then exposes one link per configured tab (iter-326: four tabs after People landed)', () => {
+  it('when rendered, then exposes one link per configured tab (iter-356.x: five tabs after Training surfaced for active-learning loop)', () => {
     // arrange
     renderAt('/live')
 
@@ -35,16 +35,17 @@ describe('BottomNav', () => {
     // assert: getAllByRole returns ALL links; if a future tab is
     // added or removed without updating this test it'll fail loudly.
     // Pin both the count and the labels so a rename also fires.
-    expect(links).toHaveLength(4)
+    expect(links).toHaveLength(5)
     expect(links.map((el) => el.textContent?.toLowerCase())).toEqual([
       expect.stringContaining('live'),
       expect.stringContaining('events'),
       expect.stringContaining('people'),
+      expect.stringContaining('train'),
       expect.stringContaining('settings'),
     ])
   })
 
-  it('when rendered, then each link points to its own /tab path (iter-326)', () => {
+  it('when rendered, then each link points to its own /tab path (iter-356.x)', () => {
     // arrange
     renderAt('/live')
 
@@ -53,6 +54,7 @@ describe('BottomNav', () => {
       live: screen.getByRole('link', { name: /live/i }).getAttribute('href'),
       events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
       people: screen.getByRole('link', { name: /people/i }).getAttribute('href'),
+      training: screen.getByRole('link', { name: /train/i }).getAttribute('href'),
       settings: screen.getByRole('link', { name: /settings/i }).getAttribute('href'),
     }
 
@@ -61,6 +63,7 @@ describe('BottomNav', () => {
       live: '/live',
       events: '/events',
       people: '/people',
+      training: '/training',
       settings: '/settings',
     })
   })
