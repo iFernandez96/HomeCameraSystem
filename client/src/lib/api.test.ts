@@ -1178,4 +1178,147 @@ describe('lib/api', () => {
       expect((e as HttpError).status).toBe(401)
     }
   })
+
+  // iter-356.6X (tiered-inference slice 4): wire tests for the new
+  // training-export + per-name purge + consent endpoints. Server
+  // routes live in `routes/training.py` + `routes/training_admin.py`.
+
+  it('test_when_get_training_export_called_then_GETs_the_endpoint_with_query_params', async () => {
+    // arrange — server streams application/zip; mock with a Blob body.
+    const blob = new Blob([new Uint8Array([0x50, 0x4b])], {
+      type: 'application/zip',
+    })
+    asMock().mockResolvedValueOnce(
+      new Response(blob, {
+        status: 200,
+        headers: { 'Content-Type': 'application/zip' },
+      }),
+    )
+    const { getTrainingExport } = await import('./api')
+
+    // act
+    const out = await getTrainingExport('face', 224)
+
+    // assert
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/training/export?kind=face&size=224')
+    expect((call[1] as RequestInit).credentials).toBe('include')
+    // Node 18 / jsdom mismatch: the Blob the wrapper returns may
+    // come from undici's Response, which isn't strictly the same
+    // constructor as the global Blob. Pin the duck-typed shape
+    // (size + type) instead of identity.
+    expect(typeof (out as { size?: number }).size).toBe('number')
+    expect((out as { type?: string }).type).toBe('application/zip')
+  })
+
+  it('test_given_404_when_get_training_export_then_throws_HttpError', async () => {
+    // arrange — server returns 422 on an invalid kind/size; pin the
+    // typed throw with a 4xx status so callers can branch on err.status.
+    asMock().mockResolvedValueOnce(new Response('not found', { status: 404 }))
+    const { getTrainingExport, HttpError } = await import('./api')
+
+    // act / assert
+    try {
+      await getTrainingExport('person', 640)
+      throw new Error('expected getTrainingExport to reject')
+    } catch (e) {
+      expect(e).toBeInstanceOf(HttpError)
+      expect((e as HttpError).status).toBe(404)
+    }
+  })
+
+  it('test_when_delete_training_captures_called_then_sends_DELETE_with_name_query', async () => {
+    // arrange
+    mockJson({ ok: true, deleted: 12 })
+    const { deleteTrainingCaptures } = await import('./api')
+
+    // act
+    const r = await deleteTrainingCaptures('alice')
+
+    // assert
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/training/captures?name=alice')
+    expect((call[1] as RequestInit).method).toBe('DELETE')
+    expect(r).toEqual({ ok: true, deleted: 12 })
+  })
+
+  it('test_when_set_name_consent_called_then_POSTs_consent_body', async () => {
+    // arrange
+    const record = {
+      granted: true,
+      recorded_at_ms: 1700000000000,
+      consent_text_version: 'v1',
+      recorded_by: 'owner',
+    }
+    mockJson(record)
+    const { setNameConsent } = await import('./api')
+
+    // act
+    const r = await setNameConsent('alice', true, 'v1')
+
+    // assert
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/face/captures/alice/consent')
+    const init = call[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({
+      granted: true,
+      consent_text_version: 'v1',
+    })
+    expect(r).toEqual(record)
+  })
+
+  it('test_when_get_name_consent_called_then_returns_default_record_on_404', async () => {
+    // arrange — server returns 200 with the default-deny shape on
+    // miss (NOT 404). Pinned by training_admin.py::get_consent so the
+    // client doesn't branch on status. This test asserts the
+    // contract: client passes through whatever the server returned.
+    const defaultDeny = {
+      granted: false,
+      recorded_at_ms: null,
+      consent_text_version: null,
+      recorded_by: null,
+    }
+    mockJson(defaultDeny)
+    const { getNameConsent } = await import('./api')
+
+    // act
+    const r = await getNameConsent('alice')
+
+    // assert
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/face/captures/alice/consent')
+    expect(r).toEqual(defaultDeny)
+  })
+
+  it('test_get_detection_config_includes_face_capture_fields', async () => {
+    // arrange — extended DetectionConfig with the slice-4 fields.
+    // The client type now requires both fields; pin the wire shape
+    // so a server route rename doesn't silently de-sync.
+    const cfg = {
+      threshold: 0.55,
+      cooldown_s: 5,
+      enabled: true,
+      schedule_off_start: null,
+      schedule_off_end: null,
+      classes: ['person'],
+      zones: [],
+      clip_post_roll_s: 5,
+      clip_pre_roll_s: 5,
+      clip_retention_preset: 'month',
+      camera_label: 'Front Door',
+      audio_enabled: false,
+      face_capture_enabled: true,
+      face_capture_retention_days: 30,
+    }
+    mockJson(cfg)
+    const { getDetectionConfig } = await import('./api')
+
+    // act
+    const r = await getDetectionConfig()
+
+    // assert
+    expect(r.face_capture_enabled).toBe(true)
+    expect(r.face_capture_retention_days).toBe(30)
+  })
 })

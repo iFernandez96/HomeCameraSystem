@@ -2,13 +2,21 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CatEmptyState } from '../components/CatEmptyState'
 import {
+  type ConsentRecord,
   deleteFaceCapture,
+  deleteTrainingCaptures,
+  getDetectionConfig,
+  getNameConsent,
+  getTrainingExport,
   listFaceCaptureDirs,
   listFaceCapturesInDir,
   moveFaceCapture,
+  patchDetectionConfig,
+  setNameConsent,
   type FaceCaptureDir,
   type FaceCaptureFile,
 } from '../lib/api'
+import type { DetectionConfig } from '../lib/types'
 import { Button } from '../components/primitives/Button'
 import { useConfirm } from '../lib/confirm'
 import { formatError } from '../lib/format'
@@ -76,13 +84,214 @@ export function Training() {
           }}
         />
       ) : (
-        <IndexView
-          onPick={(name) => {
-            navigate(`/training?name=${encodeURIComponent(name)}`)
-          }}
-        />
+        <>
+          <CaptureRetentionSection />
+          <ExportSection />
+          <IndexView
+            onPick={(name) => {
+              navigate(`/training?name=${encodeURIComponent(name)}`)
+            }}
+          />
+        </>
       )}
     </div>
+  )
+}
+
+// iter-356.6X (tiered-inference slice 4): operator-facing capture
+// + retention controls. Mirrors the `face_capture_enabled` /
+// `face_capture_retention_days` server fields. Fetch once on mount,
+// PATCH on change (toggle) / blur (numeric input) per the
+// DetectionSection convention — half-typed values must not churn
+// the worker config-poll.
+function CaptureRetentionSection() {
+  const { showToast } = useToast()
+  const [config, setConfig] = useState<DetectionConfig | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getDetectionConfig()
+      .then((c) => {
+        if (cancelled) return
+        setConfig(c)
+      })
+      .catch(() => {
+        if (cancelled) return
+        // Owner-only; family/viewer 401 is expected. Leave config
+        // null so the section degrades to disabled inputs.
+        setConfig(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const commit = (patch: Partial<DetectionConfig>) => {
+    patchDetectionConfig(patch)
+      .then((next) => {
+        setConfig(next)
+        showToast('Capture settings saved', 'success')
+      })
+      .catch((e) => {
+        showToast(`Could not save: ${formatError(e)}`, 'error')
+      })
+  }
+
+  const enabled = config?.face_capture_enabled ?? false
+  const retention = config?.face_capture_retention_days ?? 30
+  const disabled = config === null
+
+  return (
+    <section
+      aria-labelledby="capture-retention-heading"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3"
+    >
+      <h2
+        id="capture-retention-heading"
+        className="text-base font-semibold text-[var(--color-text-primary)]"
+      >
+        Capture & retention
+      </h2>
+      <div className="flex items-center justify-between gap-3">
+        <label
+          htmlFor="face-capture-enabled"
+          className="text-sm text-[var(--color-text-primary)] flex-1"
+        >
+          Save face captures for retraining
+        </label>
+        <input
+          id="face-capture-enabled"
+          type="checkbox"
+          role="switch"
+          aria-label="Save face captures for retraining"
+          checked={enabled}
+          disabled={disabled}
+          onChange={(e) => commit({ face_capture_enabled: e.target.checked })}
+          className="w-5 h-5 accent-[var(--color-accent-default)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <label
+          htmlFor="face-capture-retention"
+          className="text-sm text-[var(--color-text-primary)] flex-1"
+        >
+          Keep captures for N days
+        </label>
+        <input
+          id="face-capture-retention"
+          type="number"
+          min={1}
+          max={365}
+          aria-label="Keep captures for N days"
+          value={retention}
+          disabled={disabled}
+          onChange={(e) =>
+            setConfig((c) =>
+              c
+                ? {
+                    ...c,
+                    face_capture_retention_days: Number(e.target.value) || 1,
+                  }
+                : c,
+            )
+          }
+          onBlur={(e) => {
+            const v = Math.max(1, Math.min(365, Number(e.target.value) || 1))
+            // Always PATCH on blur — the comparator-against-state
+            // path was misleading because onChange already mirrored
+            // the typed value into local config. Re-clamping here
+            // is the load-bearing safety: 999 typed → 365 saved.
+            if (config) {
+              commit({ face_capture_retention_days: v })
+            }
+          }}
+          className="w-24 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-sm text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        />
+      </div>
+      <p className="text-xs text-[var(--color-text-secondary)]">
+        Captures older than this are swept off disk. Range 1–365 days.
+      </p>
+    </section>
+  )
+}
+
+// iter-356.6X (tiered-inference slice 4): training-ZIP export.
+// Two fixed presets — face crops at 224 px (face-recog input size),
+// person crops at 640 px (YOLO input size). Server returns
+// `application/zip`; we trigger a download via
+// URL.createObjectURL + a synthetic anchor click.
+function ExportSection() {
+  const { showToast } = useToast()
+  const [busy, setBusy] = useState<'face' | 'person' | null>(null)
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    try {
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } finally {
+      // Free the blob URL on the next tick — Safari needs the
+      // anchor click to dispatch first.
+      setTimeout(() => URL.revokeObjectURL(url), 0)
+    }
+  }
+
+  const onExport = (kind: 'face' | 'person', size: number) => {
+    if (busy) return
+    setBusy(kind)
+    getTrainingExport(kind, size)
+      .then((blob) => {
+        downloadBlob(blob, `homecam-training-${kind}-${size}.zip`)
+        showToast('Export ready', 'success')
+      })
+      .catch((e) => {
+        showToast(`Export failed: ${formatError(e)}`, 'error')
+      })
+      .finally(() => {
+        setBusy(null)
+      })
+  }
+
+  return (
+    <section
+      aria-labelledby="export-heading"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3"
+    >
+      <h2
+        id="export-heading"
+        className="text-base font-semibold text-[var(--color-text-primary)]"
+      >
+        Export training data
+      </h2>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => onExport('face', 224)}
+          disabled={busy !== null}
+          aria-label="Export face crops (224×224)"
+        >
+          {busy === 'face' ? 'Exporting…' : 'Export face crops (224×224)'}
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => onExport('person', 640)}
+          disabled={busy !== null}
+          aria-label="Export person crops (640×640)"
+        >
+          {busy === 'person' ? 'Exporting…' : 'Export person crops (640×640)'}
+        </Button>
+      </div>
+      <p className="text-xs text-[var(--color-text-secondary)]">
+        Letterboxed PNGs + manifest.csv. Capped at 5,000 entries per export.
+      </p>
+    </section>
   )
 }
 
@@ -90,6 +299,8 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
   const [dirs, setDirs] = useState<FaceCaptureDir[] | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [retryNonce, setRetryNonce] = useState(0)
+  const confirm = useConfirm()
+  const toast = useToast()
 
   useEffect(() => {
     let cancelled = false
@@ -172,14 +383,32 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
       />
     )
   }
+  const onDeleteAll = async (name: string, count: number) => {
+    const ok = await confirm({
+      title: `Delete all captures of ${_displayName(name)}?`,
+      body: `Delete ${count} captures of ${_displayName(name)}? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    })
+    if (!ok) return
+    try {
+      const r = await deleteTrainingCaptures(name)
+      toast.showToast(`Deleted ${r.deleted} captures`, 'success')
+      setDirs((cur) => (cur ? cur.filter((x) => x.name !== name) : cur))
+    } catch (e) {
+      toast.showToast(`Delete failed: ${formatError(e)}`, 'error')
+    }
+  }
+
   return (
     <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 list-none">
       {dirs.map((d) => (
         <li key={d.name}>
+          <div className="flex flex-col gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">
           <button
             type="button"
             onClick={() => onPick(d.name)}
-            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+            className="w-full text-left flex items-center gap-3 min-h-[48px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-lg"
             aria-label={`${_displayName(d.name)}: ${d.count} ${d.count === 1 ? 'photo' : 'photos'}, most recent ${_formatRelative(d.latest_ts)}`}
           >
             {/* iter-355aa (Maya: Iconography Major): emerald is the
@@ -205,9 +434,126 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
               </div>
             </div>
           </button>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <ConsentControl name={d.name} />
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => onDeleteAll(d.name, d.count)}
+              aria-label={`Delete all captures of ${_displayName(d.name)}`}
+            >
+              Delete all captures of {_displayName(d.name)}
+            </Button>
+          </div>
+          </div>
         </li>
       ))}
     </ul>
+  )
+}
+
+// iter-356.6X (tiered-inference slice 4): per-name consent badge +
+// grant/revoke control. The badge mirrors the server's stored
+// record (default-deny shape on miss). Granting is one click;
+// revoking goes through `useConfirm` so the operator must confirm
+// breaking the consent chain. consent_text_version is hard-coded
+// to 'v1' for now — when the household prose changes the operator
+// bumps this string + re-prompts.
+function ConsentControl({ name }: { name: string }) {
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [record, setRecord] = useState<ConsentRecord | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    getNameConsent(name)
+      .then((r) => {
+        if (cancelled) return
+        setRecord(r)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRecord({
+          granted: false,
+          recorded_at_ms: null,
+          consent_text_version: null,
+          recorded_by: null,
+        })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [name])
+
+  const onClick = async () => {
+    if (busy || record === null) return
+    if (record.granted) {
+      const ok = await confirm({
+        title: 'Revoke consent?',
+        body: `Revoke consent for ${_displayName(name)}? Their captures will be excluded from future exports.`,
+        confirmLabel: 'Revoke',
+        destructive: true,
+      })
+      if (!ok) return
+    }
+    setBusy(true)
+    try {
+      const next = await setNameConsent(name, !record.granted, 'v1')
+      setRecord(next)
+      toast.showToast(
+        next.granted ? 'Consent granted' : 'Consent revoked',
+        'success',
+      )
+    } catch (e) {
+      toast.showToast(`Could not save consent: ${formatError(e)}`, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (record === null) {
+    return (
+      <span className="text-xs text-[var(--color-text-secondary)]">
+        Loading consent…
+      </span>
+    )
+  }
+
+  const grantedDate =
+    record.granted && record.recorded_at_ms != null
+      ? new Date(record.recorded_at_ms).toISOString().slice(0, 10)
+      : null
+
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={
+          'text-xs px-2 py-0.5 rounded-full ' +
+          (record.granted
+            ? 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
+            : 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]')
+        }
+        aria-live="polite"
+      >
+        {record.granted
+          ? `Consent granted ${grantedDate ?? ''}`.trim()
+          : 'Consent required'}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onClick}
+        disabled={busy}
+        aria-label={
+          record.granted
+            ? `Revoke consent for ${_displayName(name)}`
+            : `Grant consent for ${_displayName(name)}`
+        }
+      >
+        {record.granted ? 'Revoke' : 'Grant'}
+      </Button>
+    </div>
   )
 }
 

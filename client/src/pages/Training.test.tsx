@@ -13,12 +13,25 @@ const listFaceCapturesInDir = vi.fn()
 const moveFaceCapture = vi.fn()
 const deleteFaceCapture = vi.fn()
 const navigate = vi.fn()
+// iter-356.6X (slice 4) — additional wrappers consumed by the page.
+const getDetectionConfig = vi.fn()
+const patchDetectionConfig = vi.fn()
+const getTrainingExport = vi.fn()
+const deleteTrainingCaptures = vi.fn()
+const getNameConsent = vi.fn()
+const setNameConsent = vi.fn()
 
 vi.mock('../lib/api', () => ({
   listFaceCaptureDirs: (...a: unknown[]) => listFaceCaptureDirs(...a),
   listFaceCapturesInDir: (...a: unknown[]) => listFaceCapturesInDir(...a),
   moveFaceCapture: (...a: unknown[]) => moveFaceCapture(...a),
   deleteFaceCapture: (...a: unknown[]) => deleteFaceCapture(...a),
+  getDetectionConfig: (...a: unknown[]) => getDetectionConfig(...a),
+  patchDetectionConfig: (...a: unknown[]) => patchDetectionConfig(...a),
+  getTrainingExport: (...a: unknown[]) => getTrainingExport(...a),
+  deleteTrainingCaptures: (...a: unknown[]) => deleteTrainingCaptures(...a),
+  getNameConsent: (...a: unknown[]) => getNameConsent(...a),
+  setNameConsent: (...a: unknown[]) => setNameConsent(...a),
 }))
 
 vi.mock('react-router-dom', async () => {
@@ -42,6 +55,23 @@ function renderTraining(initialUrl = '/training') {
       </ToastProvider>
     </MemoryRouter>,
   )
+}
+
+const SAMPLE_CONFIG = {
+  threshold: 0.55,
+  cooldown_s: 5,
+  enabled: true,
+  schedule_off_start: null,
+  schedule_off_end: null,
+  classes: ['person'],
+  zones: [],
+  clip_post_roll_s: 5,
+  clip_pre_roll_s: 5,
+  clip_retention_preset: 'month' as const,
+  camera_label: 'Front Door',
+  audio_enabled: false,
+  face_capture_enabled: true,
+  face_capture_retention_days: 30,
 }
 
 const SAMPLE_DIRS: FaceCaptureDir[] = [
@@ -71,6 +101,28 @@ describe('Training page', () => {
     moveFaceCapture.mockReset()
     deleteFaceCapture.mockReset()
     navigate.mockReset()
+    getDetectionConfig.mockReset()
+    patchDetectionConfig.mockReset()
+    getTrainingExport.mockReset()
+    deleteTrainingCaptures.mockReset()
+    getNameConsent.mockReset()
+    setNameConsent.mockReset()
+    // Sensible defaults — the Index view always mounts these via
+    // CaptureRetentionSection + ConsentControl. Tests that pin
+    // specific behavior override below.
+    getDetectionConfig.mockResolvedValue(SAMPLE_CONFIG)
+    patchDetectionConfig.mockImplementation(
+      async (patch: Partial<typeof SAMPLE_CONFIG>) => ({
+        ...SAMPLE_CONFIG,
+        ...patch,
+      }),
+    )
+    getNameConsent.mockResolvedValue({
+      granted: false,
+      recorded_at_ms: null,
+      consent_text_version: null,
+      recorded_by: null,
+    })
   })
   afterEach(() => {
     vi.clearAllMocks()
@@ -84,7 +136,12 @@ describe('Training page', () => {
     renderTraining()
 
     // assert
-    expect(screen.getByRole('status')).toHaveTextContent(/Loading photos/i)
+    // iter-356.6X: page now mounts CaptureRetentionSection +
+    // ExportSection alongside IndexView; the export Buttons render
+    // sr-only role=status spans (Button primitive). Match the
+    // dirs-loading status by its visible text.
+    const statuses = screen.getAllByRole('status')
+    expect(statuses.some((n) => /Loading photos/i.test(n.textContent ?? ''))).toBe(true)
   })
 
   it('when listFaceCaptureDirs resolves with dirs, then each dir renders with count + most-recent', async () => {
@@ -142,7 +199,12 @@ describe('Training page', () => {
     // act
     renderTraining()
     await waitFor(() => screen.getByText('alice'))
-    fireEvent.click(screen.getByRole('button', { name: /alice/i }))
+    // iter-356.6X: row also contains "Delete all captures of alice"
+    // + a per-name "Grant consent" button. Match the open-row
+    // button by its full aria-label which includes the photo count.
+    fireEvent.click(
+      screen.getByRole('button', { name: /alice: 12 photos/i }),
+    )
 
     // assert
     expect(navigate).toHaveBeenCalledWith('/training?name=alice')
@@ -445,5 +507,238 @@ describe('Training page', () => {
     })
     expect(moveFaceCapture).not.toHaveBeenCalled()
     expect(deleteFaceCapture).not.toHaveBeenCalled()
+  })
+
+  // iter-356.6X (tiered-inference slice 4) — capture & retention,
+  // export, per-name consent, per-name purge.
+
+  it('test_given_face_capture_enabled_in_config_when_page_loads_then_toggle_reflects_state', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: [] })
+    getDetectionConfig.mockResolvedValue({
+      ...SAMPLE_CONFIG,
+      face_capture_enabled: true,
+    })
+
+    // act
+    renderTraining()
+
+    // assert
+    const toggle = await screen.findByRole('switch', {
+      name: /Save face captures for retraining/i,
+    })
+    expect(toggle).toBeChecked()
+  })
+
+  it('test_when_user_toggles_off_then_PATCH_sent_with_face_capture_enabled_false', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: [] })
+    getDetectionConfig.mockResolvedValue({
+      ...SAMPLE_CONFIG,
+      face_capture_enabled: true,
+    })
+
+    // act
+    renderTraining()
+    const toggle = await screen.findByRole('switch', {
+      name: /Save face captures for retraining/i,
+    })
+    fireEvent.click(toggle)
+
+    // assert
+    await waitFor(() => {
+      expect(patchDetectionConfig).toHaveBeenCalledWith({
+        face_capture_enabled: false,
+      })
+    })
+  })
+
+  it('test_when_retention_field_changes_then_PATCH_sent_with_new_value', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: [] })
+    getDetectionConfig.mockResolvedValue({
+      ...SAMPLE_CONFIG,
+      face_capture_retention_days: 30,
+    })
+
+    // act — change-then-blur is the commit path (mirrors
+    // DetectionSection's camera_label pattern; PATCH-on-debounce
+    // would churn during typing).
+    renderTraining()
+    const input = await screen.findByLabelText(/Keep captures for N days/i)
+    fireEvent.change(input, { target: { value: '60' } })
+    fireEvent.blur(input)
+
+    // assert
+    await waitFor(() => {
+      expect(patchDetectionConfig).toHaveBeenCalledWith({
+        face_capture_retention_days: 60,
+      })
+    })
+  })
+
+  it('test_when_export_face_button_clicked_then_calls_getTrainingExport', async () => {
+    // arrange — mock URL.createObjectURL so the download trigger
+    // doesn't throw in jsdom.
+    listFaceCaptureDirs.mockResolvedValue({ dirs: [] })
+    const blob = new Blob(['zip'], { type: 'application/zip' })
+    getTrainingExport.mockResolvedValue(blob)
+    // jsdom doesn't implement URL.createObjectURL/revokeObjectURL.
+    // Define them as no-ops so spyOn has something to wrap.
+    const origCreate = (URL as unknown as { createObjectURL?: unknown })
+      .createObjectURL
+    const origRevoke = (URL as unknown as { revokeObjectURL?: unknown })
+      .revokeObjectURL
+    ;(URL as unknown as { createObjectURL: () => string }).createObjectURL =
+      () => 'blob:fake'
+    ;(URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL =
+      () => {}
+    const createSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:fake')
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    // act
+    renderTraining()
+    const btn = await screen.findByRole('button', {
+      name: /Export face crops/i,
+    })
+    fireEvent.click(btn)
+
+    // assert
+    await waitFor(() => {
+      expect(getTrainingExport).toHaveBeenCalledWith('face', 224)
+    })
+    await waitFor(() => {
+      expect(createSpy).toHaveBeenCalledWith(blob)
+    })
+
+    createSpy.mockRestore()
+    revokeSpy.mockRestore()
+    if (origCreate === undefined) {
+      delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL
+    } else {
+      ;(URL as unknown as { createObjectURL: unknown }).createObjectURL =
+        origCreate
+    }
+    if (origRevoke === undefined) {
+      delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL
+    } else {
+      ;(URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL =
+        origRevoke
+    }
+  })
+
+  it('test_given_consent_not_granted_when_render_then_consent_required_badge_shown', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })
+    getNameConsent.mockResolvedValue({
+      granted: false,
+      recorded_at_ms: null,
+      consent_text_version: null,
+      recorded_by: null,
+    })
+
+    // act
+    renderTraining()
+
+    // assert — at least one "Consent required" badge per name in the
+    // list (SAMPLE_DIRS has 2 names).
+    await waitFor(() => {
+      expect(screen.getAllByText(/Consent required/i).length).toBeGreaterThan(0)
+    })
+  })
+
+  it('test_when_user_clicks_grant_consent_then_setNameConsent_called', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })
+    getNameConsent.mockResolvedValue({
+      granted: false,
+      recorded_at_ms: null,
+      consent_text_version: null,
+      recorded_by: null,
+    })
+    setNameConsent.mockResolvedValue({
+      granted: true,
+      recorded_at_ms: 1700000000000,
+      consent_text_version: 'v1',
+      recorded_by: 'owner',
+    })
+
+    // act
+    renderTraining()
+    const grantBtns = await screen.findAllByRole('button', {
+      name: /Grant consent for/i,
+    })
+    fireEvent.click(grantBtns[0])
+
+    // assert
+    await waitFor(() => {
+      expect(setNameConsent).toHaveBeenCalledWith('alice', true, 'v1')
+    })
+  })
+
+  it('test_when_user_clicks_delete_all_for_name_then_confirm_modal_appears', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })
+
+    // act
+    renderTraining()
+    const deleteBtns = await screen.findAllByRole('button', {
+      name: /Delete all captures of alice/i,
+    })
+    fireEvent.click(deleteBtns[0])
+
+    // assert
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText(/Delete 12 captures of alice/i)).toBeInTheDocument()
+  })
+
+  it('test_when_user_confirms_delete_then_deleteTrainingCaptures_called_and_name_removed_from_list', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })
+    deleteTrainingCaptures.mockResolvedValue({ ok: true, deleted: 12 })
+
+    // act
+    renderTraining()
+    const deleteBtns = await screen.findAllByRole('button', {
+      name: /Delete all captures of alice/i,
+    })
+    fireEvent.click(deleteBtns[0])
+    await screen.findByRole('dialog')
+    // Click the dialog's confirm "Delete" — last "Delete" button on
+    // the page (the row buttons are "Delete all captures of …").
+    const deletes = screen.getAllByRole('button', { name: /^Delete$/ })
+    fireEvent.click(deletes[deletes.length - 1])
+
+    // assert
+    await waitFor(() => {
+      expect(deleteTrainingCaptures).toHaveBeenCalledWith('alice')
+    })
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', {
+          name: /Delete all captures of alice/i,
+        }),
+      ).toBeNull()
+    })
+  })
+
+  it('test_when_user_cancels_delete_then_no_api_call', async () => {
+    // arrange
+    listFaceCaptureDirs.mockResolvedValue({ dirs: SAMPLE_DIRS })
+
+    // act
+    renderTraining()
+    const deleteBtns = await screen.findAllByRole('button', {
+      name: /Delete all captures of alice/i,
+    })
+    fireEvent.click(deleteBtns[0])
+    await screen.findByRole('dialog')
+    const cancels = screen.getAllByRole('button', { name: /^Cancel$/ })
+    fireEvent.click(cancels[cancels.length - 1])
+
+    // assert
+    expect(deleteTrainingCaptures).not.toHaveBeenCalled()
   })
 })
