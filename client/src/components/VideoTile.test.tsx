@@ -67,7 +67,7 @@ describe('VideoTile', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     connectWhep.mockRejectedValue(new Error('boom'))
     render(<VideoTile src="http://test/cam/whep" />)
-    await waitFor(() => expect(screen.getByText(/Offline/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText(/Offline/i)[0]).toBeInTheDocument())
     errorSpy.mockRestore()
   })
 
@@ -442,7 +442,12 @@ describe('VideoTile', () => {
     })
 
     // assert
-    expect(screen.getByText(/Offline/i)).toBeInTheDocument()
+    // iter-356.63 (mobile redesign Slice F): the offline overlay
+    // now uses the shared <OfflineState> primitive whose heading
+    // is "Camera offline", so /Offline/i now matches both the
+    // StatusPill label AND the overlay heading. Match specifically
+    // by allowing multiple results.
+    expect(screen.getAllByText(/Offline/i).length).toBeGreaterThan(0)
     expect(screen.queryByText('LIVE')).not.toBeInTheDocument()
     vi.useRealTimers()
   })
@@ -500,7 +505,7 @@ describe('VideoTile', () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" />)
     await waitFor(() =>
-      expect(screen.getByText(/Offline/i)).toBeInTheDocument(),
+      expect(screen.getAllByText(/Offline/i)[0]).toBeInTheDocument(),
     )
     expect(connectWhep).toHaveBeenCalledTimes(1)
 
@@ -524,7 +529,7 @@ describe('VideoTile', () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" />)
     await waitFor(() =>
-      expect(screen.getByText(/Offline/i)).toBeInTheDocument(),
+      expect(screen.getAllByText(/Offline/i)[0]).toBeInTheDocument(),
     )
     expect(connectWhep).toHaveBeenCalledTimes(1)
 

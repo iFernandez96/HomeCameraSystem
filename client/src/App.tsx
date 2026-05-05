@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { PawSpinner } from './components/PawSpinner'
+import { LoadingState } from './components/states/LoadingState'
 import { RequireAuth } from './components/RequireAuth'
 import { SideRail } from './components/SideRail'
 import { WatchRibbon } from './components/WatchRibbon'
@@ -68,16 +68,13 @@ const CatLayer = lazy(() =>
 // PageFallback is the fallback for everything else; not worth
 // per-route skeletons until a specific page requests one.
 function PageFallback() {
-  // iter-356.35 (cat-themed loading): replaces the iter-356.25 ring
-  // spinner with three paw glyphs that fade in sequentially — reads
-  // as "cat walking past" instead of a generic mechanical ring. On-
-  // brand with the rest of the cat theme; reduced-motion respected
-  // via index.css gate.
-  return (
-    <div className="flex items-center justify-center py-12">
-      <PawSpinner size={20} ariaLabel="Loading" />
-    </div>
-  )
+  // iter-356.63 (mobile redesign Slice F): swap the centered
+  // PawSpinner Suspense fallback for a route-shaped <LoadingState>.
+  // The "list" shape is a reasonable default — most route bundles
+  // (Events, People, Training, Review) resolve to a list/grid that
+  // matches it; the grid/video/form variants are picked at the page
+  // level when the route can be more specific.
+  return <LoadingState shape="list" />
 }
 
 // Each page is wrapped in its own ErrorBoundary so an uncaught throw
