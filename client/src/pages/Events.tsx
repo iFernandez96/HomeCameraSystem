@@ -737,22 +737,19 @@ export function Events() {
           but we adjust `--day-header-top` to safe-area-inset-top so
           day labels pin to the actual viewport top instead of
           beneath the now-gone sticky page header. */}
-      {/* iter-356.66 (real-device user feedback): swap the sticky
-          target. Pre-fix the DayHeader ("Today's log 100 ENTRIES")
-          pinned to the top of the viewport while the page header
-          containing the calendar icon scrolled away, so a user
-          deep in the event list had to scroll back up to filter by
-          day. The DayHeader is a LABEL, not a control — pinning
-          the label was decorative; pinning the calendar icon is
-          functional. Inverting: this <header> now sticks just
-          below the WatchRibbon (calc(56px + env(safe-area-inset-top)))
-          and the DayHeader (EventList.tsx:DayHeader) scrolls
-          naturally with the events. z-10 keeps the header above
-          the event-list content but below modals (z-30+) and the
-          WatchRibbon. */}
+      {/* iter-356.66 (real-device user feedback round 2): user said
+          "the only thing that should follow the scroll is the
+          calendar icon. you don't need so much space for the
+          header." Round-1 sticky'd the entire <header> — title +
+          Last-N + filter chips, ~150 px tall. Too much real-estate.
+          Reverting <header> to normal block flow; lifting JUST the
+          calendar button into a `position: fixed` floating control
+          at top-right of the viewport (rendered separately below).
+          The header (Watch log title + filter chips) scrolls away
+          naturally; the calendar icon alone follows the user. */}
       <header
         ref={headerRef}
-        className="sticky top-[calc(56px+env(safe-area-inset-top))] z-10 bg-[var(--color-bg)] border-b border-[var(--color-border)]"
+        className="pt-[env(safe-area-inset-top)] bg-[var(--color-bg)] border-b border-[var(--color-border)]"
       >
         <div className="px-4 pt-4 pb-3">
         <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">
@@ -782,28 +779,14 @@ export function Events() {
                   : `${filtered.length} of last ${events.length}`}
               </span>
             )}
-            {/* iter-251: calendar toggle. Hides the 30-day heatmap
-                until the user wants the wider context. Always
-                rendered (even on empty/loading) so the user has a
-                consistent affordance. */}
-            {/* iter-356.16: calendar toggle is mobile-only (lg:hidden).
-                Desktop users see the heatmap permanently in the
-                right rail below — no need for a toggle. */}
-            <button
-              type="button"
-              onClick={() => setCalendarOpen((v) => !v)}
-              aria-label={
-                calendarOpen ? 'Hide calendar' : 'Show calendar'
-              }
-              aria-pressed={calendarOpen}
-              className={`lg:hidden inline-flex items-center justify-center w-11 h-11 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-                calendarOpen
-                  ? 'bg-[var(--color-accent-default)]/20 text-[var(--color-accent-default)] ring-1 ring-[var(--color-accent-default)]/40'
-                  : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-border-strong)]'
-              }`}
-            >
-              <CalendarIcon />
-            </button>
+            {/* iter-356.66 (round 2): calendar toggle moved OUT of
+                the in-header position into a fixed-positioned
+                floating button rendered after </header> below.
+                User feedback: "the only thing that should follow the
+                scroll is the calendar icon. you don't need so much
+                space for the header." Original position kept on
+                lg+ via the desktop heatmap rail; the in-header
+                slot is gone everywhere now. */}
           </div>
         </div>
         {showFilters && (
@@ -1007,6 +990,28 @@ export function Events() {
           </div>
         ) : null}
       </header>
+      {/* iter-356.66 (real-device user feedback round 2): floating
+          calendar button. Mobile-only (lg:hidden) — desktop has the
+          permanent heatmap in the right rail. Position fixed at
+          calc(56px + safe-area-top + 8px) below the WatchRibbon,
+          right: 16px from edge. z-30 sits above content, below
+          modals (z-40+). The button takes itself out of normal
+          flow so the title row in the header above no longer needs
+          to balance it; user sees "Watch log + Last 100" naturally
+          left-aligned and the calendar floats top-right always. */}
+      <button
+        type="button"
+        onClick={() => setCalendarOpen((v) => !v)}
+        aria-label={calendarOpen ? 'Hide calendar' : 'Show calendar'}
+        aria-pressed={calendarOpen}
+        className={`lg:hidden fixed top-[calc(56px+env(safe-area-inset-top)+8px)] right-3 z-30 inline-flex items-center justify-center w-11 h-11 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+          calendarOpen
+            ? 'bg-[var(--color-accent-default)] text-white ring-1 ring-[var(--color-accent-default)]'
+            : 'bg-[var(--color-surface)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
+        }`}
+      >
+        <CalendarIcon />
+      </button>
       {/* iter-356.16 (Maya 10th + Priya 3rd CRITICAL): pulled
           EventHeatmap out of the sticky <header>. Pre-iter-356.16
           the heatmap lived inside the pin (iter-298) which made the
