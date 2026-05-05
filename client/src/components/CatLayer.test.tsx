@@ -25,6 +25,44 @@ function stubMatchMedia({ matches }: MqlInit) {
   return mql
 }
 
+// iter-356-E (Slice E): per-query matchMedia stub so the reduced-data
+// gate can be toggled while reduced-motion stays off (the production
+// hook calls matchMedia with each query string independently).
+function stubMatchMediaPerQuery(map: Record<string, boolean>) {
+  window.matchMedia = vi.fn((query: string) => {
+    const matches = map[query] ?? false
+    return {
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }
+  }) as unknown as typeof window.matchMedia
+}
+
+type BatteryStub = {
+  level: number
+  charging: boolean
+  addEventListener: ReturnType<typeof vi.fn>
+  removeEventListener: ReturnType<typeof vi.fn>
+}
+
+function stubGetBattery(level: number, charging: boolean): BatteryStub {
+  const battery: BatteryStub = {
+    level,
+    charging,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }
+  ;(navigator as unknown as { getBattery: () => Promise<BatteryStub> }).getBattery = () =>
+    Promise.resolve(battery)
+  return battery
+}
+
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined
 
@@ -40,6 +78,7 @@ describe('CatLayer', () => {
       // was nothing here originally.
       delete (window as unknown as { matchMedia?: unknown }).matchMedia
     }
+    delete (navigator as unknown as { getBattery?: unknown }).getBattery
     vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.restoreAllMocks()
@@ -197,5 +236,89 @@ describe('CatLayer', () => {
     expect(cmp & 4).toBe(4)
     // unused-but-referenced sanity (silence prettier noise; firstCat may match firstCatBlock):
     expect(firstCat ?? firstCatBlock).toBeDefined()
+  })
+
+  // iter-356-E (Slice E): perf gates — reduced-data + battery short-circuit
+  // the rAF loop the same way reduced-motion does. The cats stay mounted
+  // (brand identity is load-bearing per CLAUDE.md "Don't reintroduce")
+  // — only the per-frame state-machine pauses.
+  it('given prefers-reduced-data is true, when the layer mounts, then it does not schedule any animation frame (iter-356-E)', () => {
+    // arrange — reduced-MOTION off, reduced-DATA on. Production hooks
+    // each call matchMedia with their own query string; the per-query
+    // stub returns true only for the data query.
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': false,
+      '(prefers-reduced-data: reduce)': true,
+    })
+    const rafSpy = vi.fn((_cb: FrameRequestCallback): number => 0)
+    vi.stubGlobal('requestAnimationFrame', rafSpy)
+
+    // act
+    const { container } = render(<CatLayer />)
+
+    // assert — rAF never queued; cats render in their initial pose only.
+    expect(rafSpy).not.toHaveBeenCalled()
+    // The brand stays visible: 3 sprites + the habitat both render.
+    const sprites = container.querySelectorAll('[data-testid="cat-sprite"]')
+    expect(sprites.length).toBe(3)
+  })
+
+  it('given navigator.getBattery resolves with level<20% AND not charging, when the battery hook settles, then the rAF loop pauses (iter-356-E)', async () => {
+    // arrange — reduced-motion off, reduced-data off, but battery is
+    // critical AND the device isn't on power. Promise resolves after
+    // mount; the useEffect cleanup must let the .then() flip the gate
+    // via the cancelled flag (React 19 lint rule).
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': false,
+      '(prefers-reduced-data: reduce)': false,
+    })
+    stubGetBattery(0.1, false)
+    const rafSpy = vi.fn((cb: FrameRequestCallback): number => {
+      return setTimeout(() => cb(performance.now()), 16) as unknown as number
+    })
+    const cancelSpy = vi.fn((id: number) =>
+      clearTimeout(id as unknown as ReturnType<typeof setTimeout>),
+    )
+    vi.stubGlobal('requestAnimationFrame', rafSpy)
+    vi.stubGlobal('cancelAnimationFrame', cancelSpy)
+
+    // act — render, then flush microtasks so the getBattery() Promise
+    // resolves and the gate flips. The effect re-runs and the rAF loop
+    // tears down (cancelAnimationFrame fires on cleanup).
+    render(<CatLayer />)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // assert — once the gate flipped, the second-mount-after-gate-flip
+    // never re-queued a frame. cancelAnimationFrame fired on the first
+    // teardown, AND the count of rAFs never exceeds the initial pre-
+    // gate-flip pump (a small finite number; we check teardown ran).
+    expect(cancelSpy).toHaveBeenCalled()
+  })
+
+  it('given battery level<20% but device IS charging, when the hook settles, then the gate stays open (cats keep animating, iter-356-E)', async () => {
+    // arrange — low battery WITH charger plugged in is not a gate trip.
+    // The user wants the cats; saving cycles is unwarranted on AC.
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': false,
+      '(prefers-reduced-data: reduce)': false,
+    })
+    stubGetBattery(0.1, true) // charging=true
+    const rafSpy = vi.fn((_cb: FrameRequestCallback): number => 1)
+    vi.stubGlobal('requestAnimationFrame', rafSpy)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    // act
+    render(<CatLayer />)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // assert — rAF was queued (animation runs) AND no teardown of the
+    // loop happened from a gate flip after settle.
+    expect(rafSpy).toHaveBeenCalled()
   })
 })

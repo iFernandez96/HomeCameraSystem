@@ -48,6 +48,32 @@ export function LivePageSkeleton() {
   )
 }
 
+// iter-356-E (Slice E): heatmap fallback for the lazy-loaded
+// `EventHeatmap` chunk. The heatmap renders ~30 day cells in a row + a
+// month label; the skeleton mirrors that geometry so the layout
+// doesn't reflow when the chunk resolves. Aria-busy keeps SR users
+// informed during the (typically <100 ms) load.
+export function HeatmapSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading detection calendar"
+      aria-busy="true"
+      className="px-4 py-3 animate-pulse"
+    >
+      <div className="h-4 w-32 bg-[var(--color-surface-raised)] rounded mb-2" />
+      <div className="flex gap-1">
+        {Array.from({ length: 30 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-6 w-2 rounded-sm bg-[var(--color-surface-raised)]"
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function EventListSkeleton({ rows = 6 }: { rows?: number }) {
   return (
     <ul

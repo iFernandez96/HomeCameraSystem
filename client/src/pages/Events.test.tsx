@@ -132,8 +132,9 @@ describe('Events page', () => {
     )
 
     // assert — heatmap mounts; aria-label flips to "hide calendar".
+    // iter-356-E: EventHeatmap is React.lazy; await Suspense settle.
     expect(
-      screen.getByLabelText(/detection events per day/i),
+      await screen.findByLabelText(/detection events per day/i),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /hide calendar/i }),
