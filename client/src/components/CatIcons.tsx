@@ -219,7 +219,14 @@ export function CatTrioMark({
         width={cell}
         height={cell}
         decoding="async"
-        loading="lazy"
+        // iter-356-E (Slice E): trio mark sits above-the-fold on the
+        // Login hero AND in the SideNav rail header — both surfaces
+        // are first-paint critical. `loading="eager"` + `fetchpriority`
+        // hint asks the browser to prioritize these PNGs in the
+        // network queue. Other icon usages (face avatars in lists)
+        // are below-the-fold and stay lazy via their own components.
+        loading="eager"
+        fetchPriority="high"
         style={{ objectFit: 'contain', display: 'inline-block' }}
       />
       <img
@@ -228,7 +235,14 @@ export function CatTrioMark({
         width={cell}
         height={cell}
         decoding="async"
-        loading="lazy"
+        // iter-356-E (Slice E): trio mark sits above-the-fold on the
+        // Login hero AND in the SideNav rail header — both surfaces
+        // are first-paint critical. `loading="eager"` + `fetchpriority`
+        // hint asks the browser to prioritize these PNGs in the
+        // network queue. Other icon usages (face avatars in lists)
+        // are below-the-fold and stay lazy via their own components.
+        loading="eager"
+        fetchPriority="high"
         style={{ objectFit: 'contain', display: 'inline-block' }}
       />
       <img
@@ -237,7 +251,14 @@ export function CatTrioMark({
         width={cell}
         height={cell}
         decoding="async"
-        loading="lazy"
+        // iter-356-E (Slice E): trio mark sits above-the-fold on the
+        // Login hero AND in the SideNav rail header — both surfaces
+        // are first-paint critical. `loading="eager"` + `fetchpriority`
+        // hint asks the browser to prioritize these PNGs in the
+        // network queue. Other icon usages (face avatars in lists)
+        // are below-the-fold and stay lazy via their own components.
+        loading="eager"
+        fetchPriority="high"
         style={{ objectFit: 'contain', display: 'inline-block' }}
       />
     </span>

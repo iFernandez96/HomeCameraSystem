@@ -203,4 +203,24 @@ describe('Login page', () => {
     expect(slot).not.toBeNull()
     expect(slot?.className).toMatch(/min-h-\[3\.5rem\]/)
   })
+
+  // iter-356-E (Slice E): Login hero trio mark sits above-the-fold —
+  // first paint depends on the three face PNGs. Pre-iter-356-E they
+  // were `loading="lazy"`, which on slow connections deferred them
+  // BELOW critical resources. Eager + fetchpriority="high" tells the
+  // browser to prioritize them in the network queue.
+  it('given the Login hero renders, then the trio mark imgs are eager + high priority (iter-356-E)', () => {
+    // arrange / act
+    renderLogin()
+    const trio = screen.getByRole('img', { name: /three cats/i })
+    const imgs = trio.querySelectorAll('img')
+
+    // assert — three cells (panther / mushu / coco), each eager and
+    // carrying the fetchpriority hint.
+    expect(imgs.length).toBe(3)
+    for (const img of imgs) {
+      expect(img.getAttribute('loading')).toBe('eager')
+      expect(img.getAttribute('fetchpriority')).toBe('high')
+    }
+  })
 })

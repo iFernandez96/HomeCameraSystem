@@ -611,9 +611,21 @@ export function CatLayer() {
   const [cats, setCats] = useState<CatState[]>(() => initialCats())
   const lastGlobalInteractionRef = useRef<number>(0)
   const reducedMotion = usePrefersReducedMotion()
+  // iter-356-E (Slice E): two more perf gates besides reduced-motion.
+  // - reducedData: `prefers-reduced-data: reduce` — operator on a metered
+  //   connection asked the OS to throttle bandwidth/CPU. Same code path
+  //   as reduced-motion: short-circuit the rAF loop, render cats statically
+  //   (brand stays visible).
+  // - batteryLow: best-effort Battery Status API. < 20% AND not charging
+  //   = pause the loop. listens for 'levelchange' + 'chargingchange' so
+  //   plugging in resumes the cats. API is non-universal (Safari ships
+  //   nothing) so the whole thing is wrapped in try + feature-detected.
+  const reducedData = usePrefersReducedData()
+  const batteryLow = useBatteryLow()
+  const animationsPaused = reducedMotion || reducedData || batteryLow
 
   useEffect(() => {
-    if (reducedMotion) return
+    if (animationsPaused) return
     let raf = 0
     let lastTs = performance.now()
     let visible = !document.hidden
@@ -642,7 +654,7 @@ export function CatLayer() {
       cancelAnimationFrame(raf)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [reducedMotion])
+  }, [animationsPaused])
 
   return (
     <div
@@ -1246,4 +1258,98 @@ function usePrefersReducedMotion(): boolean {
     return () => mq.removeEventListener('change', onChange)
   }, [])
   return reduced
+}
+
+// iter-356-E (Slice E): mirror of usePrefersReducedMotion for the
+// `prefers-reduced-data: reduce` media query. Same lazy-init + change-
+// listener pattern so the lint rule (no setState in useEffect body) is
+// honored. Browsers without the query (most as of 2026) report `false`
+// at construction — the user opts in via a known browser flag or OS-
+// level data-saver, so missing support === "no preference set."
+function usePrefersReducedData(): boolean {
+  const [reduced, setReduced] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false
+    return window.matchMedia('(prefers-reduced-data: reduce)').matches
+  })
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(prefers-reduced-data: reduce)')
+    const onChange = (e: MediaQueryListEvent) => setReduced(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return reduced
+}
+
+// iter-356-E (Slice E): best-effort Battery Status API gate. Returns
+// `true` when battery level < 20% AND the device is not charging.
+// Wrapped in try/catch + feature detect because the API is unevenly
+// shipped (Chromium yes, Safari no, Firefox removed). React 19 lint
+// rule (no setState in useEffect body) is honored via a `cancelled`
+// flag in the .then() — same pattern as the AuthProvider /me fetch.
+type BatteryManagerLike = {
+  level: number
+  charging: boolean
+  addEventListener: (type: string, listener: () => void) => void
+  removeEventListener: (type: string, listener: () => void) => void
+}
+function useBatteryLow(): boolean {
+  const [low, setLow] = useState(false)
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return
+    const nav = navigator as Navigator & {
+      getBattery?: () => Promise<BatteryManagerLike>
+    }
+    if (typeof nav.getBattery !== 'function') return
+    let cancelled = false
+    let battery: BatteryManagerLike | null = null
+    const evaluate = (b: BatteryManagerLike) => {
+      // < 20% AND not charging — plugging in cancels the gate even if
+      // the cell is at 5%, which matches the "save what's left" intent.
+      const isLow = b.level < 0.2 && !b.charging
+      if (!cancelled) setLow(isLow)
+    }
+    try {
+      nav
+        .getBattery()
+        .then((b) => {
+          if (cancelled) return
+          battery = b
+          evaluate(b)
+          const onChange = () => {
+            if (battery) evaluate(battery)
+          }
+          b.addEventListener('levelchange', onChange)
+          b.addEventListener('chargingchange', onChange)
+          // Stash the listener on the battery object via a closure so
+          // cleanup can reach it. Returning early-cleanup from a
+          // .then() isn't possible — instead the outer useEffect
+          // returns a cleanup that flips `cancelled` AND tears down
+          // the listeners by re-binding via `battery` ref capture.
+          ;(battery as BatteryManagerLike & { __homecamCleanup?: () => void }).__homecamCleanup = () => {
+            b.removeEventListener('levelchange', onChange)
+            b.removeEventListener('chargingchange', onChange)
+          }
+        })
+        .catch(() => {
+          // getBattery() can reject in privacy-restricted contexts
+          // (some Chromium policies block it). Treat as "no signal."
+          if (!cancelled) setLow(false)
+        })
+    } catch {
+      // Synchronous throw from a non-conforming polyfill; default
+      // initial state is already `false` so no setState is needed
+      // (and the React 19 lint rule rejects sync setState here).
+    }
+    return () => {
+      cancelled = true
+      const b = battery as
+        | (BatteryManagerLike & { __homecamCleanup?: () => void })
+        | null
+      if (b && typeof b.__homecamCleanup === 'function') {
+        b.__homecamCleanup()
+      }
+    }
+  }, [])
+  return low
 }

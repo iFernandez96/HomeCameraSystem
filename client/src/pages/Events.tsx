@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
-import { EventHeatmap } from '../components/EventHeatmap'
+// iter-356-E (Slice E): EventHeatmap lazy-split. The component pulls
+// in ~6 KB gzip of date math + SVG cells and is below-the-fold on
+// mobile (the calendar is opened via the header button OR sits in the
+// lg+ right rail). Deferring it cuts the Events route's first paint.
+const EventHeatmap = lazy(() => import('../components/EventHeatmap.lazy'))
 import { EventList } from '../components/EventList'
-import { EventListSkeleton } from '../components/Skeleton'
+import { EventListSkeleton, HeatmapSkeleton } from '../components/Skeleton'
 import { Button } from '../components/primitives/Button'
 import {
   deleteEvent,
@@ -978,16 +982,18 @@ export function Events() {
             typeof document !== 'undefined' &&
             createPortal(
               <CalendarOverlay onClose={() => setCalendarOpen(false)}>
-                <EventHeatmap
-                  onSelectDay={(s, u, day) => {
-                    onSelectDay(s, u, day)
-                    setCalendarOpen(false)
-                  }}
-                  personName={
-                    filter !== 'all' && filter !== '__unknown__' ? filter : undefined
-                  }
-                  faceUnrecognized={filter === '__unknown__' ? true : undefined}
-                />
+                <Suspense fallback={<HeatmapSkeleton />}>
+                  <EventHeatmap
+                    onSelectDay={(s, u, day) => {
+                      onSelectDay(s, u, day)
+                      setCalendarOpen(false)
+                    }}
+                    personName={
+                      filter !== 'all' && filter !== '__unknown__' ? filter : undefined
+                    }
+                    faceUnrecognized={filter === '__unknown__' ? true : undefined}
+                  />
+                </Suspense>
               </CalendarOverlay>,
               document.body,
             )}
@@ -1050,13 +1056,15 @@ export function Events() {
             style={{ top: 'calc(var(--day-header-top, 64px) + 8px)' }}
           >
             <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3">
-              <EventHeatmap
-                onSelectDay={onSelectDay}
-                personName={
-                  filter !== 'all' && filter !== '__unknown__' ? filter : undefined
-                }
-                faceUnrecognized={filter === '__unknown__' ? true : undefined}
-              />
+              <Suspense fallback={<HeatmapSkeleton />}>
+                <EventHeatmap
+                  onSelectDay={onSelectDay}
+                  personName={
+                    filter !== 'all' && filter !== '__unknown__' ? filter : undefined
+                  }
+                  faceUnrecognized={filter === '__unknown__' ? true : undefined}
+                />
+              </Suspense>
             </div>
           </aside>
         )}
