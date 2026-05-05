@@ -19,9 +19,19 @@ import { RETENTION_PRESETS, type RetentionPreset } from '../../lib/types'
 
 export function Section({
   title,
+  subtitle,
   children,
 }: {
   title: string
+  /**
+   * Optional one-line helper rendered below the title. Calm tone
+   * (text-tertiary) so it sits as guidance, not as competing
+   * heading weight. Used by JetsonSection's grouped panels to
+   * explain WHY a cluster of rows belongs together (e.g. "What
+   * the AI is seeing and processing"). All other Section
+   * consumers leave this undefined and render unchanged.
+   */
+  subtitle?: string
   children: ReactNode
 }) {
   return (
@@ -29,6 +39,11 @@ export function Section({
       <h2 className="text-xs uppercase tracking-wider text-[var(--color-text-tertiary)] mb-2 px-1">
         {title}
       </h2>
+      {subtitle && (
+        <p className="text-xs text-[var(--color-text-tertiary)] mb-2 px-1 -mt-1">
+          {subtitle}
+        </p>
+      )}
       <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl divide-y divide-[var(--color-border-subtle)] overflow-hidden">
         {children}
       </div>
