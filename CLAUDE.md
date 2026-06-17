@@ -54,7 +54,7 @@ No symlinks → `python -m venv` breaks (workaround: `/tmp/homecam-venv`). No `n
 - `<CatEmptyState>` is the only empty-state primitive. Don't render plain-text empty states.
 
 ### Client wiring
-- WHEP config: `iceServers: []` (no STUN), single recv-only video transceiver (no audio). Adding either adds hundreds of ms to first frame. Camera has no audio.
+- WHEP config: `ICE_SERVERS` in `lib/webrtc.ts` = STUN (`stun.l.google.com:19302`) + optional TURN from `VITE_TURN_*` (iter cellular-ice, 2026-06-17). Single recv-only video transceiver (no audio). STUN was added because on CELLULAR the in-browser WebRTC media socket does NOT route through the Tailscale tunnel (only the WHEP control plane does) — host candidates (LAN / Tailscale IP) are unreachable, so both peers need a server-reflexive candidate to hole-punch over the public internet. MediaMTX mirrors this via `webrtcICEServers2` in `mediamtx.yml`, and also offers ICE-TCP (`webrtcLocalTCPAddress`). The ICE-gathering wait in `webrtc.ts` was raised 250ms→2500ms so the STUN srflx candidate is gathered before the WHEP POST. Tradeoff vs the old `iceServers: []`: slightly slower first frame on LAN. Pinned by `webrtc.test.ts`.
 - WHEP ICE gathering (`lib/webrtc.ts`): 250ms LAN-fast fallback uses a `done` flag so it can't resolve after natural completion.
 - WHEP `connectionstatechange` (`VideoTile.tsx`) flips to error on failed/disconnected/closed. Manual Retry only — no auto-retry (would tight-loop on outage).
 - Three visibility-aware listeners close the mobile-resume gap; don't rip any out: `useStatus.ts` (status polling), `Events.tsx` (refetch on visible), `ConnectionBanner.tsx` (cancels WS backoff).
@@ -84,6 +84,7 @@ No symlinks → `python -m venv` breaks (workaround: `/tmp/homecam-venv`). No `n
 - `detection/*.py` MUST stay Python 3.6 compatible (JetPack 4.x). No `from __future__ import annotations`, PEP-604 unions, `match`, walrus. Pinned by `tests/test_py36_compat.py` AST scanner.
 - If you add `cv2` to `detect.py`, import it BEFORE `jetson_inference` / `jetson_utils`. CUDA fills static-TLS first → libgomp can't load.
 - Single-owner libargus (`mediamtx.yml`): one `nvarguscamerasrc → nvv4l2h264enc → rtspclientsink` branch; detection re-decodes via NVDEC. Don't add `tee` or a second `nvarguscamerasrc`.
+- Cellular-adaptive rungs `cam_lq`/`cam_uq` (`mediamtx.yml`) MUST encode with software `x264enc tune=zerolatency`, NOT hardware `nvv4l2h264enc`. The Tegra encoder emits NON-MONOTONIC output PTS when fed by NVDEC in a transcode (bitstream is clean IPPP, but MediaMTX's gortsplib DTS extractor reads the backwards-jumping PTS as reordering → kills every WebRTC reader with "WebRTC doesn't support H264 streams with B-frames" → phone shows black tile then error). The always-on `cam` HQ path encodes live sensor frames (monotonic PTS) so it MUST stay `nvv4l2h264enc`. Decode stays hardware NVDEC; only the small-rung encode is software (~0.75 core @ 480p60). Pinned by `test_mediamtx_adaptive_paths.py`.
 - `PrivateTmp=yes` on systemd units breaks `nvarguscamerasrc` (libargus uses `/tmp/argus_socket`).
 - `detection/face_recog/` dir name is intentional — pip lib is `face_recognition`; matching name would shadow it.
 - `init_face_recognizer()` lazy-imports `face_recognition` only when `encodings.pkl` exists. Eager import hangs every Nano boot — dlib v20 deadlocks in `PyInit__dlib_pybind11`.
@@ -101,4 +102,4 @@ No symlinks → `python -m venv` breaks (workaround: `/tmp/homecam-venv`). No `n
 - Cloud relay — assume Tailscale/LAN. Don't expose Jetson directly.
 - iOS Safari Web Push — needs homescreen install (16.4+); targeting Android + desktop first.
 
-Anti-recommendations: no STUN, no PrivateTmp, no rate-limiting middleware, no GStreamer tee, no eager `face_recognition` import, no ffmpeg re-encode in the recorder, no pixel-burn-in for bboxes.
+Anti-recommendations: no PrivateTmp, no rate-limiting middleware, no GStreamer tee, no eager `face_recognition` import, no ffmpeg re-encode in the recorder, no pixel-burn-in for bboxes. (STUN/TURN WERE on the no-list — reversed iter cellular-ice 2026-06-17 because cellular needs NAT traversal; see WHEP config note above.)

@@ -18,6 +18,16 @@ rtspAddress: :8554
 
 # WebRTC is what the browser pulls from.
 webrtcAddress: :8889
+# iter cellular-ice (2026-06-17): offer an ICE-over-TCP candidate alongside
+# the default UDP one (:8189). On cellular over Tailscale the WHEP control
+# plane (HTTPS/443 via `tailscale serve`) connects fine, but the WebRTC media
+# UDP to :8189 never arrives (verified: tcpdump saw ~0 packets, MediaMTX logs
+# "deadline exceeded while waiting connection"). ICE-TCP gives the phone a TCP
+# media path — TCP traverses the same way the working control plane does — so
+# the browser can fall back to it when UDP ICE fails. Additive: UDP stays the
+# preferred path for clients where it works (LAN, wifi).
+webrtcLocalTCPAddress: :8189
+webrtcLocalUDPAddress: :8189
 # Plain HTTP is fine for LAN. Flip to yes + serverCert/serverKey for TLS,
 # or front MediaMTX with Caddy/Nginx.
 webrtcEncryption: no
@@ -44,7 +54,24 @@ webrtcAllowOrigins: ['*']
 # When the LAN client (laptop on the same Wi-Fi as the Jetson) hits
 # the PWA at the LAN IP directly, the LAN host candidate is still
 # announced by default — Tailscale entries are additive.
+#
+# iter cellular-ice (2026-06-17): `webrtcAdditionalHosts` candidates are
+# ADDITIVE to interface-gathered ones, NOT a replacement — setting
+# `webrtcIPsFromInterfaces: no` produced ZERO candidates (WHEP answer had
+# no a=candidate lines at all → WebRTC dead), so interface gathering must
+# stay on. The cellular candidate-churn fix is being pinned down with the
+# debug logging above; do not disable interface gathering.
 webrtcAdditionalHosts: ['100.85.251.7', 'homecam.tail4a6525.ts.net']
+# iter cellular-ice (2026-06-17): STUN (+ TURN) so MediaMTX gathers a
+# server-reflexive (public) candidate of its own. On cellular the phone's
+# in-browser WebRTC media won't route through the Tailscale tunnel, so the
+# host candidates (LAN / Tailscale IP) are unreachable; both peers need a
+# srflx candidate to hole-punch directly over the public internet. The
+# client mirrors this (ICE_SERVERS in client/src/lib/webrtc.ts). TURN, when
+# added, goes here as a second entry with username/password for the
+# symmetric-NAT carriers where the direct hole-punch fails.
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
 
 paths:
   cam:
@@ -164,26 +191,41 @@ paths:
   #   ONE `nvarguscamerasrc` in this whole file (the `cam` path above) and
   #   exactly ONE GStreamer `tee` count: zero. Each path below RE-DECODES the
   #   ALREADY-PUBLISHED `rtsp://localhost:8554/cam` H.264 stream via NVDEC
-  #   (`nvv4l2decoder`), rescales in NVMM (`nvvidconv` = Tegra VIC), and
-  #   re-encodes to a smaller rung. This is a TRANSCODE of the published
-  #   stream, NOT a second capture path.
+  #   (`nvv4l2decoder`), rescales with the Tegra VIC (`nvvidconv`, which also
+  #   downloads NVMM -> system memory), and re-encodes to a smaller rung. This
+  #   is a TRANSCODE of the published stream, NOT a second capture path.
+  #   Do NOT "consolidate" by adding a GStreamer `tee` to the `cam` pipeline
+  #   (libargus is single-owner; a tee on the capture branch is exactly the
+  #   anti-pattern CLAUDE.md forbids).
   #
-  #   ==> Future camera-library / single-owner-libargus audit: the second and
-  #       third `nvv4l2h264enc` you see here are NOT a "second encode path off
-  #       the sensor." They consume the loopback RTSP republish. Do not flag.
-  #       Do not "consolidate" by adding a GStreamer `tee` to the `cam`
-  #       pipeline (libargus is single-owner; a tee on the capture branch is
-  #       exactly the anti-pattern CLAUDE.md forbids).
+  # CRITICAL — WHY x264enc (SOFTWARE) AND NOT nvv4l2h264enc HERE:
+  #   The hardware encoder `nvv4l2h264enc` emits output buffers with
+  #   NON-MONOTONIC PTS when fed by NVDEC in a transcode (verified on-device
+  #   2026-06-17: post-encode PTS came out `53 102 87 69 ...`, adjacent frames
+  #   swapped). The bitstream itself is in correct order with no B-frames
+  #   (ffprobe shows pure IPPP), but gortsplib's H264 DTS extractor inside
+  #   MediaMTX reads the backwards-jumping presentation timestamps as frame
+  #   reordering and kills every WebRTC reader with
+  #   `WebRTC doesn't support H264 streams with B-frames`. The phone shows a
+  #   black tile then the "can't reach camera" error. poc-type=2, disable-dpb,
+  #   and num-B-Frames=0 do NOT fix it — the scramble is intrinsic to the Tegra
+  #   NVENC output stage. The always-on `cam` path is unaffected because it
+  #   encodes live sensor frames (monotonic PTS), which is why HQ works and only
+  #   the low rungs were broken. `x264enc tune=zerolatency` produces strictly
+  #   monotonic, B-frame-free, WebRTC-safe output. Decode stays on hardware
+  #   NVDEC; only the (small, low-bitrate) encode is software. Cost measured at
+  #   ~0.75 core for 480p60 / less for 360p30 — acceptable for an on-demand rung
+  #   on the Nano's 4 cores. tune=zerolatency implies bframes=0; do not add
+  #   B-frames back. The `cam` HQ path MUST stay nvv4l2h264enc (full res/bitrate
+  #   would be far too costly in software).
   #
   # runOnDemand: MediaMTX launches the transcode only when a reader subscribes
   # to cam_lq / cam_uq, and runOnDemandCloseAfter tears it down once the last
-  # reader leaves — so an idle low-bandwidth rung costs zero NVENC/NVDEC.
-  # Encoder tuning mirrors the `cam` path style (single-pass CBR, max clocks,
-  # SPS/PPS in every keyframe, vbv-size + peak-bitrate to bound VBV drain).
+  # reader leaves — so an idle low-bandwidth rung costs zero CPU/NVDEC.
   # On-device tegrastats headroom validation is operator-side.
   # ===========================================================================
 
-  # LQ rung — 854x480 @ ~24 fps, 700 kbps CBR. Phone on a decent LTE link.
+  # LQ rung — 854x480, ~700 kbps. Phone on a decent LTE link.
   cam_lq:
     source: publisher
     runOnDemand: >-
@@ -193,20 +235,19 @@ paths:
       h264parse !
       nvv4l2decoder !
       nvvidconv !
-      'video/x-raw(memory:NVMM),width=854,height=480' !
-      nvv4l2h264enc insert-sps-pps=true iframeinterval=24 control-rate=1 bitrate=700000 vbv-size=700000 peak-bitrate=900000 EnableTwopassCBR=false maxperf-enable=true !
+      'video/x-raw,width=854,height=480,format=I420' !
+      x264enc tune=zerolatency bitrate=700 speed-preset=ultrafast key-int-max=48 !
       h264parse !
       rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_lq
     runOnDemandRestart: yes
     runOnDemandCloseAfter: 10s
 
-  # UQ rung — 640x360 at ~half source fps, 400 kbps CBR. Congested / metered cell.
+  # UQ rung — 640x360 at ~half source fps, ~400 kbps. Congested / metered cell.
   # Framerate cap is done at the DECODER via `nvv4l2decoder drop-frame-interval=2`
-  # (drops every other frame in hardware), NOT with `videorate`. videorate on the
-  # NVMM (memory:NVMM) path negotiates but produces a stream rtspclientsink/mediamtx
-  # rejects on read (400 Bad Request) — verified on-device 2026-06-16. drop-frame-
-  # interval keeps the whole path zero-copy on the GPU and is the Jetson-native way
-  # to thin frames before NVENC. iframeinterval=15 => ~1 s GOP at the resulting fps.
+  # (drops every other frame in hardware) before the software encode, so x264enc
+  # only has to chew ~30 fps. videorate on the NVMM path negotiates but produces a
+  # stream rtspclientsink/mediamtx rejects on read (400 Bad Request) — verified
+  # on-device 2026-06-16 — so the decoder drop is the right fps lever.
   cam_uq:
     source: publisher
     runOnDemand: >-
@@ -216,8 +257,8 @@ paths:
       h264parse !
       nvv4l2decoder drop-frame-interval=2 !
       nvvidconv !
-      'video/x-raw(memory:NVMM),width=640,height=360' !
-      nvv4l2h264enc insert-sps-pps=true iframeinterval=15 control-rate=1 bitrate=400000 vbv-size=400000 peak-bitrate=520000 EnableTwopassCBR=false maxperf-enable=true !
+      'video/x-raw,width=640,height=360,format=I420' !
+      x264enc tune=zerolatency bitrate=400 speed-preset=ultrafast key-int-max=30 !
       h264parse !
       rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_uq
     runOnDemandRestart: yes

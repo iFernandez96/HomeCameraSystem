@@ -75,10 +75,15 @@ describe('lib/webrtc.connectWhep', () => {
     expect(pc.addTransceiver).toHaveBeenCalledTimes(1)
   })
 
-  it('uses no ICE servers (LAN-only deployment)', async () => {
+  it('Given a cellular client needs NAT traversal, When connectWhep builds the peer connection, Then it configures a STUN server (iter cellular-ice)', async () => {
+    // arrange / act
     await connectWhep('http://example/cam/whep', makeVideo())
+    // assert — STUN is required for cellular: the in-browser media socket
+    // can't ride the Tailscale tunnel, so both peers need a server-reflexive
+    // candidate to hole-punch. (Was `[]` pre-iter-cellular-ice.)
     const pc = MockRTCPeerConnection.instances[0]
-    expect(pc.config?.iceServers).toEqual([])
+    const urls = (pc.config?.iceServers ?? []).map((s) => s.urls)
+    expect(urls).toContain('stun:stun.l.google.com:19302')
   })
 
   it('POSTs the local SDP to the WHEP URL with application/sdp', async () => {
@@ -143,16 +148,17 @@ describe('lib/webrtc.warmWhepConnection', () => {
     vi.unstubAllGlobals()
   })
 
-  it('Given warmup runs, When the peer connection is created, Then iceServers stays [] and the only transceiver is recvonly video (auth-boundary safety: no STUN/TURN, no audio)', async () => {
+  it('Given warmup runs, When the peer connection is created, Then it uses the same STUN config as the cold path and the only transceiver is recvonly video (iter cellular-ice: warm/cold parity, no audio)', async () => {
     // arrange / act
     await warmWhepConnection()
 
-    // assert — pre-warm PC is configured identically to the cold-
-    // path PC so the warm-vs-cold consume produces no behavior
-    // difference. iceServers: [] is the project's "no STUN ever"
-    // sharp edge — pinned across both code paths.
+    // assert — pre-warm PC is configured identically to the cold-path PC
+    // so warm-vs-cold consume produces no behavior difference. Both now
+    // carry STUN (iter cellular-ice) so the warmed PC pre-gathers the
+    // srflx candidate cellular needs. Still no audio transceiver.
     const pc = MockRTCPeerConnection.instances[0]
-    expect(pc.config?.iceServers).toEqual([])
+    const urls = (pc.config?.iceServers ?? []).map((s) => s.urls)
+    expect(urls).toContain('stun:stun.l.google.com:19302')
     expect(pc.addTransceiver).toHaveBeenCalledWith('video', { direction: 'recvonly' })
     expect(pc.addTransceiver).toHaveBeenCalledTimes(1)
   })
@@ -181,7 +187,8 @@ describe('lib/webrtc.warmWhepConnection', () => {
     // assert — same observable contract as the legacy path.
     expect(MockRTCPeerConnection.instances.length).toBe(1)
     const pc = MockRTCPeerConnection.instances[0]
-    expect(pc.config?.iceServers).toEqual([])
+    const urls = (pc.config?.iceServers ?? []).map((s) => s.urls)
+    expect(urls).toContain('stun:stun.l.google.com:19302')
     expect(pc.localDescription).toEqual({ type: 'offer', sdp: 'OFFER_SDP' })
     expect(pc.remoteDescription).toEqual({ type: 'answer', sdp: 'ANSWER_SDP' })
   })

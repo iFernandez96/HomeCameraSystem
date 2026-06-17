@@ -3,6 +3,32 @@ export type WhepConnection = {
   close: () => void
 }
 
+// iter cellular-ice (2026-06-17): ICE servers.
+//
+// Pre-iter-cellular-ice this was `[]` (no STUN) — fine on LAN/tailnet-wifi
+// where a host candidate (10.0.0.9 or the Tailscale IP) is directly
+// reachable. But on CELLULAR the phone has no LAN path, and an in-browser
+// WebRTC media socket does NOT route through the Tailscale VPN tunnel
+// (the WHEP control plane does, the media doesn't), so the only reachable
+// host candidate (100.85.251.7) gets the media packets dropped by the
+// carrier and MediaMTX logs "deadline exceeded while waiting connection".
+// STUN gives both peers a server-reflexive (public) candidate so they can
+// hole-punch directly over the public internet — standard mobile-WebRTC
+// NAT traversal. TURN (a relay) is the fallback for symmetric-NAT carriers
+// where the hole-punch fails; populated from VITE_TURN_* at build time so
+// no relay credentials are committed. MediaMTX must mirror this server-side
+// (webrtcICEServers2 in deploy/mediamtx.yml) so its side also gathers srflx.
+const _TURN_URL = import.meta.env.VITE_TURN_URL as string | undefined
+const _TURN_USER = import.meta.env.VITE_TURN_USERNAME as string | undefined
+const _TURN_CRED = import.meta.env.VITE_TURN_CREDENTIAL as string | undefined
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  ...(_TURN_URL && _TURN_USER && _TURN_CRED
+    ? [{ urls: _TURN_URL, username: _TURN_USER, credential: _TURN_CRED }]
+    : []),
+]
+
+
 // Premium-launch slice — pre-WHEP connection warmup.
 //
 // The WHEP handshake decomposes into:
@@ -32,8 +58,9 @@ export type WhepConnection = {
 //   - Warmup does not bind to a video element (no `<video>` srcObject
 //     change before the user lands on Live). That binding happens at
 //     consume time, when we have the user's intended video element.
-//   - iceServers: [] is preserved. No STUN, no TURN, no third-party
-//     network exposure ever introduced.
+//   - iter cellular-ice: warmup now uses the same ICE_SERVERS (STUN, +
+//     TURN if configured) as connectWhep so the warmed PC's pre-gathered
+//     candidates include the srflx candidate cellular needs.
 //   - The cached PC is invalidated on the `offline` window event so
 //     a Wi-Fi → cellular swap doesn't re-use stale host candidates.
 //   - TTL of WARM_TTL_MS (30 s) bounds memory if the user warms but
@@ -71,7 +98,7 @@ export async function warmWhepConnection(): Promise<void> {
   if (_warmed) return
   let pc: RTCPeerConnection | null = null
   try {
-    pc = new RTCPeerConnection({ iceServers: [] })
+    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
     pc.addTransceiver('video', { direction: 'recvonly' })
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
@@ -162,7 +189,7 @@ export async function connectWhep(
     // network as the browser). Skipping STUN saves ~200-500 ms of
     // resolution time for the first frame, and avoids leaking the
     // LAN IP to a public server.
-    pc = new RTCPeerConnection({ iceServers: [] })
+    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
     // Video only — the camera has no audio. An audio transceiver
     // costs ~50-100 ms of SDP/ICE negotiation for a track that never
     // carries data.
@@ -221,11 +248,16 @@ function iceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
       if (pc.iceGatheringState === 'complete') finish()
     }
     pc.addEventListener('icegatheringstatechange', onChange)
-    // 250 ms is plenty on a LAN — host candidates gather in <50 ms
-    // with no STUN. The fallback only fires if something is wrong;
-    // in normal cases the icegatheringstatechange event resolves
-    // first. The previous 3 s timeout meant a slow LAN could block
-    // first-frame for that long.
-    const timer = setTimeout(finish, 250)
+    // iter cellular-ice: this cap was 250 ms when iceServers was `[]`
+    // (host-only gathering completes in <50 ms). With STUN enabled
+    // (ICE_SERVERS), `icegatheringstatechange → complete` only fires
+    // AFTER the STUN round-trip that produces the server-reflexive
+    // candidate — and on cellular that candidate is the ONLY one that
+    // can connect, so cutting gathering off at 250 ms would drop it and
+    // guarantee the cellular failure we're fixing. The `complete` event
+    // still resolves as soon as gathering actually finishes (≈ STUN RTT,
+    // ~tens of ms on a good link), so on LAN/wifi this rarely waits the
+    // full cap; the cap is just the upper bound if STUN is slow/blocked.
+    const timer = setTimeout(finish, 2500)
   })
 }

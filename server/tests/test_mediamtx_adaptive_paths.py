@@ -94,3 +94,43 @@ def test_Given_adaptive_rung_When_inspected_Then_closes_after_idle(paths, rung):
     close_after = paths[rung].get("runOnDemandCloseAfter")
     # assert — idle rung must tear down to free NVENC/NVDEC
     assert close_after, "{} must set runOnDemandCloseAfter".format(rung)
+
+
+@pytest.mark.parametrize("rung", ["cam_lq", "cam_uq"])
+def test_Given_adaptive_rung_When_inspected_Then_software_encodes_for_webrtc(
+    paths, rung
+):
+    """The low rungs MUST use software `x264enc tune=zerolatency`, NOT the
+    hardware `nvv4l2h264enc`.
+
+    The Tegra hardware encoder emits NON-MONOTONIC output PTS when fed by
+    NVDEC in a transcode (verified on-device 2026-06-17). The bitstream has
+    no B-frames, but gortsplib's DTS extractor in MediaMTX reads the
+    backwards-jumping timestamps as frame reordering and kills every WebRTC
+    reader with "WebRTC doesn't support H264 streams with B-frames" — the
+    phone shows a black tile then an error. `x264enc tune=zerolatency`
+    produces monotonic, B-frame-free, WebRTC-safe output. Do NOT
+    "consolidate" these rungs back to nvv4l2h264enc to save CPU."""
+    # arrange
+    command = _normalize(paths[rung]["runOnDemand"])
+    # act / assert
+    assert "x264enc" in command, "{} must software-encode with x264enc".format(rung)
+    assert (
+        "tune=zerolatency" in command
+    ), "{} x264enc must use tune=zerolatency (no B-frames)".format(rung)
+    assert (
+        "nvv4l2h264enc" not in command
+    ), "{} must NOT use nvv4l2h264enc (scrambles PTS -> WebRTC B-frame reject)".format(
+        rung
+    )
+
+
+def test_Given_hq_cam_path_When_inspected_Then_keeps_hardware_encoder(paths):
+    """The always-on HQ `cam` path stays on hardware `nvv4l2h264enc`: it
+    encodes live sensor frames (monotonic PTS, WebRTC-safe) and full-res
+    software encode would be far too costly on the Nano."""
+    # arrange / act
+    command = _normalize(paths["cam"]["runOnInit"])
+    # assert
+    assert "nvv4l2h264enc" in command, "HQ cam path must keep the hardware encoder"
+    assert "nvarguscamerasrc" in command, "HQ cam path is the single capture path"
