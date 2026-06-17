@@ -24,22 +24,11 @@ import { useToast } from '../lib/toast'
 // (which already runs every 5 s anyway).
 const _DEFAULT_CAMERA_LABEL = 'Front Door'
 
-function whepUrl() {
-  // iter-244b: same-origin path-based WHEP. Pre-iter-244b this composed
-  // `<proto>//<host>:8889/cam/whep` directly — fine on LAN where the
-  // browser can hit the Jetson's :8889 port over HTTP, broken over the
-  // iter-244 Tailscale Serve HTTPS proxy because (a) the proxy only
-  // forwards :443 not :8889, and (b) browsers refuse mixed-content
-  // (HTTPS page → HTTP MediaMTX).
-  //
-  // Fix: route WHEP through the Tailscale Serve path proxy at
-  // `/whep/*` (configured `tailscale serve --bg --https=443
-  // --set-path=/whep http://localhost:8889`). Same origin as the page,
-  // so HTTPS preserved, no mixed content, no extra port. Vite dev
-  // server proxies `/whep` → `http://localhost:8889` for parity (see
-  // vite.config.ts).
-  return `${window.location.origin}/whep/cam/whep`
-}
+// Cellular-adaptive streaming (2026-06-16): the WHEP URL is no longer
+// hardcoded here. VideoTile owns a quality picker (Auto / HQ /
+// Data-saver / Ultra-low) and composes its own same-origin WHEP URL via
+// `lib/streamQuality.ts` (`auto` reads navigator.connection and
+// downshifts on cellular/metered links). Live just renders the tile.
 
 export function Live() {
   const [busy, setBusy] = useState<string | null>(null)
@@ -168,7 +157,6 @@ export function Live() {
       <div className="relative flex-1 min-h-0 bg-black overflow-hidden lg:rounded-tl-2xl">
         {/* The cinematic video field. fills 100% of this region. */}
         <VideoTile
-          src={whepUrl()}
           detectionActive={detectionActive}
           workerAlive={workerAlive}
           lowMemory={lowMemory}

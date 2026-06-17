@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { drawBoxes } from '../lib/drawBoxes'
+import {
+  getStreamQuality,
+  pathForQuality,
+  setStreamQuality,
+  whepUrlForPath,
+  type StreamQuality,
+} from '../lib/streamQuality'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
@@ -19,7 +26,14 @@ export function VideoTile({
   thermal = null,
   streamStaleSeconds = null,
 }: {
-  src: string
+  /**
+   * Optional explicit WHEP URL override. When omitted, the tile composes
+   * its own URL from the user's chosen stream quality (cellular-adaptive
+   * streaming, 2026-06-16). Live no longer passes this — the quality
+   * control inside the tile owns the URL — but it's kept as an override
+   * for tests and any future multi-cam wiring.
+   */
+  src?: string
   /**
    * Whether the server is currently emitting detection events. `null` means
    * "unknown" (status hasn't loaded yet) and is treated like `true` to avoid
@@ -80,6 +94,21 @@ export function VideoTile({
   const [boxes, setBoxes] = useState<DetectionEvent['boxes']>([])
   const [personName, setPersonName] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
+  // Cellular-adaptive streaming (2026-06-16): the user picks a stream
+  // tier (Auto / HQ / Data-saver / Ultra-low). `auto` reads
+  // navigator.connection and downshifts on cellular/metered links. The
+  // choice persists in localStorage and drives the WHEP path. Changing
+  // it recomputes `effectiveSrc`, whose change re-runs the connect
+  // effect (same dep that manual Retry's `retryNonce` bump relies on),
+  // tearing down the old PeerConnection and connecting to the new path.
+  const [quality, setQuality] = useState<StreamQuality>(() => getStreamQuality())
+  // `src` override (tests / future multi-cam wiring) wins; otherwise the
+  // tile composes its own URL from the chosen quality.
+  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(quality))
+  const onSelectQuality = (q: StreamQuality) => {
+    setStreamQuality(q)
+    setQuality(q)
+  }
   // iter-356.C (mobile-redesign Slice C — security clarity): the
   // single "Detection offline" pill split into three honest cases.
   // `cameraOffline`: worker has never heartbeated AND we've never
@@ -183,7 +212,7 @@ export function VideoTile({
     video.addEventListener('waiting', onStallOrWaiting)
     video.addEventListener('playing', onPlaying)
     setStatus('connecting')
-    connectWhep(src, video)
+    connectWhep(effectiveSrc, video)
       .then((c) => {
         if (cancelled) {
           c.close()
@@ -252,7 +281,7 @@ export function VideoTile({
       }
       conn?.close()
     }
-  }, [src, retryNonce])
+  }, [effectiveSrc, retryNonce])
 
   useEffect(() => {
     return subscribeEvents((evt) => {
@@ -424,6 +453,7 @@ export function VideoTile({
       />
       <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none" />
       <StatusPill status={status} />
+      <QualityControl quality={quality} onSelect={onSelectQuality} />
       <button
         type="button"
         onClick={() => setBoxesVisible((v) => !v)}
@@ -655,6 +685,69 @@ export function VideoTile({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Cellular-adaptive streaming (2026-06-16): per-tile quality picker.
+ * Auto reads navigator.connection and downshifts on cellular/metered
+ * links; the other tiers force a fixed bitrate. Rendered as a labelled
+ * native <select> so it's keyboard-operable, reachable by accessible
+ * name, and announces the current tier without any custom ARIA.
+ *
+ * Theme: the picker overlays the dark video field, so it uses the same
+ * black/glass + white-text treatment as the StatusPill and the
+ * box-overlay / fullscreen buttons (text-white is allowed on a colored
+ * fill). The focus ring uses the accent token.
+ */
+const QUALITY_OPTIONS: ReadonlyArray<{ value: StreamQuality; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'hq', label: 'HQ' },
+  { value: 'sd', label: 'Data-saver' },
+  { value: 'xs', label: 'Ultra-low' },
+]
+
+function QualityControl({
+  quality,
+  onSelect,
+}: {
+  quality: StreamQuality
+  onSelect: (q: StreamQuality) => void
+}) {
+  return (
+    <label className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2 py-1 rounded-full text-xs font-medium text-white">
+      <span className="sr-only">Stream quality</span>
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {/* signal-bars glyph */}
+        <line x1="6" y1="20" x2="6" y2="14" />
+        <line x1="12" y1="20" x2="12" y2="9" />
+        <line x1="18" y1="20" x2="18" y2="4" />
+      </svg>
+      <select
+        aria-label="Stream quality"
+        value={quality}
+        onChange={(e) => onSelect(e.target.value as StreamQuality)}
+        className="bg-transparent text-white text-xs font-medium outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-sm cursor-pointer"
+      >
+        {QUALITY_OPTIONS.map((o) => (
+          // option bg follows the native picker; force a readable surface
+          // for the open list on dark-UA defaults.
+          <option key={o.value} value={o.value} className="text-[var(--color-text-primary)]">
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 

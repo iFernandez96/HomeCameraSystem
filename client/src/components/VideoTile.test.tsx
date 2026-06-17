@@ -625,6 +625,87 @@ describe('VideoTile', () => {
     expect(connectWhep).toHaveBeenCalledTimes(1)
   })
 
+  // Cellular-adaptive streaming (2026-06-16): the tile owns a quality
+  // picker. When no `src` override is given it composes its own WHEP
+  // URL from the chosen quality via lib/streamQuality. Switching tiers
+  // re-runs the WHEP connect against the new path (same mechanism as
+  // manual Retry: a change in the effect's URL dep).
+
+  it('given no src override, when rendered, then the quality control is reachable by accessible name (2026-06-16)', () => {
+    // arrange
+    window.localStorage.removeItem('homecam:streamQuality')
+    connectWhep.mockReturnValue(new Promise(() => {}))
+
+    // act
+    render(<VideoTile detectionActive={null} />)
+
+    // assert — labelled, role-discoverable, defaults to Auto.
+    const control = screen.getByRole('combobox', { name: /stream quality/i })
+    expect(control).toBeInTheDocument()
+    expect(control).toHaveValue('auto')
+  })
+
+  it('given the default Auto tier, when rendered, then connectWhep targets the HQ path (2026-06-16)', () => {
+    // arrange — jsdom has no navigator.connection, so Auto resolves HQ.
+    window.localStorage.removeItem('homecam:streamQuality')
+    connectWhep.mockReturnValue(new Promise(() => {}))
+
+    // act
+    render(<VideoTile detectionActive={null} />)
+
+    // assert
+    expect(connectWhep).toHaveBeenCalledWith(
+      `${window.location.origin}/whep/cam/whep`,
+      expect.any(Object),
+    )
+  })
+
+  it('given the quality control, when Data-saver is selected, then the WHEP URL swaps and persists (2026-06-16)', async () => {
+    // arrange
+    window.localStorage.removeItem('homecam:streamQuality')
+    connectWhep.mockReturnValue(new Promise(() => {}))
+    render(<VideoTile detectionActive={null} />)
+    expect(connectWhep).toHaveBeenCalledTimes(1)
+    expect(connectWhep).toHaveBeenLastCalledWith(
+      `${window.location.origin}/whep/cam/whep`,
+      expect.any(Object),
+    )
+
+    // act — pick Data-saver (sd -> cam_lq).
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /stream quality/i }),
+      { target: { value: 'sd' } },
+    )
+
+    // assert — connect re-runs against the new path; choice persisted.
+    await waitFor(() =>
+      expect(connectWhep).toHaveBeenLastCalledWith(
+        `${window.location.origin}/whep/cam_lq/whep`,
+        expect.any(Object),
+      ),
+    )
+    expect(window.localStorage.getItem('homecam:streamQuality')).toBe('sd')
+  })
+
+  it('given a persisted Ultra-low choice, when the tile mounts, then it connects to the ultra-low path (2026-06-16)', () => {
+    // arrange
+    window.localStorage.setItem('homecam:streamQuality', 'xs')
+    connectWhep.mockReturnValue(new Promise(() => {}))
+
+    // act
+    render(<VideoTile detectionActive={null} />)
+
+    // assert
+    expect(connectWhep).toHaveBeenCalledWith(
+      `${window.location.origin}/whep/cam_uq/whep`,
+      expect.any(Object),
+    )
+    expect(
+      screen.getByRole('combobox', { name: /stream quality/i }),
+    ).toHaveValue('xs')
+    window.localStorage.removeItem('homecam:streamQuality')
+  })
+
   it('observes the video element and redraws on resize', async () => {
     const observe = vi.fn()
     const disconnect = vi.fn()
