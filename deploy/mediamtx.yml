@@ -200,13 +200,13 @@ paths:
     runOnDemandRestart: yes
     runOnDemandCloseAfter: 10s
 
-  # UQ rung — 640x360 capped at 15 fps, 400 kbps CBR. Congested / metered cell.
-  # Framerate cap happens BEFORE the encoder: the published `cam` stream is
-  # 60 fps, so we drop frames in the raw (NVMM) path with videorate so NVENC
-  # only encodes 15 fps. Capping after the encoder is impossible — videorate
-  # operates on raw frames, not an H.264 bitstream. The caps filter pins the
-  # negotiated framerate to 15/1 so the encoder GOP math (iframeinterval=15 =>
-  # ~1 s GOP at 15 fps) is correct.
+  # UQ rung — 640x360 at ~half source fps, 400 kbps CBR. Congested / metered cell.
+  # Framerate cap is done at the DECODER via `nvv4l2decoder drop-frame-interval=2`
+  # (drops every other frame in hardware), NOT with `videorate`. videorate on the
+  # NVMM (memory:NVMM) path negotiates but produces a stream rtspclientsink/mediamtx
+  # rejects on read (400 Bad Request) — verified on-device 2026-06-16. drop-frame-
+  # interval keeps the whole path zero-copy on the GPU and is the Jetson-native way
+  # to thin frames before NVENC. iframeinterval=15 => ~1 s GOP at the resulting fps.
   cam_uq:
     source: publisher
     runOnDemand: >-
@@ -214,11 +214,9 @@ paths:
       rtspsrc location=rtsp://localhost:$RTSP_PORT/cam latency=0 protocols=tcp !
       rtph264depay !
       h264parse !
-      nvv4l2decoder !
+      nvv4l2decoder drop-frame-interval=2 !
       nvvidconv !
       'video/x-raw(memory:NVMM),width=640,height=360' !
-      videorate max-rate=15 drop-only=true !
-      'video/x-raw(memory:NVMM),framerate=15/1' !
       nvv4l2h264enc insert-sps-pps=true iframeinterval=15 control-rate=1 bitrate=400000 vbv-size=400000 peak-bitrate=520000 EnableTwopassCBR=false maxperf-enable=true !
       h264parse !
       rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_uq
