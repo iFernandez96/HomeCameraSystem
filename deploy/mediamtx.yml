@@ -155,3 +155,72 @@ paths:
     #   h264parse !
     #   rtspclientsink location=rtsp://localhost:$RTSP_PORT/cam
     # runOnInitRestart: yes
+
+  # ===========================================================================
+  # Cellular-adaptive streaming — on-demand transcode ladder (iter cellular-adaptive)
+  #
+  # CRITICAL — SINGLE-OWNER libargus / SINGLE ENCODE-FROM-SENSOR:
+  #   These cam_lq / cam_uq paths DO NOT touch the camera. There is exactly
+  #   ONE `nvarguscamerasrc` in this whole file (the `cam` path above) and
+  #   exactly ONE GStreamer `tee` count: zero. Each path below RE-DECODES the
+  #   ALREADY-PUBLISHED `rtsp://localhost:8554/cam` H.264 stream via NVDEC
+  #   (`nvv4l2decoder`), rescales in NVMM (`nvvidconv` = Tegra VIC), and
+  #   re-encodes to a smaller rung. This is a TRANSCODE of the published
+  #   stream, NOT a second capture path.
+  #
+  #   ==> Future camera-library / single-owner-libargus audit: the second and
+  #       third `nvv4l2h264enc` you see here are NOT a "second encode path off
+  #       the sensor." They consume the loopback RTSP republish. Do not flag.
+  #       Do not "consolidate" by adding a GStreamer `tee` to the `cam`
+  #       pipeline (libargus is single-owner; a tee on the capture branch is
+  #       exactly the anti-pattern CLAUDE.md forbids).
+  #
+  # runOnDemand: MediaMTX launches the transcode only when a reader subscribes
+  # to cam_lq / cam_uq, and runOnDemandCloseAfter tears it down once the last
+  # reader leaves — so an idle low-bandwidth rung costs zero NVENC/NVDEC.
+  # Encoder tuning mirrors the `cam` path style (single-pass CBR, max clocks,
+  # SPS/PPS in every keyframe, vbv-size + peak-bitrate to bound VBV drain).
+  # On-device tegrastats headroom validation is operator-side.
+  # ===========================================================================
+
+  # LQ rung — 854x480 @ ~24 fps, 700 kbps CBR. Phone on a decent LTE link.
+  cam_lq:
+    source: publisher
+    runOnDemand: >-
+      gst-launch-1.0 -e
+      rtspsrc location=rtsp://localhost:$RTSP_PORT/cam latency=0 protocols=tcp !
+      rtph264depay !
+      h264parse !
+      nvv4l2decoder !
+      nvvidconv !
+      'video/x-raw(memory:NVMM),width=854,height=480' !
+      nvv4l2h264enc insert-sps-pps=true iframeinterval=24 control-rate=1 bitrate=700000 vbv-size=700000 peak-bitrate=900000 EnableTwopassCBR=false maxperf-enable=true !
+      h264parse !
+      rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_lq
+    runOnDemandRestart: yes
+    runOnDemandCloseAfter: 10s
+
+  # UQ rung — 640x360 capped at 15 fps, 400 kbps CBR. Congested / metered cell.
+  # Framerate cap happens BEFORE the encoder: the published `cam` stream is
+  # 60 fps, so we drop frames in the raw (NVMM) path with videorate so NVENC
+  # only encodes 15 fps. Capping after the encoder is impossible — videorate
+  # operates on raw frames, not an H.264 bitstream. The caps filter pins the
+  # negotiated framerate to 15/1 so the encoder GOP math (iframeinterval=15 =>
+  # ~1 s GOP at 15 fps) is correct.
+  cam_uq:
+    source: publisher
+    runOnDemand: >-
+      gst-launch-1.0 -e
+      rtspsrc location=rtsp://localhost:$RTSP_PORT/cam latency=0 protocols=tcp !
+      rtph264depay !
+      h264parse !
+      nvv4l2decoder !
+      nvvidconv !
+      'video/x-raw(memory:NVMM),width=640,height=360' !
+      videorate max-rate=15 drop-only=true !
+      'video/x-raw(memory:NVMM),framerate=15/1' !
+      nvv4l2h264enc insert-sps-pps=true iframeinterval=15 control-rate=1 bitrate=400000 vbv-size=400000 peak-bitrate=520000 EnableTwopassCBR=false maxperf-enable=true !
+      h264parse !
+      rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_uq
+    runOnDemandRestart: yes
+    runOnDemandCloseAfter: 10s
