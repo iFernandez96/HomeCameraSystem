@@ -929,3 +929,52 @@ def test_added_sub_with_iter_205_fields_round_trips_to_disk(tmp_path):
         "person_names": ["israel"],
         "schedule_window": None,
     }
+
+
+def test_send_to_user_targets_only_that_users_subscriptions(service, monkeypatch):
+    """send_to_user fans out ONLY to subs owned by the given user — bob's and
+    legacy (user_id=None) subs are excluded. Used for the 'your timelapse is
+    ready' notification to the build's requester."""
+    # arrange
+    import asyncio
+    service.subs = [
+        {"endpoint": "https://e/a1", "user_id": "alice"},
+        {"endpoint": "https://e/b1", "user_id": "bob"},
+        {"endpoint": "https://e/a2", "user_id": "alice"},
+        {"endpoint": "https://e/legacy", "user_id": None},
+    ]
+    captured = {}
+
+    async def _fake_fanout(subs, payload):
+        captured["subs"] = subs
+        return len(subs)
+
+    monkeypatch.setattr(service, "_fanout_to", _fake_fanout)
+
+    # act
+    n = asyncio.run(service.send_to_user("alice", {"title": "x"}))
+
+    # assert — only alice's two subscriptions targeted.
+    assert n == 2
+    assert {s["endpoint"] for s in captured["subs"]} == {
+        "https://e/a1",
+        "https://e/a2",
+    }
+
+
+def test_send_to_user_with_empty_user_is_a_noop(service, monkeypatch):
+    """An empty/None user must NEVER fan out (no accidental broadcast-to-all)."""
+    # arrange
+    import asyncio
+    service.subs = [{"endpoint": "https://e/a1", "user_id": "alice"}]
+    called = {"n": 0}
+
+    async def _fake_fanout(subs, payload):
+        called["n"] += 1
+        return 0
+
+    monkeypatch.setattr(service, "_fanout_to", _fake_fanout)
+
+    # act + assert — fanout never called.
+    assert asyncio.run(service.send_to_user("", {"title": "x"})) == 0
+    assert called["n"] == 0

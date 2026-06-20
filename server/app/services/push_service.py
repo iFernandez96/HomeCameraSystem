@@ -631,6 +631,19 @@ class PushService:
         ]
         return await self._fanout_to(matching, payload)
 
+    async def send_to_user(self, user_id: str, payload: dict[str, Any]) -> int:
+        """Fan out `payload` to every subscription owned by `user_id` (the
+        username stamped at subscribe time, `routes/push.py`). Used for
+        USER-DIRECTED notifications — e.g. "your timelapse is ready" to the
+        person who requested the build — rather than the event broadcasts of
+        `send_matching`/`send_all`. Bypasses per-event filters (this isn't a
+        detection event). Returns the count delivered; 0 when the user has no
+        registered devices (they still get the in-app poll result)."""
+        if not user_id:
+            return 0
+        owned = [s for s in self.subs if s.get("user_id") == user_id]
+        return await self._fanout_to(owned, payload)
+
 
 push_service = PushService()
 push_service.load_keys()

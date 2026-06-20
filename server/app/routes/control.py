@@ -306,45 +306,91 @@ _TIMELAPSE_STATUS: dict[str, dict] = {}
 _TIMELAPSE_TASKS: set[asyncio.Task] = set()
 
 
-async def _run_timelapse_build(date: str) -> None:
-    """Background worker: build the day's timelapse and record the outcome
-    in `_TIMELAPSE_STATUS` for the status endpoint to report."""
+async def _notify_timelapse_done(
+    user: str | None, date: str, ok: bool, reason: str | None
+) -> None:
+    """Web-Push the user who requested a build when it finishes — success OR
+    failure — so they hear about it even if they've closed the app (the
+    in-app status poll only fires while the Settings tab is open).
+
+    Best-effort: a push failure (no VAPID key, no registered devices, network)
+    must NEVER affect the build outcome or the status the client polls — hence
+    the broad catch. Targets ONLY the requester's devices (send_to_user)."""
+    if not user:
+        return
+    if ok:
+        payload = {
+            "title": "Timelapse ready",
+            "body": "Your {0} day video is ready to watch.".format(date),
+            "tag": "timelapse:{0}".format(date),
+            "url": "/settings",
+        }
+    else:
+        payload = {
+            "title": "Timelapse build failed",
+            "body": reason or "Couldn't build your {0} day video.".format(date),
+            "tag": "timelapse:{0}".format(date),
+            "url": "/settings",
+        }
+    try:
+        from ..services.push_service import push_service
+        n = await push_service.send_to_user(user, payload)
+        log.info("timelapse push for %s → %s: %d device(s)", date, user, n)
+    except Exception:
+        log.exception(
+            "timelapse push notification failed for %s (requester=%s)",
+            date, user,
+        )
+
+
+async def _run_timelapse_build(date: str, requested_by: str | None = None) -> None:
+    """Background worker: build the day's timelapse, record the outcome in
+    `_TIMELAPSE_STATUS` for the status endpoint, and Web-Push the requester
+    (`requested_by`) when it finishes."""
     from ..services import timelapse as _timelapse_service
+    ok = False
+    reason = None  # human-readable failure reason, also the push body on fail
     try:
         result = await _timelapse_service.build_async(date)
         if result.ok:
             log.info("timelapse built for %s: %d clips", date, result.clip_count)
             _TIMELAPSE_STATUS[date] = {"building": False, "ready": True, "error": None}
+            ok = True
         elif result.clip_count == 0:
             log.info("timelapse skipped for %s: no clips", date)
+            reason = "No recorded events on that day yet — nothing to build."
             _TIMELAPSE_STATUS[date] = {
-                "building": False,
-                "ready": False,
-                "error": "No recorded events on that day yet — nothing to build.",
+                "building": False, "ready": False, "error": reason,
             }
         else:
             log.warning("timelapse build failed for %s: %s", date, result.error)
+            reason = "Couldn't build timelapse: {0}".format(
+                result.error or "unknown error"
+            )
             _TIMELAPSE_STATUS[date] = {
-                "building": False,
-                "ready": False,
-                "error": "Couldn't build timelapse: {0}".format(
-                    result.error or "unknown error"
-                ),
+                "building": False, "ready": False, "error": reason,
             }
     except Exception:
         log.exception("timelapse background build crashed for %s", date)
+        reason = "Timelapse build crashed — see server logs."
         _TIMELAPSE_STATUS[date] = {
-            "building": False,
-            "ready": False,
-            "error": "Timelapse build crashed — see server logs.",
+            "building": False, "ready": False, "error": reason,
         }
+    # Notify the requester last, after status is settled (best-effort).
+    await _notify_timelapse_done(requested_by, date, ok, reason)
 
 
 @router.post(
     "/system/timelapse",
     dependencies=[Depends(require_role("owner"))],
 )
-async def system_timelapse(body: _TimelapseBody) -> dict[str, object]:
+async def system_timelapse(
+    body: _TimelapseBody,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
+    # `user` (the requester's username) is captured so the background build
+    # can Web-Push THIS person when it finishes — the require_role("owner")
+    # dependency above gates access; this resolves who to notify.
     expected_url = f"/api/timelapses/{body.date}.mp4"
     existing = _TIMELAPSE_STATUS.get(body.date)
     if existing is not None and existing.get("building"):
@@ -360,7 +406,7 @@ async def system_timelapse(body: _TimelapseBody) -> dict[str, object]:
     # Mark building SYNCHRONOUSLY (before create_task) so two rapid POSTs
     # can't both pass the guard above.
     _TIMELAPSE_STATUS[body.date] = {"building": True, "ready": False, "error": None}
-    task = asyncio.create_task(_run_timelapse_build(body.date))
+    task = asyncio.create_task(_run_timelapse_build(body.date, user))
     _TIMELAPSE_TASKS.add(task)
     task.add_done_callback(_TIMELAPSE_TASKS.discard)
     log.info("timelapse build started (background) for %s", body.date)

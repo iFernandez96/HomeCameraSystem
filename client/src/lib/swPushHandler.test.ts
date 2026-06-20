@@ -302,4 +302,28 @@ describe('buildNotification — iter-332 actions', () => {
     // assert
     expect(actions).toBeUndefined()
   })
+
+  it('given a non-event payload WITH a tag (timelapse ready), when built, then it keeps tag + url but emits NO actions', () => {
+    // arrange — the "your timelapse is ready" notification carries a per-day
+    // tag (so different days don't collapse) and a /settings url, but no
+    // event_id. The event-only Mark-seen action would POST a bogus
+    // /api/events/timelapse:.../seen, so it must be suppressed.
+    const data: PushPayload = {
+      title: 'Timelapse ready',
+      body: 'Your 2026-06-19 day video is ready to watch.',
+      tag: 'timelapse:2026-06-19',
+      url: '/settings',
+    }
+
+    // act
+    const { title, options } = buildNotification(data)
+    const actions = (options as unknown as { actions?: unknown }).actions
+
+    // assert — tag + url preserved, event_id null, and NO actions.
+    expect(title).toBe('Timelapse ready')
+    expect(options.tag).toBe('timelapse:2026-06-19')
+    expect((options.data as { url?: string }).url).toBe('/settings')
+    expect((options.data as { event_id?: unknown }).event_id).toBeNull()
+    expect(actions).toBeUndefined()
+  })
 })

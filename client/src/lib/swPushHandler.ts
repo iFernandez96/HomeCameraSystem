@@ -38,12 +38,17 @@ export function buildNotification(
 ): { title: string; options: NotificationOptions } {
   const title = typeof data.title === 'string' ? data.title : 'Home Camera'
   const body = typeof data.body === 'string' ? data.body : 'New event'
-  // iter-275 per-event tag fallback chain.
-  const tag =
+  // A REAL detection event carries event_id/id; a user-directed notification
+  // (e.g. "timelapse ready") carries only `tag`. eventId stays null for the
+  // latter so the event-only "Mark seen" action below isn't attached (it
+  // would otherwise POST /api/events/<tag>/seen with a non-event id).
+  const eventId =
     (typeof data.event_id === 'string' && data.event_id) ||
     (typeof data.id === 'string' && data.id) ||
-    (typeof data.tag === 'string' && data.tag) ||
-    'event'
+    null
+  // iter-275 per-event tag fallback chain (eventId first so detection bursts
+  // stack per-event; else the caller-supplied tag; else the generic default).
+  const tag = eventId || (typeof data.tag === 'string' && data.tag) || 'event'
   const url = typeof data.url === 'string' ? data.url : '/events'
   const image = typeof data.image === 'string' ? data.image : undefined
 
@@ -52,11 +57,10 @@ export function buildNotification(
     icon: '/icon-192.png',
     badge: '/icon-96.png',
     tag,
-    // iter-332: include event_id in data so the iter-332
-    // notificationclick "Mark seen" branch can POST
-    // /api/events/{id}/seen without re-parsing the tag fallback
-    // chain. URL stays for the default click destination.
-    data: { url, event_id: tag },
+    // iter-332: event_id (only when a real event) lets the notificationclick
+    // "Mark seen" branch POST /api/events/{id}/seen. null for non-event
+    // notifications (timelapse), which have nothing to mark seen.
+    data: { url, event_id: eventId },
   }
   if (image) {
     ;(options as unknown as { image: string }).image = image
@@ -69,10 +73,10 @@ export function buildNotification(
   // as buttons under the notification body; iOS Safari 16.4 ignores
   // `actions` entirely (silent degradation — the tap-body fallback
   // continues to work via the iter-? notificationclick handler).
-  // Only emit actions when the tag is a real event_id (the "event"
-  // fallback indicates a test push or malformed payload that can't
-  // be marked seen).
-  if (tag !== 'event') {
+  // Only emit View / Mark-seen actions for REAL detection events (those
+  // carry an event_id). A user-directed notification (timelapse ready /
+  // failed) or a test push has no event to mark seen.
+  if (eventId) {
     ;(options as unknown as { actions: NotificationAction[] }).actions = [
       { action: 'view', title: 'View' },
       { action: 'dismiss', title: 'Mark seen' },

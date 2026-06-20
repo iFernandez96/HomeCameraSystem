@@ -657,6 +657,94 @@ def test_when_build_succeeds_then_status_reports_ready_with_url(
     assert st["url"] == "/api/timelapses/2026-04-30.mp4"
 
 
+# --- requester push-notification on build done/failed ---------------------
+
+
+def _spy_send_to_user(monkeypatch):
+    """Replace push_service.send_to_user with an async spy recording calls."""
+    from app.services.push_service import push_service
+    calls = []
+
+    async def _spy(user_id, payload):
+        calls.append((user_id, payload))
+        return 1
+
+    monkeypatch.setattr(push_service, "send_to_user", _spy)
+    return calls
+
+
+def test_given_successful_build_when_done_then_requester_is_push_notified(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """The user who triggered the build gets a Web Push when it's ready — so
+    they hear about it even with the app closed (the in-app poll only runs
+    while the Settings tab is open). The default `client` is authed testuser."""
+    # arrange
+    _patch_timelapses(tmp_path, monkeypatch)
+    _patch_build_async(monkeypatch, ok=True, clip_count=3)
+    calls = _spy_send_to_user(monkeypatch)
+
+    # act
+    client.post("/api/system/timelapse", json={"date": "2026-04-30"})
+    st = _poll_status(client, "2026-04-30")
+
+    # assert — ready, and the REQUESTER (testuser) was notified with a
+    # success payload pointing at /settings.
+    assert st["ready"] is True
+    assert len(calls) == 1
+    user_id, payload = calls[0]
+    assert user_id == "testuser"
+    assert "ready" in payload["title"].lower()
+    assert "2026-04-30" in payload["body"]
+    assert payload["url"] == "/settings"
+    assert payload["tag"] == "timelapse:2026-04-30"
+
+
+def test_given_failed_build_when_done_then_requester_is_push_notified(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """A FAILED build notifies the requester too (not just success)."""
+    # arrange
+    _patch_timelapses(tmp_path, monkeypatch)
+    _patch_build_async(monkeypatch, ok=False, clip_count=5, error="ffmpeg boom")
+    calls = _spy_send_to_user(monkeypatch)
+
+    # act
+    client.post("/api/system/timelapse", json={"date": "2026-04-30"})
+    st = _poll_status(client, "2026-04-30")
+
+    # assert
+    assert st["ready"] is False
+    assert len(calls) == 1
+    user_id, payload = calls[0]
+    assert user_id == "testuser"
+    assert "fail" in payload["title"].lower()
+    assert payload["url"] == "/settings"
+
+
+def test_given_push_send_raises_when_build_done_then_status_still_settles(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """A push failure (backend down) must NEVER break the build outcome the
+    client polls — the notification is strictly best-effort."""
+    # arrange
+    _patch_timelapses(tmp_path, monkeypatch)
+    _patch_build_async(monkeypatch, ok=True, clip_count=3)
+    from app.services.push_service import push_service
+
+    async def _boom(user_id, payload):
+        raise RuntimeError("push backend down")
+
+    monkeypatch.setattr(push_service, "send_to_user", _boom)
+
+    # act
+    client.post("/api/system/timelapse", json={"date": "2026-04-30"})
+    st = _poll_status(client, "2026-04-30")
+
+    # assert — still ready despite the push blowing up.
+    assert st["ready"] is True
+
+
 def test_when_build_already_running_then_second_post_dedupes(
     client: TestClient, tmp_path, monkeypatch
 ):
