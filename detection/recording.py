@@ -40,6 +40,8 @@ import os
 import subprocess
 import threading
 
+import applog
+
 
 class ClipRecorder(object):
     """Forks an ffmpeg subprocess per detection event to capture a
@@ -75,12 +77,70 @@ class ClipRecorder(object):
 
     def _reap(self):
         """Drop finished subprocesses from `_procs`. Called lazily
-        on each `start_clip` invocation; no background thread."""
+        on each `start_clip` invocation; no background thread.
+
+        Structural observability fix (docs/logging_plan.md §2): a
+        finished ffmpeg's ``returncode`` is the ONLY signal that a clip
+        was written truncated / not at all. Pre-logging this returned
+        ``None`` was discarded and a non-zero rc (clip missing/truncated)
+        was invisible — the user saw a 404-forever clip with no journal
+        trace. On rc!=0 we log WHY at WARNING, naming the event_id and
+        the tail of the per-event stderr temp file (see ``start_clip``),
+        then unlink the temp so it can't accumulate."""
         live = []
         for p in self._procs:
             if p.poll() is None:
                 live.append(p)
+                continue
+            # Finished — inspect the returncode so a failed clip is
+            # observable. `returncode` is set by poll() above.
+            rc = getattr(p, "returncode", None)
+            stderr_path = getattr(p, "_homecam_stderr_path", None)
+            event_id = getattr(p, "_homecam_event_id", "?")
+            if rc is not None and rc != 0:
+                tail = self._read_stderr_tail(stderr_path)
+                applog.emit(
+                    "recording",
+                    "clip ffmpeg exited rc={} for event_id={}{}".format(
+                        rc, event_id,
+                        (" stderr_tail=" + tail) if tail else "",
+                    ),
+                )
+            self._unlink_stderr_temp(stderr_path)
         self._procs = live
+
+    @staticmethod
+    def _read_stderr_tail(stderr_path, max_bytes=2000):
+        """Read the tail of a per-event stderr temp file (bounded).
+        Returns a short single-line string, or "" on any failure / when
+        no temp file was attached. Fail-quiet: a logging helper must
+        never raise into the reap path."""
+        if not stderr_path:
+            return ""
+        try:
+            if not os.path.exists(stderr_path):
+                return ""
+            size = os.path.getsize(stderr_path)
+            with open(stderr_path, "rb") as f:
+                if size > max_bytes:
+                    f.seek(size - max_bytes)
+                data = f.read()
+        except (OSError, IOError):
+            return ""
+        text = data.decode("utf-8", "replace").strip()
+        # Collapse to one journal-friendly line.
+        return text.replace("\n", " | ")[-max_bytes:]
+
+    @staticmethod
+    def _unlink_stderr_temp(stderr_path):
+        """Remove the per-event stderr temp file. Fail-quiet."""
+        if not stderr_path:
+            return
+        try:
+            if os.path.exists(stderr_path):
+                os.remove(stderr_path)
+        except OSError:
+            pass
 
     def in_flight(self):
         """Return current count of running ffmpeg subprocesses."""
@@ -138,20 +198,31 @@ class ClipRecorder(object):
             except (OSError, subprocess.TimeoutExpired) as e:
                 dropped.append((seg, type(e).__name__))
         if dropped:
-            try:
-                print(
-                    "[recording-merge] event_id={} dropped {} broken "
-                    "segment(s): {}".format(
-                        event_id, len(dropped),
-                        ", ".join(
-                            "{}({})".format(_os.path.basename(p), reason)
-                            for p, reason in dropped
-                        ),
+            # docs/logging_plan.md §2: distinguish "all segments dropped
+            # because ffprobe is missing" (a deploy/PATH failure — the
+            # ffprobe binary doesn't exist) from the normal in-flight-moov
+            # drops. When EVERY segment failed with an OSError-class reason
+            # (FileNotFoundError / OSError name), ffprobe itself is the
+            # suspect, not the segments.
+            os_reasons = ("FileNotFoundError", "OSError", "PermissionError")
+            all_os_failures = (
+                segments
+                and len(dropped) == len(segments)
+                and all(r in os_reasons for _p, r in dropped)
+            )
+            applog.emit(
+                "recording",
+                "event_id={} dropped {} broken segment(s): {}{}".format(
+                    event_id, len(dropped),
+                    ", ".join(
+                        "{}({})".format(_os.path.basename(p), reason)
+                        for p, reason in dropped
                     ),
-                    flush=True,
-                )
-            except OSError:
-                pass
+                    " (ALL via OSError — ffprobe '{}' likely missing/"
+                    "unexecutable)".format(ffprobe_bin)
+                    if all_os_failures else "",
+                ),
+            )
         return valid
 
     def _build_args(self, output_path, duration_s):
@@ -217,6 +288,14 @@ class ClipRecorder(object):
         callers can opt in without breaking old call sites.
         """
         if not event_id or "/" in event_id or "\\" in event_id:
+            # docs/logging_plan.md §2: malformed event_id is a caller-side
+            # (worker id-gen) bug — log it so the resulting /clips 404 is
+            # attributable rather than silent.
+            applog.emit(
+                "recording",
+                "refusing clip: malformed event_id={!r} (empty or path "
+                "separator) — worker id-gen bug".format(event_id),
+            )
             return False
         # iter-254: per-call duration_s overrides the constructor
         # default. Caller (detect.py emit path) passes the live
@@ -247,9 +326,19 @@ class ClipRecorder(object):
         with self._lock:
             self._reap()
             if len(self._procs) >= self.max_concurrent:
-                # Drop. Logging is the caller's job; this module
-                # stays log-free so it can be unit-tested without
-                # a logger fixture.
+                # docs/logging_plan.md §2: capacity-cap drop. Previously
+                # "logging is the caller's job" and detect.py only caught
+                # exceptions, so this `False` return (clip silently
+                # dropped during a burst) was invisible. Log it here at
+                # WARNING naming in_flight/max so a sustained burst that
+                # eats clips is greppable.
+                applog.emit(
+                    "recording",
+                    "dropping clip event_id={}: at capacity "
+                    "({}/{} in flight)".format(
+                        event_id, len(self._procs), self.max_concurrent,
+                    ),
+                )
                 return False
         output_path = os.path.join(
             self.recordings_dir,
@@ -260,7 +349,17 @@ class ClipRecorder(object):
             # the lock — makedirs on a slow filesystem is the worst
             # offender for emit-path latency.
             os.makedirs(self.recordings_dir, exist_ok=True)
-        except OSError:
+        except OSError as e:
+            # docs/logging_plan.md §2: recordings_dir makedirs failed —
+            # volume unmounted / disk full / read-only. Every clip will
+            # fail until fixed; name the dir + reason at ERROR.
+            applog.emit(
+                "recording",
+                "ERROR makedirs failed for recordings_dir={!r} event_id={}"
+                ": {}: {} — clip cannot be written".format(
+                    self.recordings_dir, event_id, type(e).__name__, e,
+                ),
+            )
             return False
         # iter-324: pre-roll mode forks ffmpeg to a TEMP path so the
         # final `<event_id>.mp4` only appears once the concat-merge
@@ -279,27 +378,59 @@ class ClipRecorder(object):
         post_only_path = (
             output_path + ".postroll.tmp" if use_preroll else output_path
         )
+        # docs/logging_plan.md §2 + §4 (CLAUDE.md deadlock pin): the
+        # post-roll ffmpeg is an ASYNC long-lived subprocess; PIPE on its
+        # stderr risks the ~64 KB pipe-buffer-fill hang (RTSP
+        # keyframe-not-found loop) because nothing drains it until
+        # _reap(). So instead of PIPE we redirect stderr to a BOUNDED
+        # per-event TEMP FILE. The OS writes directly to the fd (no pipe
+        # buffer, no hang), _reap() reads its tail on rc!=0, then unlinks.
+        stderr_path = post_only_path + ".stderr"
+        stderr_fh = None
+        try:
+            stderr_fh = open(stderr_path, "wb")
+        except (OSError, IOError):
+            # Could not open the stderr temp (disk full / RO). Fall back
+            # to DEVNULL so the clip can still be attempted; we just lose
+            # the stderr tail on failure.
+            stderr_path = None
         try:
             proc = subprocess.Popen(
                 self._build_args(post_only_path, effective_duration),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                # iter-263 (camera-library-usage-auditor): swap
-                # PIPE -> DEVNULL. PIPE risked a buffer-fill hang
-                # if ffmpeg ever produced sustained stderr (e.g.
-                # an RTSP keyframe-not-found loop) — the OS pipe
-                # caps at ~64 KB and ffmpeg blocks on the next
-                # write. _reap() never drained stderr. With
-                # `-loglevel warning` warnings are rare but the
-                # trap is real; warnings are now lost which is
-                # acceptable for a per-event subprocess.
-                stderr=subprocess.DEVNULL,
+                stderr=(stderr_fh if stderr_fh is not None
+                        else subprocess.DEVNULL),
             )
-        except (OSError, FileNotFoundError):
-            # ffmpeg binary missing or unexecutable — slice 2b
-            # could fall back to a pure-python copy via libav,
-            # but for slice 2 we just refuse.
+        except (OSError, FileNotFoundError) as e:
+            # docs/logging_plan.md §2: the #1 deploy failure — ffmpeg not
+            # on the host PATH / unexecutable. Pre-logging this was a
+            # silent `return False`. Name the ffmpeg binary so the
+            # operator knows exactly what's missing.
+            applog.emit(
+                "recording",
+                "ERROR ffmpeg spawn failed (bin={!r}) for event_id={}: "
+                "{}: {} — clip not recorded".format(
+                    self.ffmpeg_bin, event_id, type(e).__name__, e,
+                ),
+            )
+            if stderr_fh is not None:
+                try:
+                    stderr_fh.close()
+                except (OSError, IOError):
+                    pass
+                self._unlink_stderr_temp(stderr_path)
             return False
+        # The parent keeps no use for the write fd once Popen dup'd it.
+        if stderr_fh is not None:
+            try:
+                stderr_fh.close()
+            except (OSError, IOError):
+                pass
+        # Attach the per-event identifiers so _reap() can log WHY a clip
+        # failed (rc + stderr tail) and clean up the temp file.
+        proc._homecam_event_id = event_id
+        proc._homecam_stderr_path = stderr_path
         with self._lock:
             self._procs.append(proc)
 
@@ -354,10 +485,34 @@ class ClipRecorder(object):
                         # merge can still produce a useful pre-roll
                         # from whatever copied successfully.
                         pass
-            except OSError:
-                # Scratch-dir creation failed (disk full, perms);
-                # fall back to passing the live ring paths and accept
-                # the race. Better than no clip at all.
+                # docs/logging_plan.md §2: per-segment copy shortfall.
+                # When fewer segments copied than were requested, the
+                # pre-roll is shorter than the user expects (ring rotation
+                # raced the copy). INFO so the truncation is attributable
+                # without alarming.
+                if len(copied_segments) < len(pre_segments):
+                    applog.emit(
+                        "recording",
+                        "event_id={} pre-roll copy shortfall: {}/{} "
+                        "segments copied (ring rotated mid-copy)".format(
+                            event_id, len(copied_segments),
+                            len(pre_segments),
+                        ),
+                    )
+            except OSError as e:
+                # docs/logging_plan.md §2: Scratch-dir creation failed
+                # (disk full, perms). The live-ring fallback re-exposes
+                # the iter-356.51 frame-corruption race (-segment_wrap
+                # rewrites slots during the merge wait), so WARN — the
+                # clip may end up with post-event content in the pre-roll.
+                applog.emit(
+                    "recording",
+                    "event_id={} scratch-dir create failed (dir={!r}): "
+                    "{}: {} — falling back to live ring (iter-356.51 "
+                    "frame-corruption race re-exposed)".format(
+                        event_id, scratch_dir, type(e).__name__, e,
+                    ),
+                )
                 copied_segments = list(pre_segments)
                 scratch_dir = None
             t = threading.Thread(
@@ -395,9 +550,19 @@ class ClipRecorder(object):
             # Bound wait: the post-roll duration plus a generous
             # buffer for ffmpeg startup + flush.
             proc.wait(timeout=120.0)
-        except Exception:
-            # Subprocess wedged — kill it. Concat may still produce
-            # a partial clip from the temp file.
+        except Exception as _e:
+            # docs/logging_plan.md §2: post-roll wait(120s) timed out (or
+            # raised) — the ffmpeg is wedged on a stalled RTSP/MediaMTX
+            # source. Force-kill it. WARN so a recurring stall (camera
+            # pipeline down) is visible; the concat may still produce a
+            # partial clip from the temp file.
+            applog.emit(
+                "recording",
+                "event_id={} post-roll wait timed out/failed ({}: {}) — "
+                "force-killing wedged ffmpeg (RTSP/MediaMTX stall?)".format(
+                    event_id, type(_e).__name__, _e,
+                ),
+            )
             try:
                 proc.kill()
             except Exception:
@@ -453,14 +618,14 @@ class ClipRecorder(object):
             _exists = _os.path.exists(post_only_path)
             _size = _os.path.getsize(post_only_path) if _exists else 0
             _rc = getattr(proc, "returncode", "?")
-            print(
-                "[recording-merge] event_id={} retries={} ({}ms) "
-                "post_only exists={} size={}B proc_rc={} pre_segs={}".format(
+            applog.emit(
+                "recording-merge",
+                "event_id={} retries={} ({}ms) post_only exists={} "
+                "size={}B proc_rc={} pre_segs={}".format(
                     event_id, _retries,
                     int(_retries * _RETRY_SLEEP_S * 1000),
                     _exists, _size, _rc, len(pre_segments),
                 ),
-                flush=True,
             )
         except OSError:
             pass
@@ -507,8 +672,19 @@ class ClipRecorder(object):
             try:
                 if _os.path.exists(post_only_path):
                     _os.rename(post_only_path, final_path)
-            except OSError:
-                pass
+            except OSError as _e:
+                # docs/logging_plan.md §2: atomic-rename failure here
+                # means the post-roll clip never lands at final_path —
+                # the /clips route 404s FOREVER. ERROR naming event_id.
+                applog.emit(
+                    "recording",
+                    "ERROR clip lost: post-roll promote rename failed for "
+                    "event_id={} ({} -> {}): {}: {} — /clips 404-forever"
+                    .format(
+                        event_id, post_only_path, final_path,
+                        type(_e).__name__, _e,
+                    ),
+                )
             return
         # Cold start (post-roll never wrote anything) → write the
         # pre-roll only via tmp + atomic rename.
@@ -522,8 +698,30 @@ class ClipRecorder(object):
                 if ok:
                     try:
                         _os.rename(tmp_path, final_path)
-                    except OSError:
-                        pass
+                    except OSError as _e:
+                        # docs/logging_plan.md §2: pre-roll-only rename
+                        # failed → clip 404-forever. ERROR naming event_id.
+                        applog.emit(
+                            "recording",
+                            "ERROR clip lost: pre-roll-only rename failed "
+                            "for event_id={} ({} -> {}): {}: {} — /clips "
+                            "404-forever".format(
+                                event_id, tmp_path, final_path,
+                                type(_e).__name__, _e,
+                            ),
+                        )
+                else:
+                    # docs/logging_plan.md §2: pre-roll-only concat
+                    # returned False — no post-roll existed to fall back
+                    # to, so the clip is lost entirely. WARN naming
+                    # event_id.
+                    applog.emit(
+                        "recording",
+                        "event_id={} pre-roll-only concat failed (no "
+                        "post-roll fallback) — clip not produced".format(
+                            event_id,
+                        ),
+                    )
             finally:
                 try:
                     _os.remove(list_path)
@@ -556,30 +754,57 @@ class ClipRecorder(object):
                     _os.path.getsize(tmp_path)
                     if _os.path.exists(tmp_path) else 0
                 )
-                print(
-                    "[recording-merge] event_id={} concat ok={} "
-                    "tmp_size={}B post_only_size={}B".format(
+                applog.emit(
+                    "recording-merge",
+                    "event_id={} concat ok={} tmp_size={}B "
+                    "post_only_size={}B".format(
                         event_id, ok, _tmp_size,
                         _os.path.getsize(post_only_path)
                         if _os.path.exists(post_only_path) else 0,
                     ),
-                    flush=True,
                 )
             except OSError:
                 pass
             if ok:
                 try:
                     _os.rename(tmp_path, final_path)
-                except OSError:
-                    pass
+                except OSError as _e:
+                    # docs/logging_plan.md §2: normal-merge rename failed
+                    # → the merged clip is lost entirely. ERROR naming
+                    # event_id.
+                    applog.emit(
+                        "recording",
+                        "ERROR clip lost: merged-clip rename failed for "
+                        "event_id={} ({} -> {}): {}: {} — /clips "
+                        "404-forever".format(
+                            event_id, tmp_path, final_path,
+                            type(_e).__name__, _e,
+                        ),
+                    )
             else:
-                # Concat failed — fall back to the post-roll-only
-                # output as the final path so the user doesn't lose
-                # the clip. Atomic rename pattern preserved.
+                # docs/logging_plan.md §2: concat failed but a post-roll
+                # exists — fall back to the post-roll-only output so the
+                # user doesn't lose the clip. WARN: the pre-roll is
+                # silently dropped (clip shorter than expected) but the
+                # event is still served.
+                applog.emit(
+                    "recording",
+                    "event_id={} concat failed — falling back to "
+                    "post-roll-only (pre-roll dropped)".format(event_id),
+                )
                 try:
                     _os.rename(post_only_path, final_path)
-                except OSError:
-                    pass
+                except OSError as _e:
+                    # The fallback rename ALSO failed → clip lost entirely.
+                    applog.emit(
+                        "recording",
+                        "ERROR clip lost: post-roll fallback rename failed "
+                        "for event_id={} ({} -> {}): {}: {} — /clips "
+                        "404-forever".format(
+                            event_id, post_only_path, final_path,
+                            type(_e).__name__, _e,
+                        ),
+                    )
         finally:
             try:
                 _os.remove(list_path)
@@ -610,5 +835,16 @@ class ClipRecorder(object):
             try:
                 import shutil as _shutil
                 _shutil.rmtree(scratch_dir, ignore_errors=True)
+                # docs/logging_plan.md §2: scratch cleanup incomplete is a
+                # slow disk leak. rmtree(ignore_errors=True) never raises,
+                # so probe directly: if the dir survives, log at DEBUG so
+                # a recurring leak is visible under triage without
+                # alarming in the common (clean) case.
+                if _os.path.exists(scratch_dir):
+                    applog.emit(
+                        "recording",
+                        "DEBUG event_id={} scratch dir not fully removed: "
+                        "{} (slow-disk leak?)".format(event_id, scratch_dir),
+                    )
             except OSError:
                 pass

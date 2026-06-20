@@ -14,6 +14,20 @@ vi.mock('../lib/auth', () => ({
   }),
 }))
 
+// docs/logging_plan.md §5: spy on the client log shim so the
+// failed-sign-in tests can assert the username IS logged and the
+// password is NOT (GUARDRAIL §4 — never log secrets).
+const logWarn = vi.fn()
+vi.mock('../lib/log', () => ({
+  log: {
+    error: vi.fn(),
+    warn: (...a: unknown[]) => logWarn(...a),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+  errFields: (e: unknown) => ({ value: String(e) }),
+}))
+
 import { HttpError } from '../lib/api'
 import { Login } from './Login'
 
@@ -31,6 +45,7 @@ function renderLogin(initialPath = '/login') {
 describe('Login page', () => {
   beforeEach(() => {
     loginFn.mockReset()
+    logWarn.mockReset()
     _authState = 'anon'
   })
   afterEach(() => {
@@ -240,5 +255,51 @@ describe('Login page', () => {
       expect(img.getAttribute('loading')).toBe('eager')
       expect(img.getAttribute('fetchpriority')).toBe('high')
     }
+  })
+
+  // docs/logging_plan.md §2/§5 (Auth): failed sign-in logs WARN with
+  // the username + status, and CRUCIALLY never the password.
+  it('given a failed sign-in, when the 401 surfaces, then it logs WARN with the username and status (logging plan §2)', async () => {
+    // arrange
+    loginFn.mockRejectedValueOnce(new HttpError('/api/auth/login', 401, ''))
+    renderLogin()
+    fireEvent.change(screen.getByLabelText(/username/i), {
+      target: { value: 'alice' },
+    })
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: 'hunter2' },
+    })
+
+    // act
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    // assert — a single WARN carrying username + status.
+    await waitFor(() => {
+      expect(logWarn).toHaveBeenCalledWith(
+        'login:failed',
+        expect.objectContaining({ username: 'alice', status: 401 }),
+      )
+    })
+  })
+
+  it('given a failed sign-in, then the password value NEVER appears in any log field (GUARDRAIL §4)', async () => {
+    // arrange
+    loginFn.mockRejectedValueOnce(new HttpError('/api/auth/login', 401, ''))
+    renderLogin()
+    fireEvent.change(screen.getByLabelText(/username/i), {
+      target: { value: 'alice' },
+    })
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: 'hunter2' },
+    })
+
+    // act
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+    await waitFor(() => expect(logWarn).toHaveBeenCalled())
+
+    // assert — serialize every captured log call and confirm the
+    // password string is absent from all of them.
+    const serialized = JSON.stringify(logWarn.mock.calls)
+    expect(serialized).not.toContain('hunter2')
   })
 })

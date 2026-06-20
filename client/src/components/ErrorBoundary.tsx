@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { log, errFields } from '../lib/log'
 import { ErrorState } from './states/ErrorState'
 
 /**
@@ -47,10 +48,21 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Log to the console so the dev sees a usable trace; the
-    // user-facing UI is intentionally minimal because the user
-    // can't do anything with stack traces.
-    console.error('ErrorBoundary caught', error, info.componentStack)
+    // docs/logging_plan.md §2 (App shell): pre-fix this was
+    // console.error only — invisible in prod where the operator can't
+    // open a phone's devtools. Ship a structured ERROR (region label +
+    // componentStack + route) to the journald sink so a render crash
+    // on a household member's device is diagnosable. The user-facing
+    // UI stays minimal because the user can't act on a stack trace.
+    log.error('errorBoundary:caught', {
+      region: this.props.label ?? 'app',
+      route: typeof window !== 'undefined' ? window.location.pathname : null,
+      // componentStack is the React render tree, NOT a JS stack — safe
+      // to ship (no source paths / secrets), and it's exactly what
+      // pinpoints which subtree threw. Bound the size defensively.
+      componentStack: info.componentStack?.slice(0, 2000) ?? null,
+      ...errFields(error),
+    })
   }
 
   reset = () => this.setState({ error: null })

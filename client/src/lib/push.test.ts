@@ -177,4 +177,77 @@ describe('lib/push', () => {
     await expect(disablePushSubscription()).resolves.toBeUndefined()
     warn.mockRestore()
   })
+
+  // docs/logging_plan.md §2 (push.ts) + §4 guardrails.
+  describe('failure-point logging', () => {
+    it('Given permission is denied, When ensurePushSubscription runs, Then it logs the enable-failure step (no longer a bare false)', async () => {
+      // arrange
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      ;(
+        Notification.requestPermission as unknown as ReturnType<typeof vi.fn>
+      ).mockResolvedValue('denied')
+
+      // act
+      const ok = await ensurePushSubscription()
+
+      // assert — reason captured with the step + permission.
+      expect(ok).toBe(false)
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[push:enable-failed]',
+        expect.objectContaining({ step: 'permission', permission: 'denied' }),
+      )
+    })
+
+    it('Given the server-persist step rejects, When ensurePushSubscription runs, Then it logs the step + endpoint HOST (NOT the secret tail) and re-throws', async () => {
+      // arrange — subscribe succeeds, server persist fails.
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      vi.mocked(subscribePush).mockRejectedValueOnce(
+        Object.assign(new Error('persist failed'), { status: 500 }),
+      )
+
+      // act / assert — the chain re-throws so the caller still surfaces it.
+      await expect(ensurePushSubscription()).rejects.toThrow(/persist failed/)
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[push:enable-failed]',
+        expect.objectContaining({
+          step: 'server-persist',
+          endpointHost: 'push.example',
+          status: 500,
+        }),
+      )
+      // assert — the opaque endpoint secret tail (/abc) is NOT logged.
+      const persistCall = errorSpy.mock.calls.find(
+        (c) =>
+          c[0] === '[push:enable-failed]' &&
+          (c[1] as { step?: string })?.step === 'server-persist',
+      )
+      expect(JSON.stringify(persistCall)).not.toContain('/abc')
+    })
+
+    it('Given the server-side unsubscribe rejects, When disablePushSubscription runs, Then it logs a warn with the endpoint HOST only', async () => {
+      // arrange
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      vi.mocked(unsubscribePush).mockRejectedValueOnce(
+        Object.assign(new Error('down'), { status: 503 }),
+      )
+      currentSub = {
+        endpoint: 'https://fcm.googleapis.com/secret-tail-xyz',
+        unsubscribe: vi.fn(async () => true),
+        toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/secret-tail-xyz' }),
+      } as unknown as PushSubscription
+
+      // act
+      await disablePushSubscription()
+
+      // assert — host logged, secret path tail NOT logged.
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[push:server-unsubscribe-failed]',
+        expect.objectContaining({ endpointHost: 'fcm.googleapis.com', status: 503 }),
+      )
+      const call = warnSpy.mock.calls.find(
+        (c) => c[0] === '[push:server-unsubscribe-failed]',
+      )
+      expect(JSON.stringify(call)).not.toContain('secret-tail-xyz')
+    })
+  })
 })

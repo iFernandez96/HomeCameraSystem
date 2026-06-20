@@ -9,7 +9,8 @@ import {
   humanCameraName,
   recognizedNames,
 } from '../lib/eventLabel'
-import { useToast } from '../lib/toast'
+import { log, errFields } from '../lib/log'
+import { useReportError, useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
 import { Button } from './primitives/Button'
 
@@ -97,12 +98,19 @@ export function ClipModal({
     if (!v) return
     const p = v.play()
     if (p && typeof p.catch === 'function') {
-      p.catch(() => {
-        /* iOS unmuted autoplay rejected — user taps native play. */
+      p.catch((e) => {
+        // docs/logging_plan.md §2 (ClipModal): iOS autoplay reject
+        // DEBUG. Expected on iOS Safari (user taps native play); a
+        // breadcrumb so an unexpectedly-always-rejecting play() on a
+        // platform that should allow it is diagnosable under triage.
+        log.debug('clipModal:autoplay-rejected', errFields(e))
       })
     }
   }, [clipUrl])
   const { showToast } = useToast()
+  // docs/logging_plan.md §1.3: pair error-toasts with a structured
+  // log.error so the user message + device log can't drift.
+  const reportError = useReportError()
   // iter-330 (missing-feature #3, Event Export ZIP): per-event
   // download button. Posts the single event id to /api/events/export
   // and triggers the browser's download flow via createObjectURL.
@@ -126,11 +134,14 @@ export function ClipModal({
       setTimeout(() => URL.revokeObjectURL(url), 1000)
       showToast('Download started', 'success')
     } catch (e) {
-      showToast(
-        e instanceof Error
-          ? `Download failed: ${e.message}`
-          : 'Download failed',
-        'error',
+      // docs/logging_plan.md §2 (ClipModal): export fail ERROR — the
+      // HTTP status was discarded today (toast-only). reportError pairs
+      // the user toast with a structured log.error carrying the status
+      // (413 over-cap / 503 semaphore / 401) so the operator sees WHY.
+      reportError(
+        'clipModal:export-failed',
+        e instanceof Error ? `Download failed: ${e.message}` : 'Download failed',
+        { eventId: event.id, ...errFields(e) },
       )
     } finally {
       setDownloading(false)
@@ -163,6 +174,10 @@ export function ClipModal({
       // AbortError is the user dismissing the share sheet — silent.
       const name = (e as Error)?.name
       if (name === 'AbortError') return
+      // docs/logging_plan.md §2 (ClipModal): share/clipboard fail WARN.
+      // Distinguishes a clipboard-permission denial / share-sheet
+      // failure from the benign user-dismiss above.
+      log.warn('clipModal:share-failed', { eventId: event.id, ...errFields(e) })
       showToast('Could not share link — try copy/paste', 'error')
     }
   }
@@ -216,7 +231,18 @@ export function ClipModal({
       .then((t) => {
         if (!cancelled) setTracks(t)
       })
-      .catch(() => {
+      .catch((e) => {
+        // docs/logging_plan.md §2 (ClipModal): non-404 tracks fetch
+        // fail WARN. fetchEventTracks returns null (not throws) on 404
+        // — the expected legacy-clip path that lands in `.then`. So a
+        // reject here is a genuine non-404 failure (5xx / network /
+        // auth): the bbox overlay silently degrades to the static
+        // event.boxes fallback, which looks like "no tracking" to the
+        // user. Logged BEFORE the cancelled guard (§1.3).
+        log.warn('clipModal:tracks-fetch-failed', {
+          eventId: event.id,
+          ...errFields(e),
+        })
         if (!cancelled) setTracks(null)
       })
     return () => {

@@ -704,6 +704,140 @@ async def test_background_tasks_set_holds_strong_ref():
     assert _BACKGROUND_TASKS == before
 
 
+# logging-plan (docs/logging_plan.md §2 push/detection): the push-fanout
+# done-callback must (a) discard the task from the strong-ref set AND
+# (b) retrieve task.exception() so a fanout crash that escaped
+# _send_push's own try/except is logged with the event id, not swallowed
+# as an unattributed "Task exception was never retrieved" at GC time.
+
+
+async def test_given_push_task_crashes_when_done_callback_runs_then_exception_logged_with_event_id(
+    caplog,
+):
+    """Given a push-fanout task that raises, When its done-callback
+    fires, Then the exception is retrieved + logged at ERROR with the
+    event id (and the task is discarded from the strong-ref set).
+
+    logging-plan §2: regression guard so a crash in the background push
+    task is never silent.
+    """
+    # arrange
+    import logging
+
+    from app.routes._internal import _BACKGROUND_TASKS, _make_push_done_callback
+
+    async def boom():
+        raise RuntimeError("push exploded")
+
+    task = asyncio.create_task(boom())
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_make_push_done_callback("evt-boom-1"))
+
+    # act — let the task run + the done-callback fire.
+    with caplog.at_level(logging.ERROR, logger="app.routes._internal"):
+        with pytest.raises(RuntimeError):
+            await task
+        await asyncio.sleep(0)  # yield so the done-callback runs
+
+    # assert — discarded from the set; ERROR names the event id.
+    assert task not in _BACKGROUND_TASKS
+    error_lines = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.ERROR
+    ]
+    assert any(
+        "push fanout task crashed" in m and "evt-boom-1" in m
+        for m in error_lines
+    ), "expected ERROR naming the crashed event id; got {!r}".format(error_lines)
+
+
+def test_given_detection_paused_when_event_posted_then_drop_logged_at_debug(
+    client: TestClient, caplog,
+):
+    """Given detection paused, When the worker posts an event, Then the
+    route drops it (200) AND logs the drop at DEBUG with the label.
+
+    logging-plan §2: the 'healthy but zero events' footgun — surface WHY
+    no events reach the bus when the Detect toggle is off.
+    """
+    # arrange
+    import logging
+
+    from app.services.detection import detection_service
+
+    was_active = detection_service.active
+    if detection_service.active:
+        client.post("/api/detection/toggle")
+    assert detection_service.active is False
+
+    # act
+    with caplog.at_level(logging.DEBUG, logger="app.routes._internal"):
+        r = client.post("/api/_internal/event", json=_payload())
+
+    # assert
+    assert r.status_code == 200
+    assert r.json().get("dropped") == "detection paused"
+    debug_lines = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.DEBUG
+    ]
+    assert any(
+        "event dropped: detection paused" in m for m in debug_lines
+    ), "expected DEBUG noting the paused drop; got {!r}".format(debug_lines)
+
+    # restore for later tests in this module.
+    if was_active and not detection_service.active:
+        client.post("/api/detection/toggle")
+
+
+def test_given_heartbeat_with_off_whitelist_field_when_posted_then_drop_logged_once(
+    client: TestClient, caplog,
+):
+    """Given a heartbeat carrying an off-whitelist field, When posted,
+    Then the drop is logged once at DEBUG (once-flag) and not on the
+    next heartbeat.
+
+    logging-plan §2: metric-coercion drops are silent today; the
+    once-flag keeps a misbehaving worker from flooding the 10s hot path.
+    """
+    # arrange — reset the module once-flag so this test is deterministic.
+    import logging
+
+    from app.routes import _internal as _int_mod
+
+    _int_mod._heartbeat_drop_warned = False
+
+    # act — first heartbeat with an unknown field triggers the log.
+    with caplog.at_level(logging.DEBUG, logger="app.routes._internal"):
+        client.post(
+            "/api/_internal/heartbeat",
+            json={"fps": 4.0, "not_a_real_metric": 7},
+        )
+        first = [
+            rec.getMessage()
+            for rec in caplog.records
+            if rec.levelno == logging.DEBUG
+            and "heartbeat dropped metric fields" in rec.getMessage()
+        ]
+        caplog.clear()
+        # second heartbeat with the same off-whitelist field is suppressed.
+        client.post(
+            "/api/_internal/heartbeat",
+            json={"fps": 5.0, "not_a_real_metric": 9},
+        )
+        second = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "heartbeat dropped metric fields" in rec.getMessage()
+        ]
+
+    # assert — logged once, suppressed thereafter.
+    assert len(first) == 1, "expected one DEBUG drop line; got {!r}".format(first)
+    assert "not_a_real_metric" in first[0]
+    assert second == [], "drop line not suppressed by once-flag: {!r}".format(second)
+
 
 def test_heartbeat_marks_worker_alive(client: TestClient):
     from app.services.health import worker_health
@@ -1224,6 +1358,12 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         # iter-302: stream-stale signal + nvargus escalation count.
         "last_frame_ts": 1700000000.0,
         "argus_restarts": 0,
+        # logging-plan §1.2: failure-rate counters.
+        "clips_dropped_capacity": 0,
+        "clip_start_failures": 0,
+        "face_recog_failures": 0,
+        "event_post_failures": 0,
+        "thumb_save_failures": 0,
     }
     # If this assertion fires, _ALLOWED_METRIC_FIELDS has grown a key
     # the test doesn't know about — add it to `payload` above.
@@ -1607,3 +1747,82 @@ def test_given_event_with_no_face_match_when_posted_then_both_fields_absent_or_n
     items = client.get("/api/events?limit=1").json()
     assert items[0].get("person_name") in (None, "")
     assert items[0].get("person_names") is None
+
+
+# --- client_log sink (logging-plan §1.3) -----------------------------------
+
+
+def test_given_anon_client_when_posting_client_log_then_accepted_unauthenticated(
+    client_anon: TestClient,
+):
+    """The PWA ships device-side error/warn logs to this sink. It lives
+    under the unauthenticated `_internal` router so it works on the
+    anon login screen (CLAUDE.md pin: `_internal` is never auth-gated)."""
+    # arrange
+    body = {"level": "error", "event": "webrtc:whep-failed", "fields": {"status": 503}}
+
+    # act
+    r = client_anon.post("/api/_internal/client_log", json=body)
+
+    # assert
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True}
+
+
+def test_given_unknown_field_when_posting_client_log_then_422_forbid_extra(
+    client_anon: TestClient,
+):
+    """`extra='forbid'` so a buggy/malicious client can't smuggle
+    arbitrary top-level keys into the journal."""
+    # arrange — `endpoint` is not a declared field.
+    body = {"level": "warn", "event": "x", "endpoint": "https://evil.example"}
+
+    # act
+    r = client_anon.post("/api/_internal/client_log", json=body)
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+def test_given_bad_level_when_posting_client_log_then_422(client_anon: TestClient):
+    """Level is regex-pinned to error|warn|info|debug."""
+    # arrange
+    body = {"level": "fatal", "event": "x"}
+
+    # act
+    r = client_anon.post("/api/_internal/client_log", json=body)
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+def test_given_burst_over_cap_when_posting_client_log_then_excess_dropped(
+    client_anon: TestClient,
+):
+    """App-level rate cap (NOT middleware) bounds journal/SD-card writes
+    so a looping client can't flood. Past the cap the route returns
+    `{ok: False, dropped: 'rate'}` instead of logging."""
+    # arrange — reset the module-global bucket so the count is deterministic.
+    from app.routes import _internal
+
+    _internal._client_log_bucket["ts"] = 0.0
+    _internal._client_log_bucket["count"] = 0
+    body = {"level": "info", "event": "spam"}
+
+    # act — fire one past the per-window cap.
+    accepted = 0
+    dropped = 0
+    for _ in range(_internal._CLIENT_LOG_MAX_PER_WINDOW + 5):
+        resp = client_anon.post("/api/_internal/client_log", json=body).json()
+        if resp.get("ok"):
+            accepted += 1
+        elif resp.get("dropped") == "rate":
+            dropped += 1
+
+    # assert — exactly the cap is accepted, the rest are shed.
+    assert accepted == _internal._CLIENT_LOG_MAX_PER_WINDOW
+    assert dropped == 5
+
+    # cleanup — leave the bucket clear for any later test in this process.
+    _internal._client_log_bucket["ts"] = 0.0
+    _internal._client_log_bucket["count"] = 0

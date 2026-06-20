@@ -19,7 +19,14 @@ from .services.detection_config import detection_config
 from .services.health import worker_health
 from .services.push_service import push_service
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# Level from HOMECAM_LOG_LEVEL (default INFO) so an operator can flip to
+# DEBUG during triage without a code change — every DEBUG breadcrumb added
+# across the routes/services stays dormant-but-flippable. Plain text +
+# %s lazy interpolation (never f-strings) so disabled levels skip formatting.
+logging.basicConfig(
+    level=os.environ.get("HOMECAM_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 class _SuppressNoisyAccess(logging.Filter):
@@ -59,7 +66,21 @@ START_TIME = time.time()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    settings.snapshots_dir.mkdir(parents=True, exist_ok=True)
+    # Each boot step is wrapped with a NAMED error before re-raising so
+    # the journal says WHICH step aborted the boot (pre-this-iter a
+    # failing step surfaced only as a bare traceback with no operation
+    # context). Re-raise is deliberate: a half-initialised server (no
+    # snapshots dir, no users.db, no events.db) must NOT come up
+    # serving requests against missing state.
+    try:
+        settings.snapshots_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        log.error(
+            "lifespan: mkdir snapshots_dir failed at %s (volume "
+            "unmounted / full / read-only) — aborting boot",
+            settings.snapshots_dir, exc_info=True,
+        )
+        raise
     # iter-179: Auth Plan Phase 2 — first-boot admin seed. Runs BEFORE
     # camera/detection start so the users.db exists when Phase 3's
     # routes (iter-181) start consuming it. Idempotent: if users.db
@@ -67,11 +88,21 @@ async def lifespan(_app: FastAPI):
     # (seeded / skipped-empty-env / skipped-existing-users / refused-
     # plaintext) so the journal is greppable.
     from .auth.bootstrap import seed_from_env_if_empty
-    seed_from_env_if_empty(
-        settings.users_db_path,
-        settings.admin_user_seed,
-        settings.admin_password_hash_seed,
-    )
+    try:
+        seed_from_env_if_empty(
+            settings.users_db_path,
+            settings.admin_user_seed,
+            settings.admin_password_hash_seed,
+        )
+    except Exception:
+        # bootstrap.seed_from_env_if_empty already ERROR-logs the
+        # specific failing DB op; add the lifespan-step name so the
+        # boot abort is greppable as a startup step.
+        log.error(
+            "lifespan: auth seed step failed (users_db_path=%s) — "
+            "aborting boot", settings.users_db_path, exc_info=True,
+        )
+        raise
     # iter-217 (Feature #6 slice 2): SQLite events store. init_db is
     # idempotent (CREATE IF NOT EXISTS + WAL); safe to call on every
     # boot. Mirrors the iter-178 users_db.init_db pattern. Must run
@@ -79,9 +110,31 @@ async def lifespan(_app: FastAPI):
     # through has a valid DB to insert into from the very first
     # detection event.
     from .services.events_db import init_db as _events_init_db
-    _events_init_db(settings.events_db_path)
-    await camera_service.start()
-    await detection_service.start()
+    try:
+        _events_init_db(settings.events_db_path)
+    except Exception:
+        log.error(
+            "lifespan: init events_db failed at %s (events store "
+            "unusable) — aborting boot",
+            settings.events_db_path, exc_info=True,
+        )
+        raise
+    try:
+        await camera_service.start()
+    except Exception:
+        log.error(
+            "lifespan: camera_service.start() failed — aborting boot",
+            exc_info=True,
+        )
+        raise
+    try:
+        await detection_service.start()
+    except Exception:
+        log.error(
+            "lifespan: detection_service.start() failed — aborting boot",
+            exc_info=True,
+        )
+        raise
     log.info(
         "server up; camera=%s detection=%s push_subs=%d",
         camera_service.health(),
@@ -91,8 +144,28 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        await detection_service.stop()
-        await camera_service.stop()
+        # THE single most important boot/shutdown diagnostic — pairs
+        # with the "server up" line so a journal grep shows the full
+        # lifecycle (and an UNCLEAN exit = "server up" with no matching
+        # "shutting down").
+        log.info("server shutting down")
+        # Guard EACH stop independently so a crash in detection.stop()
+        # can't skip camera.stop() (and leak the camera / libargus
+        # socket) — and vice versa.
+        try:
+            await detection_service.stop()
+        except Exception:
+            log.error(
+                "lifespan: detection_service.stop() failed during "
+                "shutdown", exc_info=True,
+            )
+        try:
+            await camera_service.stop()
+        except Exception:
+            log.error(
+                "lifespan: camera_service.stop() failed during shutdown",
+                exc_info=True,
+            )
 
 
 app = FastAPI(title="Home Camera System", lifespan=lifespan)
@@ -120,6 +193,13 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
 
 
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for log lines. `request.client` is None
+    under some ASGI test transports, so tolerate that."""
+    client = request.client
+    return client.host if client else "?"
+
+
 @app.middleware("http")
 async def _enforce_max_body_size(request: Request, call_next):
     # iter-194 (iter-169 Minor S2 closure): Transfer-Encoding: chunked
@@ -133,6 +213,11 @@ async def _enforce_max_body_size(request: Request, call_next):
     # heartbeat/event POSTs are dict→json bytes with known length.
     te = request.headers.get("transfer-encoding", "").lower()
     if "chunked" in te:
+        log.warning(
+            "body-cap: chunked transfer rejected (411) from %s on %s "
+            "(transfer-encoding=%r)",
+            _client_ip(request), request.url.path, te,
+        )
         return PlainTextResponse(
             "chunked transfer encoding not accepted; send Content-Length",
             status_code=411,
@@ -142,8 +227,22 @@ async def _enforce_max_body_size(request: Request, call_next):
         try:
             n = int(cl)
         except ValueError:
+            # Unparseable Content-Length — passes through (treated as
+            # missing) but log it: a broken/malicious client lying
+            # about its body size is worth a WARN.
+            log.warning(
+                "body-cap: unparseable Content-Length %r from %s on %s "
+                "(passing through)",
+                cl, _client_ip(request), request.url.path,
+            )
             n = -1
         if n > MAX_REQUEST_BODY_BYTES:
+            log.warning(
+                "body-cap: oversize body rejected (413) from %s on %s "
+                "(content-length=%d > %d)",
+                _client_ip(request), request.url.path, n,
+                MAX_REQUEST_BODY_BYTES,
+            )
             return PlainTextResponse(
                 f"request body exceeds {MAX_REQUEST_BODY_BYTES} bytes",
                 status_code=413,
@@ -189,7 +288,22 @@ _SECURITY_HEADERS = {
 
 @app.middleware("http")
 async def _add_security_headers(request: Request, call_next):
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        # An unhandled exception in a route propagates up to here as the
+        # OUTERMOST app middleware. Without this catch the 500 is emitted
+        # by Starlette's ServerErrorMiddleware but this layer never sees
+        # it — and on some transports the traceback can be swallowed.
+        # Log it (so no 500 is fully silent) then RE-RAISE unchanged:
+        # the response shape, the ServerErrorMiddleware 500, and the
+        # security-header tests all depend on this NOT becoming a
+        # custom response here. (Do not return — re-raise.)
+        log.error(
+            "unhandled exception in %s %s — re-raising to 500",
+            request.method, request.url.path, exc_info=True,
+        )
+        raise
     for k, v in _SECURITY_HEADERS.items():
         # setdefault behavior — don't overwrite a route that explicitly
         # set its own header (none today, but future-proof).
@@ -230,6 +344,14 @@ async def _add_security_headers(request: Request, call_next):
     return response
 
 
+# /api/status is polled every 5 s per open tab. A probe failure here
+# must NOT log per-poll (that defeats the SD-card-write reduction the
+# _SuppressNoisyAccess filter exists for). Once-flag: log the first
+# aggregation failure, then stay silent until it recovers (re-arm on
+# the next success).
+_status_probe_failed = False
+
+
 @app.get("/api/status")
 async def status(_user: str = Depends(get_current_user)) -> dict[str, object]:
     # iter-176: handler is `async def` for FastAPI ergonomics, but every
@@ -242,6 +364,21 @@ async def status(_user: str = Depends(get_current_user)) -> dict[str, object]:
     # twice would parse the same ~50 lines twice on every PWA poll
     # (every 5 s per open tab). Cheap on its own but the PWA poll rate
     # multiplied across users adds up on the Jetson's slow eMMC.
+    global _status_probe_failed
+    try:
+        return _build_status()
+    except Exception:
+        if not _status_probe_failed:
+            _status_probe_failed = True
+            log.error(
+                "/api/status probe aggregation failed (logged once; "
+                "suppressed until it recovers)", exc_info=True,
+            )
+        raise
+
+
+def _build_status() -> dict[str, object]:
+    global _status_probe_failed
     used_mb, total_mb = _meminfo()
     # iter-176: read worker liveness once, atomically. Pre-iter-176
     # `is_alive()`, `last_seen_s()`, and `metrics()` each read
@@ -250,6 +387,10 @@ async def status(_user: str = Depends(get_current_user)) -> dict[str, object]:
     # inconsistent responses (alive=True with last_seen_s>30, or
     # vice versa).
     worker_alive, worker_last_seen_s, worker_metrics = worker_health.snapshot()
+    if _status_probe_failed:
+        # Recovered — re-arm the once-flag so a later failure logs again.
+        _status_probe_failed = False
+        log.info("/api/status probe aggregation recovered")
     return {
         "ok": True,
         "uptime_s": time.time() - START_TIME,
@@ -361,6 +502,37 @@ app.include_router(metrics_prom.router)
 app.include_router(healthz.router)
 
 
+# Host-probe dark-detection. Each /sys + /proc probe returns None when
+# the file is unreadable. On a Jetson that's usually permanent (probe
+# unavailable on this platform) — but a probe that WAS returning a value
+# and then transitions to None is a real degradation (a bind-mount
+# dropped, a sysfs path moved, the disk filled so statvfs choked). Log
+# ONCE on the value→None transition (and once on recovery) so the dark
+# probe is visible without per-poll spam at the 5 s /api/status cadence.
+# `_disk_free_gb` transitions at WARNING (a dark disk probe hides a
+# disk-full that silently breaks the recorder); the rest at DEBUG.
+_probe_dark: dict[str, bool] = {}
+
+
+def _note_probe(name: str, value, warn: bool = False):
+    """Log once when `name`'s probe transitions value→None (dark) or
+    None→value (recovered). Returns `value` unchanged so callers can
+    `return _note_probe('x', val)`."""
+    was_dark = _probe_dark.get(name, False)
+    is_dark = value is None
+    if is_dark and not was_dark:
+        _probe_dark[name] = True
+        msg = "host probe %s went dark (returning None) — was previously readable"
+        if warn:
+            log.warning(msg, name)
+        else:
+            log.debug(msg, name)
+    elif not is_dark and was_dark:
+        _probe_dark[name] = False
+        log.info("host probe %s recovered", name)
+    return value
+
+
 def _cpu_temp() -> float | None:
     for path in (
         "/sys/class/thermal/thermal_zone0/temp",
@@ -368,10 +540,10 @@ def _cpu_temp() -> float | None:
     ):
         try:
             with open(path) as f:
-                return int(f.read().strip()) / 1000.0
+                return _note_probe("cpu_temp", int(f.read().strip()) / 1000.0)
         except OSError:
             continue
-    return None
+    return _note_probe("cpu_temp", None)
 
 
 def _gpu_temp() -> float | None:
@@ -384,7 +556,7 @@ def _gpu_temp() -> float | None:
     look the zone up by `type` rather than a hardcoded index because
     zone numbering varies across kernels and SoCs.
     """
-    return _read_thermal_zone_by_name("GPU-therm")
+    return _note_probe("gpu_temp", _read_thermal_zone_by_name("GPU-therm"))
 
 
 _THERMAL_BASE = "/sys/class/thermal"
@@ -434,10 +606,10 @@ def _cpu_freq_pct(base: str = _CPUFREQ_BASE) -> float | None:
         with open(f"{base}/cpuinfo_max_freq") as f:
             mx = int(f.read().strip())
     except (OSError, ValueError):
-        return None
+        return _note_probe("cpu_freq_pct", None)
     if mx <= 0:
-        return None
-    return round((scaled / mx) * 100.0, 1)
+        return _note_probe("cpu_freq_pct", None)
+    return _note_probe("cpu_freq_pct", round((scaled / mx) * 100.0, 1))
 
 
 _LOADAVG_PATH = "/proc/loadavg"
@@ -453,9 +625,11 @@ def _load_avg(path: str = _LOADAVG_PATH) -> list[float] | None:
     try:
         with open(path) as f:
             parts = f.read().split()
-        return [float(parts[0]), float(parts[1]), float(parts[2])]
+        return _note_probe(
+            "load_avg", [float(parts[0]), float(parts[1]), float(parts[2])]
+        )
     except (OSError, ValueError, IndexError):
-        return None
+        return _note_probe("load_avg", None)
 
 
 _MEMINFO_PATH = "/proc/meminfo"
@@ -479,11 +653,14 @@ def _meminfo(path: str = _MEMINFO_PATH) -> tuple[int | None, int | None]:
         total_kb = info.get("MemTotal")
         avail_kb = info.get("MemAvailable")
         if total_kb is None or avail_kb is None:
+            _note_probe("meminfo", None)
             return (None, None)
         used_mb = (total_kb - avail_kb) // 1024
         total_mb = total_kb // 1024
+        _note_probe("meminfo", total_mb)
         return (used_mb, total_mb)
     except (OSError, ValueError):
+        _note_probe("meminfo", None)
         return (None, None)
 
 
@@ -491,9 +668,15 @@ def _disk_free_gb(path: str) -> float | None:
     """Free space on the filesystem hosting `path`, in GB."""
     try:
         st = os.statvfs(path)
-        return round(st.f_bavail * st.f_frsize / (1024**3), 1)
+        return _note_probe(
+            "disk_free_gb",
+            round(st.f_bavail * st.f_frsize / (1024**3), 1),
+            warn=True,
+        )
     except OSError:
-        return None
+        # WARN on transition-to-dark: a disk probe going dark hides a
+        # disk-full condition that silently breaks the recorder.
+        return _note_probe("disk_free_gb", None, warn=True)
 
 
 # --- static mounts (registered after /api so they don't shadow it) ---
@@ -548,14 +731,28 @@ async def get_snapshot_file(
     can be 100+ KB; the browser will range-fetch when relevant).
     """
     if not _SNAPSHOT_FILENAME_RE.match(filename):
+        # Regex reject — benign (favicon probes, typos). DEBUG.
+        log.debug(
+            "snapshot 404: filename %r failed regex (not a valid shape)",
+            filename,
+        )
         raise HTTPException(status_code=404, detail="not found")
     target = settings.snapshots_dir / filename
     try:
         resolved = target.resolve()
         resolved.relative_to(settings.snapshots_dir.resolve())
     except (ValueError, OSError):
+        # Path-traversal / unresolvable — SECURITY-relevant. WARN.
+        log.warning(
+            "snapshot 404: path-traversal/unresolvable for %r (escaped "
+            "snapshots_dir)", filename,
+        )
         raise HTTPException(status_code=404, detail="not found")
     if not resolved.is_file():
+        # Regex-valid + in-dir but absent on disk — the worker hasn't
+        # produced it (or it was swept). DEBUG; thumb-missing is the
+        # iter-334 push-hero class so name the file.
+        log.debug("snapshot 404: %r missing on disk", filename)
         raise HTTPException(status_code=404, detail="not found")
     return FileResponse(path=str(resolved), media_type="image/jpeg")
 
@@ -598,6 +795,10 @@ async def snapshots_unauth_thumb_or_redirect(filename: str):
     from fastapi.responses import RedirectResponse
 
     if not _SNAPSHOT_FILENAME_RE.match(filename):
+        log.debug(
+            "/snapshots 404: filename %r failed regex (not a valid shape)",
+            filename,
+        )
         raise HTTPException(status_code=404, detail="not found")
 
     # Push-image carve-out: thumb_*.jpg only.
@@ -607,8 +808,19 @@ async def snapshots_unauth_thumb_or_redirect(filename: str):
             resolved = target.resolve()
             resolved.relative_to(settings.snapshots_dir.resolve())
         except (ValueError, OSError):
+            log.warning(
+                "/snapshots thumb 404: path-traversal/unresolvable for %r",
+                filename,
+            )
             raise HTTPException(status_code=404, detail="not found")
         if not resolved.is_file():
+            # iter-334 push-hero class: a notification's image: field
+            # points here and the thumb isn't on disk → silent missing
+            # hero image. WARN so a regression is visible.
+            log.warning(
+                "/snapshots thumb 404: %r missing on disk (push hero image "
+                "will be absent)", filename,
+            )
             raise HTTPException(status_code=404, detail="not found")
         return FileResponse(path=str(resolved), media_type="image/jpeg")
 
@@ -642,26 +854,50 @@ async def get_timelapse_file(
     `<video>` element in the iter-304 TimelapsesSection can stream
     the file efficiently.
 
-    Filename validation: `<YYYY-MM-DD>.mp4` strict. Regex AND
-    `Path.resolve().relative_to(timelapses_dir.resolve())` (the
-    iter-212 two-tier defense pattern) to refuse any traversal even
-    if a future iter loosens the regex.
+    Also serves the sibling `<YYYY-MM-DD>.json` timestamp sidecar (the
+    de-overlap builder writes it next to the reel) so the client overlay
+    can map reel-offset → capture time. Same auth + traversal defense.
+
+    Filename validation: `<YYYY-MM-DD>.mp4` or `<YYYY-MM-DD>.json`, strict.
+    Regex AND `Path.resolve().relative_to(timelapses_dir.resolve())` (the
+    iter-212 two-tier defense pattern) to refuse any traversal even if a
+    future iter loosens the regex.
     """
     import re as _re
     from fastapi.responses import FileResponse
-    if not _re.fullmatch(r"^[0-9]{4}-[01][0-9]-[0-3][0-9]\.mp4$", filename):
+    if not _re.fullmatch(
+        r"^[0-9]{4}-[01][0-9]-[0-3][0-9]\.(mp4|json)$", filename
+    ):
+        log.debug(
+            "timelapse 404: filename %r failed date regex", filename,
+        )
         raise HTTPException(status_code=404, detail="not found")
     target = settings.timelapses_dir / filename
     try:
         resolved = target.resolve()
         resolved.relative_to(settings.timelapses_dir.resolve())
     except (ValueError, OSError):
+        log.warning(
+            "timelapse 404: path-traversal/unresolvable for %r", filename,
+        )
         raise HTTPException(status_code=404, detail="not found")
     if not resolved.is_file():
+        # Regex-valid date + in-dir but no file. For the MP4 this is an
+        # operator-visible gap (WARN); for the optional JSON sidecar a miss
+        # is benign (older reels have none — DEBUG, client degrades to no
+        # overlay).
+        if filename.endswith(".json"):
+            log.debug("timelapse sidecar 404: %r not on disk", filename)
+        else:
+            log.warning(
+                "timelapse 404: %r missing on disk (builder produced no MP4 "
+                "for that day)", filename,
+            )
         raise HTTPException(status_code=404, detail="not found")
+    media_type = "application/json" if filename.endswith(".json") else "video/mp4"
     return FileResponse(
         path=str(resolved),
-        media_type="video/mp4",
+        media_type=media_type,
         filename=filename,
     )
 
@@ -680,8 +916,30 @@ if settings.client_dist.exists():
                 target = (_CLIENT_ROOT / full_path).resolve()
                 target.relative_to(_CLIENT_ROOT)
             except (ValueError, OSError):
-                # Path traversal attempt or unresolvable path — fall through to index.
+                # Path traversal attempt or unresolvable path —
+                # SECURITY-relevant (the SPA path-traversal guard). WARN
+                # then fall through to index (response shape unchanged).
+                log.warning(
+                    "SPA path-traversal/unresolvable for %r — serving index",
+                    full_path,
+                )
                 return FileResponse(_INDEX)
             if target.is_file():
                 return FileResponse(target)
+            # A non-asset path (client-side route) — normal SPA deep-link
+            # fall-through to index. DEBUG only; this is the common case.
+            log.debug(
+                "SPA fall-through to index for %r (no file on disk)",
+                full_path,
+            )
         return FileResponse(_INDEX)
+else:
+    # SPA bundle not mounted: client_dist doesn't exist. Every non-API
+    # GET will 404 (no catch-all route is registered). WARN at import
+    # time so an operator who deployed the server without rsync-ing the
+    # client build sees WHY the UI 404s — the server itself booted clean.
+    log.warning(
+        "SPA bundle not mounted: client_dist %s does not exist — the "
+        "UI will 404 (deploy the client build via the rsync step in "
+        "CLAUDE.md)", settings.client_dist,
+    )

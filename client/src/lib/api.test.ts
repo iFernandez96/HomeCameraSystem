@@ -6,6 +6,7 @@ import {
   getEventCountsByDay,
   getMe,
   getStatus,
+  getTimelapseManifest,
   getVapidPublicKey,
   HttpError,
   listTimelapses,
@@ -436,6 +437,43 @@ describe('lib/api', () => {
       expect.any(Object),
     )
     // GET — no method override.
+    expect(asMock().mock.calls[0][1].method).toBeUndefined()
+  })
+
+  it('listTimelapses surfaces a per-item manifest_url for the overlay sidecar', async () => {
+    // arrange — the de-overlap builder advertises the sidecar URL per row.
+    mockJson({
+      items: [
+        {
+          date: '2026-06-18',
+          url: '/api/timelapses/2026-06-18.mp4',
+          size_bytes: 10,
+          manifest_url: '/api/timelapses/2026-06-18.json',
+        },
+      ],
+    })
+    // act
+    const r = await listTimelapses()
+    // assert
+    expect(r.items[0].manifest_url).toBe('/api/timelapses/2026-06-18.json')
+  })
+
+  it('getTimelapseManifest GETs the sidecar url and returns the segment map', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      date: '2026-06-18',
+      segments: [{ offset_s: 0, capture_ts: 1718000000 }],
+    })
+    // act
+    const m = await getTimelapseManifest('/api/timelapses/2026-06-18.json')
+    // assert — wire shape the overlay depends on.
+    expect(m.v).toBe(1)
+    expect(m.segments[0]).toEqual({ offset_s: 0, capture_ts: 1718000000 })
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/timelapses/2026-06-18.json',
+      expect.any(Object),
+    )
     expect(asMock().mock.calls[0][1].method).toBeUndefined()
   })
 
@@ -1320,5 +1358,77 @@ describe('lib/api', () => {
     // assert
     expect(r.face_capture_enabled).toBe(true)
     expect(r.face_capture_retention_days).toBe(30)
+  })
+})
+
+describe('lib/api central failure logging', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('Given a non-2xx response, When a req() call fails, Then log.error fires once with {method, path, status}', async () => {
+    // arrange — spy on the log module so we assert the central chokepoint,
+    // not each of the 8 (4 swallow) callers.
+    const { log } = await import('./log')
+    const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+    asMock().mockResolvedValueOnce(new Response('nope', { status: 500 }))
+    const { getStatus } = await import('./api')
+
+    // act
+    await expect(getStatus()).rejects.toThrow()
+
+    // assert — exactly one central error line carrying the express reason.
+    const reqFailed = errSpy.mock.calls.filter((c) => c[0] === 'api:request-failed')
+    expect(reqFailed).toHaveLength(1)
+    expect(reqFailed[0][1]).toMatchObject({
+      method: 'GET',
+      path: '/api/status',
+      status: 500,
+    })
+  })
+
+  it('Given fetch rejects at the network layer, When a req() call runs, Then log.error fires with the network fields (status absent, online present)', async () => {
+    // arrange — a network reject has no `.status`, so it falls through every
+    // caller's status branch; the chokepoint is the only place it surfaces.
+    const { log } = await import('./log')
+    const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+    asMock().mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { getStatus } = await import('./api')
+
+    // act
+    await expect(getStatus()).rejects.toThrow(/Failed to fetch/)
+
+    // assert
+    const netFail = errSpy.mock.calls.filter((c) => c[0] === 'api:network-fail')
+    expect(netFail).toHaveLength(1)
+    expect(netFail[0][1]).toMatchObject({ method: 'GET', path: '/api/status' })
+    expect('online' in (netFail[0][1] as object)).toBe(true)
+    // a network reject has no HTTP status to report
+    expect((netFail[0][1] as { status?: unknown }).status).toBeUndefined()
+  })
+
+  it('Given the bootstrapFace upload hits the 1MB body cap, When it 413s, Then log.error carries the path + status', async () => {
+    // arrange — the multipart path bypasses req()'s central refresh/log,
+    // so it logs independently. 413 = the server body-cap rejection.
+    const { log } = await import('./log')
+    const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+    asMock().mockResolvedValueOnce(new Response('too large', { status: 413 }))
+    const { bootstrapFace } = await import('./api')
+    const file = new File([new Uint8Array(4)], 'face.jpg', { type: 'image/jpeg' })
+
+    // act
+    await expect(bootstrapFace('alice', file)).rejects.toThrow()
+
+    // assert
+    const reqFailed = errSpy.mock.calls.filter((c) => c[0] === 'api:request-failed')
+    expect(reqFailed).toHaveLength(1)
+    expect(reqFailed[0][1]).toMatchObject({
+      path: '/api/face/bootstrap',
+      status: 413,
+    })
   })
 })

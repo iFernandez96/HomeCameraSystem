@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react'
 import { getMe, HttpError, login as apiLogin, logout as apiLogout } from './api'
+import { log, errFields } from './log'
 import { useToast } from './toast'
 import type { User } from './types'
 import { warmWhepConnection } from './webrtc'
@@ -81,6 +82,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState('authed')
       })
       .catch((e) => {
+        // docs/logging_plan.md §2 (Auth): a non-401 /me error is
+        // masquerading as anon below — a 5xx or network failure looks
+        // identical to "never logged in" to the user, which is the
+        // exact ambiguity to surface. 401 is the expected first-visit
+        // path (DEBUG, high-freq). Logged BEFORE the cancelled guard so
+        // an in-flight failure during unmount is still recorded (§1.3).
+        if (e instanceof HttpError && e.status === 401) {
+          log.debug('auth:me-anon', { status: 401 })
+        } else {
+          log.warn('auth:me-failed', {
+            ...errFields(e),
+            online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+          })
+        }
         if (cancelled) return
         // 401 → anonymous, expected on first visit. Any other error
         // (network, 5xx) → also anonymous. The login form covers the
@@ -122,18 +137,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // redirects to /login on the next render. Self-healing.
   useEffect(() => {
     function onAuthFailed() {
+      // docs/logging_plan.md §2 (Auth): self-heal result INFO. The WS
+      // 1008 → re-check /me round-trip is otherwise invisible; logging
+      // the outcome distinguishes "origin gate, cookie still good"
+      // (healed) from "cookie actually expired" (flipped to anon).
       getMe()
         .then((res) => {
+          log.info('auth:self-heal-ok', {})
           setUser(res.user)
           setState('authed')
         })
         .catch((e) => {
           if (e instanceof HttpError && e.status === 401) {
+            log.info('auth:self-heal-anon', { status: 401 })
             setUser(null)
             setState('anon')
+          } else {
+            // Non-401 (network, 5xx) — leave state alone. The next
+            // user action will trigger another check.
+            log.warn('auth:self-heal-failed', {
+              ...errFields(e),
+              online:
+                typeof navigator !== 'undefined' ? navigator.onLine : null,
+            })
           }
-          // Non-401 (network, 5xx) — leave state alone. The next
-          // user action will trigger another check.
         })
     }
     window.addEventListener('homecam:auth-failed', onAuthFailed)
@@ -152,6 +179,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     function onSessionExpired() {
       setState((cur) => {
         if (cur === 'anon') return cur
+        // docs/logging_plan.md §2 (Auth): session-expired INFO — fires
+        // once on the authed→anon transition (the functional-setState
+        // dedupe means a burst only logs/toasts the first time).
+        log.info('auth:session-expired', {})
         // iter-356.65 (Mira critic blocker #5): set the module-scope
         // flag BEFORE the state flip so RequireAuth's next-render
         // redirect picks it up and lands the user at /login?expired=1.
@@ -179,13 +210,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     try {
       await apiLogout()
-    } catch {
+    } catch (e) {
+      // docs/logging_plan.md §2 (Auth): logout server-call fail WARN.
+      // The POST that clears the cookie didn't land — the cookie may
+      // not be invalidated server-side (security-relevant: we proceed
+      // to clear LOCAL state regardless, but the operator should know
+      // the round-trip failed).
       // Network failure during logout — the server may still hold a
       // session record (it doesn't, since there's no server-side
       // blocklist by Charter anti-rec #21, but cookies on the client
       // may also still exist). Clear local state regardless so the
       // UI immediately reflects logged-out, and the cookies' 15-min
       // TTL expires them server-side soon enough.
+      log.warn('auth:logout-failed', {
+        ...errFields(e),
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      })
     }
     setUser(null)
     setState('anon')

@@ -788,3 +788,295 @@ def test_iter356_60b_filter_valid_segments_drops_files_without_moov_atom(
 
     # assert — only the good MP4 survives.
     assert survivors == [str(good)]
+
+
+# --- docs/logging_plan.md §2/§5: failure-point logging pins ---
+# These verify that the recorder now EXPLAINS why a clip failed instead
+# of swallowing the reason. All subprocess-mocked + py3.6-AST-clean.
+
+
+def test_given_clip_ffmpeg_exits_nonzero_when_reaped_then_stderr_tail_logged(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given a finished ffmpeg with returncode=1 and a per-event stderr
+    temp file, When _reap inspects it, Then a [recording] line names the
+    event_id, rc, and the stderr tail (docs/logging_plan.md §2 recording.py
+    _reap returncode inspection — the structural observability fix)."""
+    # arrange — Popen returns a "finished" proc (poll -> 1). The recorder
+    # opens a per-event .stderr temp; we pre-seed its contents so the
+    # reap tail has something to read.
+    finished_proc = mock.MagicMock()
+    finished_proc.poll = mock.MagicMock(return_value=1)
+    finished_proc.returncode = 1
+    monkeypatch.setattr(
+        "recording.subprocess.Popen",
+        mock.MagicMock(return_value=finished_proc),
+    )
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+
+    # act — start a clip (attaches the .stderr temp path to the proc),
+    # write a fake ffmpeg error into that temp, then force a reap via
+    # another start_clip call.
+    rec.start_clip("evt-fail")
+    stderr_path = getattr(finished_proc, "_homecam_stderr_path", None)
+    assert stderr_path is not None, "stderr temp path must be attached"
+    with open(stderr_path, "wb") as f:
+        f.write(b"rtsp://x/cam: Connection refused\nmoov atom not found\n")
+    rec.start_clip("evt-trigger-reap")
+    captured = capsys.readouterr()
+
+    # assert — the reap logged rc + event_id + stderr tail.
+    combined = captured.out + captured.err
+    assert "[recording]" in combined
+    assert "rc=1" in combined
+    assert "event_id=evt-fail" in combined
+    assert "Connection refused" in combined
+    # The per-event stderr temp is unlinked after the tail is read.
+    assert not os.path.exists(stderr_path)
+
+
+def test_given_ffmpeg_missing_when_start_clip_then_error_names_binary(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given Popen raises FileNotFoundError (ffmpeg not on PATH), When
+    start_clip runs, Then an ERROR line names the ffmpeg binary so the
+    #1 deploy failure is attributable (docs/logging_plan.md §2
+    recording.py ffmpeg spawn fail)."""
+    # arrange
+    rec = ClipRecorder(
+        rtsp_url="rtsp://x/cam",
+        recordings_dir=str(tmp_path),
+        ffmpeg_bin="/no/such/ffmpeg",
+    )
+    monkeypatch.setattr(
+        "recording.subprocess.Popen",
+        mock.MagicMock(side_effect=FileNotFoundError("no ffmpeg")),
+    )
+
+    # act
+    ok = rec.start_clip("evt-no-ffmpeg")
+    captured = capsys.readouterr()
+
+    # assert — still returns False (behavior unchanged) but now logs WHY.
+    assert ok is False
+    combined = captured.out + captured.err
+    assert "[recording]" in combined
+    assert "ERROR" in combined
+    assert "/no/such/ffmpeg" in combined
+    assert "event_id=evt-no-ffmpeg" in combined
+
+
+def test_given_makedirs_oserror_when_start_clip_then_error_names_dir(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given recordings_dir makedirs raises OSError (volume gone / RO),
+    When start_clip runs, Then an ERROR line names the dir + event_id
+    (docs/logging_plan.md §2 recording.py makedirs OSError)."""
+    # arrange
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    monkeypatch.setattr(
+        "recording.os.makedirs",
+        mock.MagicMock(side_effect=OSError("read-only file system")),
+    )
+    popen = mock.MagicMock()
+    monkeypatch.setattr("recording.subprocess.Popen", popen)
+
+    # act
+    ok = rec.start_clip("evt-ro")
+    captured = capsys.readouterr()
+
+    # assert
+    assert ok is False
+    popen.assert_not_called()
+    combined = captured.out + captured.err
+    assert "[recording]" in combined
+    assert "ERROR" in combined
+    assert "read-only file system" in combined
+    assert "event_id=evt-ro" in combined
+
+
+def test_given_capacity_full_when_start_clip_then_drop_logged(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given the recorder is at max_concurrent, When another start_clip
+    arrives, Then the drop is logged (in_flight/max) instead of a silent
+    False (docs/logging_plan.md §2 recording.py capacity-cap drop)."""
+    # arrange
+    rec = ClipRecorder(
+        rtsp_url="rtsp://x/cam",
+        recordings_dir=str(tmp_path),
+        max_concurrent=1,
+    )
+
+    def fake_popen(*a, **k):
+        m = mock.MagicMock()
+        m.poll.return_value = None  # stays running
+        return m
+
+    monkeypatch.setattr("recording.subprocess.Popen", fake_popen)
+
+    # act
+    assert rec.start_clip("evt-1") is True
+    capsys.readouterr()  # drain the first (successful) call's output
+    dropped = rec.start_clip("evt-2")
+    captured = capsys.readouterr()
+
+    # assert
+    assert dropped is False
+    combined = captured.out + captured.err
+    assert "[recording]" in combined
+    assert "event_id=evt-2" in combined
+    assert "1/1" in combined
+
+
+def test_given_postroll_promote_rename_oserror_when_merge_then_error_names_event(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given the cold-start post-roll-promote os.rename raises OSError,
+    When the merge thread runs, Then an ERROR line names the event_id and
+    flags the 404-forever clip (docs/logging_plan.md §2 recording.py cold-
+    start promote rename site)."""
+    # arrange — cold start: segments_in_window returns [] so the merge
+    # takes the "promote post-roll" branch and calls os.rename once.
+    import time as _time
+    fake_proc = mock.MagicMock()
+    fake_proc.poll = mock.MagicMock(return_value=0)
+    fake_proc.wait = mock.MagicMock(return_value=0)
+    monkeypatch.setattr(
+        "recording.subprocess.Popen", mock.MagicMock(return_value=fake_proc)
+    )
+    fake_pb = mock.MagicMock()
+    fake_pb.segments_in_window = mock.MagicMock(return_value=[])
+    post_only = tmp_path / "evt-rn.mp4.postroll.tmp"
+    post_only.write_bytes(b"postroll")
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    # Make the atomic rename fail.
+    monkeypatch.setattr(
+        "recording.os.rename",
+        mock.MagicMock(side_effect=OSError("cross-device link")),
+    )
+
+    # act
+    rec.start_clip("evt-rn", pre_roll_s=5.0, preroll_buffer=fake_pb)
+    deadline = _time.time() + 3.0
+    while _time.time() < deadline:
+        out = capsys.readouterr()
+        if "ERROR clip lost" in (out.out + out.err):
+            captured_combined = out.out + out.err
+            break
+        # re-emit drained output is lost; accumulate via a fresh read
+        _time.sleep(0.05)
+    else:
+        captured_combined = ""
+
+    # assert
+    assert "ERROR clip lost" in captured_combined
+    assert "event_id=evt-rn" in captured_combined
+    assert "404-forever" in captured_combined
+
+
+def test_given_merge_concat_rename_oserror_when_merge_then_error_names_event(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given the normal-merge `os.rename(tmp -> final)` raises OSError
+    after a successful concat, When the merge thread runs, Then an ERROR
+    line names the event_id (docs/logging_plan.md §2 recording.py normal-
+    merge rename site)."""
+    # arrange — pre-roll segments present + post-roll present + concat ok
+    # → the merge takes the normal path and renames tmp -> final.
+    import time as _time
+    import preroll
+    fake_proc = mock.MagicMock()
+    fake_proc.poll = mock.MagicMock(return_value=0)
+    fake_proc.wait = mock.MagicMock(return_value=0)
+    monkeypatch.setattr(
+        "recording.subprocess.Popen", mock.MagicMock(return_value=fake_proc)
+    )
+    monkeypatch.setattr(preroll, "write_concat_list", mock.MagicMock())
+    monkeypatch.setattr(
+        preroll, "run_concat", mock.MagicMock(return_value=True)
+    )
+    seg = tmp_path / "seg_001.mp4"
+    seg.write_bytes(b"a")
+    fake_pb = mock.MagicMock()
+    fake_pb.segments_in_window = mock.MagicMock(return_value=[str(seg)])
+    post_only = tmp_path / "evt-mrn.mp4.postroll.tmp"
+    post_only.write_bytes(b"postroll")
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    monkeypatch.setattr(
+        rec, "_filter_valid_segments", lambda segs, eid: list(segs),
+    )
+    monkeypatch.setattr(
+        "recording.os.rename",
+        mock.MagicMock(side_effect=OSError("disk full")),
+    )
+
+    # act
+    rec.start_clip("evt-mrn", pre_roll_s=5.0, preroll_buffer=fake_pb)
+    deadline = _time.time() + 3.0
+    captured_combined = ""
+    while _time.time() < deadline:
+        out = capsys.readouterr()
+        captured_combined += out.out + out.err
+        if "merged-clip rename failed" in captured_combined:
+            break
+        _time.sleep(0.05)
+
+    # assert
+    assert "ERROR clip lost" in captured_combined
+    assert "merged-clip rename failed" in captured_combined
+    assert "event_id=evt-mrn" in captured_combined
+
+
+def test_given_preroll_only_rename_oserror_when_merge_then_error_names_event(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given segments exist but the post-roll temp never wrote, When the
+    pre-roll-only branch's `os.rename(tmp -> final)` raises OSError, Then
+    an ERROR line names the event_id (docs/logging_plan.md §2 recording.py
+    pre-roll-only rename site — the third rename site)."""
+    # arrange — pre-roll segments present, post-roll temp ABSENT → the
+    # merge takes the pre-roll-only branch.
+    import time as _time
+    import preroll
+    fake_proc = mock.MagicMock()
+    fake_proc.poll = mock.MagicMock(return_value=0)
+    fake_proc.wait = mock.MagicMock(return_value=0)
+    monkeypatch.setattr(
+        "recording.subprocess.Popen", mock.MagicMock(return_value=fake_proc)
+    )
+    monkeypatch.setattr(preroll, "write_concat_list", mock.MagicMock())
+    monkeypatch.setattr(
+        preroll, "run_concat", mock.MagicMock(return_value=True)
+    )
+    seg = tmp_path / "seg_001.mp4"
+    seg.write_bytes(b"a")
+    fake_pb = mock.MagicMock()
+    fake_pb.segments_in_window = mock.MagicMock(return_value=[str(seg)])
+    rec = ClipRecorder(rtsp_url="rtsp://x/cam", recordings_dir=str(tmp_path))
+    monkeypatch.setattr(
+        rec, "_filter_valid_segments", lambda segs, eid: list(segs),
+    )
+    # The post-roll temp is intentionally NOT created so the merge takes
+    # the "post-roll never wrote" branch. The retry loop will poll for up
+    # to 1.5 s then fall through. Make rename fail so the ERROR fires.
+    monkeypatch.setattr(
+        "recording.os.rename",
+        mock.MagicMock(side_effect=OSError("permission denied")),
+    )
+
+    # act
+    rec.start_clip("evt-prn", pre_roll_s=5.0, preroll_buffer=fake_pb)
+    deadline = _time.time() + 5.0
+    captured_combined = ""
+    while _time.time() < deadline:
+        out = capsys.readouterr()
+        captured_combined += out.out + out.err
+        if "pre-roll-only rename failed" in captured_combined:
+            break
+        _time.sleep(0.05)
+
+    # assert
+    assert "ERROR clip lost" in captured_combined
+    assert "pre-roll-only rename failed" in captured_combined
+    assert "event_id=evt-prn" in captured_combined

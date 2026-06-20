@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { log, type LogFields } from './log'
 
 export type ToastKind = 'info' | 'success' | 'error'
 
@@ -24,6 +25,24 @@ const ToastContext = createContext<ToastApi>({ showToast: () => {} })
 
 export function useToast(): ToastApi {
   return useContext(ToastContext)
+}
+
+/**
+ * docs/logging_plan.md §1.3: pair every error-toast with a structured
+ * `log.error` so the user-facing message and the device log can't drift.
+ * Returns `(event, userMessage, fields)` — `event` is the stable scope
+ * token for the log, `userMessage` is the human toast. NEVER put a
+ * password / token in `fields`.
+ */
+export function useReportError() {
+  const { showToast } = useToast()
+  return useCallback(
+    (event: string, userMessage: string, fields: LogFields = {}) => {
+      log.error(event, fields)
+      showToast(userMessage, 'error')
+    },
+    [showToast],
+  )
 }
 
 // iter-356.3a (Maya Minor): bumped per-kind timeouts. Was 2.5s/2.5s/5s

@@ -131,8 +131,16 @@ class FaceRecognizer:
         if self._fr is not None:
             try:
                 boxes = self._fr.face_locations(rgb_image, model="hog")
-            except Exception as e:
-                log.debug("recognizer: face_locations failed: %s", e)
+            except Exception:
+                # face_locations (dlib HOG) crashed — face matching is
+                # dead for this frame, no name returned. log.exception so
+                # the dlib/CUDA stack survives (3.6-safe). event_id ties
+                # the failure to the triggering detection.
+                log.exception(
+                    "recognizer: face_locations failed (event_id=%s) - "
+                    "face matching skipped this frame",
+                    event_id,
+                )
                 return None
             do_match = True
         else:
@@ -165,8 +173,16 @@ class FaceRecognizer:
         if do_match:
             try:
                 encs = self._fr.face_encodings(rgb_image, boxes_sorted)
-            except Exception as e:
-                log.debug("recognizer: face_encodings failed: %s", e)
+            except Exception:
+                # face_encodings (dlib 128-d) crashed after locations
+                # succeeded — all faces this frame go unmatched. Stack
+                # via log.exception (3.6-safe). %d faces names the size
+                # of the batch that was lost.
+                log.exception(
+                    "recognizer: face_encodings failed (event_id=%s, "
+                    "faces=%d) - faces unmatched this frame",
+                    event_id, len(boxes_sorted),
+                )
                 return None
             for box, enc in zip(boxes_sorted, encs):
                 name, conf = self.match(enc)
@@ -215,8 +231,19 @@ class FaceRecognizer:
                         ts_ms=(ts_ms or 0) + idx,
                         meta=per_face_meta,
                     )
-                except Exception as e:
-                    log.debug("recognizer: capture save failed: %s", e)
+                except Exception:
+                    # Best-effort capture: a save failure (disk full,
+                    # PIL encode error, capture_dir unwritable) must not
+                    # crash the hot path, but the operator needs to know
+                    # the retrain queue isn't being populated. WARNING +
+                    # stack (3.6-safe log.exception). idx/event_id locate
+                    # the dropped crop.
+                    log.exception(
+                        "recognizer: capture save failed (event_id=%s, "
+                        "face_idx=%d, capture_dir=%s) - crop NOT saved "
+                        "to retrain queue",
+                        event_id, idx, capture_dir,
+                    )
         return first_matched
 
 

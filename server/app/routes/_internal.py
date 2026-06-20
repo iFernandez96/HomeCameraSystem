@@ -82,6 +82,18 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         # nvargus-daemon escalation path was needed.
         "last_frame_ts",
         "argus_restarts",
+        # logging-plan (docs/logging_plan.md §1.2): failure-rate counters
+        # so the operator sees RATES over time, not just one-off journal
+        # lines. The worker increments these monotonically and surfaces
+        # them on the heartbeat; /api/status exposes the snapshot. Each is
+        # a plain numeric counter (goes through the _NUMERIC_METRIC_FIELDS
+        # path below). Unregistered metrics are silently dropped, so these
+        # MUST be listed here or the heartbeat slice discards them.
+        "clips_dropped_capacity",
+        "clip_start_failures",
+        "face_recog_failures",
+        "event_post_failures",
+        "thumb_save_failures",
     }
 )
 
@@ -109,6 +121,56 @@ _GEAR_MAX = 32
 # anyway — this keeps the snapshot size bounded.
 _FACE_RECOG_NAMES_MAX = 50
 _FACE_RECOG_NAME_LEN_MAX = 64
+
+# logging-plan (docs/logging_plan.md §2 detection/events): heartbeat
+# metric-coercion drops are silent today — a worker that starts emitting
+# a metric with the wrong type (or a key not on the whitelist) loses that
+# field every 10 s with zero signal. We log it at DEBUG (the heartbeat is
+# a 10 s hot path — CLAUDE.md `_SuppressNoisyAccess` discipline) and gate
+# it behind a once-flag so a persistently-misbehaving worker writes one
+# line, not one every 10 s forever. The flag re-arms only on process
+# restart — a single line is enough to point the operator at the worker.
+_heartbeat_drop_warned = False
+
+# logging-plan (docs/logging_plan.md §1.3): server sink for client-side
+# logs. The PWA's `lib/log.ts` ships error+warn lines here so a failure
+# on a phone the operator can't physically inspect lands in the same
+# journald stream as the server. Mounted under the unauthenticated
+# `_internal` router (CLAUDE.md pin: `_internal` is never auth-gated) so
+# it works on the anon login screen too. App-level rate cap (NOT a
+# middleware — CLAUDE.md anti-rec stands) so a looping client can't
+# flood the journal / SD card.
+_CLIENT_LOG_WINDOW_S = 10.0
+_CLIENT_LOG_MAX_PER_WINDOW = 50
+_client_log_bucket = {"ts": 0.0, "count": 0}
+_CLIENT_LOG_LEVELS = {
+    "error": logging.ERROR,
+    "warn": logging.WARNING,
+    "info": logging.INFO,
+    "debug": logging.DEBUG,
+}
+
+
+class ClientLog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    level: str = Field(pattern=r"^(error|warn|info|debug)$")
+    event: str = Field(min_length=1, max_length=120)
+    fields: dict | None = Field(default=None)
+    online: bool | None = None
+    ua: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="after")
+    def _bound_fields(self) -> "ClientLog":
+        # Cap the serialized field payload so a buggy/malicious client
+        # can't pump megabytes into the journal. The client already
+        # bounds this; this is the server-side belt.
+        if self.fields is not None:
+            try:
+                if len(json.dumps(self.fields)) > 2048:
+                    object.__setattr__(self, "fields", {"_truncated": True})
+            except (TypeError, ValueError):
+                object.__setattr__(self, "fields", {"_unserializable": True})
+        return self
 
 
 def _coerce_metric(key: str, value):
@@ -368,15 +430,77 @@ async def worker_heartbeat(request: Request) -> dict[str, bool]:
             data = None
         if isinstance(data, dict) and data:
             picked: dict = {}
+            dropped_unknown: list = []
+            dropped_coerce: list = []
             for k, v in data.items():
                 if k not in _ALLOWED_METRIC_FIELDS:
+                    dropped_unknown.append(k)
                     continue
                 coerced = _coerce_metric(k, v)
                 if coerced is not None:
                     picked[k] = coerced
+                else:
+                    dropped_coerce.append(k)
+            if dropped_unknown or dropped_coerce:
+                # logging-plan §2: surface metric drops once per process
+                # so a worker emitting an off-whitelist or wrong-typed
+                # field is diagnosable. DEBUG + once-flag — this is a
+                # 10 s hot path (CLAUDE.md `_SuppressNoisyAccess`).
+                global _heartbeat_drop_warned
+                if not _heartbeat_drop_warned:
+                    _heartbeat_drop_warned = True
+                    log.debug(
+                        "heartbeat dropped metric fields: "
+                        "unknown=%s wrong-type/out-of-bounds=%s "
+                        "(further drops suppressed)",
+                        dropped_unknown or None,
+                        dropped_coerce or None,
+                    )
             if picked:
                 metrics = picked
     worker_health.heartbeat(metrics)
+    return {"ok": True}
+
+
+@router.post("/client_log")
+async def client_log(entry: ClientLog) -> dict:
+    """Sink for PWA-side logs (docs/logging_plan.md §1.3).
+
+    The browser logger (`client/src/lib/log.ts`) POSTs error+warn lines
+    here so device-side failures the operator can't physically inspect
+    land in the Jetson journald stream with a `client_log:` prefix.
+
+    Unauthenticated by design (mounted on `_internal`) so it works on
+    the anon login screen. App-level rate cap drops past
+    `_CLIENT_LOG_MAX_PER_WINDOW` lines per `_CLIENT_LOG_WINDOW_S` so a
+    looping client can't flood the journal — the cap-hit itself is
+    logged once per window so the throttling is visible.
+    """
+    import time as _t
+
+    now = _t.monotonic()
+    if now - _client_log_bucket["ts"] >= _CLIENT_LOG_WINDOW_S:
+        _client_log_bucket["ts"] = now
+        _client_log_bucket["count"] = 0
+    _client_log_bucket["count"] += 1
+    if _client_log_bucket["count"] > _CLIENT_LOG_MAX_PER_WINDOW:
+        if _client_log_bucket["count"] == _CLIENT_LOG_MAX_PER_WINDOW + 1:
+            log.warning(
+                "client_log rate cap hit (%d/%.0fs) — dropping further "
+                "client logs this window",
+                _CLIENT_LOG_MAX_PER_WINDOW,
+                _CLIENT_LOG_WINDOW_S,
+            )
+        return {"ok": False, "dropped": "rate"}
+    level = _CLIENT_LOG_LEVELS.get(entry.level, logging.INFO)
+    log.log(
+        level,
+        "client_log:%s fields=%s online=%s ua=%s",
+        entry.event,
+        entry.fields or {},
+        entry.online,
+        (entry.ua or "")[:120],
+    )
     return {"ok": True}
 
 
@@ -394,6 +518,17 @@ async def publish_detection(payload: DetectionPayload) -> dict[str, object]:
     # (it runs continuously), but we drop them here instead of forwarding to
     # WebSocket subscribers / Web Push.
     if not detection_service.active:
+        # logging-plan §2: surface the drop at DEBUG. The worker runs
+        # continuously and keeps POSTing while the UI "Detect" toggle is
+        # off; we drop here rather than fan out. Logging confirms WHY no
+        # events reach the bus / push when detection is paused (the
+        # "healthy but zero events" footgun). DEBUG, not WARN — this is
+        # an intended, operator-driven state, and the route is hit at
+        # the worker's emit rate (hot path).
+        log.debug(
+            "event dropped: detection paused (label=%s camera_id=%s)",
+            payload.label, payload.camera_id,
+        )
         return {"ok": True, "dropped": "detection paused"}
 
     evt = make_detection_event(
@@ -416,9 +551,40 @@ async def publish_detection(payload: DetectionPayload) -> dict[str, object]:
     # GC can't collect it mid-flight (CPython issue #44665).
     task = asyncio.create_task(_send_push(evt))
     _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    # logging-plan §2: the done-callback must check `task.exception()`.
+    # `_send_push` catches its own send failures, but ANY other escape
+    # (a bug, a CancelledError, an exception raised before the inner
+    # try) would otherwise be swallowed — asyncio only surfaces it as an
+    # unattributed "Task exception was never retrieved" at GC time. The
+    # callback retrieves it and logs with the event id so a fanout crash
+    # is never silent. Carry the event id via a closure since the
+    # callback only receives the Task.
+    task.add_done_callback(_make_push_done_callback(evt.get("id")))
 
     return {"ok": True, "event_id": evt["id"]}
+
+
+def _make_push_done_callback(event_id):
+    """Build the done-callback for a `_send_push` task (logging-plan §2).
+
+    Discards the task from the strong-ref set (iter-176 invariant) AND
+    retrieves `task.exception()` so a fanout crash that escaped
+    `_send_push`'s own try/except is logged with the event id instead of
+    surfacing as an unattributed asyncio warning at GC time."""
+
+    def _done(task: "asyncio.Task") -> None:
+        _BACKGROUND_TASKS.discard(task)
+        if task.cancelled():
+            log.warning("push fanout task cancelled (event_id=%s)", event_id)
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error(
+                "push fanout task crashed (event_id=%s): %s",
+                event_id, exc, exc_info=exc,
+            )
+
+    return _done
 
 
 async def _send_push(evt: dict) -> None:
@@ -513,7 +679,13 @@ async def _send_push(evt: dict) -> None:
             _UNREAD_CACHE["ts"] = now_s
         push_payload["unread_count"] = _UNREAD_CACHE["value"]
     except Exception:
-        log.warning("unread_count refresh for push payload failed", exc_info=True)
+        # logging-plan §2: include the event id; push delivery still
+        # proceeds (the count is a best-effort badge refresh).
+        log.warning(
+            "unread_count refresh for push payload failed (event_id=%s)",
+            evt.get("id"),
+            exc_info=True,
+        )
     try:
         # iter-206: send_matching evaluates each sub's filters against
         # the event before fanning out. Legacy subs (filters=None)
@@ -521,4 +693,9 @@ async def _send_push(evt: dict) -> None:
         # test-push behavior for unfiltered subs.
         await push_service.send_matching(evt, push_payload)
     except Exception:
-        log.exception("push send failed in _internal/event")
+        # logging-plan §2: include the event id so a push-fanout failure
+        # is traceable to the specific detection event.
+        log.exception(
+            "push send failed in _internal/event (event_id=%s)",
+            evt.get("id"),
+        )

@@ -8,6 +8,7 @@ import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { CatTrioMark } from '../components/CatIcons'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { log } from '../lib/log'
 
 /**
  * Full-page sign-in form. iter-356.1 redesign per architect brief:
@@ -66,6 +67,16 @@ export function Login() {
       await login(username, password)
       navigate('/live', { replace: true })
     } catch (err) {
+      // docs/logging_plan.md §2 (Auth): failed sign-in WARN. GUARDRAIL
+      // §4 — log the username + HTTP status ONLY; NEVER the password
+      // (it's in `password` scope here and must never reach the log).
+      // online disambiguates "wrong creds" (401) from "server/network
+      // down" (no status). navigator.onLine is the network-edge signal.
+      log.warn('login:failed', {
+        username,
+        status: err instanceof HttpError ? err.status : null,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      })
       if (err instanceof HttpError && err.status === 401) {
         // iter-356.1: human voice + recovery action in the copy itself.
         setError('Wrong username or password — try again.')

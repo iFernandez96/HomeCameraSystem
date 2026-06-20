@@ -51,13 +51,26 @@ iter-216 helpers exposed:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from ..log import RateLimitedLog
 from .event_bus import DetectionEventDict
+
+
+log = logging.getLogger(__name__)
+
+# A malformed `boxes_json` (operator hand-edit, half-written row) is
+# benign — `_row_to_event` degrades to empty boxes rather than 500 —
+# but a SYSTEMATIC corruption (bad migration, disk bit-rot) would
+# otherwise be invisible. Rate-limit the WARN so one bad row per
+# listing doesn't flood, but a sustained problem still surfaces every
+# 60s. Matches the docs/logging_plan.md "once-per-N" intent.
+_boxes_parse_gate = RateLimitedLog(60.0)
 
 
 _SCHEMA = """
@@ -161,8 +174,16 @@ def init_db(path: Path) -> None:
     # already exists with looser perms. No-op on read-only mounts.
     try:
         path.chmod(0o600)
-    except OSError:
-        pass
+    except OSError as exc:
+        # PRIVACY: events.db can hold person_name + thumb URLs. If we
+        # can't tighten the mode the file may stay world-readable on a
+        # multi-tenant box — surface it (WARN, not silent pass).
+        log.warning(
+            "events_db: could not chmod 0o600 on %s — DB may remain "
+            "world-readable: %s",
+            path,
+            exc,
+        )
 
 
 @contextmanager
@@ -173,6 +194,43 @@ def _connect(path: Path) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+@contextmanager
+def _db_op(op: str, path: Path, **key_args: Any) -> Iterator[None]:
+    """Wrap a DB helper body so any sqlite error (locked DB, disk
+    full, corrupt page, missing window-function support on an old
+    SQLite) is logged with the OPERATION + db PATH + the key filter
+    args at ERROR (with ``exc_info``) BEFORE re-raising.
+
+    Without this the route layer just 500s on a bare ``sqlite3.Error``
+    and the operator never learns WHICH query died on WHICH db. The
+    ``people_summary`` window-function query is the worst landmine —
+    SQLite < 3.25 raises ``OperationalError: near "OVER"`` and the
+    failure is otherwise silent.
+
+    Re-raises the ORIGINAL exception unchanged so the route still
+    surfaces its 500 and any existing ``except sqlite3.Error`` handler
+    keeps working — this only adds the diagnostic line.
+
+    ``key_args`` are short identifying scalars (camera_id, before_ts,
+    a count of ids) — NEVER PII bodies. Caller chooses what to pass.
+    """
+    try:
+        yield
+    except sqlite3.Error as exc:
+        # `%r` on a dict keeps the line greppable + bounded; key_args
+        # are deliberately small scalars chosen by the caller.
+        log.error(
+            "events_db.%s failed on %s: %s (%s) [%r]",
+            op,
+            path,
+            exc,
+            type(exc).__name__,
+            key_args,
+            exc_info=True,
+        )
+        raise
 
 
 def insert_event(path: Path, event: DetectionEventDict) -> bool:
@@ -227,11 +285,20 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
     boxes_raw = row["boxes_json"]
     try:
         boxes = json.loads(boxes_raw) if boxes_raw else []
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         # Operator hand-edited the DB with malformed JSON. Don't
         # crash the listing — empty boxes is a cleaner degradation
-        # than a 500 on /api/events.
+        # than a 500 on /api/events. But a SYSTEMATIC corruption
+        # (bad migration, bit-rot) should still surface: WARN at
+        # most once per 60s so one bad row can't flood a listing.
         boxes = []
+        if _boxes_parse_gate.should_log():
+            log.warning(
+                "events_db: unparseable boxes_json for event %s "
+                "(rendering zero boxes): %s",
+                row["id"],
+                exc,
+            )
     # iter-357: row may not carry `person_names_json` at all on
     # SQLite Row objects from a CONNECTION whose read predates the
     # column migration (rare — `_ensure_person_names_column` runs
@@ -254,9 +321,26 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
             ):
                 person_names = decoded
             else:
+                # Well-formed JSON but wrong shape — multi-person
+                # match list degrades to the single `person_name`.
+                # DEBUG (not WARN): benign, high-frequency-possible.
                 person_names = None
-        except (TypeError, ValueError):
+                log.debug(
+                    "events_db: person_names_json wrong shape for "
+                    "event %s; using single person_name",
+                    row["id"],
+                )
+        except (TypeError, ValueError) as exc:
+            # Unparseable person_names_json → degrade to single
+            # person_name. DEBUG only: an operator hand-edit and the
+            # event still renders via `person_name`.
             person_names = None
+            log.debug(
+                "events_db: unparseable person_names_json for event "
+                "%s (using single person_name): %s",
+                row["id"],
+                exc,
+            )
     else:
         person_names = None
     return {
@@ -380,7 +464,18 @@ def search(
         "SELECT * FROM events" + where + " ORDER BY ts DESC LIMIT ?"
     )
     args.append(limit)
-    with _connect(path) as conn:
+    with _db_op(
+        "search",
+        path,
+        camera_id=camera_id,
+        person_name=person_name,
+        label=label,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        before_ts=before_ts,
+        face_unrecognized=face_unrecognized,
+        limit=limit,
+    ), _connect(path) as conn:
         rows = conn.execute(sql, args).fetchall()
         return [_row_to_event(r) for r in rows]
 
@@ -440,7 +535,16 @@ def count_by_day(
         "SELECT date(ts, 'unixepoch', 'localtime') AS day, COUNT(*) AS n "
         "FROM events" + where + " GROUP BY day ORDER BY day ASC"
     )
-    with _connect(path) as conn:
+    with _db_op(
+        "count_by_day",
+        path,
+        camera_id=camera_id,
+        person_name=person_name,
+        label=label,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        face_unrecognized=face_unrecognized,
+    ), _connect(path) as conn:
         rows = conn.execute(sql, args).fetchall()
         # `dict()` preserves insertion order in 3.7+, so the ASC
         # SQL ordering carries through to the response. Useful for
@@ -507,7 +611,7 @@ def get_by_ids(path: Path, ids: list[str]) -> list[dict]:
         return []
     placeholders = ",".join("?" for _ in ids)
     sql = "SELECT * FROM events WHERE id IN ({})".format(placeholders)
-    with _connect(path) as conn:
+    with _db_op("get_by_ids", path, n_ids=len(ids)), _connect(path) as conn:
         rows = conn.execute(sql, tuple(ids)).fetchall()
     by_id = {r["id"]: _row_to_event(r) for r in rows}
     return [by_id[i] for i in ids if i in by_id]
@@ -584,7 +688,10 @@ def people_summary(path: Path, *, limit: int = 100) -> list[dict]:
         " ORDER BY last_seen_ts DESC"
         " LIMIT ?"
     )
-    with _connect(path) as conn:
+    # The window-function syntax (`OVER (...)`) requires SQLite >= 3.25
+    # — on an unexpectedly-old runtime this is an `OperationalError`
+    # the `_db_op` wrap names explicitly instead of a silent 500.
+    with _db_op("people_summary", path, limit=limit), _connect(path) as conn:
         rows = conn.execute(sql, (limit,)).fetchall()
         return [
             {
@@ -627,7 +734,7 @@ def mark_seen(path: Path, event_id: str) -> bool:
     False when the row is missing or already seen. Caller uses the
     return value to decide whether to refresh the badge.
     """
-    with _connect(path) as conn:
+    with _db_op("mark_seen", path, event_id=event_id), _connect(path) as conn:
         cur = conn.execute(
             "UPDATE events SET seen = 1 WHERE id = ? AND seen = 0",
             (event_id,),
@@ -653,7 +760,7 @@ def delete(path: Path, event_id: str) -> bool:
     was actually removed, False if the id didn't exist (caller can
     surface a 404 if needed).
     """
-    with _connect(path) as conn:
+    with _db_op("delete", path, event_id=event_id), _connect(path) as conn:
         cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
         conn.commit()
         return cur.rowcount > 0

@@ -97,6 +97,20 @@ class Metrics:
         self.thumb_ms_recent = 0.0
         self.gear = "idle"
         self.face_recog_names = []
+        # logging-plan (docs/logging_plan.md §1.2): failure-rate counters.
+        # Individual failures are logged to journald at their call site;
+        # these cumulative counters let the operator see the RATE over
+        # time on /api/status without journald access. Each is bumped
+        # directly (`metrics.clip_start_failures += 1`) at the
+        # corresponding failure site in detect.py / recording.py. They
+        # are part of the producer/consumer contract pinned by
+        # test_internal.py::test_worker_snapshot_keys_match_whitelist —
+        # snapshot() keys must equal the server _ALLOWED_METRIC_FIELDS.
+        self.clips_dropped_capacity = 0
+        self.clip_start_failures = 0
+        self.face_recog_failures = 0
+        self.event_post_failures = 0
+        self.thumb_save_failures = 0
         self.started = time.time()
 
     def fps(self):
@@ -169,4 +183,9 @@ class Metrics:
             "thumb_ms_recent": round(self.thumb_ms_recent, 1),
             "uptime_s": round(self.uptime_s(), 1),
             "face_recog_names": list(self.face_recog_names),
+            "clips_dropped_capacity": self.clips_dropped_capacity,
+            "clip_start_failures": self.clip_start_failures,
+            "face_recog_failures": self.face_recog_failures,
+            "event_post_failures": self.event_post_failures,
+            "thumb_save_failures": self.thumb_save_failures,
         }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
+import { log } from '../lib/log'
 import { reconnectIfClosed, subscribeWsState, type WsState } from '../lib/ws'
 
 /**
@@ -121,6 +122,12 @@ export function ConnectionBanner() {
           // Resolve only fires recovery if we actually surfaced an
           // outage banner — gates the success on `outageShown`.
           if (outageShownRef.current) {
+            // docs/logging_plan.md §2 (ConnectionBanner): surface WS
+            // backoff state — the realtime socket recovered after a
+            // visible outage. INFO so the operator can see the outage
+            // had a bounded duration (paired with the escalation WARN
+            // below) rather than the recovery being a silent unmount.
+            log.info('ws:reconnected', { online: navigator.onLine })
             setRecoveredAt(Date.now())
           }
           setEscalated(false)
@@ -136,7 +143,17 @@ export function ConnectionBanner() {
   // `closed` state. Cleared on state change.
   useEffect(() => {
     if (state !== 'closed') return
-    const t = setTimeout(() => setEscalated(true), ESCALATE_AFTER_MS)
+    const t = setTimeout(() => {
+      // docs/logging_plan.md §2 (ConnectionBanner): WS backoff crossed
+      // the escalation threshold — sustained outage, not a blip. WARN
+      // so a real disconnect (live alerts paused) is greppable. Paired
+      // with the ws:reconnected INFO above for outage-duration framing.
+      log.warn('ws:outage-escalated', {
+        afterMs: ESCALATE_AFTER_MS,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      })
+      setEscalated(true)
+    }, ESCALATE_AFTER_MS)
     return () => clearTimeout(t)
   }, [state])
 

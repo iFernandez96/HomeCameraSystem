@@ -37,6 +37,8 @@ import subprocess
 import threading
 import time
 
+import applog
+
 
 # Per-segment duration. 1 s is small enough to give precise pre-roll
 # windows (1 s rounding error on a typical 5 s pre-roll = 20 % off, which
@@ -128,7 +130,18 @@ class PrerollBuffer(object):
                 return True
             try:
                 os.makedirs(self.buffer_dir, exist_ok=True)
-            except OSError:
+            except OSError as e:
+                # docs/logging_plan.md §2: buffer_dir makedirs failed
+                # (volume unmounted / full / RO). The pre-roll buffer
+                # stays empty → every clip loses its pre-roll. ERROR
+                # naming the dir + reason.
+                applog.emit(
+                    "preroll",
+                    "ERROR makedirs failed for buffer_dir={!r}: {}: {} — "
+                    "pre-roll buffer cannot start".format(
+                        self.buffer_dir, type(e).__name__, e,
+                    ),
+                )
                 return False
             try:
                 self._proc = subprocess.Popen(
@@ -141,7 +154,18 @@ class PrerollBuffer(object):
                     # stderr; the watchdog detects death via poll().
                     stderr=subprocess.DEVNULL,
                 )
-            except (OSError, FileNotFoundError):
+            except (OSError, FileNotFoundError) as e:
+                # docs/logging_plan.md §2: segment-recorder spawn failed —
+                # ffmpeg missing / unexecutable. The caller (detect.py)
+                # only said "failed to start" with no reason; name the
+                # ffmpeg binary so the operator knows what's missing.
+                applog.emit(
+                    "preroll",
+                    "ERROR ffmpeg spawn failed (bin={!r}): {}: {} — "
+                    "pre-roll buffer not running".format(
+                        self.ffmpeg_bin, type(e).__name__, e,
+                    ),
+                )
                 self._proc = None
                 return False
             return True
@@ -172,6 +196,11 @@ class PrerollBuffer(object):
             return None
         self._watchdog_started = True
         self._watchdog_running = True
+        # docs/logging_plan.md §2: track consecutive restarts so a
+        # FLAPPING buffer (RTSP / MediaMTX down — death every tick) is
+        # distinguishable from a one-off restart. Reset to 0 on the
+        # first tick that finds the process alive.
+        self._watchdog_consecutive_restarts = 0
 
         def _loop():
             while self._watchdog_running:
@@ -179,10 +208,32 @@ class PrerollBuffer(object):
                     # Subprocess died — try to spawn a fresh one.
                     # Failures (ffmpeg missing, RTSP still down) just
                     # leave the next tick to retry.
+                    self._watchdog_consecutive_restarts += 1
+                    started = False
                     try:
-                        self.start()
-                    except Exception:
-                        pass
+                        started = self.start()
+                    except Exception as e:
+                        applog.emit(
+                            "preroll",
+                            "watchdog restart raised ({}: {}) "
+                            "[consecutive={}]".format(
+                                type(e).__name__, e,
+                                self._watchdog_consecutive_restarts,
+                            ),
+                        )
+                    else:
+                        applog.emit(
+                            "preroll",
+                            "watchdog restarting dead segment-recorder "
+                            "(start ok={}) [consecutive={}] — flapping "
+                            "implies RTSP/MediaMTX down".format(
+                                started,
+                                self._watchdog_consecutive_restarts,
+                            ),
+                        )
+                else:
+                    # Healthy tick — reset the flap counter.
+                    self._watchdog_consecutive_restarts = 0
                 # Sleep in small chunks so stop() can wake us within
                 # ~1 second instead of waiting the full interval.
                 slept = 0.0
@@ -211,13 +262,33 @@ class PrerollBuffer(object):
             p.wait(timeout=2.0)
             return True
         except subprocess.TimeoutExpired:
+            # docs/logging_plan.md §2: SIGTERM didn't land within the
+            # grace window — escalate to SIGKILL. WARN so a recurring
+            # zombie holding the RTSP source (blocking the next start())
+            # is visible.
+            applog.emit(
+                "preroll",
+                "segment-recorder ignored SIGTERM within 2s — escalating "
+                "to SIGKILL (zombie may hold RTSP source)",
+            )
             try:
                 p.kill()
                 p.wait(timeout=1.0)
-            except Exception:
-                pass
+            except Exception as e:
+                applog.emit(
+                    "preroll",
+                    "SIGKILL escalation failed: {}: {}".format(
+                        type(e).__name__, e,
+                    ),
+                )
             return False
-        except Exception:
+        except Exception as e:
+            applog.emit(
+                "preroll",
+                "stop() failed terminating segment-recorder: {}: {}".format(
+                    type(e).__name__, e,
+                ),
+            )
             return False
 
     # iter-356.61: dynamic ring sizing. Pre-iter-356.61 the ring
@@ -284,18 +355,24 @@ class PrerollBuffer(object):
                     pass
                 self._proc = None
         # Restart out-of-lock so start() can re-acquire it cleanly.
-        try:
-            print(
-                "[preroll] resized ring to capacity={} ({}s window) "
-                "for slider pre_roll={:.1f}s".format(
-                    needed, needed * float(self.segment_s),
-                    float(pre_roll_s),
-                ),
-                flush=True,
+        applog.emit(
+            "preroll",
+            "resized ring to capacity={} ({}s window) for slider "
+            "pre_roll={:.1f}s".format(
+                needed, needed * float(self.segment_s), float(pre_roll_s),
+            ),
+        )
+        # docs/logging_plan.md §2: the restart return value was ignored —
+        # if start() fails here the buffer is DOWN at the larger size
+        # (no segments written until the watchdog or next resize fixes
+        # it). WARN naming the new capacity so the gap is observable.
+        ok = self.start()
+        if not ok:
+            applog.emit(
+                "preroll",
+                "ring resize restart FAILED — buffer DOWN at "
+                "capacity={} (no segments until next start)".format(needed),
             )
-        except Exception:
-            pass
-        self.start()
         return True
 
     def segments_in_window(self, now, pre_roll_s):
@@ -312,8 +389,25 @@ class PrerollBuffer(object):
         """
         try:
             entries = os.listdir(self.buffer_dir)
-        except OSError:
+        except OSError as e:
+            # docs/logging_plan.md §2 + §4: buffer dir unreadable
+            # (unmounted / perms). Pre-logging this returned [] silently —
+            # the clip then has NO pre-roll with no trace. WARN, but
+            # once-flagged (re-armed on the next success below) so a
+            # persistent failure doesn't flood the journal per call.
+            if not getattr(self, "_segwin_listdir_warned", False):
+                applog.emit(
+                    "preroll",
+                    "segments_in_window listdir failed for "
+                    "buffer_dir={!r}: {}: {} — pre-roll unavailable "
+                    "(buffer dir unmounted?)".format(
+                        self.buffer_dir, type(e).__name__, e,
+                    ),
+                )
+                self._segwin_listdir_warned = True
             return []
+        # Re-arm the once-flag so a transient failure logs again next time.
+        self._segwin_listdir_warned = False
         candidates = []
         cutoff = now - pre_roll_s
         for name in entries:
@@ -340,11 +434,27 @@ def write_concat_list(list_path, segment_paths):
     """Write the ffmpeg concat-demuxer input file. Mirrors the
     services/timelapse._write_concat_list helper's escape rules. Used
     by the caller after segments_in_window returns the pre-roll set,
-    plus the post-roll capture from ClipRecorder."""
-    with open(list_path, "w") as f:
-        for p in segment_paths:
-            escaped = os.path.abspath(p).replace("'", "'" + chr(92) + "''")
-            f.write("file '" + escaped + "'\n")
+    plus the post-roll capture from ClipRecorder.
+
+    docs/logging_plan.md §2: the open()/write() OSError (list_path's dir
+    full / RO) had no guard and propagated up into recording.py's silent
+    merge `finally` — the clip then vanished with no trace. Log the
+    reason at ERROR before re-raising so the merge failure is
+    attributable; the caller's try/finally still cleans up."""
+    try:
+        with open(list_path, "w") as f:
+            for p in segment_paths:
+                escaped = os.path.abspath(p).replace(
+                    "'", "'" + chr(92) + "''"
+                )
+                f.write("file '" + escaped + "'\n")
+    except (OSError, IOError) as e:
+        applog.emit(
+            "preroll",
+            "ERROR write_concat_list failed for {!r}: {}: {} — clip "
+            "merge will fail".format(list_path, type(e).__name__, e),
+        )
+        raise
 
 
 def run_concat(ffmpeg_bin, list_path, output_path, timeout_s=30.0):
@@ -374,23 +484,55 @@ def run_concat(ffmpeg_bin, list_path, output_path, timeout_s=30.0):
         output_path,
     ]
     try:
-        # iter-350 (camera-library-usage D1 from iter-333 broad audit):
-        # stdout/stderr were both PIPE; subprocess.run reads them only
-        # AFTER wait() but wait() blocks on the child, and the child
-        # blocks on the pipe once the OS pipe (~64 KB) fills. A large
-        # ffmpeg error message (missing segment, malformed MP4) could
-        # deadlock the synchronous concat indefinitely. DEVNULL on
-        # both eliminates the trap; loglevel=error already suppresses
-        # most non-error chatter so we lose nothing actionable.
+        # docs/logging_plan.md §2 + §4: this is a SYNCHRONOUS
+        # ``subprocess.run`` WITH a timeout, which means stderr=PIPE is
+        # deadlock-SAFE here — run() spawns a reader and drains the pipe
+        # itself, and the timeout bounds the call. (The iter-350 DEVNULL
+        # was over-cautious: that deadlock pin applies to the ASYNC
+        # long-lived recorder/post-roll subprocesses, NOT this bounded
+        # run.) Capturing stderr lets us log WHY a concat failed (missing
+        # segment, malformed MP4) instead of an opaque False.
         result = subprocess.run(
             cmd,
             timeout=timeout_s,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        applog.emit(
+            "preroll",
+            "ERROR run_concat TIMED OUT after {}s ({} -> {}) — clip "
+            "merge failed".format(timeout_s, list_path, output_path),
+        )
         return False
-    return result.returncode == 0
+    except OSError as e:
+        applog.emit(
+            "preroll",
+            "ERROR run_concat spawn failed (bin={!r}): {}: {} — clip "
+            "merge failed".format(ffmpeg_bin, type(e).__name__, e),
+        )
+        return False
+    if result.returncode != 0:
+        # Non-zero rc: log the stderr tail so the reason (missing input,
+        # moov atom, etc.) is in the journal instead of a silent False.
+        stderr = getattr(result, "stderr", None)
+        tail = ""
+        if stderr:
+            try:
+                tail = stderr.decode("utf-8", "replace").strip()
+                tail = tail.replace("\n", " | ")[-1500:]
+            except (AttributeError, UnicodeError):
+                tail = ""
+        applog.emit(
+            "preroll",
+            "ERROR run_concat ffmpeg exited rc={} ({} -> {}){} — clip "
+            "merge failed".format(
+                result.returncode, list_path, output_path,
+                (" stderr_tail=" + tail) if tail else "",
+            ),
+        )
+        return False
+    return True
 
 
 # Smoke test for `time` import — keeps the linter happy when no

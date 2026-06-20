@@ -165,7 +165,12 @@ def build_export_zip(
                     src.load()
                     src_w, src_h = src.size
                     canvas, scale, pad_x, pad_y = letterbox(src, size)
-            except (UnidentifiedImageError, OSError) as exc:
+            except (UnidentifiedImageError, OSError, ValueError) as exc:
+                # ValueError: `letterbox()` raises it on a zero-dim
+                # image (a 0-byte / 0xN crop the worker wrote mid-race).
+                # Previously uncaught → it 500'd the ENTIRE export ZIP,
+                # losing every other valid crop. Skip+log this one image
+                # instead so the rest of the export still streams.
                 log.warning("training-export: skipping %s — bad image (%s)", jpeg, exc)
                 skipped += 1
                 continue

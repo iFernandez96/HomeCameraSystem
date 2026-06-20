@@ -34,9 +34,23 @@ vi.mock('../../lib/api', () => ({
 }))
 
 const showToast = vi.fn()
-vi.mock('../../lib/toast', () => ({
-  useToast: () => ({ showToast }),
-}))
+// useReportError mirrors the real pairing (log.error + error toast).
+// Under vitest (MODE === 'test') lib/log ship() is disabled, so
+// log.error only hits console.error — observed via spy in the tests.
+vi.mock('../../lib/toast', async () => {
+  const { log } = await vi.importActual<typeof import('../../lib/log')>(
+    '../../lib/log',
+  )
+  return {
+    useToast: () => ({ showToast }),
+    useReportError:
+      () =>
+      (event: string, message: string, fields: Record<string, unknown> = {}) => {
+        log.error(event, fields)
+        showToast(message, 'error')
+      },
+  }
+})
 
 import { NotificationsSection } from './NotificationsSection'
 
@@ -266,5 +280,59 @@ describe('NotificationsSection — permission-denied recovery disclosure (premiu
     expect(
       screen.queryByText(/re-enable in your device settings, then reload/i),
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('NotificationsSection — filter-load 5xx logging (docs/logging_plan.md §2)', () => {
+  // The filter load only fires when push is enabled. The catch falls
+  // back to empty pickers, and a subsequent Save would WIPE the user's
+  // real server-side filters. A 5xx is therefore a load FAILURE
+  // masquerading as "no filters" — it must log WARN. A 404 is the
+  // legitimate "no subs yet" case and must NOT log.
+
+  beforeEach(() => {
+    // Enable push so the filter-load effect runs.
+    getPushState.mockResolvedValue(true)
+    getKnownFilterOptions
+      .mockReset()
+      .mockResolvedValue({ cameras: [], person_names: [] })
+  })
+
+  it('Given push is enabled, When getMyPushFilters rejects with a 5xx, Then a warn log records the status (so the operator sees a masked load failure)', async () => {
+    // arrange
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const err = Object.assign(new Error('server error'), { status: 503 })
+    getMyPushFilters.mockReset().mockRejectedValue(err)
+
+    // act
+    render(<NotificationsSection pushSubsCount={1} />)
+
+    // assert — the 5xx is logged, not silently masked as "no filters".
+    await waitFor(() =>
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[notifications:filter-load-5xx]',
+        expect.objectContaining({ status: 503 }),
+      ),
+    )
+  })
+
+  it('Given push is enabled, When getMyPushFilters rejects with a 404, Then NO 5xx warn fires (legitimate no-subs case stays quiet)', async () => {
+    // arrange
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const err = Object.assign(new Error('not found'), { status: 404 })
+    getMyPushFilters.mockReset().mockRejectedValue(err)
+
+    // act — let the effect settle by waiting for the filters UI to
+    // render its clean-slate pickers.
+    render(<NotificationsSection pushSubsCount={1} />)
+    await waitFor(() =>
+      expect(getMyPushFilters).toHaveBeenCalled(),
+    )
+
+    // assert — the masquerade warning is reserved for 5xx only.
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      '[notifications:filter-load-5xx]',
+      expect.anything(),
+    )
   })
 })

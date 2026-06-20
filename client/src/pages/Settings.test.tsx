@@ -17,6 +17,7 @@ const getKnownFilterOptions = vi.fn()
 const triggerBackup = vi.fn()
 const triggerRestore = vi.fn()
 const triggerTimelapse = vi.fn()
+const getTimelapseStatus = vi.fn()
 const deleteTimelapse = vi.fn().mockResolvedValue({ deleted: true, date: '' })
 const triggerUpdate = vi.fn()
 const getServerVersion = vi.fn()
@@ -60,6 +61,7 @@ vi.mock('../lib/api', async () => {
     triggerBackup: (...a: unknown[]) => triggerBackup(...a),
     triggerRestore: (...a: unknown[]) => triggerRestore(...a),
     triggerTimelapse: (...a: unknown[]) => triggerTimelapse(...a),
+    getTimelapseStatus: (...a: unknown[]) => getTimelapseStatus(...a),
     deleteTimelapse: (...a: unknown[]) => deleteTimelapse(...a),
     triggerUpdate: (...a: unknown[]) => triggerUpdate(...a),
     getServerVersion: (...a: unknown[]) => getServerVersion(...a),
@@ -81,6 +83,10 @@ vi.mock('../lib/confirm', () => ({
 const showToast = vi.fn()
 vi.mock('../lib/toast', () => ({
   useToast: () => ({ showToast }),
+  // useReportError pairs an error log with a toast; route it through the
+  // same showToast spy so existing error-toast assertions still hold.
+  useReportError: () => (_event: string, message: string) =>
+    showToast(message, 'error'),
 }))
 
 // iter-186: Settings consumes useAuth() for the "Logged in as" row
@@ -143,6 +149,7 @@ describe('Settings page', () => {
     triggerBackup.mockReset()
     triggerRestore.mockReset()
     triggerTimelapse.mockReset()
+    getTimelapseStatus.mockReset()
     triggerUpdate.mockReset()
     // iter-239 default: one backup available so iter-237 tests
     // (which assume the form is fully usable) keep working. Empty-
@@ -1207,19 +1214,20 @@ describe('Settings page', () => {
 
   it('given iter-304 native date input, when user changes it, then the Build button still triggers with the new date', async () => {
     // arrange
+    // Background build: POST returns building:true; the date wiring is
+    // what this test pins (the new value flows to triggerTimelapse). Keep
+    // the build "in flight" (status stays building) so we don't depend on
+    // the poll-loop timing here.
     triggerTimelapse.mockResolvedValue({
       ok: true,
-      note: 'scaffold: timelapse is stubbed',
+      building: true,
       date: '2026-04-30',
-      url: '/timelapses/2026-04-30.mp4',
+      url: '/api/timelapses/2026-04-30.mp4',
     })
-    listTimelapses
-      .mockResolvedValueOnce({ items: [] })
-      .mockResolvedValueOnce({
-        items: [
-          { date: '2026-04-30', url: '/timelapses/2026-04-30.mp4', size_bytes: 100 },
-        ],
-      })
+    getTimelapseStatus.mockResolvedValue({
+      date: '2026-04-30', building: true, ready: false, error: null, url: null,
+    })
+    listTimelapses.mockResolvedValue({ items: [] })
     const { fireEvent } = await import('@testing-library/react')
     const user = userEvent.setup()
     render(<Settings />)
@@ -1234,12 +1242,12 @@ describe('Settings page', () => {
       screen.getByRole('button', { name: /generate timelapse/i }),
     )
 
-    // assert
+    // assert — the changed date flowed to the trigger, and the user gets
+    // the "building…" acknowledgement.
     await waitFor(() => expect(triggerTimelapse).toHaveBeenCalledWith('2026-04-30'))
-    await waitFor(() => expect(listTimelapses).toHaveBeenCalledTimes(2))
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/isn't set up yet/i),
+        expect.stringMatching(/building/i),
         'info',
       ),
     )

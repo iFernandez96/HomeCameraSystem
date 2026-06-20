@@ -17,17 +17,33 @@ in either spot from silently breaking auth sessions.
 """
 from __future__ import annotations
 
-from fastapi import Cookie, HTTPException
+import logging
+
+from fastapi import Cookie, HTTPException, Request
 
 from . import tokens, users_db
 from ..config import settings
+from ..log import auth_rejected
+
+
+log = logging.getLogger(__name__)
 
 
 COOKIE_ACCESS = "homecam_access"
 COOKIE_REFRESH = "homecam_refresh"
 
 
+def _req(request: Request | None):
+    """(method, path) for the auth-rejection log line, tolerating a
+    missing Request (FastAPI always injects one for a route dep, but a
+    direct unit-test call may omit it)."""
+    if request is None:
+        return ("?", "?")
+    return (request.method, request.url.path)
+
+
 def get_current_user_optional(
+    request: Request = None,  # type: ignore[assignment]
     homecam_access: str | None = Cookie(default=None),
 ) -> str | None:
     """Return the username from a valid access cookie, or ``None``
@@ -42,20 +58,46 @@ def get_current_user_optional(
     minutes), including hitting owner-only routes.
     """
     if not homecam_access:
+        # Normal anonymous case (no session yet) — silent, this is the
+        # expected state on the login screen.
         return None
+    method, path = _req(request)
     try:
         claims = tokens.decode(homecam_access, kind="access")
-    except tokens.InvalidToken:
+    except tokens.InvalidToken as e:
+        # DEBUG (not WARN): the optional gate resolving anon despite a
+        # PRESENT cookie is the interesting signal (stale/expired
+        # session that the UI thinks is live). Skip the normal
+        # no-cookie case above; this branch is cookie-present-but-bad.
+        log.debug(
+            "optional-auth resolved anon despite cookie on %s %s: %s",
+            method,
+            path,
+            e,
+        )
         return None
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        log.debug(
+            "optional-auth resolved anon despite cookie on %s %s: malformed sub",
+            method,
+            path,
+        )
         return None
     if users_db.get_user(settings.users_db_path, sub) is None:
+        log.debug(
+            "optional-auth resolved anon despite cookie on %s %s: "
+            "user row gone (sub=%r)",
+            method,
+            path,
+            sub,
+        )
         return None
     return sub
 
 
 def get_current_user(
+    request: Request = None,  # type: ignore[assignment]
     homecam_access: str | None = Cookie(default=None),
 ) -> str:
     """Return the username from a valid access cookie, or raise
@@ -77,22 +119,42 @@ def get_current_user(
     Jetson eMMC) per authed request — dominated by the existing
     iter-244 connection-per-call pattern's open/close.
     """
+    method, path = _req(request)
     if not homecam_access:
+        auth_rejected(log, method, path, "no cookie", cookie_present=False)
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         claims = tokens.decode(homecam_access, kind="access")
-    except tokens.InvalidToken:
+    except tokens.InvalidToken as e:
+        # invalid signature / expired / malformed / wrong-kind — the
+        # exception text carries the discriminator (tokens.decode also
+        # DEBUG/WARN-logs the precise PyJWT type). Cookie was present.
+        auth_rejected(
+            log, method, path, "invalid/expired: {}".format(e),
+            cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="invalid access cookie")
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        auth_rejected(
+            log, method, path, "malformed sub", cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="invalid access cookie")
     if users_db.get_user(settings.users_db_path, sub) is None:
-        # User row deleted (admin/delete_user) or DB wiped. Refuse.
+        # SECURITY EVENT: a validly-signed, unexpired token whose user
+        # row no longer exists = a session live when the admin deleted
+        # the user. Refuse. WARN (survives prod) and name the sub so
+        # the household audit trail records who was deleted-while-live.
+        auth_rejected(
+            log, method, path, "user row gone (deleted-while-live)",
+            sub=sub, cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="user no longer exists")
     return sub
 
 
 def get_current_user_role(
+    request: Request = None,  # type: ignore[assignment]
     homecam_access: str | None = Cookie(default=None),
 ) -> tuple[str, str]:
     """Return ``(username, role)`` from a valid access cookie, or
@@ -115,17 +177,30 @@ def get_current_user_role(
     ``Depends(get_current_user)`` (the iter-184 strict variant) is
     fine when the route only needs to know the user is authed.
     """
+    method, path = _req(request)
     if not homecam_access:
+        auth_rejected(log, method, path, "no cookie", cookie_present=False)
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         claims = tokens.decode(homecam_access, kind="access")
-    except tokens.InvalidToken:
+    except tokens.InvalidToken as e:
+        auth_rejected(
+            log, method, path, "invalid/expired: {}".format(e),
+            cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="invalid access cookie")
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        auth_rejected(
+            log, method, path, "malformed sub", cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="invalid access cookie")
     row = users_db.get_user(settings.users_db_path, sub)
     if row is None:
+        auth_rejected(
+            log, method, path, "user row gone (deleted-while-live)",
+            sub=sub, cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="user no longer exists")
     # iter-266: prefer DB row's role over JWT claim. Falls through
     # to claim-or-admin for tokens that pre-date the iter-192 role
@@ -134,10 +209,26 @@ def get_current_user_role(
     db_role = row.get("role")
     if isinstance(db_role, str) and db_role:
         return (sub, db_role)
+    # SILENT PRIVILEGE ESCALATION risk: the DB row has no usable role
+    # so we fall back to the JWT claim, and if that's also missing, to
+    # "admin" (the pre-iter-192 default). Either fallback can grant a
+    # user more privilege than the operator believes they have. WARN
+    # so this anomalous resolution is never silent.
     claim_role = claims.get("role")
-    if not isinstance(claim_role, str) or not claim_role:
-        claim_role = "admin"
-    return (sub, claim_role)
+    if isinstance(claim_role, str) and claim_role:
+        log.warning(
+            "role resolution fell back to JWT claim on %s %s "
+            "(sub=%r role=%r) — DB row had no role",
+            method, path, sub, claim_role,
+        )
+        return (sub, claim_role)
+    log.warning(
+        "role resolution fell back to default 'admin' on %s %s "
+        "(sub=%r) — neither DB row nor JWT claim carried a role; "
+        "possible silent privilege escalation",
+        method, path, sub,
+    )
+    return (sub, "admin")
 
 
 def require_role(required: str):
@@ -161,6 +252,7 @@ def require_role(required: str):
     from fastapi import Depends
 
     def _dep(
+        request: Request = None,  # type: ignore[assignment]
         user_and_role: tuple[str, str] = Depends(get_current_user_role),
     ) -> str:
         username, role = user_and_role
@@ -176,6 +268,15 @@ def require_role(required: str):
             return username
         if required == "owner" and role == "admin":
             return username
+        # RBAC deny — authenticated but under-privileged. WARN with the
+        # user, their actual role, and the required role so the
+        # household has an audit trail of attempted privilege use.
+        method, path = _req(request)
+        auth_rejected(
+            log, method, path,
+            "RBAC deny: role={!r} required={!r}".format(role, required),
+            sub=username, cookie_present=True,
+        )
         raise HTTPException(
             status_code=403,
             detail="role '{}' required".format(required),

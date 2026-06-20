@@ -111,12 +111,34 @@ def delete_clip(event_id: str) -> bool:
         sidecar = tracks_path(event_id)
         if sidecar.is_file():
             sidecar.unlink()
-    except (ValueError, FileNotFoundError, OSError):
-        pass
+    except (ValueError, FileNotFoundError, OSError) as e:
+        # Sidecar removal is independent of the boolean returned, but
+        # an un-deletable sidecar still leaves orphaned bbox-track
+        # data on disk — DEBUG breadcrumb (benign: list routes index
+        # by the MP4 basename).
+        log.debug(
+            "delete_clip: could not remove tracks sidecar for %s: %s",
+            event_id,
+            e,
+        )
     try:
         path.unlink()
         return True
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError:
+        # Already gone — the common "event deleted but clip was never
+        # recorded / already swept" case. DEBUG, not WARN.
+        log.debug("delete_clip: clip already absent for %s", event_id)
+        return False
+    except OSError as e:
+        # A real failure (permission flip, RO mount, busy file): the
+        # clip LINGERS on disk despite the event being deleted, which
+        # is a privacy + disk-leak surprise. WARN so it surfaces.
+        log.warning(
+            "delete_clip: failed to unlink clip for %s (clip lingers "
+            "on disk): %s",
+            event_id,
+            e,
+        )
         return False
 
 
@@ -145,8 +167,21 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
                 preset_retention_days as _preset_retention_days,
             )
             retention_days = _preset_retention_days(_dc.get().clip_retention_preset)
-        except Exception:
+        except Exception as e:
+            # The user's Settings retention tier (week / month / 5-year)
+            # could not be resolved — every sweep now silently uses the
+            # env default instead, so their choice is IGNORED. WARN with
+            # the reason + the fallback value so the discrepancy between
+            # "what the UI shows" and "what's actually swept" is visible.
             retention_days = settings.recordings_retention_days
+            log.warning(
+                "sweep: could not resolve retention preset (%s: %s); "
+                "falling back to env default %d days — user's Settings "
+                "retention choice is being ignored",
+                type(e).__name__,
+                e,
+                retention_days,
+            )
     if retention_days <= 0:
         # Retention 0 or negative would delete every clip; treat as
         # a misconfiguration and skip the sweep entirely. Operator
@@ -190,5 +225,12 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
                         "sweep failed to delete %s: %s", entry.name, e
                     )
     except OSError as e:
-        log.warning("sweep failed to list %s: %s", rec_dir, e)
+        # Note how many we'd already deleted before the listdir died
+        # mid-walk so the operator knows the sweep was partial.
+        log.warning(
+            "sweep failed to list %s after deleting %d clip(s): %s",
+            rec_dir,
+            deleted,
+            e,
+        )
     return deleted

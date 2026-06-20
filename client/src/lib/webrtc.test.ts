@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { log } from './log'
 import {
   _resetWhepWarmupForTests,
   connectWhep,
+  summarizeCandidates,
   warmWhepConnection,
 } from './webrtc'
 
@@ -130,6 +132,81 @@ describe('lib/webrtc.connectWhep', () => {
     conn.close()
     expect(stop).toHaveBeenCalled()
     expect(pc.closed).toBe(true)
+  })
+
+  it('Given the WHEP POST rejects at the network layer, When connectWhep runs, Then the peer connection is closed (no PC leak) and the failure is logged', async () => {
+    // arrange — fetch rejects (offline / MediaMTX unreachable). Before the
+    // try/finally fix, pc.close() ran only in the `!res.ok` branch, so a
+    // network reject returned with the PC + its ICE agent still open.
+    const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+    ;(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new TypeError('Failed to fetch'),
+    )
+
+    // act
+    await expect(
+      connectWhep('http://example/cam/whep', makeVideo()),
+    ).rejects.toThrow(/Failed to fetch/)
+
+    // assert — regression guard for the leak fix + the express-reason log.
+    const pc = MockRTCPeerConnection.instances[0]
+    expect(pc.closed).toBe(true)
+    expect(errSpy).toHaveBeenCalledWith(
+      'webrtc:whep-network-fail',
+      expect.objectContaining({ url: 'http://example/cam/whep' }),
+    )
+    errSpy.mockRestore()
+  })
+
+  it('Given WHEP returns non-2xx, When connectWhep runs, Then the peer is closed AND an ERROR carries the status (no leak on the HTTP-error path either)', async () => {
+    // arrange
+    const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+    ;(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response('no such path', { status: 404 }),
+    )
+
+    // act
+    await expect(
+      connectWhep('http://example/cam/whep', makeVideo()),
+    ).rejects.toThrow(/WHEP 404/)
+
+    // assert
+    const pc = MockRTCPeerConnection.instances[0]
+    expect(pc.closed).toBe(true)
+    expect(errSpy).toHaveBeenCalledWith(
+      'webrtc:whep-failed',
+      expect.objectContaining({ status: 404 }),
+    )
+    errSpy.mockRestore()
+  })
+})
+
+describe('lib/webrtc.summarizeCandidates', () => {
+  it('Given an SDP with mixed candidate types, When summarized, Then it returns counts and srflxPresent WITHOUT leaking IPs', () => {
+    // arrange — a candidate block with one host + one srflx line. The host
+    // line carries a private IP; the summary must surface the COUNT only.
+    const sdp = [
+      'v=0',
+      'a=candidate:1 1 udp 2113937151 192.168.1.50 54321 typ host',
+      'a=candidate:2 1 udp 1677729535 203.0.113.7 40000 typ srflx raddr 192.168.1.50 rport 54321',
+    ].join('\n')
+
+    // act
+    const s = summarizeCandidates(sdp)
+
+    // assert — counts present, srflx flagged, and the function's own return
+    // contains no raw IP fields (the caller logs only this object).
+    expect(s.total).toBe(2)
+    expect(s.host).toBe(1)
+    expect(s.srflx).toBe(1)
+    expect(s.srflxPresent).toBe(true)
+    expect(JSON.stringify(s)).not.toContain('192.168.1.50')
+  })
+
+  it('Given a null/empty SDP, When summarized, Then all counts are zero and srflx is absent', () => {
+    // arrange / act / assert
+    expect(summarizeCandidates(null).srflxPresent).toBe(false)
+    expect(summarizeCandidates('').total).toBe(0)
   })
 })
 

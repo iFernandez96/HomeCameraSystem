@@ -78,6 +78,45 @@ def test_negative_frame_dim_raises():
         normalize_box(0, 0, 100, 100, -1280, 720, "p", 0.5)
 
 
+# --- non-positive dims logging (logging-plan §2 box_norm.py:37-38) ---
+
+
+def test_given_zero_frame_dim_when_normalize_then_logs_error_and_still_raises(caplog):
+    # Given a non-positive frame width, the inference loop is about to
+    # crash on the propagating ValueError; the cause must be logged at
+    # ERROR before the raise (the loop has no other record here) AND
+    # the guard must still raise (regression: don't swallow).
+    import logging
+
+    # arrange / act / assert
+    with caplog.at_level(logging.ERROR, logger="box_norm"):
+        with pytest.raises(ValueError):
+            normalize_box(0, 0, 100, 100, 0, 720, "person", 0.5)
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors, "expected an ERROR log on non-positive dims"
+    msg = errors[-1].getMessage()
+    assert "non-positive frame dimensions" in msg
+    assert "frame_w=0" in msg
+    assert "inference loop will crash" in msg
+
+
+def test_given_negative_frame_dim_when_normalize_then_logs_error_with_dims(caplog):
+    # Given a negative frame height, the ERROR line must name the
+    # offending dimension so the cause is greppable.
+    import logging
+
+    # arrange / act / assert
+    with caplog.at_level(logging.ERROR, logger="box_norm"):
+        with pytest.raises(ValueError):
+            normalize_box(0, 0, 100, 100, 1280, -720, "person", 0.5)
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors, "expected an ERROR log on negative dims"
+    msg = errors[-1].getMessage()
+    assert "frame_h=-720" in msg
+
+
 def test_score_coerced_to_float():
     """jetson-inference's d.Confidence is sometimes a numpy float —
     the dict value should always be a Python float so json.dumps

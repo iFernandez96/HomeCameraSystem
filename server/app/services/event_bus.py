@@ -6,6 +6,8 @@ import time
 import uuid
 from typing import Any, Literal, TypedDict
 
+from ..log import RateLimitedLog
+
 log = logging.getLogger(__name__)
 
 
@@ -98,7 +100,19 @@ class EventBus:
         # stalled WebSocket doesn't flood the journal — every backed-up
         # publish would fire one without this. We log on first overflow
         # then suppress until a successful put resets the flag.
+        # This dict-of-bool once-flag is the CANONICAL idiom referenced
+        # by docs/logging_plan.md §1 (mirrored by
+        # push_service._persist_warned).
         self._sub_overflow_warned: dict[int, bool] = {}
+        # iter (logging-plan §2): the persist-fail path used to log
+        # ONCE per process and then go fully silent under a SUSTAINED
+        # failure (disk stayed full → operator saw a single line then
+        # nothing). Re-log at most every 60s instead so an ongoing
+        # outage keeps a heartbeat in the journal without flooding.
+        self._persist_fail_gate = RateLimitedLog(60.0)
+        # `recent()` runs on every /api/events poll; a failing read
+        # would otherwise log on every poll. Rate-limit to once/60s.
+        self._recent_fail_gate = RateLimitedLog(60.0)
 
     def subscribe(self) -> asyncio.Queue[ServerEvent]:
         # iter-263: hard cap to defend against authed-DoS. Caller
@@ -135,11 +149,20 @@ class EventBus:
                 self._sub_overflow_warned.pop(id(q), None)
             except asyncio.QueueFull:
                 if not self._sub_overflow_warned.get(id(q)):
+                    # Include the subscriber's position in the list so
+                    # an operator can correlate WHICH consumer stalled
+                    # across multiple connected devices.
+                    try:
+                        sub_idx = self._subs.index(q)
+                    except ValueError:
+                        sub_idx = -1
                     log.warning(
-                        "event dropped: subscriber queue full (qsize=%d). "
-                        "A stalled WebSocket consumer is the usual cause; "
-                        "history still persists to SQLite, the WS will "
-                        "catch up on next successful send.",
+                        "event dropped: subscriber queue full "
+                        "(sub_index=%d qsize=%d). A stalled WebSocket "
+                        "consumer is the usual cause; history still "
+                        "persists to SQLite, the WS will catch up on "
+                        "next successful send.",
+                        sub_idx,
                         q.qsize(),
                     )
                     self._sub_overflow_warned[id(q)] = True
@@ -147,11 +170,14 @@ class EventBus:
     def _persist_event(self, event: ServerEvent) -> None:
         """iter-217: SQLite write-through. Failures are non-fatal —
         a hiccup on the events.db (disk full, locked, missing dir)
-        must NOT break the live WS fanout. Logs once per process
-        on the first failure so the journal flags the problem
-        without flooding under sustained errors. The `_persist_warned`
-        flag resets on successful insert so a transient blip
-        re-arms the warning.
+        must NOT break the live WS fanout.
+
+        Logging (logging-plan §2): re-log at most every 60s under a
+        SUSTAINED failure rather than going fully silent after the
+        first line. Each line carries the dropped event id + db path
+        so the operator can correlate "this event is missing from the
+        listing" with the write failure. The gate's window resets the
+        rhythm on a successful insert.
         """
         try:
             # Lazy import: events_db imports DetectionEventDict from
@@ -160,17 +186,22 @@ class EventBus:
             from ..config import settings
 
             insert_event(settings.events_db_path, event)
-            self._persist_warned = False
+            # Re-arm so a transient blip that recovers logs afresh on
+            # the next failure rather than waiting out the 60s window.
+            self._persist_fail_gate = RateLimitedLog(60.0)
         except Exception:
-            if not getattr(self, "_persist_warned", False):
+            if self._persist_fail_gate.should_log():
+                from ..config import settings
+
                 log.warning(
-                    "event-store write failed; WS fanout still working, "
-                    "but /api/events listing + slice-4 search will miss "
-                    "this event. Investigate events.db permissions / "
-                    "disk space.",
+                    "event-store write failed for event %s on %s; WS "
+                    "fanout still working, but /api/events listing + "
+                    "search will miss this event. Investigate events.db "
+                    "permissions / disk space.",
+                    event.get("id") if isinstance(event, dict) else None,
+                    getattr(settings, "events_db_path", None),
                     exc_info=True,
                 )
-                self._persist_warned = True
 
     def recent(self, limit: int = 100) -> list[ServerEvent]:
         """iter-218 (Feature #6 slice 3): read from SQLite instead
@@ -188,11 +219,20 @@ class EventBus:
 
             return _db_recent(settings.events_db_path, limit=limit)
         except Exception:
-            log.warning(
-                "events_db.recent() failed; returning empty list. "
-                "Investigate events.db permissions / corruption.",
-                exc_info=True,
-            )
+            # `recent()` is on the /api/events poll path — a failing
+            # read would log on EVERY poll. Rate-limit to once/60s and
+            # carry the db path + limit so the failure is actionable.
+            if self._recent_fail_gate.should_log():
+                from ..config import settings
+
+                log.warning(
+                    "events_db.recent() failed on %s (limit=%d); "
+                    "returning empty list. Investigate events.db "
+                    "permissions / corruption.",
+                    getattr(settings, "events_db_path", None),
+                    limit,
+                    exc_info=True,
+                )
             return []
 
     def reset(self) -> None:

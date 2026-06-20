@@ -281,6 +281,42 @@ def test_when_owner_moves_capture_then_file_lands_in_target_dir(
     assert (captures_root / "bob" / src_filename).is_file()
 
 
+def test_given_rename_oserror_when_moving_then_500_and_error_logged(
+    client, captures_root, monkeypatch, caplog,
+):
+    """Given the underlying os.rename fails (disk RO / unmounted),
+    When the operator moves a capture, Then the route 500s AND logs an
+    ERROR naming the src/dst — the failure was a bare swallow before."""
+    import logging
+
+    from app.routes import face as face_route
+
+    # arrange
+    src_filename = "1700000000000_evt-001.jpg"
+
+    def boom(*_a, **_k):
+        raise OSError("simulated EROFS")
+
+    monkeypatch.setattr(face_route.os, "rename", boom)
+    caplog.set_level(logging.ERROR, logger="app.routes.face")
+
+    # act
+    r = client.post(
+        "/api/face/captures/alice/{}/move".format(src_filename),
+        json={"target_name": "bob"},
+    )
+
+    # assert
+    assert r.status_code == 500
+    errors = [
+        rec for rec in caplog.records
+        if rec.levelno == logging.ERROR
+        and "move failed" in rec.getMessage()
+    ]
+    assert errors, "expected a 'move failed' ERROR"
+    assert src_filename in errors[0].getMessage()
+
+
 def test_given_collision_when_moving_then_filename_suffixed(
     client, captures_root,
 ):

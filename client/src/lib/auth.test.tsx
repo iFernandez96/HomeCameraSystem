@@ -20,6 +20,10 @@ vi.mock('./api', async () => {
 const showToast = vi.fn()
 vi.mock('./toast', () => ({
   useToast: () => ({ showToast }),
+  // useReportError pairs an error log with a toast; route it through the
+  // same showToast spy so existing error-toast assertions still hold.
+  useReportError: () => (_event: string, message: string) =>
+    showToast(message, 'error'),
 }))
 
 // Premium-launch slice (WHEP warmup auth boundary): AuthProvider now
@@ -29,6 +33,20 @@ vi.mock('./toast', () => ({
 const warmWhepConnection = vi.fn().mockResolvedValue(undefined)
 vi.mock('./webrtc', () => ({
   warmWhepConnection: () => warmWhepConnection(),
+}))
+
+// docs/logging_plan.md §2/§5 (Auth): spy on the client log shim so we
+// can pin the "non-401 /me masquerading as anon → WARN" contract.
+const logWarn = vi.fn()
+const logInfo = vi.fn()
+vi.mock('./log', () => ({
+  log: {
+    error: vi.fn(),
+    warn: (...a: unknown[]) => logWarn(...a),
+    info: (...a: unknown[]) => logInfo(...a),
+    debug: vi.fn(),
+  },
+  errFields: (e: unknown) => ({ value: String(e) }),
 }))
 
 import { HttpError } from './api'
@@ -51,6 +69,8 @@ describe('AuthProvider', () => {
     apiLogout.mockReset()
     showToast.mockReset()
     warmWhepConnection.mockReset().mockResolvedValue(undefined)
+    logWarn.mockReset()
+    logInfo.mockReset()
   })
   afterEach(() => {
     vi.clearAllMocks()
@@ -363,5 +383,50 @@ describe('AuthProvider', () => {
       expect(screen.getByTestId('state')).toHaveTextContent('authed'),
     )
     expect(warmWhepConnection).toHaveBeenCalledTimes(1)
+  })
+
+  // docs/logging_plan.md §2 (Auth): a non-401 /me error flips to anon
+  // (looks like "never logged in") but should WARN so the operator
+  // can tell a 5xx / network failure apart from a real anon state.
+  it('Given /me fails with a non-401 error, When it masquerades as anon, Then it logs a WARN (logging plan §2)', async () => {
+    // arrange
+    getMe.mockRejectedValueOnce(new HttpError('/api/auth/me', 503, ''))
+
+    // act
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('anon'),
+    )
+
+    // assert — masquerade is logged as a WARN with the status.
+    expect(logWarn).toHaveBeenCalledWith(
+      'auth:me-failed',
+      expect.objectContaining({ value: expect.stringContaining('503') }),
+    )
+  })
+
+  it('Given /me 401, When it resolves to anon, Then NO me-failed WARN fires (401 is the expected first-visit path)', async () => {
+    // arrange
+    getMe.mockRejectedValueOnce(new HttpError('/api/auth/me', 401, ''))
+
+    // act
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('anon'),
+    )
+
+    // assert — the 401 path must not raise the masquerade WARN.
+    expect(logWarn).not.toHaveBeenCalledWith(
+      'auth:me-failed',
+      expect.anything(),
+    )
   })
 })

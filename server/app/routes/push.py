@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,7 @@ from ..auth.dependencies import get_current_user, require_role
 from ..services.push_service import push_service
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 # Field length caps. Real Web-Push subscription values are well under
 # these bounds — the caps exist so a malformed/malicious payload can't
@@ -94,6 +96,14 @@ class Unsubscribe(BaseModel):
 @router.get("/push/vapid-public-key")
 async def vapid_key() -> dict[str, str]:
     if not push_service.public_key_b64:
+        # Push is fundamentally dead without the VAPID keypair: the
+        # client can't subscribe, so no detection event ever notifies.
+        # ERROR (not WARN) — this is a deploy/setup misconfig the
+        # operator must fix (gen_vapid + restart).
+        log.error(
+            "VAPID public key requested but none loaded; push is disabled "
+            "(run `python -m app.scripts.gen_vapid`)"
+        )
         raise HTTPException(
             status_code=500,
             detail="VAPID keys not generated; run `python -m app.scripts.gen_vapid`",
@@ -137,7 +147,16 @@ async def unsubscribe(
         return {"ok": False}
     owner = target.get("user_id")
     if owner is not None and owner != user:
-        # Don't leak the existence of another user's sub via 404 vs 403.
+        # Security event (audit A2): an authed device tried to remove a
+        # subscription it doesn't own — pre-fix this silently blinded the
+        # owner to all detection events. The response is a deliberate
+        # 200/{ok:false} so we don't leak the sub's existence, but the
+        # attempt MUST be visible to the operator. WARN with actor +
+        # owner only — never the endpoint bytes (push secret material).
+        log.warning(
+            "push unsubscribe denied: user %r tried to remove sub owned by %r",
+            user, owner,
+        )
         return {"ok": False}
     return {"ok": push_service.remove(payload.endpoint)}
 
@@ -239,10 +258,20 @@ async def get_known_filter_options(
     # both calls in asyncio.to_thread + run them in parallel via
     # asyncio.gather so we pay one thread-pool round-trip instead
     # of two serial ones.
-    cameras_list, persons_list = await asyncio.gather(
-        asyncio.to_thread(events_db.distinct_cameras, db_path),
-        asyncio.to_thread(events_db.distinct_persons, db_path),
-    )
+    try:
+        cameras_list, persons_list = await asyncio.gather(
+            asyncio.to_thread(events_db.distinct_cameras, db_path),
+            asyncio.to_thread(events_db.distinct_persons, db_path),
+        )
+    except Exception:
+        # The full-table SELECT DISTINCT can fail (DB locked / corrupt /
+        # path gone). Without this the picker silently 500s and the owner
+        # can't build a filter at all — name the op + db path before
+        # re-raising.
+        log.exception(
+            "known_filter_options scan failed on %s", db_path
+        )
+        raise
     cameras = set(cameras_list)
     person_names = set(persons_list)
     # Mix in the user's currently-selected filter values so editing
@@ -268,5 +297,12 @@ async def test_push() -> dict[str, object]:
             "tag": "test",
             "url": "/settings",
         }
+    )
+    # Summary so the owner can confirm the fan-out reached devices.
+    # `sent` of 0 against a non-empty sub list points at a VAPID/PEM
+    # regression; the per-sub failure detail lives in push_service.
+    log.info(
+        "test push fan-out: sent=%d of %d subscription(s)",
+        sent, len(push_service.subs),
     )
     return {"ok": True, "sent": sent}

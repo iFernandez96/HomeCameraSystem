@@ -10,7 +10,8 @@ import {
 import { Button } from '../../components/primitives/Button'
 import { useConfirm } from '../../lib/confirm'
 import { formatBytes, formatError } from '../../lib/format'
-import { useToast } from '../../lib/toast'
+import { log, errFields } from '../../lib/log'
+import { useReportError, useToast } from '../../lib/toast'
 
 // iter-293: extracted from Settings.tsx (~120 lines of inline JSX +
 // 4 destructive handlers + restore form state). Owner-only block —
@@ -28,6 +29,7 @@ import { useToast } from '../../lib/toast'
 export function DangerZone() {
   const confirm = useConfirm()
   const { showToast } = useToast()
+  const reportError = useReportError()
   // iter-237: inline restore-from-backup form. null = button view;
   // string = form open with current selected filename. iter-239
   // populates the dropdown from the live backup list.
@@ -75,7 +77,11 @@ export function DangerZone() {
         showToast('Reboot requested', 'success')
       }
     } catch (e) {
-      showToast('Reboot failed: ' + formatError(e), 'error')
+      // docs/logging_plan.md §2: reboot/backup/update/restore are the
+      // HIGHEST-consequence ops in the app and were toast-only — a
+      // failed reboot left no durable record. Pair each toast with a
+      // structured ERROR carrying the status / network reason.
+      reportError('dangerZone:reboot-failed', 'Reboot failed: ' + formatError(e), errFields(e))
     }
   }
 
@@ -104,7 +110,7 @@ export function DangerZone() {
         showToast('Backup requested', 'success')
       }
     } catch (e) {
-      showToast('Backup failed: ' + formatError(e), 'error')
+      reportError('dangerZone:backup-failed', 'Backup failed: ' + formatError(e), errFields(e))
     }
   }
 
@@ -141,7 +147,7 @@ export function DangerZone() {
         showToast('Update requested', 'success')
       }
     } catch (e) {
-      showToast('Update failed: ' + formatError(e), 'error')
+      reportError('dangerZone:update-failed', 'Update failed: ' + formatError(e), errFields(e))
     }
   }
 
@@ -175,7 +181,10 @@ export function DangerZone() {
       // Close the form on any non-error completion (stubbed or real).
       setRestorePath(null)
     } catch (e) {
-      showToast('Restore failed: ' + formatError(e), 'error')
+      // NEVER log `path` raw — it's user-typed and the server's
+      // traversal defense owns rejecting it; the status carries the
+      // diagnostic. Log only the error shape.
+      reportError('dangerZone:restore-failed', 'Restore failed: ' + formatError(e), errFields(e))
     } finally {
       setRestoreSubmitting(false)
     }
@@ -259,7 +268,14 @@ export function DangerZone() {
                   setRestorePath(r.items[0].filename)
                 }
               })
-              .catch(() => {
+              .catch((e) => {
+                // docs/logging_plan.md §2: the empty-array fallback
+                // renders "No backups found" — a silent failure looks
+                // identical to a genuinely empty backup folder, so the
+                // operator can't tell a misconfig from "nothing saved
+                // yet". Log the status. Toast-only would be noisy here
+                // (the form is mid-open), so this is log-only ERROR.
+                log.error('dangerZone:list-backups-failed', errFields(e))
                 setBackupList([])
               })
           }}

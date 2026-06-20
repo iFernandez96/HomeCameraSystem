@@ -9,14 +9,38 @@ import re
 import time as _time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives import serialization
 from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
 from ..config import settings
+from ..log import RateLimitedLog
 
 log = logging.getLogger(__name__)
+
+# Rate-limit the "no VAPID key, skipping push" line: it fires on every
+# detection event when keys aren't loaded. INFO (so it's visible at the
+# default level) but gated to once/5min so a busy day doesn't flood.
+_no_key_skip_gate = RateLimitedLog(300.0)
+
+
+def _endpoint_host(endpoint: object) -> str:
+    """Extract just the HOST of a push endpoint for logging.
+
+    PRIVACY/SECURITY (logging-plan §4): a push endpoint URL carries a
+    per-device secret token in its PATH (e.g.
+    ``https://fcm.googleapis.com/fcm/send/<SECRET>``). NEVER log the
+    full endpoint. The host alone (``fcm.googleapis.com``,
+    ``updates.push.services.mozilla.com``) is enough to tell which push
+    gateway is failing without leaking the device secret.
+    """
+    try:
+        host = urlparse(str(endpoint)).netloc
+    except (ValueError, TypeError):
+        return "?"
+    return host or "?"
 
 
 # Field length caps for persisted subscriptions. Mirrored on the
@@ -260,6 +284,28 @@ class PushService:
         except (OSError, json.JSONDecodeError) as e:
             log.warning("failed to load push subs from %s: %s", self.persist_path, e)
             self.subs = []
+            # On a JSON parse failure preserve the corrupt file as
+            # `<path>.corrupt` BEFORE the next `_save_subs` overwrites
+            # it with `[]` — otherwise a single bad write silently
+            # destroys every device subscription with no forensic copy.
+            # OSError (file vanished / unreadable) has nothing to
+            # preserve, so only rename on a JSON decode failure.
+            if isinstance(e, json.JSONDecodeError):
+                corrupt = self.persist_path.with_suffix(
+                    self.persist_path.suffix + ".corrupt"
+                )
+                try:
+                    os.replace(str(self.persist_path), str(corrupt))
+                    log.warning(
+                        "preserved corrupt push subs as %s for forensics",
+                        corrupt,
+                    )
+                except OSError as re_err:
+                    log.warning(
+                        "could not preserve corrupt push subs %s: %s",
+                        self.persist_path,
+                        re_err,
+                    )
 
     def _save_subs(self) -> None:
         # iter-264 (security-auditor C2): pre-create the temp file
@@ -285,6 +331,18 @@ class PushService:
             os.replace(tmp, self.persist_path)
         except OSError as e:
             log.warning("failed to save push subs to %s: %s", self.persist_path, e)
+            # The `.tmp` may be half-written and left behind on a failed
+            # write/replace — clean it up so it doesn't accumulate.
+            try:
+                tmp = self.persist_path.with_suffix(self.persist_path.suffix + ".tmp")
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError as cleanup_err:
+                log.debug(
+                    "could not clean up push subs temp %s: %s",
+                    tmp,
+                    cleanup_err,
+                )
 
     # --- VAPID -----------------------------------------------------------
 
@@ -404,9 +462,16 @@ class PushService:
         SSL, etc.) leave subs in the registry."""
         if self.private_pem is None:
             # `load_keys()` already warned once on startup if keys were
-            # missing — don't repeat the warning on every detection
-            # event (would be a few log lines/minute on a busy day).
-            log.debug("no VAPID key loaded; skipping push")
+            # missing — but a DEBUG line here is invisible at the INFO
+            # default, so "push silently does nothing" looks healthy.
+            # INFO, rate-limited to once/5min so a busy day doesn't
+            # flood while still surfacing the misconfig.
+            if _no_key_skip_gate.should_log():
+                log.info(
+                    "no VAPID key loaded; skipping push to %d subscriber(s) "
+                    "(run `python -m app.scripts.gen_vapid`)",
+                    len(subs),
+                )
             return 0
         if not subs:
             return 0
@@ -423,7 +488,13 @@ class PushService:
             else self.private_pem.decode()
         )
 
-        def send_one(sub: dict[str, Any]) -> tuple[bool, int | None]:
+        # Track which transient-exception types we saw so we can
+        # escalate ONCE when EVERY sub failed the same way (see below).
+        transient_exc_types: list[str] = []
+
+        def send_one(sub: dict[str, Any]) -> tuple[bool, int | None, str | None]:
+            # Host-only — NEVER the full endpoint (carries device secret).
+            host = _endpoint_host(sub.get("endpoint"))
             try:
                 webpush(
                     subscription_info=sub,
@@ -431,11 +502,40 @@ class PushService:
                     vapid_private_key=vapid_key,
                     vapid_claims={"sub": settings.vapid_subject},
                 )
-                return True, None
+                return True, None, None
             except WebPushException as e:
                 code = e.response.status_code if e.response is not None else None
-                log.warning("push %s: %s", code, str(e)[:200])
-                return False, code
+                # Classify the gateway response so the operator knows
+                # whether this is "device went away" (prune, benign) vs
+                # "our VAPID auth is wrong" (every push will fail until
+                # fixed) vs "we're being rate-limited".
+                if code in (404, 410):
+                    log.info(
+                        "push to %s: %s — subscription gone, will prune",
+                        host,
+                        code,
+                    )
+                elif code in (401, 403):
+                    # VAPID misconfig is NOT per-device — it dooms every
+                    # push. WARN loudly so it's not mistaken for a dead
+                    # sub. (str(e) is the gateway's message, no secret.)
+                    log.warning(
+                        "push to %s: %s — VAPID auth rejected "
+                        "(misconfigured keys / subject?); push will keep "
+                        "failing until fixed: %s",
+                        host,
+                        code,
+                        str(e)[:200],
+                    )
+                elif code == 429:
+                    log.warning(
+                        "push to %s: 429 — rate-limited by gateway: %s",
+                        host,
+                        str(e)[:200],
+                    )
+                else:
+                    log.warning("push to %s: %s: %s", host, code, str(e)[:200])
+                return False, code, None
             except Exception as e:
                 # iter-165: any non-WebPushException (ConnectionError,
                 # ssl.SSLError, OSError, a buggy pywebpush release raising
@@ -444,28 +544,52 @@ class PushService:
                 # HTTP 500 on `POST /api/push/test` — violating the
                 # documented `{"ok": True, "sent": N}` contract that
                 # the client toast (iter-141) consumes. Catch here, log
-                # once with the exception type so a class of failure is
-                # diagnosable, count as not-sent. Returning code=None
-                # (not 404/410) means the sub stays in the registry —
-                # transient errors must NOT prune subscriptions, only
-                # explicit 404/410 from the push gateway should.
+                # with the exception type + endpoint host so a class of
+                # failure is diagnosable, count as not-sent. Returning
+                # code=None (not 404/410) means the sub stays in the
+                # registry — transient errors must NOT prune
+                # subscriptions, only explicit 404/410 should.
+                exc_type = type(e).__name__
                 log.warning(
-                    "push transient error (%s): %s",
-                    type(e).__name__,
+                    "push to %s transient error (%s): %s",
+                    host,
+                    exc_type,
                     str(e)[:200],
                 )
-                return False, None
+                return False, None, exc_type
 
         results = await asyncio.gather(
             *(asyncio.to_thread(send_one, s) for s in subs)
         )
         sent = 0
         dead: list[dict[str, Any]] = []
-        for sub, (ok, code) in zip(subs, results):
+        for sub, (ok, code, exc_type) in zip(subs, results):
             if ok:
                 sent += 1
             elif code in (404, 410):
                 dead.append(sub)
+            elif exc_type is not None:
+                transient_exc_types.append(exc_type)
+        # Escalate-once: a regression that looks "transient" forever —
+        # e.g. a malformed PEM making every webpush raise the SAME
+        # exception type — is otherwise indistinguishable from real
+        # network blips. If we sent NOTHING and EVERY sub failed with
+        # the SAME transient exc type, log an ERROR naming it so the
+        # operator sees "this is systemic, not a blip".
+        if (
+            sent == 0
+            and not dead
+            and len(transient_exc_types) == len(subs)
+            and len(subs) > 0
+            and len(set(transient_exc_types)) == 1
+        ):
+            log.error(
+                "push: ALL %d deliveries failed with the same transient "
+                "error (%s) — this looks systemic (e.g. a VAPID/PEM "
+                "regression), not a transient network blip",
+                len(subs),
+                transient_exc_types[0],
+            )
         if dead:
             for d in dead:
                 # Mutating self.subs (not the local `subs` list) is
@@ -474,6 +598,14 @@ class PushService:
                 # discovered them.
                 if d in self.subs:
                     self.subs.remove(d)
+            # Dead-sub prune AUDIT: subscriptions otherwise vanish with
+            # no trace. INFO with the count + hosts so an operator can
+            # explain "why did my phone stop getting notifications".
+            log.info(
+                "push: pruned %d dead subscription(s): %s",
+                len(dead),
+                ", ".join(_endpoint_host(d.get("endpoint")) for d in dead),
+            )
             self._save_subs()
         return sent
 

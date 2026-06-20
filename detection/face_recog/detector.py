@@ -123,8 +123,14 @@ class Cv2HaarDetector(object):
             return []
         try:
             gray = self._cv2.cvtColor(rgb_image, self._cv2.COLOR_RGB2GRAY)
-        except Exception as e:
-            log.debug("cv2 RGB→GRAY convert failed: %s", e)
+        except Exception:
+            # Colour-convert failed (malformed frame / dtype mismatch):
+            # the fallback detector returns zero faces, so always-on
+            # capture silently stops. WARNING + stack (3.6-safe).
+            log.exception(
+                "cv2 RGB->GRAY convert failed - no faces detected this "
+                "frame (always-on capture skipped)"
+            )
             return []
         try:
             rects = self._cascade.detectMultiScale(
@@ -133,8 +139,13 @@ class Cv2HaarDetector(object):
                 minNeighbors=_MIN_NEIGHBORS,
                 minSize=_MIN_SIZE,
             )
-        except Exception as e:
-            log.debug("cv2 detectMultiScale failed: %s", e)
+        except Exception:
+            # Haar detect crashed: same consequence as above - zero
+            # faces, capture queue not populated. WARNING + stack.
+            log.exception(
+                "cv2 detectMultiScale failed - no faces detected this "
+                "frame (always-on capture skipped)"
+            )
             return []
         # cv2 returns a numpy array of (x, y, w, h) per face. Convert
         # to face_recognition's (top, right, bottom, left) shape.

@@ -224,3 +224,87 @@ async def test_given_subscriber_unsubscribed_then_a_new_subscribe_succeeds(bus):
         bus.unsubscribe(q)
     # silence unused-import lint
     _ = SubscriberCapReached
+
+
+# --- logging-plan §5 #6: persist re-logs every 60s under sustained failure ---
+
+async def test_given_sustained_persist_failure_then_relogs_after_window_not_suppressed(
+    bus: EventBus, monkeypatch, caplog
+):
+    """Given the events_db write keeps failing (disk stays full), When
+    events are published across a fake clock spanning the 60s gate
+    window, Then the warning is NOT fully suppressed after the first
+    line — it re-logs once the window elapses. This is the regression
+    over the old once-per-process flag that went silent forever."""
+    import logging as _logging
+    import app.services.events_db as events_db_mod
+    import app.log as applog_mod
+
+    # arrange — every insert raises (sustained disk-full).
+    def _raise(*_a, **_kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(events_db_mod, "insert_event", _raise)
+
+    # Fake monotonic clock INJECTED into the gate — NOT patched onto the
+    # global `time` module (doing that corrupts asyncio's event-loop
+    # clock and breaks every subsequent async test).
+    now = {"t": 1000.0}
+    bus._persist_fail_gate = applog_mod.RateLimitedLog(60.0, clock=lambda: now["t"])
+
+    # act / assert
+    with caplog.at_level(_logging.WARNING, logger="app.services.event_bus"):
+        # First failure at t=1000 → logs once.
+        await bus.publish(make_detection_event("person", 0.5, []))
+        # Still inside the window (t=1030) → suppressed.
+        now["t"] = 1030.0
+        await bus.publish(make_detection_event("person", 0.5, []))
+        # Window elapsed (t=1061) → re-logs.
+        now["t"] = 1061.0
+        await bus.publish(make_detection_event("person", 0.5, []))
+
+    persist_warns = [
+        r for r in caplog.records
+        if "event-store write failed" in r.getMessage()
+    ]
+    # Exactly two lines: t=1000 + t=1061. The t=1030 publish is
+    # suppressed (still inside the window) — proving rate-limiting,
+    # not full suppression.
+    assert len(persist_warns) == 2, (
+        "expected 2 re-logs across the 60s window, got "
+        "{0}".format(len(persist_warns))
+    )
+
+
+async def test_given_persist_failure_then_warning_names_event_id_and_db_path(
+    bus: EventBus, monkeypatch, caplog
+):
+    """The persist-fail line must carry the dropped event id + db path
+    so the operator can correlate a missing event with the write
+    failure."""
+    import logging as _logging
+    import app.services.events_db as events_db_mod
+    import app.log as applog_mod
+    from app.config import settings
+
+    # arrange
+    def _raise(*_a, **_kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(events_db_mod, "insert_event", _raise)
+    bus._persist_fail_gate = applog_mod.RateLimitedLog(60.0)
+    evt = make_detection_event("person", 0.5, [])
+
+    # act
+    with caplog.at_level(_logging.WARNING, logger="app.services.event_bus"):
+        await bus.publish(evt)
+
+    # assert — id + db path present.
+    warns = [
+        r for r in caplog.records
+        if "event-store write failed" in r.getMessage()
+    ]
+    assert warns
+    msg = warns[0].getMessage()
+    assert evt["id"] in msg
+    assert str(settings.events_db_path) in msg

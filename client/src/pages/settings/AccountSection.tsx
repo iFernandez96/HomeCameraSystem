@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getServerVersion } from '../../lib/api'
+import { log, errFields } from '../../lib/log'
 import { useAuth } from '../../lib/auth'
 import { useCatsEnabled } from '../../lib/catPref'
 import { useConfirm } from '../../lib/confirm'
@@ -48,9 +49,12 @@ export function AccountSection() {
         if (cancelled) return
         setServerVersion(r.version)
       })
-      .catch(() => {
-        // Leave null — UI shows em-dash. Don't surface a toast;
-        // version is informational and a fail-quiet UX is fine.
+      .catch((e) => {
+        // docs/logging_plan.md §2: version is informational and stays
+        // fail-quiet (em-dash) in the UI, but log at DEBUG so an
+        // always-failing version probe is diagnosable without adding
+        // noise at the default level. Logged before the cancelled guard.
+        log.debug('account:version-fetch-failed', errFields(e))
       })
     return () => {
       cancelled = true

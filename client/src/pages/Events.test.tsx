@@ -72,6 +72,10 @@ vi.mock('../lib/confirm', () => ({
 const showToast = vi.fn()
 vi.mock('../lib/toast', () => ({
   useToast: () => ({ showToast }),
+  // useReportError pairs an error log with a toast; route it through the
+  // same showToast spy so existing error-toast assertions still hold.
+  useReportError: () => (_event: string, message: string) =>
+    showToast(message, 'error'),
 }))
 
 // iter-326b: Events now reads `?person=` via useSearchParams() to
@@ -91,11 +95,28 @@ vi.mock('react-router-dom', async () => {
   }
 })
 
+// docs/logging_plan.md §2/§5 (Events): spy on the client log shim so
+// the load-fail / loadMore-fail tests can assert a structured ERROR
+// with the op name fires at the swallow site.
+const logError = vi.fn()
+const logWarn = vi.fn()
+vi.mock('../lib/log', () => ({
+  log: {
+    error: (...a: unknown[]) => logError(...a),
+    warn: (...a: unknown[]) => logWarn(...a),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+  errFields: (e: unknown) => ({ value: String(e) }),
+}))
+
 import { Events } from './Events'
 
 describe('Events page', () => {
   beforeEach(() => {
     _searchSeed = ''
+    logError.mockReset()
+    logWarn.mockReset()
     fetchEvents.mockReset()
     searchEvents.mockReset()
     getEventCountsByDay.mockReset().mockResolvedValue({ counts: {} })
@@ -277,6 +298,26 @@ describe('Events page', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/could not load events/i),
     )
     expect(screen.getByText(/network down/)).toBeInTheDocument()
+  })
+
+  // docs/logging_plan.md §2/§5 (Events): the initial-load failure must
+  // log a structured ERROR (op name) at the swallow site — not just
+  // surface the ErrorState UI.
+  it('given the initial fetch fails, when the ErrorState surfaces, then a structured ERROR is logged with the op name (logging plan §2)', async () => {
+    // arrange
+    fetchEvents.mockRejectedValueOnce(new Error('network down'))
+
+    // act
+    render(<Events />)
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/could not load events/i),
+    )
+
+    // assert — load-failed ERROR carrying the fetchEvents op name.
+    expect(logError).toHaveBeenCalledWith(
+      'events:load-failed',
+      expect.objectContaining({ op: 'fetchEvents' }),
+    )
   })
 
   it('retry button retries the fetch and renders results on success', async () => {

@@ -97,9 +97,12 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     )
     // React itself logs the error too; we just want to confirm our
-    // componentDidCatch-side log fired with the expected prefix.
+    // componentDidCatch-side log fired. ErrorBoundary now routes through
+    // the structured logger (log.error), which emits
+    // console.error('[errorBoundary:caught]', fields).
     const matchingCall = errorSpy.mock.calls.find(
-      (args) => typeof args[0] === 'string' && args[0].startsWith('ErrorBoundary caught'),
+      (args) =>
+        typeof args[0] === 'string' && args[0].includes('errorBoundary:caught'),
     )
     expect(matchingCall).toBeTruthy()
   })

@@ -151,3 +151,63 @@ def test_given_truncated_jpeg_when_build_export_zip_then_skipped_not_500(tmp_pat
     assert summary["count"] == 1
     assert summary["skipped"] == 1
     assert len(zip_bytes) > 0
+
+
+# --- logging-plan §5 #13: ValueError from letterbox skipped, not 500 ---
+
+def test_given_zero_dim_image_when_letterbox_then_raises_valueerror():
+    """Given a zero-dimension image, When letterbox runs, Then it
+    raises ValueError. Pins the exact trigger that build_export_zip
+    must now catch (was uncaught → 500'd the whole ZIP)."""
+    # arrange — we can't Image.new a 0-dim canvas, so craft an RGB
+    # image then force its .size to a degenerate 0xN (PIL stores the
+    # tuple in the private `_size` attribute that `.size` reads).
+    img = Image.new("RGB", (1, 1), (0, 0, 0))
+    img._size = (0, 10)
+
+    # act / assert
+    with pytest.raises(ValueError):
+        letterbox(img, 224)
+
+
+def test_given_image_that_letterboxes_to_valueerror_when_build_then_skipped_not_500(
+    tmp_path, monkeypatch, caplog
+):
+    """Given an image whose letterbox raises ValueError (a zero-dim
+    crop the worker wrote mid-race), When build_export_zip runs, Then
+    that one image is skipped + logged and the rest of the ZIP still
+    builds — NOT a 500 that loses every valid crop."""
+    import logging as _logging
+
+    # arrange — two valid JPEGs; force letterbox to raise ValueError
+    # for the SECOND one only.
+    good = tmp_path / "alice" / "1700000000000_evt-a.jpg"
+    bad = tmp_path / "alice" / "1700000001000_evt-b.jpg"
+    _make_jpeg(good, 50, 50)
+    _make_jpeg(bad, 50, 50)
+    _make_sidecar(good.with_suffix(".json"), predicted_name="alice")
+    _make_sidecar(bad.with_suffix(".json"), predicted_name="alice")
+
+    real_letterbox = training_export.letterbox
+    seen = {"n": 0}
+
+    def _letterbox(img, size, **kw):
+        seen["n"] += 1
+        if seen["n"] == 2:
+            raise ValueError("non-positive image dimensions: 0x10")
+        return real_letterbox(img, size, **kw)
+
+    monkeypatch.setattr(training_export, "letterbox", _letterbox)
+
+    # act
+    with caplog.at_level(_logging.WARNING, logger="app.services.training_export"):
+        zip_bytes, summary = build_export_zip(tmp_path, kind="face", size=224)
+
+    # assert — one kept, one skipped, no exception escaped.
+    assert summary["count"] == 1
+    assert summary["skipped"] == 1
+    assert len(zip_bytes) > 0
+    warns = [
+        r for r in caplog.records if "bad image" in r.getMessage()
+    ]
+    assert warns, "expected a WARN naming the skipped bad image"

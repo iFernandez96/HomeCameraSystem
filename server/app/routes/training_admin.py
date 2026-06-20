@@ -107,7 +107,10 @@ def _purge_dir(target: Path) -> int:
     "/training/captures",
     dependencies=[Depends(require_role("owner"))],
 )
-async def delete_training_captures(name: str) -> dict:
+async def delete_training_captures(
+    name: str,
+    user: str = Depends(get_current_user),
+) -> dict:
     """Purge every JPEG + sidecar for `name` under both
     `face_captures_dir/<name>/` AND `person_captures_dir/<name>/`.
     Returns `{"ok": True, "deleted": <count>}`. 404 if NEITHER
@@ -122,6 +125,12 @@ async def delete_training_captures(name: str) -> dict:
     face_target = _resolve_capture_subdir(settings.face_captures_dir, name)
     person_target = _resolve_capture_subdir(settings.person_captures_dir, name)
     if face_target is None and person_target is None:
+        # Both resolves escaped the root — anomalous given _NAME_RE
+        # already passed. Security-adjacent; WARN.
+        log.warning(
+            "training purge rejected: path escape for name %r (actor=%s)",
+            name, user,
+        )
         raise HTTPException(status_code=404, detail="not found")
 
     face_exists = face_target is not None and face_target.is_dir()
@@ -134,6 +143,13 @@ async def delete_training_captures(name: str) -> dict:
         deleted += _purge_dir(face_target)  # type: ignore[arg-type]
     if person_exists:
         deleted += _purge_dir(person_target)  # type: ignore[arg-type]
+    # GDPR / right-to-erasure audit: a household member's training crops
+    # were purged. Record actor + which name + count + which trees, so
+    # there's a durable trail the data subject's request was honored.
+    log.info(
+        "training captures purged: name=%r deleted=%d face=%s person=%s actor=%s",
+        name, deleted, face_exists, person_exists, user,
+    )
     return {"ok": True, "deleted": deleted}
 
 
@@ -183,11 +199,18 @@ async def post_consent(
         raise HTTPException(status_code=404, detail="not found")
     target = _consent_path(name)
     if target is None:
+        log.warning(
+            "consent write rejected: path escape for name %r (actor=%s)",
+            name, user,
+        )
         raise HTTPException(status_code=404, detail="not found")
     parent = target.parent
     try:
         parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    except OSError as e:
+        log.error(
+            "consent write: mkdir failed for name %r: %s", name, e
+        )
         raise HTTPException(status_code=500, detail="could not create dir")
 
     record = {
@@ -226,6 +249,13 @@ async def post_consent(
     except OSError as e:
         log.warning("training_admin: consent write failed for %s: %s", name, e)
         raise HTTPException(status_code=500, detail="write failed")
+    # Legal-record audit: consent was granted/revoked for a household
+    # member. Record actor + name + grant state + which wording version,
+    # so the household has a durable trail of who agreed to what, when.
+    log.info(
+        "consent recorded: name=%r granted=%s version=%r actor=%s",
+        name, body.granted, body.consent_text_version, user,
+    )
     return record
 
 
@@ -252,9 +282,18 @@ async def get_consent(name: str) -> dict:
         with target.open("rb") as f:
             data = f.read(64 * 1024)  # bounded read; consent records are tiny
         parsed = json.loads(data)
-    except (OSError, ValueError, json.JSONDecodeError):
+    except OSError as e:
+        log.warning("consent read failed for %r: %s", name, e)
+        return default
+    except (ValueError, json.JSONDecodeError) as e:
+        # Corrupt/truncated consent.json is a legal-record integrity
+        # problem (tamper or partial write) — the route falls back to
+        # default-deny, which silently flips a "granted" record to
+        # denied. WARN so the operator can investigate.
+        log.warning("consent record corrupt for %r: %s", name, e)
         return default
     if not isinstance(parsed, dict):
+        log.warning("consent record not a JSON object for %r", name)
         return default
     # Validate field shapes; fall back to default per field. This is
     # the same defensive pattern as `face.py::_read_sidecar`.

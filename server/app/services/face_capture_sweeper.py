@@ -45,8 +45,21 @@ def sweep_old_face_captures(retention_days: int | None = None) -> int:
         try:
             from .detection_config import detection_config as _dc
             retention_days = _dc.get().face_capture_retention_days
-        except Exception:
+        except Exception as e:
+            # The user's live face-capture retention setting could not
+            # be resolved — the sweep silently falls back to the 30-day
+            # default, IGNORING their Settings choice. WARN with the
+            # reason + fallback so the discrepancy is visible (mirrors
+            # recording_service.sweep_old_clips).
             retention_days = 30
+            log.warning(
+                "face_capture_sweeper: could not resolve retention "
+                "config (%s: %s); falling back to %d days — user's "
+                "Settings choice is being ignored",
+                type(e).__name__,
+                e,
+                retention_days,
+            )
     if retention_days <= 0:
         log.warning(
             "face_capture_retention_days=%d skipped sweep; manual deletion required",

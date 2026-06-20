@@ -268,7 +268,7 @@ def test_publish_writes_to_both_deque_and_events_db():
     e = make_detection_event(
         label="person", score=0.91, boxes=[], camera_id="cam1"
     )
-    asyncio.get_event_loop().run_until_complete(event_bus.publish(e))
+    asyncio.run(event_bus.publish(e))
 
     # Deque-side check: existing recent() reads from the in-memory deque.
     items = event_bus.recent(limit=10)
@@ -297,7 +297,7 @@ def test_publish_persists_all_event_fields():
         person_name="alice",
         clip_url="/api/events/abc/clip",
     )
-    asyncio.get_event_loop().run_until_complete(event_bus.publish(e))
+    asyncio.run(event_bus.publish(e))
 
     db_items = events_db.recent(settings.events_db_path, limit=10)
     matches = [item for item in db_items if item["id"] == e["id"]]
@@ -334,7 +334,7 @@ def test_publish_does_not_raise_when_events_db_insert_fails(monkeypatch):
     q = event_bus.subscribe()
     try:
         # Must NOT raise.
-        asyncio.get_event_loop().run_until_complete(event_bus.publish(e))
+        asyncio.run(event_bus.publish(e))
         # Live subscriber still received the event — fanout path
         # is what matters; persistence is best-effort.
         delivered = q.get_nowait()
@@ -1017,3 +1017,196 @@ def test_given_limit_default_when_route_called_then_returns_at_most_100_items(cl
     body = r.json()
     assert len(body["items"]) == 100
     assert body["total"] == 150
+
+
+# iter-logging (docs/logging_plan.md §2 "Detection / events" + §5 #7/#8):
+# the WS auth gate must log every rejection branch at WARNING (it was
+# silent today while the origin gate logged — an asymmetry that hid all
+# WS auth rejections), and a DB read failure in /events/search must
+# re-raise but log the operation + filter params. Both tests assert NO
+# token / cookie bytes leak into the captured log.
+
+import logging as _logging
+
+
+def _mint_access_cookie(client_anon: TestClient, username: str) -> str:
+    """arrange helper: seed a user + set a valid access cookie, returning
+    the raw token (so a negative test can assert it never appears in the
+    log)."""
+    from app.auth import passwords, tokens, users_db
+    from app.config import settings
+
+    users_db.init_db(settings.users_db_path)
+    try:
+        users_db.create_user(
+            settings.users_db_path,
+            username,
+            passwords.hash_password("p"),
+            role="admin",
+        )
+    except Exception:
+        pass
+    token = tokens.issue(username, "access")
+    client_anon.cookies.set(
+        "homecam_access", token, domain="testserver", path="/api"
+    )
+    return token
+
+
+def test_given_no_cookie_when_ws_handshake_then_auth_rejection_logged_at_warning(
+    client_anon: TestClient, caplog
+):
+    """Given an authenticated origin but no access cookie, When the WS
+    handshake runs, Then the no-cookie auth branch logs a WARNING."""
+    # arrange — same-origin so the origin gate passes; no cookie set.
+    with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
+        # act
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client_anon.websocket_connect(
+                "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
+            ):
+                pass
+
+    # assert
+    assert exc.value.code == 1008
+    warnings = [r.getMessage() for r in caplog.records
+                if r.levelno == _logging.WARNING]
+    assert any("auth rejected" in m and "no cookie" in m for m in warnings)
+
+
+def test_given_garbage_cookie_when_ws_handshake_then_invalid_token_branch_logged(
+    client_anon: TestClient, caplog
+):
+    """Given a present-but-garbage access cookie, When the WS handshake
+    decodes it, Then the invalid-token branch logs a WARNING and the
+    cookie bytes never appear in the log."""
+    # arrange — attach the cookie via the Cookie HEADER (the httpx jar's
+    # .set(domain/path) does not reach the WS handshake in this TestClient).
+    garbage = "not-a-real-jwt-deadbeef"
+    headers = dict(_SAME_ORIGIN_HEADERS)
+    headers["Cookie"] = "homecam_access=" + garbage
+
+    with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
+        # act
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client_anon.websocket_connect(
+                "/api/events/ws", headers=headers
+            ):
+                pass
+
+    # assert
+    assert exc.value.code == 1008
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("auth rejected" in m and "invalid" in m for m in msgs)
+    # guardrail §4: NEVER log the cookie / token bytes.
+    assert all(garbage not in m for m in msgs)
+
+
+def test_given_empty_sub_token_when_ws_handshake_then_malformed_sub_branch_logged(
+    client_anon: TestClient, caplog
+):
+    """Given a signature-valid access token whose `sub` claim is empty,
+    When the WS handshake validates the claim, Then the malformed-sub
+    branch logs a WARNING."""
+    # arrange — mint a token with an empty sub: it decodes (valid sig +
+    # kind) but fails the `isinstance(sub, str) and sub` check.
+    from app.auth import tokens
+
+    bad_sub_token = tokens.issue("", "access")
+    headers = dict(_SAME_ORIGIN_HEADERS)
+    headers["Cookie"] = "homecam_access=" + bad_sub_token
+
+    with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
+        # act
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client_anon.websocket_connect(
+                "/api/events/ws", headers=headers
+            ):
+                pass
+
+    # assert
+    assert exc.value.code == 1008
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("auth rejected" in m and "malformed sub" in m for m in msgs)
+    assert all(bad_sub_token not in m for m in msgs)
+
+
+def test_given_deleted_user_token_when_ws_handshake_then_user_row_gone_logged(
+    client_anon: TestClient, caplog
+):
+    """Given a TTL-valid token whose user row was deleted, When the WS
+    handshake looks the user up, Then the user-row-gone branch logs a
+    WARNING and the token bytes never appear in the log."""
+    # arrange
+    import sqlite3
+    from app.config import settings
+
+    token = _mint_access_cookie(client_anon, "ghostlog")
+    with sqlite3.connect(settings.users_db_path) as conn:
+        conn.execute("DELETE FROM users WHERE username = ?", ("ghostlog",))
+        conn.commit()
+    headers = dict(_SAME_ORIGIN_HEADERS)
+    headers["Cookie"] = "homecam_access=" + token
+
+    with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
+        # act
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client_anon.websocket_connect(
+                "/api/events/ws", headers=headers
+            ):
+                pass
+
+    # assert
+    assert exc.value.code == 1008
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("auth rejected" in m and "user row gone" in m for m in msgs)
+    # the sub username is safe (already in the DB), but the token bytes
+    # must never leak.
+    assert all(token not in m for m in msgs)
+
+
+def test_given_db_read_fails_when_search_called_then_reraises_and_logs_op_and_params(
+    client, monkeypatch, caplog
+):
+    """Given the sqlite search helper raises, When /api/events/search is
+    called, Then the route still 500s AND logs the operation + every
+    filter param at exception level (with no token bytes)."""
+    # arrange — patch events_db.search to raise a DB-style error.
+    from app.services import events_db
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(events_db, "search", _boom)
+
+    # A non-raising client so the 500 RESPONSE is observable (the default
+    # TestClient re-raises server exceptions into the test instead). Carry
+    # the authed cookies from the `client` fixture so the route's auth gate
+    # passes and we reach the search handler.
+    from starlette.testclient import TestClient as _TestClient
+    from app.main import app as _app
+
+    non_raising = _TestClient(_app, raise_server_exceptions=False)
+    non_raising.cookies.update(client.cookies)
+
+    with caplog.at_level(_logging.ERROR, logger="app.routes.events"):
+        # act — a distinctive camera_id so we can assert it surfaced.
+        r = non_raising.get(
+            "/api/events/search?camera_id=cam_sentinel_42&label=person"
+        )
+
+    # assert — behaviour unchanged: the route still 500s.
+    assert r.status_code == 500
+    records = [
+        r for r in caplog.records
+        if r.levelno >= _logging.ERROR and "events_db.search failed" in r.getMessage()
+    ]
+    assert records, "search DB failure must log at ERROR/EXCEPTION"
+    msg = records[0].getMessage()
+    # operation + identifying filter params present.
+    assert "cam_sentinel_42" in msg
+    assert "person" in msg
+    # the stack was captured (log.exception).
+    assert records[0].exc_info is not None
+    # guardrail §4: no cookie header value should appear in the log.
+    assert "homecam_access" not in msg

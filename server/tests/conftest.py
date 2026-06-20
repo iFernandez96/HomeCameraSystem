@@ -204,3 +204,20 @@ def _reset_detection_config(tmp_path):
     yield
     detection_config.path = original_path
     detection_config.config = original_config
+
+
+@pytest.fixture(autouse=True)
+def _reset_timelapse_state():
+    """The timelapse route tracks background-build status in module-global
+    dicts (control._TIMELAPSE_STATUS / _TIMELAPSE_TASKS). Without a reset,
+    a build started by one test (e.g. the auth-gating POST to
+    /api/system/timelapse) leaves a stale `building` entry — then a later
+    test's de-dupe guard ("already building") skips its own build and its
+    status poll never settles. Clear before AND after each test."""
+    from app.routes import control
+
+    control._TIMELAPSE_STATUS.clear()
+    control._TIMELAPSE_TASKS.clear()
+    yield
+    control._TIMELAPSE_STATUS.clear()
+    control._TIMELAPSE_TASKS.clear()

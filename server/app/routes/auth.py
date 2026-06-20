@@ -31,6 +31,7 @@ dummy hash is precomputed at module import in
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Optional
 
@@ -47,6 +48,10 @@ from ..auth.dependencies import (
     require_role,
 )
 from ..config import settings
+from ..log import auth_rejected
+
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -133,10 +138,25 @@ def login(body: LoginIn, response: Response) -> LoginOut:
         # against the dummy hash so wall-clock for "no such user"
         # matches "wrong password" — kills username enumeration.
         passwords.verify_password(body.password, passwords.dummy_hash())
+        # WARN (tailnet auth signal). The reason token says "no such
+        # user" for the operator's logs ONLY — the wire response stays
+        # the indistinguishable "invalid credentials" so the timing-
+        # oracle defense isn't undone. NEVER log body.password.
+        auth_rejected(
+            log, "POST", "/api/auth/login", "login failed: no such user",
+            sub=body.username, cookie_present=False,
+        )
         raise HTTPException(status_code=401, detail="invalid credentials")
     if not passwords.verify_password(body.password, user["password_hash"]):
+        auth_rejected(
+            log, "POST", "/api/auth/login", "login failed: bad password",
+            sub=body.username, cookie_present=False,
+        )
         raise HTTPException(status_code=401, detail="invalid credentials")
     _set_session_cookies(response, user["username"], user["role"])
+    log.info(
+        "login ok: user=%r role=%r", user["username"], user["role"],
+    )
     return LoginOut(user=UserOut(username=user["username"], role=user["role"]))
 
 
@@ -153,20 +173,42 @@ def refresh(
     # debugging but the client never branches on the detail string,
     # and uniform messaging is friendlier to the operator who's
     # tailing logs trying to spot real failures vs idle expirations.
+    # The WIRE response stays a uniform "session expired" (the client
+    # never branches on the detail). The operator's LOG distinguishes
+    # the three reasons so a real failure (deleted-user, bad-sig) is
+    # separable from a benign idle expiry. All WARN (auth signal).
     if not homecam_refresh:
+        auth_rejected(
+            log, "POST", "/api/auth/refresh", "refresh: no cookie",
+            cookie_present=False,
+        )
         raise HTTPException(status_code=401, detail="session expired")
     try:
         claims = tokens.decode(homecam_refresh, kind="refresh")
-    except tokens.InvalidToken:
+    except tokens.InvalidToken as e:
+        auth_rejected(
+            log, "POST", "/api/auth/refresh",
+            "refresh: invalid/expired: {}".format(e), cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="session expired")
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        auth_rejected(
+            log, "POST", "/api/auth/refresh", "refresh: malformed sub",
+            cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="session expired")
     user = users_db.get_user(settings.users_db_path, sub)
     if user is None:
         # User row deleted while their session was live (operator
         # ran `gen_admin`+row delete or the DB was wiped). Refuse
-        # the refresh so a stale session can't be revived.
+        # the refresh so a stale session can't be revived. SECURITY:
+        # validly-signed refresh token for a vanished user.
+        auth_rejected(
+            log, "POST", "/api/auth/refresh",
+            "refresh: user row gone (deleted-while-live)",
+            sub=sub, cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="session expired")
     _set_session_cookies(response, user["username"], user["role"])
     return RefreshOut(user=UserOut(username=user["username"], role=user["role"]))
@@ -214,19 +256,35 @@ def change_password(
     if row is None:
         # User row deleted while session was live — same shape as
         # /api/auth/refresh's "session expired" pathway.
+        auth_rejected(
+            log, "POST", "/api/auth/change_password",
+            "change_password: user row gone (deleted-while-live)",
+            sub=user, cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="user no longer exists")
     if not passwords.verify_password(body.current_password, row["password_hash"]):
+        # WARN: an authed session failing the current-password re-check
+        # is exactly the hijacked-session signal this gate defends
+        # against. NEVER log body.current_password / body.new_password.
+        auth_rejected(
+            log, "POST", "/api/auth/change_password",
+            "change_password: current password incorrect",
+            sub=user, cookie_present=True,
+        )
         raise HTTPException(status_code=401, detail="current password incorrect")
     new_hash = passwords.hash_password(body.new_password)
     users_db.update_password(settings.users_db_path, user, new_hash)
+    log.info("change_password ok: user=%r", user)
     return {"ok": True}
 
 
 @router.post(
     "/admin/reset_password",
-    dependencies=[Depends(require_role("owner"))],
 )
-def admin_reset_password(body: AdminResetPasswordIn) -> dict:
+def admin_reset_password(
+    body: AdminResetPasswordIn,
+    caller: str = Depends(require_role("owner")),
+) -> dict:
     """iter-258: owner-only override that resets ANOTHER user's
     password without their current password. The "I forgot my
     password" recovery path for a 2-user home setup — the owner
@@ -238,9 +296,19 @@ def admin_reset_password(body: AdminResetPasswordIn) -> dict:
     `gen_admin --reset` inside the Jetson container as root.
     """
     if users_db.get_user(settings.users_db_path, body.username) is None:
+        log.warning(
+            "admin reset_password: caller=%r targeted unknown user %r (404)",
+            caller, body.username,
+        )
         raise HTTPException(status_code=404, detail="no such user")
     new_hash = passwords.hash_password(body.new_password)
     users_db.update_password(settings.users_db_path, body.username, new_hash)
+    # Privileged audit: who reset whose password. NEVER log the new
+    # password bytes.
+    log.info(
+        "admin reset_password: caller=%r reset password for user=%r",
+        caller, body.username,
+    )
     return {"ok": True}
 
 
@@ -289,7 +357,17 @@ def admin_list_users() -> ListUsersOut:
     """iter-265: list every user, owner-only. Returns username +
     role + created_at — never the password hash. Used by the
     Settings "Manage users" panel."""
-    rows = users_db.list_users(settings.users_db_path)
+    try:
+        rows = users_db.list_users(settings.users_db_path)
+    except Exception:
+        # DB read failed (locked / corrupt / path gone). ERROR + re-raise
+        # so the route 500s; the "Manage users" panel shows an error
+        # rather than a silently-empty list.
+        log.error(
+            "admin_list_users: list_users failed on %s",
+            settings.users_db_path, exc_info=True,
+        )
+        raise
     return ListUsersOut(
         users=[
             UserRowOut(
@@ -304,10 +382,12 @@ def admin_list_users() -> ListUsersOut:
 
 @router.post(
     "/admin/users",
-    dependencies=[Depends(require_role("owner"))],
     status_code=201,
 )
-def admin_create_user(body: CreateUserIn) -> dict:
+def admin_create_user(
+    body: CreateUserIn,
+    caller: str = Depends(require_role("owner")),
+) -> dict:
     """iter-265: create a new user, owner-only. 409 on duplicate
     username (sqlite IntegrityError). 422 on bad role (handled by
     Pydantic before this body runs, but the storage layer also
@@ -322,6 +402,10 @@ def admin_create_user(body: CreateUserIn) -> dict:
             role=body.role,
         )
     except users_db.InvalidRole as e:
+        log.warning(
+            "admin_create_user: caller=%r rejected role=%r for new user %r: %s",
+            caller, body.role, body.username, e,
+        )
         raise HTTPException(status_code=422, detail=str(e))
     except sqlite3.IntegrityError as e:
         # iter-266 (security-auditor G1): catch IntegrityError
@@ -330,8 +414,25 @@ def admin_create_user(body: CreateUserIn) -> dict:
         # PRIMARY KEY → 409. Other integrity errors (e.g. a future
         # FK violation if the schema grows) re-raise as 500.
         if "UNIQUE constraint failed" in str(e):
+            log.warning(
+                "admin_create_user: caller=%r duplicate username %r (409)",
+                caller, body.username,
+            )
             raise HTTPException(status_code=409, detail="username already exists")
+        # Non-UNIQUE IntegrityError (e.g. a future FK/CHECK violation)
+        # re-raises as 500 — ERROR so it doesn't vanish as a bare
+        # traceback. NEVER log body.password.
+        log.error(
+            "admin_create_user: caller=%r unexpected IntegrityError "
+            "creating user %r (role=%r) — re-raising as 500",
+            caller, body.username, body.role, exc_info=True,
+        )
         raise
+    # Privileged audit: who created whom, at what role. NEVER the password.
+    log.info(
+        "admin_create_user: caller=%r created user=%r role=%r",
+        caller, body.username, body.role,
+    )
     return {"ok": True, "username": body.username, "role": body.role}
 
 
@@ -359,6 +460,12 @@ def admin_delete_user(
       operator-side `gen_admin --reset` recipe).
     """
     if body.username == caller:
+        # Near-miss: the safety guard fired. WARN so an operator who
+        # locked-themselves-out-attempt is visible in the audit trail.
+        log.warning(
+            "admin_delete_user: caller=%r attempted to delete OWN account "
+            "(refused 400)", caller,
+        )
         raise HTTPException(
             status_code=400,
             detail="cannot delete your own account",
@@ -374,12 +481,27 @@ def admin_delete_user(
             settings.users_db_path, body.username
         )
     except users_db.CannotDeleteLastOwner:
+        # Last-owner near-miss: the deployment was one delete away from
+        # zero admin-capable accounts. WARN — this is the high-
+        # consequence guard the operator most wants in the journal.
+        log.warning(
+            "admin_delete_user: caller=%r attempted to delete the LAST "
+            "owner (user=%r) — refused 400", caller, body.username,
+        )
         raise HTTPException(
             status_code=400,
             detail="cannot delete the last owner",
         )
     if not deleted:
+        log.warning(
+            "admin_delete_user: caller=%r targeted unknown user %r (404)",
+            caller, body.username,
+        )
         raise HTTPException(status_code=404, detail="no such user")
+    # Destructive audit: who deleted whom.
+    log.info(
+        "admin_delete_user: caller=%r deleted user=%r", caller, body.username,
+    )
     return {"ok": True}
 
 
@@ -389,16 +511,26 @@ def me(homecam_access: Optional[str] = Cookie(default=None)) -> MeOut:
     # middleware path-prefix branch in main.py — covers the 401
     # paths below that build a fresh JSONResponse from HTTPException
     # (which loses any header set on an injected `Response`).
+    # /me is the client's self-heal probe — it 401s constantly and
+    # benignly (every page load on an idle session, every visibility
+    # change). So these rejections are DEBUG, NOT the WARN that the
+    # strict gate uses: surfacing them at WARNING would drown the real
+    # auth-fail signal. The strict gate (dependencies.get_current_user)
+    # already WARN-logs genuinely-gated route rejections.
     if not homecam_access:
+        log.debug("/me 401: no cookie")
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         claims = tokens.decode(homecam_access, kind="access")
-    except tokens.InvalidToken:
+    except tokens.InvalidToken as e:
+        log.debug("/me 401: invalid/expired access cookie: %s", e)
         raise HTTPException(status_code=401, detail="invalid access cookie")
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        log.debug("/me 401: malformed sub")
         raise HTTPException(status_code=401, detail="invalid access cookie")
     user = users_db.get_user(settings.users_db_path, sub)
     if user is None:
+        log.debug("/me 401: user row gone (sub=%r)", sub)
         raise HTTPException(status_code=401, detail="user no longer exists")
     return MeOut(user=UserOut(username=user["username"], role=user["role"]))

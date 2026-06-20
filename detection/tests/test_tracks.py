@@ -148,3 +148,48 @@ def test_given_unwritable_dir_when_write_sidecar_then_returns_false(tmp_path, mo
 
     # assert
     assert ok is False
+
+
+# --- write_sidecar failure logging (logging-plan §2 tracks.py:127-138) ---
+
+
+def test_given_oserror_when_write_sidecar_then_logs_false_return_with_reason(
+    tmp_path, monkeypatch, capsys
+):
+    # Given a write that fails with an OSError (disk full / dir RO),
+    # the False return was previously swallowed with no caller try —
+    # the clip silently degraded to a static overlay with no record.
+    # arrange — force the write path to raise inside the try.
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("tracks.os.makedirs", _boom)
+
+    # act
+    ok = write_sidecar(str(tmp_path), "evt-degraded", {"v": 1, "samples": []})
+
+    # assert — False return AND a log line naming the op, the event_id,
+    # the express reason (OSError), and the degrade consequence.
+    assert ok is False
+    out = capsys.readouterr().out
+    assert "[tracks]" in out
+    assert "write_sidecar failed" in out
+    assert "evt-degraded" in out
+    assert "OSError" in out
+    assert "static overlay" in out
+
+
+def test_given_invalid_event_id_when_write_sidecar_then_logs_charset_reject(
+    tmp_path, capsys
+):
+    # Given a malformed event_id (worker/server charset drift), the
+    # reject must be greppable rather than a silent /tracks 404.
+    # act
+    ok = write_sidecar(str(tmp_path), "../evil", {"v": 1, "samples": []})
+
+    # assert
+    assert ok is False
+    out = capsys.readouterr().out
+    assert "[tracks]" in out
+    assert "rejected event_id" in out
+    assert "../evil" in out

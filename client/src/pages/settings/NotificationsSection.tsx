@@ -7,6 +7,7 @@ import {
   setMyPushFilters,
 } from '../../lib/api'
 import { formatError } from '../../lib/format'
+import { log, errFields } from '../../lib/log'
 import {
   disablePushSubscription,
   ensurePushSubscription,
@@ -14,7 +15,7 @@ import {
   pushSupported,
   sendTestPush,
 } from '../../lib/push'
-import { useToast } from '../../lib/toast'
+import { useReportError, useToast } from '../../lib/toast'
 import type { PushFilters } from '../../lib/types'
 import { Mono, Row, Section, TimeInput, Toggle } from './parts'
 
@@ -56,6 +57,7 @@ export function NotificationsSection({
   pushSubsCount: number | null | undefined
 }) {
   const { showToast } = useToast()
+  const reportError = useReportError()
   const [pushEnabled, setPushEnabled] = useState(false)
   const [busy, setBusy] = useState(false)
   // iter-208 (Feature #4 slice 3b): per-user push filter management.
@@ -156,7 +158,19 @@ export function NotificationsSection({
         setKnownPersons(optionsRes.person_names)
         setFiltersLoaded(true)
       })
-      .catch(() => {
+      .catch((e) => {
+        // docs/logging_plan.md §2 (Push notifications): a 5xx here is
+        // a load FAILURE masquerading as "no filters" — the clean-slate
+        // fallback below shows empty pickers, and if the user then taps
+        // Save it WIPES their real server-side filters. 404 is the
+        // legitimate "no subs yet" case (benign). Log the 5xx at WARN
+        // with the status so the operator can tell them apart. Logged
+        // BEFORE the cancelled guard so an unmount mid-failure is still
+        // recorded.
+        const status = (e as { status?: number })?.status
+        if (typeof status === 'number' && status >= 500) {
+          log.warn('notifications:filter-load-5xx', errFields(e))
+        }
         if (cancelled) return
         // 404 (no subs) or transient — treat as match-all so the
         // user can still set up filters from a clean slate.
@@ -187,8 +201,15 @@ export function NotificationsSection({
         showToast('Push notifications disabled', 'info')
       }
     } catch (e) {
-      showToast('Could not change push state', 'error')
-      console.error(e)
+      // docs/logging_plan.md §2: replace the bare console.error with a
+      // structured log that records the DIRECTION (enable vs disable)
+      // — an enable failure is usually a permission / VAPID / SW issue
+      // while a disable failure is a server-unreachable case, and the
+      // generic toast couldn't tell them apart.
+      reportError('notifications:toggle-failed', 'Could not change push state', {
+        direction: v ? 'enable' : 'disable',
+        ...errFields(e),
+      })
     } finally {
       setBusy(false)
     }
@@ -212,9 +233,10 @@ export function NotificationsSection({
         )
       }
     } catch (e) {
-      showToast(
+      reportError(
+        'notifications:test-failed',
         "Couldn't send the test alert: " + formatError(e),
-        'error',
+        errFields(e),
       )
     }
   }
@@ -238,7 +260,11 @@ export function NotificationsSection({
       await setMyPushFilters(next)
       showToast('Notification filters saved', 'success')
     } catch (e) {
-      showToast('Could not save filters: ' + formatError(e), 'error')
+      reportError(
+        'notifications:save-failed',
+        'Could not save filters: ' + formatError(e),
+        errFields(e),
+      )
     } finally {
       setFiltersSaving(false)
     }

@@ -823,3 +823,131 @@ def test_when_50_people_seeded_then_people_summary_executes_one_sql_statement_no
     )
     # Sanity check: result still has 50 distinct people.
     assert len(result) == 50
+
+
+# --- logging-plan §5 #5: _connect wrap re-raises but logs op+path -------
+
+def test_given_connect_raises_when_search_then_logs_op_and_path_and_propagates(
+    tmp_path, monkeypatch, caplog
+):
+    """Given the DB connect raises OperationalError (locked DB / disk
+    gone), When a helper runs, Then an ERROR names the op + db path AND
+    the original exception still propagates (route still 500s)."""
+    import logging as _logging
+
+    # arrange — a valid DB, then force _connect to raise.
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+
+    def _boom(_p):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(events_db, "_connect", _boom)
+
+    # act / assert — the original exception propagates.
+    with caplog.at_level(_logging.ERROR, logger="app.services.events_db"):
+        with pytest.raises(sqlite3.OperationalError):
+            events_db.search(path, camera_id="cam1")
+
+    # assert — an ERROR line names the op AND the db path.
+    errs = [r for r in caplog.records if r.levelno >= _logging.ERROR]
+    assert errs, "expected an ERROR log line"
+    msg = errs[0].getMessage()
+    assert "search" in msg
+    assert str(path) in msg
+
+
+def test_given_connect_raises_when_people_summary_then_logs_op_and_propagates(
+    tmp_path, monkeypatch, caplog
+):
+    """The window-fn people_summary is the silent landmine (old SQLite
+    raises near "OVER"). Given _connect raises, Then ERROR names the op
+    and the exception propagates."""
+    import logging as _logging
+
+    # arrange
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+
+    def _boom(_p):
+        raise sqlite3.OperationalError("near \"OVER\": syntax error")
+
+    monkeypatch.setattr(events_db, "_connect", _boom)
+
+    # act / assert
+    with caplog.at_level(_logging.ERROR, logger="app.services.events_db"):
+        with pytest.raises(sqlite3.OperationalError):
+            events_db.people_summary(path)
+
+    errs = [r for r in caplog.records if r.levelno >= _logging.ERROR]
+    assert errs and "people_summary" in errs[0].getMessage()
+    assert str(path) in errs[0].getMessage()
+
+
+def test_given_malformed_boxes_json_when_row_read_then_warns_and_degrades(
+    tmp_path, caplog
+):
+    """Given a row with unparseable boxes_json (operator hand-edit),
+    When read back, Then it degrades to zero boxes AND a WARN fires
+    (rate-limited so one bad row can't flood)."""
+    import logging as _logging
+
+    # arrange — insert a valid event, then corrupt its boxes_json.
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+    e = _make_event(camera_id="cam1")
+    events_db.insert_event(path, e)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE events SET boxes_json = ? WHERE id = ?",
+            ("{not valid json", e["id"]),
+        )
+        conn.commit()
+
+    # Reset the module-level rate-limit gate so the WARN is not
+    # suppressed by an earlier test in the same process.
+    from app.services import events_db as _ed
+    _ed._boxes_parse_gate = _ed.RateLimitedLog(0.0)
+
+    # act
+    with caplog.at_level(_logging.WARNING, logger="app.services.events_db"):
+        items = events_db.recent(path, limit=10)
+
+    # assert — degraded to empty boxes, and a WARN named the event.
+    assert items[0]["boxes"] == []
+    warns = [
+        r for r in caplog.records
+        if "unparseable boxes_json" in r.getMessage()
+    ]
+    assert warns, "expected a WARN on unparseable boxes_json"
+
+
+def test_given_chmod_oserror_when_init_db_then_warns_privacy(
+    tmp_path, monkeypatch, caplog
+):
+    """Given chmod 0o600 raises OSError (RO mount), When init_db runs,
+    Then a WARN flags the privacy risk instead of silently passing."""
+    import logging as _logging
+    from pathlib import Path as _Path
+
+    # arrange — make Path.chmod raise only for our db file.
+    path = tmp_path / "events.db"
+    real_chmod = _Path.chmod
+
+    def _chmod(self, *a, **kw):
+        if self == path:
+            raise OSError("read-only file system")
+        return real_chmod(self, *a, **kw)
+
+    monkeypatch.setattr(_Path, "chmod", _chmod)
+
+    # act
+    with caplog.at_level(_logging.WARNING, logger="app.services.events_db"):
+        events_db.init_db(path)
+
+    # assert
+    warns = [
+        r for r in caplog.records
+        if "world-readable" in r.getMessage() and str(path) in r.getMessage()
+    ]
+    assert warns, "expected a privacy WARN on chmod failure"

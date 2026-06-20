@@ -47,9 +47,28 @@ def seed_from_env_if_empty(
     Caller (lifespan) supplies the env values explicitly so this
     function is testable without monkey-patching `os.environ`.
     """
-    # Schema must exist before count_users can read.
-    users_db.init_db(db_path)
-    existing = users_db.count_users(db_path)
+    # Schema must exist before count_users can read. Wrap these DB
+    # ops: pre-this-iter an OSError/sqlite3.Error here surfaced only as
+    # a bare traceback during the FastAPI lifespan (boot), with no
+    # express reason. Log the failing operation + db path at ERROR,
+    # then re-raise so the lifespan still aborts (a server with no
+    # usable users.db must NOT silently come up half-initialised).
+    try:
+        users_db.init_db(db_path)
+    except Exception:
+        log.error(
+            "auth seed: init_db failed on %s (schema not created — "
+            "auth unusable)", db_path, exc_info=True,
+        )
+        raise
+    try:
+        existing = users_db.count_users(db_path)
+    except Exception:
+        log.error(
+            "auth seed: count_users failed on %s (cannot decide whether "
+            "to seed)", db_path, exc_info=True,
+        )
+        raise
     if existing > 0:
         log.debug(
             "users.db already has %d user(s); skipping env-seed",
@@ -75,12 +94,23 @@ def seed_from_env_if_empty(
             "`hash_password()` instead of putting plaintext in env."
         )
         return False
-    users_db.create_user(
-        db_path,
-        admin_user,
-        admin_password_hash,
-        role="admin",
-    )
+    try:
+        users_db.create_user(
+            db_path,
+            admin_user,
+            admin_password_hash,
+            role="admin",
+        )
+    except Exception:
+        # NEVER log admin_password_hash (a credential, even hashed) —
+        # only the username + db path. Re-raise so boot aborts rather
+        # than coming up with no admin account.
+        log.error(
+            "auth seed: create_user failed for admin %r on %s "
+            "(first-boot admin NOT created)",
+            admin_user, db_path, exc_info=True,
+        )
+        raise
     log.info(
         "seeded admin user %r from HOMECAM_ADMIN_USER env (one-time, "
         "future restarts no-op)",

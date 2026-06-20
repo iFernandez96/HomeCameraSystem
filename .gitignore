@@ -73,6 +73,8 @@ client/public.zip
 
 # Claude Code runtime state
 .claude/scheduled_tasks.lock
+# Claude session transcripts occasionally dumped at the repo root (UUID.jsonl)
+/*.jsonl
 
 # Caveman:compress backups (pre-compression copies of memory/*.md,
 # kept locally so the operator can revert if compression is too lossy)

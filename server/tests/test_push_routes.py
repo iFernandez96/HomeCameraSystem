@@ -77,6 +77,46 @@ def test_unsubscribe_returns_false_for_unknown_endpoint(client: TestClient):
     assert r.json() == {"ok": False}
 
 
+def test_given_sub_owned_by_other_when_unsubscribe_then_denied_and_warns(
+    client: TestClient, caplog
+):
+    """Given a subscription owned by another user (audit A2 attack),
+    When testuser tries to unsubscribe it, Then the sub is NOT removed,
+    the response is the non-leaking {ok: False}, AND a security WARNING
+    records the actor + owner (never the endpoint bytes)."""
+    import logging
+
+    from app.services.push_service import push_service
+
+    # arrange — a sub owned by "victim", not the auto-logged-in testuser
+    push_service.subs.clear()
+    endpoint = "https://push.example/victim-sub"
+    push_service.subs.append(
+        {"endpoint": endpoint, "keys": {"p256dh": "a", "auth": "b"},
+         "user_id": "victim"}
+    )
+    caplog.set_level(logging.WARNING, logger="app.routes.push")
+
+    # act
+    r = client.post("/api/push/unsubscribe", json={"endpoint": endpoint})
+
+    # assert — not removed, non-leaking response, WARNING emitted
+    assert r.status_code == 200
+    assert r.json() == {"ok": False}
+    assert any(s["endpoint"] == endpoint for s in push_service.subs)
+    warnings = [
+        rec for rec in caplog.records
+        if rec.levelno == logging.WARNING
+        and "unsubscribe denied" in rec.getMessage()
+    ]
+    assert warnings, "expected an 'unsubscribe denied' WARNING"
+    msg = warnings[0].getMessage()
+    assert "victim" in msg
+    # Endpoint bytes (push secret material) must NOT be logged.
+    assert endpoint not in msg
+    push_service.subs.clear()
+
+
 def test_subscribe_rejects_oversized_endpoint(client: TestClient):
     """The body-size middleware caps total request size at 1 MB but
     individual fields aren't otherwise capped. A subscription with a

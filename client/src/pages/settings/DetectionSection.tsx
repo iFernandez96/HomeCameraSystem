@@ -3,7 +3,8 @@ import { Slider } from '../../components/Slider'
 import { ErrorState } from '../../components/states/ErrorState'
 import { ZoneEditor } from '../../components/ZoneEditor'
 import { getDetectionConfig, patchDetectionConfig } from '../../lib/api'
-import { useToast } from '../../lib/toast'
+import { log, errFields } from '../../lib/log'
+import { useReportError, useToast } from '../../lib/toast'
 import {
   COMMON_DETECTION_CLASSES,
   DETECTION_LIMITS,
@@ -42,6 +43,7 @@ function formatClipDuration(seconds: number): string {
 
 export function DetectionSection() {
   const { showToast } = useToast()
+  const reportError = useReportError()
   const [config, setConfig] = useState<DetectionConfig | null>(null)
   // iter-356.x (Frank E2 + feature audit): pre-fix a transient
   // getDetectionConfig() failure put every field into a permanent
@@ -59,6 +61,10 @@ export function DetectionSection() {
         setLoadError(null)
       })
       .catch((e) => {
+        // Log BEFORE the cancelled guard so an unmount mid-failure is
+        // still recorded. The component renders an ErrorState below; the
+        // log carries the status / network reason for the operator.
+        log.warn('detectionSettings:load-failed', errFields(e))
         if (cancelled) return
         setLoadError(e instanceof Error ? e.message : 'Could not load settings')
       })
@@ -74,8 +80,14 @@ export function DetectionSection() {
         showToast('Detection settings saved', 'success')
       })
       .catch((e) => {
-        showToast('Could not save settings', 'error')
-        console.error(e)
+        // docs/logging_plan.md §2 + §4 guardrail: log the patch KEYS
+        // (NOT values — zone geometry / labels are PII-adjacent) plus
+        // the status so the operator sees WHICH setting failed to save
+        // and WHY. Replaces the bare console.error.
+        reportError('detectionSettings:save-failed', 'Could not save settings', {
+          keys: Object.keys(patch),
+          ...errFields(e),
+        })
       })
   }
 

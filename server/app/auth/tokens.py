@@ -41,6 +41,7 @@ anti-rec #21).
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Literal
 
@@ -48,6 +49,9 @@ import jwt
 
 from ..config import settings
 from . import jwt_secret
+
+
+log = logging.getLogger(__name__)
 
 
 _ALGORITHM = "HS256"
@@ -114,8 +118,41 @@ def decode(token: str, *, kind: TokenKind) -> dict:
     """
     try:
         claims = jwt.decode(token, _get_secret(), algorithms=[_ALGORITHM])
+    except jwt.ExpiredSignatureError as e:
+        # Most benign + most common decode failure (idle session past
+        # TTL). DEBUG so triage can see it without noise at INFO. The
+        # *type name* is the discriminator (expired vs bad-sig vs
+        # malformed) — never log the token bytes themselves.
+        log.debug(
+            "token decode rejected: expired (%s) [expected kind=%s]",
+            type(e).__name__,
+            kind,
+        )
+        raise InvalidToken(str(e)) from e
     except jwt.InvalidTokenError as e:
+        # Bad signature / malformed structure / unknown alg. DEBUG the
+        # PyJWT exception TYPE so an operator triaging at DEBUG can tell
+        # a tampered/forged token (InvalidSignatureError) apart from a
+        # truncated one (DecodeError). Token bytes are NEVER logged.
+        log.debug(
+            "token decode rejected: %s [expected kind=%s]",
+            type(e).__name__,
+            kind,
+        )
         raise InvalidToken(str(e)) from e
     if claims.get("kind") != kind:
+        # Signature is VALID but the kind claim is wrong — a refresh
+        # token presented as access (or vice versa). PyJWT considers
+        # this token "valid"; this branch is the load-bearing re-check
+        # (pinned by test_decode_rejects_kind_mismatch_*). It is the
+        # anomalous case (a correctly-signed token used in the wrong
+        # slot), so WARN — `sub` is safe to log (a username already in
+        # the DB); the token bytes are not.
+        log.warning(
+            "token kind mismatch: got %r expected %r (sub=%r)",
+            claims.get("kind"),
+            kind,
+            claims.get("sub"),
+        )
         raise InvalidToken("token kind mismatch (expected {!r})".format(kind))
     return claims

@@ -95,6 +95,35 @@ def test_given_owner_when_get_export_face_then_200_zip(client, captures_dir):
     assert int(by_name["alice"]["pad_y"]) > 0
 
 
+def test_given_owner_export_when_served_then_biometric_audit_logged(
+    client, captures_dir, caplog,
+):
+    # arrange — one face crop so the export has content
+    import logging
+
+    face_root = captures_dir["face"]
+    a = face_root / "alice" / "1700000000000_evt-a.jpg"
+    _make_jpeg(a, 120, 80)
+    _make_sidecar(
+        a.with_suffix(".json"),
+        predicted_name="alice", confidence=0.91, event_id="evt-a",
+        ts_ms=1700000000000, sw_rev="iter-x",
+    )
+    caplog.set_level(logging.INFO, logger="app.routes.training")
+
+    # act
+    resp = client.get("/api/training/export?kind=face&size=224")
+
+    # assert
+    assert resp.status_code == 200
+    audit = [
+        rec for rec in caplog.records
+        if "training export served" in rec.getMessage()
+    ]
+    assert audit, "expected a 'training export served' biometric audit line"
+    assert "kind=face" in audit[0].getMessage()
+
+
 def test_given_invalid_kind_when_get_export_then_422(client, captures_dir):
     # arrange / act
     resp = client.get("/api/training/export?kind=banana&size=224")

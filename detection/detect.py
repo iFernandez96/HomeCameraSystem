@@ -65,10 +65,35 @@ import jetson_utils
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+# applog is pure-stdlib (logging/os/sys) — no CUDA/native deps, so importing
+# it here (after the sys.path insert, even before the jetson imports ran
+# above) carries no static-TLS risk. main() calls applog.configure() first
+# thing so the leaf-lib `logging` records + the hot-loop `[tag]` prints all
+# land in journald with one format.
+import applog  # noqa: E402
+
+# Leaf-style logger for the worker. `applog.configure()` (called first
+# thing in main()) installs the root handler so these records reach
+# journald. Hot-loop breadcrumbs use `applog.emit("detect", ...)` so a
+# broken pipe can never crash the inference loop; structured failure
+# lines outside the per-frame inner path use `log.error/.warning/.info`.
+log = applog.get_logger("detect")
 try:
     from face_recog.recognizer import FaceRecognizer  # noqa: E402
-except Exception:
+except Exception as _fr_import_err:
+    # Import-disable site: the wrapper module failed to import (missing
+    # file, syntax error, or a transitive dep like cv2 unavailable).
+    # Worker still runs but never touches face surfaces. Log WHY at
+    # WARNING so an operator who expected face-recog sees the reason
+    # instead of a silently dormant feature. (configure() hasn't run
+    # yet at import time, but the record is buffered/handled once main()
+    # installs the root handler; emit() is the belt-and-suspenders path.)
     FaceRecognizer = None
+    applog.emit(
+        "detect",
+        "face_recog wrapper import failed ({}: {}) - face capture "
+        "disabled".format(type(_fr_import_err).__name__, _fr_import_err),
+    )
 # iter-356.62 (slice 1): single read at import time. Worker boots
 # rarely, deploy script can stamp `HOMECAM_SW_REV` via systemd unit env;
 # absent → "unknown" so sidecars still record the field consistently.
@@ -145,10 +170,18 @@ def _bbox_iou(a_left, a_top, a_right, a_bot, b_left, b_top, b_right, b_bot):
 # COCO-style "match" threshold and gives clear margin both ways.
 _PERSON_DEDUP_IOU = 0.5
 
+# Presence coalescing: if the same (label, camera) hasn't been detected for
+# this many seconds, the subject is considered to have LEFT — the next
+# detection starts a fresh event. Short enough that genuinely separate visits
+# stay separate, long enough that a brief occlusion / step-out-of-frame within
+# one visit doesn't spuriously re-trigger. See detection/presence.py.
+_PRESENCE_GAP_S = 20.0
+
 from box_norm import normalize_box  # noqa: E402
 from mediamtx_watchdog import MediaMtxWatchdog  # noqa: E402
 from memory_guard import MemoryGuard, read_mem_available_mb  # noqa: E402
 from metrics import Metrics  # noqa: E402
+from presence import PresenceTracker  # noqa: E402
 from schedule import in_off_window  # noqa: E402
 from thermal_guard import ThermalGuard, read_gpu_temp_c  # noqa: E402
 from zones import any_box_center_inside_any_zone, sanitize_zones  # noqa: E402
@@ -172,7 +205,16 @@ def save_thumb(cuda_img, ts, thumb_dir, max_keep, quality):
         path = os.path.join(thumb_dir, name)
         jetson_utils.saveImage(path, cuda_img, quality=quality)
     except Exception as e:
-        print("[detect] thumb save failed: {}".format(e), flush=True)
+        # Thumb save failed: the event still publishes (returns None ->
+        # caller omits `thumb_url`), but the push-notification hero image
+        # + Events thumbnail will be missing. Name the dir + reason so an
+        # operator can tell disk-full / RO-mount / bad-extension apart.
+        # Runs at most once per emitted event (cooldown-gated), not
+        # per-frame. Caller bumps `thumb_save_failures` on the None return.
+        log.error(
+            "thumb save failed for dir=%s: %s: %s",
+            thumb_dir, type(e).__name__, e,
+        )
         return None
 
     try:
@@ -238,10 +280,30 @@ def _enforce_mem_floor(read_mem_fn, floor_mb):
         raise SystemExit(3)
 
 
-def post_event(url, payload, timeout=2.0):
+def post_event(url, payload, timeout=2.0, metrics=None):
+    """POST one detection event to the server's internal endpoint.
+
+    The event is LOST on failure — there is no retry queue. We log WHY
+    at ERROR and bump `metrics.event_post_failures` (when `metrics` is
+    supplied) so the operator sees both the first occurrence in journald
+    AND the rate over time on /api/status, since a silent POST failure
+    looks identical to "camera saw nobody."
+
+    Two distinct failure classes are logged apart:
+      * HTTPError (4xx/5xx) — the server answered. A 422 means a
+        permanent schema drift between worker payload and the server's
+        `extra='forbid'` validator (the event will NEVER post until a
+        deploy); a 5xx is transient server trouble. The status + reason
+        + a short body tail disambiguate. We log `event_id` (safe — it's
+        the same uuid that flows through the rest of the system) but
+        NEVER the full payload (carries person_name + thumb URLs).
+      * everything else — transient network reject (server restarting,
+        loopback not yet listening). No status code.
+    """
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
+    event_id = payload.get("id") if isinstance(payload, dict) else None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
@@ -250,9 +312,19 @@ def post_event(url, payload, timeout=2.0):
             detail = e.read().decode("utf-8", "replace")[:200]
         except Exception:
             detail = ""
-        print("[detect] event POST {} {} {}".format(e.code, e.reason, detail), flush=True)
+        log.error(
+            "event POST rejected for id=%s: HTTP %s %s (event LOST, no "
+            "retry) %s", event_id, e.code, e.reason, detail,
+        )
+        if metrics is not None:
+            metrics.event_post_failures += 1
     except Exception as e:
-        print("[detect] event POST failed: {}".format(e), flush=True)
+        log.error(
+            "event POST failed for id=%s: %s: %s (event LOST, no retry)",
+            event_id, type(e).__name__, e,
+        )
+        if metrics is not None:
+            metrics.event_post_failures += 1
 
 
 class RuntimeConfig:
@@ -311,6 +383,84 @@ class RuntimeConfig:
         return in_off_window(self.schedule_off_start, self.schedule_off_end, cur)
 
 
+def apply_config(runtime, data):
+    """Apply a polled config dict to `runtime`, field by field.
+
+    Returns a list of ``(field, reason)`` tuples for any field that was
+    PRESENT in `data` but failed to cast to the runtime type. Pre-logging
+    this used a single outer try/except so one bad field (e.g.
+    ``threshold="abc"``) raised and discarded the WHOLE update — the
+    operator's other slider changes silently never took effect. Now each
+    field is applied independently: a bad ``threshold`` is reported and
+    skipped while ``cooldown_s`` / ``enabled`` / zones still apply.
+
+    Pure function (no I/O, no logging) so the per-field cast behaviour
+    can be unit-tested without a live server or a logger fixture. The
+    caller (`start_config_poll`) turns the returned warnings into
+    re-arming once-flag log lines.
+    """
+    warnings = []  # list of (field, reason)
+    if "threshold" in data:
+        try:
+            runtime.threshold = float(data["threshold"])
+        except (TypeError, ValueError) as e:
+            warnings.append(("threshold", "{}".format(e)))
+    if "cooldown_s" in data:
+        try:
+            runtime.cooldown_s = float(data["cooldown_s"])
+        except (TypeError, ValueError) as e:
+            warnings.append(("cooldown_s", "{}".format(e)))
+    if "enabled" in data:
+        # bool() never raises, but a non-bool truthy (e.g. the string
+        # "false", which is truthy!) is a server/worker drift worth
+        # flagging rather than silently coercing.
+        val = data["enabled"]
+        if isinstance(val, bool):
+            runtime.enabled = val
+        else:
+            runtime.enabled = bool(val)
+            warnings.append((
+                "enabled",
+                "non-bool {!r} coerced to {}".format(val, runtime.enabled),
+            ))
+    if "schedule_off_start" in data:
+        runtime.schedule_off_start = data["schedule_off_start"]
+    if "schedule_off_end" in data:
+        runtime.schedule_off_end = data["schedule_off_end"]
+    if "classes" in data:
+        raw = data["classes"]
+        if isinstance(raw, list):
+            runtime.classes = [
+                c.strip().lower() for c in raw
+                if isinstance(c, str) and c.strip()
+            ]
+        else:
+            warnings.append((
+                "classes",
+                "expected list, got {}".format(type(raw).__name__),
+            ))
+    # iter-191b (Feature #5): zones from the server config.
+    # `sanitize_zones` mirrors server-side `_valid_zones` bounds
+    # (3-32 vertices, coords [0,1], up to 16 polys) so a transient
+    # corrupt payload or downgraded server can't poison the runtime.
+    if "zones" in data:
+        try:
+            runtime.zones = sanitize_zones(data["zones"])
+        except Exception as e:
+            warnings.append(("zones", "{}: {}".format(type(e).__name__, e)))
+    if "clip_post_roll_s" in data:
+        try:
+            runtime.clip_post_roll_s = float(data["clip_post_roll_s"])
+        except (TypeError, ValueError) as e:
+            warnings.append(("clip_post_roll_s", "{}".format(e)))
+    if "clip_pre_roll_s" in data:
+        try:
+            runtime.clip_pre_roll_s = float(data["clip_pre_roll_s"])
+        except (TypeError, ValueError) as e:
+            warnings.append(("clip_pre_roll_s", "{}".format(e)))
+    return warnings
+
+
 def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0):
     """Periodically GET the config endpoint and update `runtime`. Runs as
     a daemon thread; failures are logged once per backoff cycle so a brief
@@ -327,68 +477,62 @@ def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0):
     def loop():
         backoff = 1.0
         warned = False
+        # Per-field "warned-once" set so a PERSISTENT bad field
+        # (server/worker schema drift that never self-heals) logs once
+        # then stays quiet, but RE-ARMS the moment that field next
+        # casts cleanly — a clean poll clears the whole set so a future
+        # regression logs again instead of being silenced forever (the
+        # plan §4 re-arm guardrail). Keyed by field name.
+        field_warned = set()
         while True:
             try:
                 req = urllib.request.Request(url, method="GET")
                 with urllib.request.urlopen(req, timeout=2.0) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                if "threshold" in data:
-                    runtime.threshold = float(data["threshold"])
-                if "cooldown_s" in data:
-                    runtime.cooldown_s = float(data["cooldown_s"])
-                if "enabled" in data:
-                    runtime.enabled = bool(data["enabled"])
-                if "schedule_off_start" in data:
-                    runtime.schedule_off_start = data["schedule_off_start"]
-                if "schedule_off_end" in data:
-                    runtime.schedule_off_end = data["schedule_off_end"]
-                if "classes" in data:
-                    raw = data["classes"]
-                    if isinstance(raw, list):
-                        runtime.classes = [
-                            c.strip().lower() for c in raw
-                            if isinstance(c, str) and c.strip()
-                        ]
-                # iter-191b (Feature #5): zones from the server config.
-                # `sanitize_zones` mirrors server-side `_valid_zones`
-                # bounds (3-32 vertices, coords [0,1], up to 16 polys)
-                # so a transient corrupt payload or downgraded server
-                # can't poison the worker's runtime.
-                if "zones" in data:
-                    runtime.zones = sanitize_zones(data["zones"])
-                # iter-254 (Feature #1 polish): live-tunable clip
-                # duration knobs. Wrapped in try/except so a corrupt
-                # payload doesn't poison the runtime (Python 3.6
-                # compat — no walrus / structural pattern match).
-                if "clip_post_roll_s" in data:
+                # Apply field-by-field (pure helper). A bad single field
+                # no longer discards the whole update — it's reported and
+                # skipped while the other fields still take effect.
+                cast_warnings = apply_config(runtime, data)
+                bad_fields = set(f for f, _r in cast_warnings)
+                for field, reason in cast_warnings:
+                    if field not in field_warned:
+                        log.warning(
+                            "config poll: field %r failed to apply (%s); "
+                            "skipped, other fields still applied", field, reason,
+                        )
+                        field_warned.add(field)
+                # Re-arm: any field that's now healthy drops out of the
+                # warned set so a later regression on it logs afresh.
+                field_warned &= bad_fields
+                # iter-356.61: grow the segment-recorder ring if the
+                # slider asked for more pre-roll than the current
+                # capacity covers. No-op when the ring already has
+                # enough headroom; never shrinks.
+                if preroll_buffer is not None and "clip_pre_roll_s" in data:
                     try:
-                        runtime.clip_post_roll_s = float(data["clip_post_roll_s"])
-                    except (ValueError, TypeError):
-                        pass
-                if "clip_pre_roll_s" in data:
-                    try:
-                        runtime.clip_pre_roll_s = float(data["clip_pre_roll_s"])
-                    except (ValueError, TypeError):
-                        pass
-                    # iter-356.61: grow the segment-recorder ring if
-                    # the slider asked for more pre-roll than the
-                    # current capacity covers. No-op when the ring
-                    # already has enough headroom; never shrinks.
-                    if preroll_buffer is not None:
-                        try:
-                            preroll_buffer.ensure_capacity_for(
-                                runtime.clip_pre_roll_s,
-                            )
-                        except Exception as _e:
-                            print(
-                                "[detect] preroll resize failed: {}".format(_e),
-                                flush=True,
-                            )
+                        preroll_buffer.ensure_capacity_for(
+                            runtime.clip_pre_roll_s,
+                        )
+                    except Exception as _e:
+                        log.warning(
+                            "preroll ring resize failed for pre_roll_s=%s: "
+                            "%s: %s (buffer stays at current capacity)",
+                            runtime.clip_pre_roll_s, type(_e).__name__, _e,
+                        )
                 backoff = 1.0
                 warned = False
             except Exception as e:
+                # Whole-poll failure (network reject, server down,
+                # unparseable body). Re-arming once-flag: log once per
+                # outage, re-arm on the next successful poll so a fresh
+                # outage is visible. Distinct from the per-field warnings
+                # above (which fire when the server answered but a value
+                # was bad).
                 if not warned:
-                    print("[detect] config poll failed: {}".format(e), flush=True)
+                    log.warning(
+                        "config poll failed (live config frozen at last "
+                        "good values): %s: %s", type(e).__name__, e,
+                    )
                     warned = True
                 backoff = min(backoff * 2, 60.0)
             time.sleep(interval_s if backoff <= 1.0 else min(backoff, 60.0))
@@ -433,13 +577,18 @@ def start_heartbeat(url, liveness, metrics, interval_s=10.0, stale_threshold_s=3
             if liveness.stale(stale_threshold_s):
                 # Don't lie to the server. Skip the POST; WorkerHealth will
                 # expire the alive window and the UI will show OFFLINE.
+                # WARN (not routine): a stale liveness means the main
+                # inference loop is wedged (net.Detect deadlock, a hung
+                # Capture, etc.) — the worker process is alive but doing
+                # no work. Logged once per backoff cycle so a sustained
+                # wedge doesn't fill the journal but the FIRST occurrence
+                # is always recorded with WHY (seconds-since-last-bump).
                 if backoff <= 1.0:
-                    print(
-                        "[detect] heartbeat skipped: inference loop stalled "
-                        "({:.1f}s since last bump)".format(
-                            time.time() - liveness.last_active
-                        ),
-                        flush=True,
+                    log.warning(
+                        "heartbeat skipped: inference loop stalled "
+                        "(%.1fs since last bump > %.0fs threshold); "
+                        "WorkerHealth will expire -> UI shows OFFLINE",
+                        time.time() - liveness.last_active, stale_threshold_s,
                     )
                 backoff = min(backoff * 2, 60.0)
                 time.sleep(min(backoff, 60.0))
@@ -453,10 +602,16 @@ def start_heartbeat(url, liveness, metrics, interval_s=10.0, stale_threshold_s=3
                     resp.read()
                 backoff = 1.0
             except Exception as e:
-                # Don't spam the log — heartbeat failures are routine during
-                # server restart. Print once per backoff cycle.
+                # Heartbeat POST failed — routine during a server
+                # restart, so log once per backoff cycle (re-arms when
+                # backoff resets to 1.0 on the next success) rather than
+                # per-attempt. WARN, not ERROR: the server simply sees a
+                # gap and expires the alive window on its own.
                 if backoff <= 1.0:
-                    print("[detect] heartbeat failed: {}".format(e), flush=True)
+                    log.warning(
+                        "heartbeat POST failed (server may be restarting): "
+                        "%s: %s", type(e).__name__, e,
+                    )
                 backoff = min(backoff * 2, 60.0)
             time.sleep(interval_s if backoff <= 1.0 else min(backoff, 60.0))
 
@@ -482,7 +637,14 @@ def init_face_recognizer():
     Returns the recognizer instance for modes 1+2, None for mode 3.
     """
     if FaceRecognizer is None:
-        print("[detect] face_recog wrapper missing - face capture disabled", flush=True)
+        # Import-disable site (mode 3): the wrapper module didn't import
+        # (the reason was already logged at import time). WARN, not INFO:
+        # an operator who deployed encodings expecting face-recog needs
+        # to know the whole subsystem is dormant.
+        log.warning(
+            "face_recog wrapper unavailable - face capture/recognition "
+            "fully disabled (see import-time error above for the cause)"
+        )
         return None
     encodings_path = os.path.join(_HERE, "face_recog", "encodings.pkl")
     rec = FaceRecognizer(encodings_path)
@@ -493,12 +655,20 @@ def init_face_recognizer():
     # useful for capture-only.
     matching_ready = rec.load()
     if matching_ready:
-        print("[detect] face recognizer in MATCH mode ({} encodings, tolerance={})".format(
-            len(rec.names), rec.tolerance), flush=True)
+        log.info(
+            "face recognizer in MATCH mode (%d encodings, tolerance=%s)",
+            len(rec.names), rec.tolerance,
+        )
     else:
-        print("[detect] face recognizer in CAPTURE-ONLY mode "
-              "(no encodings or face_recognition unavailable; "
-              "cv2 Haar fallback will save crops)", flush=True)
+        # Capture-only (mode 2): a degraded-but-running state. INFO so
+        # the operator can confirm WHY names aren't appearing on events
+        # (no encodings.pkl, or face_recognition/dlib unimportable) —
+        # otherwise "no names ever match" looks like a recognition bug.
+        log.info(
+            "face recognizer in CAPTURE-ONLY mode (no encodings or "
+            "face_recognition unavailable; cv2 Haar fallback saves crops, "
+            "no name matching)"
+        )
     return rec
 
 
@@ -720,7 +890,67 @@ def _handle_capture_failure(
     return consecutive_failures
 
 
+# Human-readable reason for each gear, surfaced on the transition log
+# line so an operator reading the journal understands WHY the worker
+# stopped emitting events without cross-referencing the code. The
+# "healthy but zero events" footgun (plan §2): a worker sitting in
+# `off` / `scheduled-off` / `low-memory` / `thermal-throttled` looks
+# identical in /api/status to "camera saw nobody" unless the gear
+# transition is logged.
+_GEAR_REASON = {
+    "off": "detection disabled (manual toggle) - NO events will fire",
+    "scheduled-off": "inside the scheduled off-window - NO events will fire",
+    "low-memory": "RAM below floor - inference PAUSED (capture continues)",
+    "thermal-throttled": "GPU hot - forced to idle gear (1 fps)",
+    "idle": "no recent detections - inference throttled to idle fps",
+    "active": "recent detection - inference at active fps",
+}
+
+
+def top_label_for_log(kept):
+    """Best-effort top-confidence label from a `kept` list of
+    ``(detection, label)`` tuples, for log lines that need a label
+    BEFORE the main emit path computes `top_label`. Returns ``"?"`` on
+    an empty list so a log line can never KeyError/ValueError. Pure
+    (no I/O); kept tiny so it stays off the per-frame cost path (only
+    called on the throttled zone-suppression line)."""
+    if not kept:
+        return "?"
+    try:
+        return max(kept, key=lambda dl: dl[0].Confidence)[1]
+    except Exception:
+        return "?"
+
+
+def gear_transition(prev_gear, new_gear):
+    """Pure helper: decide whether a gear change warrants a log line.
+
+    Returns ``(should_log, message)``. ``should_log`` is True only on an
+    actual transition (``prev_gear != new_gear``) so the inference loop
+    logs ONCE per gear change, never per-frame — the plan §4 hot-path
+    silence guardrail and the "log on TRANSITION only" directive. The
+    message embeds the `_GEAR_REASON` text for the destination gear.
+
+    Factored out (no logging, no I/O) so the transition decision can be
+    unit-tested without spinning up the inference loop or a logger.
+    """
+    if prev_gear == new_gear:
+        return (False, "")
+    reason = _GEAR_REASON.get(new_gear, "")
+    if reason:
+        msg = "gear {} -> {}: {}".format(prev_gear, new_gear, reason)
+    else:
+        msg = "gear {} -> {}".format(prev_gear, new_gear)
+    return (True, msg)
+
+
 def main():
+    # First thing: install the root logging handler so every leaf-lib
+    # `log.warning(...)` (recognizer / detector / *_guard / watchdog) and
+    # every `applog.emit("[tag] ...")` breadcrumb reaches journald. Must
+    # run BEFORE any worker thread (heartbeat / config-poll / preroll
+    # watchdog) spawns so their first log line is already handled.
+    applog.configure()
     source_uri = _env("DETECT_SOURCE", "rtsp://localhost:8554/cam")
     threshold = _env("DETECT_THRESHOLD", 0.55, float)
     cooldown = _env("DETECT_COOLDOWN_S", 5.0, float)
@@ -809,11 +1039,19 @@ def main():
                 duration_s=clip_duration_s,
                 max_concurrent=clip_max_concurrent,
             )
-            print("[detect] clip recorder armed -> {} ({}s clips, max {} concurrent)".format(
+            log.info(
+                "clip recorder armed -> %s (%ss clips, max %s concurrent)",
                 recordings_dir, clip_duration_s, clip_max_concurrent,
-            ), flush=True)
+            )
         except Exception as e:
-            print("[detect] clip recorder disabled: {}".format(e), flush=True)
+            # Import-disable site: RECORDINGS_DIR was configured (operator
+            # wants clips) but the recorder couldn't be built. ERROR with
+            # the reason + dir — every detection event will now ship
+            # without a clip and the ClipModal falls back to the snapshot.
+            log.error(
+                "clip recorder disabled (events will have no clips) for "
+                "dir=%s: %s: %s", recordings_dir, type(e).__name__, e,
+            )
             clip_recorder = None
 
     # iter-324 (Feature #1 slice 2c, pre-roll): start a long-running
@@ -847,14 +1085,29 @@ def main():
                     # cycle, short enough that the buffer is back
                     # in service before the next detection event.
                     preroll_buffer.start_watchdog(interval_s=10.0)
-                    print("[detect] preroll buffer armed -> {} (watchdog 10s)".format(
+                    log.info(
+                        "preroll buffer armed -> %s (watchdog 10s)",
                         preroll_dir,
-                    ), flush=True)
+                    )
                 else:
-                    print("[detect] preroll buffer failed to start", flush=True)
+                    # start() returned False: the segment-recorder ffmpeg
+                    # didn't come up (RTSP not yet available, ffmpeg
+                    # missing, buffer dir unwritable). ERROR — pre-roll is
+                    # configured but silently absent; clips will be
+                    # post-roll-only with no warning to the operator.
+                    log.error(
+                        "preroll buffer failed to start for dir=%s "
+                        "(clips will be post-roll-only)", preroll_dir,
+                    )
                     preroll_buffer = None
             except Exception as e:
-                print("[detect] preroll buffer disabled: {}".format(e), flush=True)
+                # Import-disable site: pre-roll configured but the module
+                # couldn't load / construct. ERROR with reason + dir.
+                log.error(
+                    "preroll buffer disabled for dir=%s: %s: %s "
+                    "(clips will be post-roll-only)",
+                    preroll_dir, type(e).__name__, e,
+                )
                 preroll_buffer = None
 
     # iter-356.62 (camera-algorithm-auditor pre-YOLO win 3): mem-floor
@@ -866,10 +1119,28 @@ def main():
 
     # detectNet uses a fixed low floor; the live-tunable threshold filters
     # the results post-inference (avoids reloading the TRT engine).
-    print("[detect] loading {} (floor={}, initial threshold={})".format(
-        model, RuntimeConfig.DETECT_FLOOR, threshold), flush=True)
-    net = jetson_inference.detectNet(model, threshold=RuntimeConfig.DETECT_FLOOR)
-    print("[detect] model ready", flush=True)
+    log.info(
+        "loading %s (floor=%s, initial threshold=%s)",
+        model, RuntimeConfig.DETECT_FLOOR, threshold,
+    )
+    try:
+        net = jetson_inference.detectNet(
+            model, threshold=RuntimeConfig.DETECT_FLOOR,
+        )
+    except Exception as e:
+        # detectNet construction failed: TRT engine couldn't be built /
+        # deserialized (missing model files, corrupt .engine, TensorRT
+        # version mismatch, or an OOM-SIGKILL'd workspace alloc that
+        # surfaced as an exception rather than a kill). The worker CANNOT
+        # run without the net — log ERROR naming the model + reason and
+        # abort so systemd's RestartSec retries with a clear cause in the
+        # journal instead of a bare traceback.
+        log.error(
+            "detectNet load FAILED for model=%s: %s: %s (worker cannot "
+            "start)", model, type(e).__name__, e,
+        )
+        raise SystemExit(4)
+    log.info("model ready")
 
     # Optional face recognizer: matches each person detection against a
     # small known-faces database. Disables itself cleanly if the encodings
@@ -892,7 +1163,7 @@ def main():
     # grow the segment-recorder ring on demand when the user pushes
     # the Settings "Pre-roll" slider above the boot-time capacity.
     start_config_poll(config_url, runtime, preroll_buffer=preroll_buffer)
-    print("[detect] config poll -> {}".format(config_url), flush=True)
+    log.info("config poll -> %s", config_url)
 
     # Liveness signal driven by the inference loop; heartbeat thread reads
     # it before each POST. Bumped here so the server sees us alive during
@@ -902,11 +1173,11 @@ def main():
     metrics.face_recog_names = metrics_known_names
     heartbeat_url = event_url.rsplit("/", 1)[0] + "/heartbeat"
     start_heartbeat(heartbeat_url, liveness, metrics)
-    print("[detect] heartbeat -> {}".format(heartbeat_url), flush=True)
+    log.info("heartbeat -> %s", heartbeat_url)
 
-    print("[detect] opening source {}".format(source_uri), flush=True)
+    log.info("opening source %s", source_uri)
     camera = open_camera(source_uri)
-    print("[detect] source open; sending events to {}".format(event_url), flush=True)
+    log.info("source open; sending events to %s", event_url)
     liveness.bump()
 
     # iter-272 (camera-algorithm-auditor B1): per-(label, camera_id)
@@ -921,7 +1192,13 @@ def main():
     # unbounded growth path (e.g. ssd-mobilenet-v2 has 90 class
     # labels, all of which could in theory survive `wanted` if the
     # operator selected them).
-    last_emit_by_key = {}  # type: ignore[var-annotated]
+    # Presence-coalescing emit gate (replaces the old flat per-(label,camera)
+    # cooldown dict). A continuous presence used to re-fire a fresh event +
+    # clip every cooldown (~5 s); the tracker collapses those re-fires into one
+    # event per presence (segmented only when a long linger outlasts its clip).
+    # See detection/presence.py and the gate below. The old `cooldown_s` now
+    # acts as the min-gap floor between emits for one key.
+    presence_tracker = PresenceTracker()
     # iter-356.53 (bbox-track sidecar, Feature #1 follow-up):
     # rolling deque of (frame_ts, boxes) for the last ~64 s of
     # inferences (covers the absolute pre-roll ceiling). Single-
@@ -936,10 +1213,15 @@ def main():
     try:
         import tracks as _tracks_mod
     except Exception as _e:
-        # Fail-quiet: if tracks.py is missing or broken, fall back
-        # to today's static-overlay behavior. The clip MP4 path is
-        # independent.
-        print("[detect] track sidecar disabled: {}".format(_e), flush=True)
+        # Import-disable site: if tracks.py is missing or broken, fall
+        # back to today's static-overlay behavior. The clip MP4 path is
+        # independent, so this degrades gracefully — WARN (not ERROR)
+        # naming the reason so the operator knows bbox-following will be
+        # absent on new clips and why.
+        log.warning(
+            "track sidecar disabled (clips fall back to static overlay): "
+            "%s: %s", type(_e).__name__, _e,
+        )
         _tracks_mod = None
     last_inference = 0.0
     last_detection = 0.0
@@ -948,6 +1230,30 @@ def main():
     started = time.time()
     metrics.started = started  # so fps() / infer_per_s() use the same baseline
     latest_path = os.path.join(thumb_dir, "latest.jpg")
+    # Gear-transition logging state (plan §2 "healthy but zero events"
+    # footgun). `prev_gear` tracks the last gear we logged; the loop
+    # calls `_set_gear(...)` instead of assigning `metrics.gear`
+    # directly so a change is logged ONCE at the transition, never
+    # per-frame. Seeded to None so the FIRST gear is always logged.
+    gear_state = {"prev": None}
+
+    def _set_gear(new_gear):
+        metrics.gear = new_gear
+        should_log, msg = gear_transition(gear_state["prev"], new_gear)
+        if should_log:
+            log.info("%s", msg)
+            gear_state["prev"] = new_gear
+
+    # Throttle state for the in-loop INFO/WARN lines that would
+    # otherwise fire per-frame. `_empty_class_warned` is a re-arming
+    # once-flag (set when the wanted-set is empty, cleared the moment a
+    # non-empty set is seen). `_zone_suppress` rate-limits the
+    # zone-gate-suppression INFO to at most one line per
+    # `_ZONE_SUPPRESS_EVERY_S` so a busy scene outside every zone
+    # doesn't flood the journal.
+    empty_class_warned = False
+    last_zone_suppress_log = 0.0
+    _ZONE_SUPPRESS_EVERY_S = 60.0
 
     consecutive_failures = 0
     # The watchdog kicks mediamtx after a sustained burst of capture
@@ -1122,11 +1428,11 @@ def main():
         # heartbeats keep firing — the `gear` field tells the UI which
         # off-state we're in.
         if not runtime.enabled:
-            metrics.gear = "off"
+            _set_gear("off")
             del img
             continue
         if runtime.schedule_says_off():
-            metrics.gear = "scheduled-off"
+            _set_gear("scheduled-off")
             del img
             continue
 
@@ -1136,7 +1442,7 @@ def main():
         # Memory pressure: when low, drop inference; we keep capturing +
         # writing latest.jpg above so the camera plane stays clean.
         if memory_guard.low:
-            metrics.gear = "low-memory"
+            _set_gear("low-memory")
             del img
             continue
 
@@ -1151,9 +1457,9 @@ def main():
 
         idle = thermally_throttled or (now - last_detection) > idle_after_s
         if thermally_throttled:
-            metrics.gear = "thermal-throttled"
+            _set_gear("thermal-throttled")
         else:
-            metrics.gear = "idle" if idle else "active"
+            _set_gear("idle" if idle else "active")
         target_period = idle_period if idle else active_period
         if target_period > 0 and (now - last_inference) < target_period:
             # Drop the cudaImage explicitly so jetson-utils releases the
@@ -1164,7 +1470,24 @@ def main():
         last_inference = now
 
         infer_t0 = time.time()
-        detections = net.Detect(img, overlay="none")
+        try:
+            detections = net.Detect(img, overlay="none")
+        except Exception as e:
+            # net.Detect raised — a CUDA fault (illegal address, ECC
+            # error, OOM on the GPU) or a TensorRT runtime error. This is
+            # NOT recoverable in-process: the CUDA context is poisoned, so
+            # every subsequent Detect would fault too. Log ERROR naming
+            # the reason + frame count (one line — we re-raise so the loop
+            # does NOT spin logging per-frame) and let systemd restart the
+            # worker with a fresh CUDA context. del img so the dmabuf is
+            # released before we unwind.
+            del img
+            log.error(
+                "net.Detect CUDA fault at frame %s: %s: %s (CUDA context "
+                "poisoned; worker will restart)",
+                metrics.frames, type(e).__name__, e,
+            )
+            raise
         # Wall-clock per-inference latency. On the Nano 2GB at FP16 this is
         # ~45 ms steady-state and climbs into the 100s when the GPU thermal
         # throttles — the most direct signal we have for thermal pressure.
@@ -1181,9 +1504,23 @@ def main():
         wanted = set(runtime.classes)
         # An empty wanted-set means the user explicitly turned every class
         # off. Treat as "no detections" (silent), don't fall back to person.
+        # WARN once on the transition into the empty state (re-arming
+        # once-flag, NOT per-frame): a worker that emits zero events
+        # because every class was deselected looks identical to "the
+        # camera saw nobody" — the operator needs the reason. The flag
+        # clears the moment a non-empty wanted-set is seen so re-enabling
+        # a class logs a fresh recovery on the next non-empty poll.
         if not wanted:
+            if not empty_class_warned:
+                log.warning(
+                    "wanted-class set is EMPTY (every class deselected in "
+                    "Settings) - NO events will fire until a class is "
+                    "re-enabled"
+                )
+                empty_class_warned = True
             del img
             continue
+        empty_class_warned = False
         kept: list = []     # list[(detection, label)]
         for d in detections:
             if d.Confidence < threshold_now:
@@ -1208,15 +1545,30 @@ def main():
         w = float(img.width)
         h = float(img.height)
         boxes = []
-        for d, label in kept:
-            # Use the box-normalizer helper so x+w <= 1 exactly (clamps
-            # pixel coords before the division — the iter-96 follow-up
-            # to iter-95's server-side validator). The helper raises
-            # ValueError on a zero-dim frame; img.width/height come
-            # from videoSource and are always positive on a live feed.
-            boxes.append(normalize_box(
-                d.Left, d.Top, d.Right, d.Bottom, w, h, label, d.Confidence,
-            ))
+        try:
+            for d, label in kept:
+                # Use the box-normalizer helper so x+w <= 1 exactly
+                # (clamps pixel coords before the division — the iter-96
+                # follow-up to iter-95's server-side validator). The
+                # helper raises ValueError on a zero-dim frame;
+                # img.width/height come from videoSource and are always
+                # positive on a live feed.
+                boxes.append(normalize_box(
+                    d.Left, d.Top, d.Right, d.Bottom, w, h, label, d.Confidence,
+                ))
+        except ValueError as e:
+            # Non-positive frame dims (zero-width/height cudaImage —
+            # corrupt frame, decoder hiccup). Pre-logging this propagated
+            # and crashed the whole inference loop. ERROR naming the dims
+            # + reason, then drop THIS frame and continue so one bad
+            # frame doesn't take the worker down. del img first to
+            # release the dmabuf.
+            del img
+            log.error(
+                "box normalize failed for frame %s (w=%s h=%s): %s - "
+                "frame dropped", metrics.frames, w, h, e,
+            )
+            continue
         # iter-356.53: capture this frame's boxes for any in-flight
         # clip's track sidecar — runs BEFORE zone/cooldown gates so
         # the post-roll path of a triggering event still sees every
@@ -1255,39 +1607,59 @@ def main():
         # gate now runs BEFORE the cooldown gate, so a zone-rejected
         # false positive can't consume the cooldown window.
         if not any_box_center_inside_any_zone(boxes, runtime.zones):
+            # Zone gate suppressed this detection: a box cleared the
+            # threshold + wanted-class filters but its center fell
+            # outside every drawn zone. Throttled INFO (at most one line
+            # per `_ZONE_SUPPRESS_EVERY_S`) so a busy scene just outside
+            # the zone doesn't flood the journal, but the operator can
+            # still tell "zones are silently eating my detections" apart
+            # from "nothing was detected" — only logged when zones are
+            # actually configured (empty zones short-circuit to allow).
+            if runtime.zones and (now - last_zone_suppress_log) >= _ZONE_SUPPRESS_EVERY_S:
+                log.info(
+                    "zone gate suppressed a %s detection (center outside "
+                    "all %d zone(s)); throttled to 1/%.0fs",
+                    top_label_for_log(kept), len(runtime.zones),
+                    _ZONE_SUPPRESS_EVERY_S,
+                )
+                last_zone_suppress_log = now
             del img
             continue
-        # Compute the top-confidence detection now — it drives both
-        # the cooldown key (iter-272 B1) and the rest of the emit path.
+        # Compute the top-confidence detection now — it drives the presence
+        # key and the rest of the emit path.
         top_d, top_label = max(kept, key=lambda dl: dl[0].Confidence)
-        # iter-272 (camera-algorithm-auditor B1): per-(label, camera_id)
-        # cooldown. Two concurrent classes (person + dog) are gated
-        # independently so a low-priority bark doesn't suppress a
-        # high-priority person event in the same window.
+        # iter-271 (camera-algorithm-auditor C1): bump the idle-gear keepalive
+        # once a detection has cleared threshold + wanted-classes + zone.
+        # iter (presence coalescing): MOVED above the emit gate. With
+        # coalescing, a lingering subject emits only ~once per clip — if the
+        # keepalive only bumped on emit, the worker would drop to idle 1 fps
+        # mid-presence. Bumping on every in-zone detection keeps it at active
+        # fps while a subject is present. Still AFTER the zone gate, so a
+        # zone-rejected false positive does NOT keep it awake (iter-271 intent).
+        last_detection = now
+        # iter-272 (camera-algorithm-auditor B1): per-(label, camera_id) key so
+        # two concurrent classes (person + dog) are tracked independently.
         emit_key = "{}:{}".format(top_label, camera_id)
-        if now - last_emit_by_key.get(emit_key, 0.0) < cooldown_now:
-            # iter-172 cudaImage release symmetry — release the dmabuf
-            # promptly so jetson-utils can recycle it; matches every
-            # other early-continue in this loop.
+        # Presence-coalescing gate (replaces the old flat per-key cooldown).
+        # While this same subject keeps appearing in roughly the same place
+        # (IoU-matched) AND its clip is still recording, suppress the re-fire —
+        # one event per continuous presence. Re-arm to the next segment only
+        # when a long linger outlasts its clip, so coverage stays complete and
+        # the segments tile back-to-back without overlap. `cooldown_now` (the
+        # old DETECT_COOLDOWN_S) is now the min-gap floor between emits. See
+        # detection/presence.py + tests/test_presence.py.
+        top_box = (top_d.Left, top_d.Top, top_d.Right, top_d.Bottom)
+        clip_duration_s = max(
+            runtime.clip_pre_roll_s + runtime.clip_post_roll_s, cooldown_now
+        )
+        if not presence_tracker.should_emit(
+            emit_key, top_box, now, clip_duration_s,
+            _PRESENCE_GAP_S, cooldown_now,
+        ):
+            # iter-172 cudaImage release symmetry — release the dmabuf promptly
+            # so jetson-utils can recycle it; matches every other early-continue.
             del img
             continue
-        last_emit_by_key[emit_key] = now
-        # Bound the dict's growth. Label vocab × camera count is
-        # bounded today (single camera + ~10 wanted classes), but
-        # this is a defensive cap against operator misconfig (e.g.
-        # selecting all 90 SSD classes). Drop the oldest entry —
-        # not strictly LRU but cheap and correct under our access
-        # pattern (recent labels stay hot).
-        if len(last_emit_by_key) > 32:
-            oldest = min(last_emit_by_key, key=last_emit_by_key.get)
-            del last_emit_by_key[oldest]
-        # iter-271 (camera-algorithm-auditor C1): bump idle-gear ONLY
-        # after a detection has cleared every filter (threshold +
-        # wanted-classes + zone + cooldown). Pre-iter-271 the bump
-        # happened right after the wanted-classes filter, so a
-        # zone-rejected false positive kept the worker at 5 fps for
-        # the full idle_after_s window.
-        last_detection = now
         # iter-187 (Feature #9 observability): time the whole save_thumb
         # call (mkdir + jetson_utils.saveImage + retention sweep). This
         # is the operator-level "what does a thumb cost me" number that
@@ -1296,6 +1668,12 @@ def main():
         thumb_t0 = time.time()
         thumb_url = save_thumb(img, now, thumb_dir, thumb_max, thumb_quality)
         metrics.record_thumb_ms((time.time() - thumb_t0) * 1000.0)
+        if thumb_url is None:
+            # save_thumb already logged the ERROR with the reason (dir +
+            # exception). Bump the counter here at the caller (where
+            # `metrics` is in scope) so the rate surfaces on /api/status.
+            # Runs at most once per emitted event (cooldown-gated).
+            metrics.thumb_save_failures += 1
 
         # iter-352 (face-capture-for-retraining): generate event_id
         # earlier so the recognizer's capture path can stamp it on the
@@ -1485,18 +1863,29 @@ def main():
                                         meta=dict(capture_meta, kind="person"),
                                     )
                             except Exception as _pe:
-                                print(
-                                    "[detect] person capture save failed: {}".format(_pe),
-                                    flush=True,
+                                # Full-person training crop failed to
+                                # save for THIS person (PIL encode, disk
+                                # write). Best-effort: the face capture +
+                                # event are unaffected. WARN + bump the
+                                # face-recog failure counter (runs at most
+                                # once per emit, not per-frame).
+                                metrics.face_recog_failures += 1
+                                log.warning(
+                                    "person capture save failed for "
+                                    "event=%s idx=%s: %s: %s",
+                                    event_id, idx, type(_pe).__name__, _pe,
                                 )
                     except Exception as _per_e:
-                        # Per-person glitch must NOT drop other
-                        # selected people. Log and continue.
-                        print(
-                            "[detect] per-person face match failed (idx={}): {}".format(
-                                idx, _per_e,
-                            ),
-                            flush=True,
+                        # Per-person glitch must NOT drop other selected
+                        # people. WARN naming the person index + reason,
+                        # bump the counter, and continue so the rest of
+                        # the batch still gets recognized.
+                        metrics.face_recog_failures += 1
+                        log.warning(
+                            "per-person face match failed for event=%s "
+                            "idx=%s: %s: %s (other people in frame still "
+                            "processed)",
+                            event_id, idx, type(_per_e).__name__, _per_e,
                         )
                         continue
                 # Legacy single-name field = first matched name
@@ -1505,8 +1894,18 @@ def main():
                 # that read `event.person_name` directly.
                 person_name = person_names[0] if person_names else None
             except Exception as e:
-                # Don't let a face-recognition glitch block the event.
-                print("[detect] face match failed: {}".format(e), flush=True)
+                # Whole face-recog batch failed (numpy materialize, the
+                # selection loop, an unexpected recognizer error). Don't
+                # let it block the event — the event still fires without
+                # names. WARN naming the event + reason and bump the
+                # counter so a recognizer that's silently failing every
+                # event is visible on /api/status.
+                metrics.face_recog_failures += 1
+                log.warning(
+                    "face match batch failed for event=%s: %s: %s "
+                    "(event fires without recognized names)",
+                    event_id, type(e).__name__, e,
+                )
                 person_name = None
                 person_names = []
 
@@ -1567,11 +1966,38 @@ def main():
                             "samples": _pre_samples,
                             "expires_at": now + float(runtime.clip_post_roll_s) + 1.0,
                         }
+                else:
+                    # start_clip returned False — capacity was full
+                    # (max_concurrent ffmpeg subprocesses already
+                    # in-flight; the event_id is always a fresh uuid so
+                    # the malformed-id branch can't be hit here). The
+                    # recording module stays log-free by design (so it
+                    # unit-tests without a logger), so the DROP is logged
+                    # HERE at the caller. Pre-logging this was fully
+                    # silent: a sustained burst would drop every clip
+                    # with zero signal. WARN + bump the capacity counter
+                    # so the operator sees both the line and the rate on
+                    # /api/status.
+                    metrics.clips_dropped_capacity += 1
+                    log.warning(
+                        "clip dropped at capacity for event=%s (%d/%d "
+                        "concurrent recordings in flight); event still "
+                        "fires without a clip",
+                        event_id, clip_recorder.in_flight(),
+                        clip_recorder.max_concurrent,
+                    )
             except Exception as e:
-                # Recorder failures are best-effort. The event still
-                # flows; clip_url stays None and the client modal
-                # falls back to the snapshot.
-                print("[detect] clip start failed: {}".format(e), flush=True)
+                # Recorder raised (ffmpeg spawn failure, makedirs OSError,
+                # etc. propagated out of start_clip). Best-effort: the
+                # event still flows; clip_url stays None and the client
+                # modal falls back to the snapshot. ERROR naming the
+                # event + reason, and bump `clip_start_failures` so the
+                # rate is visible.
+                metrics.clip_start_failures += 1
+                log.error(
+                    "clip start failed for event=%s: %s: %s (event fires "
+                    "without a clip)", event_id, type(e).__name__, e,
+                )
 
         payload = {
             "id": event_id,
@@ -1596,7 +2022,7 @@ def main():
             payload["person_names"] = person_names
         if clip_url:
             payload["clip_url"] = clip_url
-        post_event(event_url, payload)
+        post_event(event_url, payload, metrics=metrics)
         metrics.emitted += 1
 
         elapsed = max(time.time() - started, 0.001)

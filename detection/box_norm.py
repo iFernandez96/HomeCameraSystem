@@ -20,6 +20,9 @@ rely on the validator's tolerance.
 Pure stdlib. Python-3.6 compatible (per the CLAUDE.md sharp edge —
 this module is imported by detect.py which runs on JetPack 4.x's 3.6).
 """
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def normalize_box(left, top, right, bottom, frame_w, frame_h, label, score):
@@ -35,6 +38,16 @@ def normalize_box(left, top, right, bottom, frame_w, frame_h, label, score):
     Raises ValueError if `frame_w` or `frame_h` is non-positive.
     """
     if frame_w <= 0 or frame_h <= 0:
+        # Non-positive frame dims would divide-by-zero / invert the
+        # normalization below; the ValueError propagates up into the
+        # inference loop and kills detection. Log at ERROR (pipeline-
+        # dead class) with the offending dims so the cause is visible
+        # before the crash — the loop has no other failure record here.
+        log.error(
+            "normalize_box: non-positive frame dimensions "
+            "(frame_w=%s, frame_h=%s) - inference loop will crash",
+            frame_w, frame_h,
+        )
         raise ValueError("frame dimensions must be positive")
     # Clamp in pixel space first — guarantees x + w <= 1 exactly,
     # without relying on the server validator's sub-pixel epsilon.

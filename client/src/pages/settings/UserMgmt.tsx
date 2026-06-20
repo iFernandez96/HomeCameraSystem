@@ -22,7 +22,8 @@ function _httpErrorStatus(e: unknown): number | undefined {
 import { useAuth } from '../../lib/auth'
 import { useConfirm } from '../../lib/confirm'
 import { formatError } from '../../lib/format'
-import { useToast } from '../../lib/toast'
+import { log, errFields } from '../../lib/log'
+import { useReportError, useToast } from '../../lib/toast'
 import { Button } from '../../components/primitives/Button'
 import { Row } from './parts'
 
@@ -42,6 +43,7 @@ export function ChangePasswordRow() {
   const [confirmPw, setConfirmPw] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { showToast } = useToast()
+  const reportError = useReportError()
   const reset = () => {
     setCurrent('')
     setNext('')
@@ -68,9 +70,18 @@ export function ChangePasswordRow() {
     } catch (e) {
       const status = _httpErrorStatus(e)
       if (status === 401) {
+        // 401 = wrong current password; user-recoverable, expected.
+        // Toast only — no log (would be noise on a routine typo).
         showToast('Current password is incorrect', 'error')
       } else {
-        showToast(`Could not change password: ${formatError(e)}`, 'error')
+        // docs/logging_plan.md §2 + §4: the generic fallback was
+        // silent. Log the status — NEVER the password values, which
+        // are in `current`/`next` scope here.
+        reportError(
+          'userMgmt:change-password-failed',
+          `Could not change password: ${formatError(e)}`,
+          errFields(e),
+        )
       }
     } finally {
       setSubmitting(false)
@@ -157,6 +168,7 @@ export function ChangePasswordRow() {
 export function ManageUsersPanel() {
   const { user } = useAuth()
   const { showToast } = useToast()
+  const reportError = useReportError()
   const confirm = useConfirm()
   const [users, setUsers] = useState<AdminUserRow[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -170,6 +182,10 @@ export function ManageUsersPanel() {
       setUsers(r.users)
       setLoadError(null)
     } catch (e) {
+      // docs/logging_plan.md §2: the user-list load showed an inline
+      // error string but never logged the status — a 403 (lost owner
+      // role mid-session) reads the same as a 5xx to the operator.
+      log.warn('userMgmt:list-load-failed', errFields(e))
       setLoadError(formatError(e))
     }
   }
@@ -188,6 +204,9 @@ export function ManageUsersPanel() {
         setLoadError(null)
       })
       .catch((e) => {
+        // Logged before the cancelled guard so an unmount mid-load is
+        // still recorded.
+        log.warn('userMgmt:list-load-failed', errFields(e))
         if (cancelled) return
         setLoadError(formatError(e))
       })
@@ -223,13 +242,21 @@ export function ManageUsersPanel() {
     } catch (e) {
       const status = _httpErrorStatus(e)
       if (status === 400) {
-        // Server-side guard: self-delete or last-owner delete.
+        // Server-side guard: self-delete or last-owner delete. Expected
+        // user error — toast only.
         showToast(formatError(e), 'error')
       } else if (status === 404) {
         showToast('User no longer exists', 'error')
         await refresh()
       } else {
-        showToast(`Could not delete: ${formatError(e)}`, 'error')
+        // docs/logging_plan.md §2: the generic fallback was silent. Log
+        // the target username (NOT a password — none in scope here) +
+        // status so a failed delete on a household account is traceable.
+        reportError(
+          'userMgmt:delete-user-failed',
+          `Could not delete: ${formatError(e)}`,
+          { username: target.username, ...errFields(e) },
+        )
       }
     }
   }
@@ -367,6 +394,7 @@ function AddUserForm(props: {
   const [role, setRole] = useState<AdminRole>('family')
   const [submitting, setSubmitting] = useState(false)
   const { showToast } = useToast()
+  const reportError = useReportError()
   const onSubmit = async () => {
     if (!username) {
       showToast('Username is required', 'error')
@@ -387,9 +415,18 @@ function AddUserForm(props: {
     } catch (e) {
       const status = _httpErrorStatus(e)
       if (status === 409) {
+        // Username-taken — expected user error, toast only.
         showToast(`Username "${username}" is already taken`, 'error')
       } else {
-        showToast(`Could not create user: ${formatError(e)}`, 'error')
+        // docs/logging_plan.md §2 + §4: the generic fallback was
+        // silent. Log the username + role + status. CRITICAL: the new
+        // user's `password` is in scope here — it MUST NOT appear in
+        // the fields. Only username/role/status are passed.
+        reportError(
+          'userMgmt:create-user-failed',
+          `Could not create user: ${formatError(e)}`,
+          { username, role, ...errFields(e) },
+        )
       }
     } finally {
       setSubmitting(false)
@@ -464,6 +501,7 @@ function InlineResetPasswordForm(props: {
   const [next, setNext] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { showToast } = useToast()
+  const reportError = useReportError()
   const onSubmit = async () => {
     if (next.length < 8) {
       showToast('Password must be at least 8 characters', 'error')
@@ -478,9 +516,16 @@ function InlineResetPasswordForm(props: {
     } catch (e) {
       const status = _httpErrorStatus(e)
       if (status === 404) {
+        // User vanished between list + reset — expected, toast only.
         showToast(`No user named "${props.username}"`, 'error')
       } else {
-        showToast(`Could not reset password: ${formatError(e)}`, 'error')
+        // docs/logging_plan.md §2 + §4: log username + status. The new
+        // password in `next` MUST NOT be logged — only the shape.
+        reportError(
+          'userMgmt:reset-password-failed',
+          `Could not reset password: ${formatError(e)}`,
+          { username: props.username, ...errFields(e) },
+        )
       }
     } finally {
       setSubmitting(false)

@@ -33,6 +33,10 @@ vi.mock('../lib/useStatus', () => ({
 const showToast = vi.fn()
 vi.mock('../lib/toast', () => ({
   useToast: () => ({ showToast }),
+  // useReportError pairs an error log with a toast; route it through the
+  // same showToast spy so existing error-toast assertions still hold.
+  useReportError: () => (_event: string, message: string) =>
+    showToast(message, 'error'),
 }))
 
 // Stub out the network functions but pass through the real HttpError

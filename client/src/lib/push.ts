@@ -4,6 +4,18 @@ import {
   subscribePush,
   unsubscribePush,
 } from './api'
+import { log, errFields } from './log'
+
+// Push endpoints are opaque per-device URLs whose path segment is a
+// device secret. Log only the host (e.g. `fcm.googleapis.com`) so a
+// failing provider is identifiable without persisting the secret tail.
+function endpointHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host
+  } catch {
+    return 'invalid-endpoint'
+  }
+}
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4)
@@ -26,22 +38,51 @@ export async function getPushState(): Promise<boolean> {
 }
 
 export async function ensurePushSubscription(): Promise<boolean> {
+  // docs/logging_plan.md §2 (push.ts enable-chain): every step below can
+  // fail for a distinct reason (permission denied, VAPID key fetch 5xx,
+  // browser/push-service subscribe reject, server persist fail). The
+  // chain returned a bare `false` or threw with no breadcrumb of WHICH
+  // step broke. Each step is logged at ERROR with a `step` tag.
+  // GUARDRAIL: NEVER log the VAPID key bytes or the endpoint secret tail.
   if (!pushSupported()) {
     alert('Push not supported in this browser. On Android, use Chrome.')
     return false
   }
   const perm = await Notification.requestPermission()
-  if (perm !== 'granted') return false
+  if (perm !== 'granted') {
+    log.error('push:enable-failed', { step: 'permission', permission: perm })
+    return false
+  }
   const reg = await navigator.serviceWorker.ready
   let sub = await reg.pushManager.getSubscription()
   if (!sub) {
-    const { key } = await getVapidPublicKey()
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(key),
-    })
+    let key: string
+    try {
+      ;({ key } = await getVapidPublicKey())
+    } catch (e) {
+      log.error('push:enable-failed', { step: 'vapid-key', ...errFields(e) })
+      throw e
+    }
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      })
+    } catch (e) {
+      log.error('push:enable-failed', { step: 'subscribe', ...errFields(e) })
+      throw e
+    }
   }
-  await subscribePush(sub)
+  try {
+    await subscribePush(sub)
+  } catch (e) {
+    log.error('push:enable-failed', {
+      step: 'server-persist',
+      endpointHost: endpointHost(sub.endpoint),
+      ...errFields(e),
+    })
+    throw e
+  }
   return true
 }
 
@@ -67,7 +108,15 @@ export async function disablePushSubscription(): Promise<void> {
   try {
     await unsubscribePush(endpoint)
   } catch (e) {
-    console.warn('server-side push unsubscribe failed (will retry on next 410)', e)
+    // docs/logging_plan.md §2: was a bare console.warn. Promote to a
+    // structured WARN carrying the endpoint HOST (NOT the secret path
+    // tail) + status so a persistently-failing server-side unsubscribe
+    // (stale sub never pruned) is visible. The browser sub is already
+    // gone so this stays best-effort.
+    log.warn('push:server-unsubscribe-failed', {
+      endpointHost: endpointHost(endpoint),
+      ...errFields(e),
+    })
   }
 }
 

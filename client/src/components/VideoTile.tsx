@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { drawBoxes } from '../lib/drawBoxes'
+import { log, errFields } from '../lib/log'
 import {
   getStreamQuality,
   pathForQuality,
@@ -105,6 +106,17 @@ export function VideoTile({
   // `src` override (tests / future multi-cam wiring) wins; otherwise the
   // tile composes its own URL from the chosen quality.
   const effectiveSrc = src ?? whepUrlForPath(pathForQuality(quality))
+  // Keep the latest quality in a ref so the connect effect can LOG it
+  // without taking it as a reactive dependency. The effect re-runs on
+  // `effectiveSrc` (which already changes in lockstep with quality in the
+  // cellular case); making quality a dep would force a redundant reconnect
+  // when a `src` override is supplied. The ref always reads current.
+  const qualityRef = useRef(quality)
+  // Sync the ref in an effect (NOT during render — react-hooks/refs) so the
+  // connect effect can log the current quality without a reactive dep.
+  useEffect(() => {
+    qualityRef.current = quality
+  }, [quality])
   const onSelectQuality = (q: StreamQuality) => {
     setStreamQuality(q)
     setQuality(q)
@@ -169,7 +181,31 @@ export function VideoTile({
     // fragile if the close is ever deferred or skipped (e.g. for
     // transition reuse). Defense-in-depth, ~3 lines.
     let pcStateChange: (() => void) | null = null
+    // docs/logging_plan.md §2 (Live view): the four mid-stream error
+    // paths (videoError / 3s stall / 8s media-timeout / pcState
+    // failed-disconnected-closed) were 100% silent — the most
+    // user-visible Live failure class with zero signal. Each logs the
+    // express cause + the WebRTC connectionState + iceConnectionState
+    // so an operator can tell a codec freeze from an ICE drop. Shared
+    // helper reads the live pc off `conn` (null until WHEP resolves).
+    const midStreamFail = (cause: string, extra: Record<string, unknown> = {}) => {
+      log.warn('videoTile:mid-stream-error', {
+        cause,
+        quality: qualityRef.current,
+        effectiveSrc,
+        retryNonce,
+        connectionState: conn?.pc.connectionState ?? null,
+        iceConnectionState: conn?.pc.iceConnectionState ?? null,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        ...extra,
+      })
+    }
     const onVideoError = () => {
+      // Log BEFORE the cancelled guard (§1.3) so a failure during
+      // unmount is still recorded. The <video> error event carries the
+      // MediaError code on the element when present.
+      const code = videoRef.current?.error?.code ?? null
+      midStreamFail('video-element-error', { mediaErrorCode: code })
       if (cancelled) return
       setStatus('error')
     }
@@ -177,6 +213,7 @@ export function VideoTile({
       if (cancelled || stallTimer !== null) return
       stallTimer = setTimeout(() => {
         stallTimer = null
+        midStreamFail('stall-3s')
         if (!cancelled) setStatus('error')
       }, 3000)
     }
@@ -225,6 +262,10 @@ export function VideoTile({
         // candidate the client can't reach).
         mediaTimer = setTimeout(() => {
           mediaTimer = null
+          // WHEP signaling resolved but no frames in 8s — almost always
+          // ICE produced no usable path (the documented cellular /
+          // unreachable-candidate failure). The ice state is the tell.
+          midStreamFail('media-timeout-8s')
           if (!cancelled) setStatus('error')
         }, 8000)
         // Mid-stream connection observability (iter-162). Without this, a
@@ -243,6 +284,7 @@ export function VideoTile({
           if (s === 'connected') {
             markLive()
           } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
+            midStreamFail('pc-state-' + s)
             setStatus('error')
           }
         }
@@ -254,7 +296,19 @@ export function VideoTile({
         if (c.pc.connectionState === 'connected') markLive()
       })
       .catch((e) => {
-        console.error('WHEP connect failed', e)
+        // docs/logging_plan.md §2 (Live view): replace the generic
+        // console.error('WHEP connect failed') with the express cause
+        // + identifying ids (quality / effectiveSrc / retryNonce) so
+        // the operator can correlate which rung + which retry failed.
+        // Logged BEFORE the cancelled guard (§1.3). errFields pulls the
+        // status off an HttpError-shaped reject if present.
+        log.error('videoTile:whep-connect-failed', {
+          quality: qualityRef.current,
+          effectiveSrc,
+          retryNonce,
+          online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+          ...errFields(e),
+        })
         if (!cancelled) setStatus('error')
       })
     return () => {
@@ -389,7 +443,13 @@ export function VideoTile({
         | (ScreenOrientation & { lock?: (o: string) => Promise<void> })
         | undefined
       if (fs) {
-        so?.lock?.('landscape').catch(() => {})
+        // docs/logging_plan.md §2 (Live view): orientation-lock
+        // fallback DEBUG. iOS Safari rejects screen.orientation.lock;
+        // the swallow is intentional but a DEBUG breadcrumb makes an
+        // unexpectedly-always-failing lock diagnosable under triage.
+        so?.lock?.('landscape').catch((e) =>
+          log.debug('videoTile:orientation-lock-failed', errFields(e)),
+        )
       } else {
         so?.unlock?.()
       }
@@ -415,15 +475,20 @@ export function VideoTile({
 
   const onFullscreen = () => {
     if (document.fullscreenElement != null) {
-      document.exitFullscreen?.().catch(() => {})
+      // docs/logging_plan.md §2 (Live view): fullscreen fallbacks DEBUG.
+      document.exitFullscreen?.().catch((e) =>
+        log.debug('videoTile:exit-fullscreen-failed', errFields(e)),
+      )
       return
     }
     const container = containerRef.current
     if (container && container.requestFullscreen) {
-      container.requestFullscreen().catch(() => {
+      container.requestFullscreen().catch((e) => {
+        log.debug('videoTile:container-fullscreen-failed', errFields(e))
         videoRef.current
           ?.requestFullscreen?.()
-          .catch(() => {
+          .catch((e2) => {
+            log.debug('videoTile:video-fullscreen-failed', errFields(e2))
             const v = videoRef.current as
               | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
               | null

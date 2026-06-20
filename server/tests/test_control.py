@@ -142,6 +142,38 @@ def test_detection_toggle_flips_state(client: TestClient):
     assert r.json()["active"] != initial
 
 
+def test_given_config_patch_when_applied_then_audits_keys_not_zone_values(
+    client: TestClient, caplog
+):
+    """Given an owner patches detection config including zone geometry,
+    When the route runs, Then the audit log records the changed KEY SET
+    but NEVER the zone coordinate values (privacy/PII guardrail §4)."""
+    import logging
+
+    # arrange — a patch with a zone polygon carrying distinctive coords
+    caplog.set_level(logging.INFO, logger="app.routes.control")
+    sentinel = 0.123456
+    payload = {
+        "threshold": 0.55,
+        "zones": [[[sentinel, 0.2], [0.3, 0.4], [0.5, 0.6]]],
+    }
+
+    # act
+    r = client.patch("/api/detection/config", json=payload)
+
+    # assert
+    assert r.status_code == 200, r.text
+    audit = [
+        rec for rec in caplog.records
+        if "detection config patch" in rec.getMessage()
+    ]
+    assert audit, "expected a detection config patch audit line"
+    msg = audit[0].getMessage()
+    assert "threshold" in msg and "zones" in msg
+    # The zone coordinate value must NOT leak into the log.
+    assert str(sentinel) not in msg
+
+
 def test_system_reboot_returns_ok_with_scaffold_note(client: TestClient):
     r = client.post("/api/system/reboot")
     assert r.status_code == 200
@@ -222,6 +254,34 @@ def test_system_restore_rejects_double_dot_traversal(
     assert ".." in r.json()["detail"]
 
 
+def test_given_double_dot_path_when_restore_then_rejects_and_warns(
+    client: TestClient, tmp_path, monkeypatch, caplog
+):
+    """Given an owner-authed restore with a '..' traversal in the path,
+    When the route runs, Then it 400s AND emits a security WARNING
+    (the rejected fragment must be greppable in journald)."""
+    import logging
+
+    # arrange
+    _patch_backup_target(tmp_path, monkeypatch)
+    caplog.set_level(logging.WARNING, logger="app.routes.control")
+
+    # act
+    r = client.post(
+        "/api/system/restore",
+        json={"backup_path": "../etc/passwd"},
+    )
+
+    # assert
+    assert r.status_code == 400
+    warnings = [
+        rec for rec in caplog.records
+        if rec.levelno == logging.WARNING and "restore rejected" in rec.getMessage()
+    ]
+    assert warnings, "expected a 'restore rejected' WARNING"
+    assert "etc/passwd" in warnings[0].getMessage()
+
+
 def test_system_restore_rejects_leading_slash_absolute(
     client: TestClient, tmp_path, monkeypatch
 ):
@@ -281,29 +341,60 @@ def _patch_timelapses(tmp_path, monkeypatch):
     return target
 
 
-def test_when_no_clips_for_day_then_timelapse_returns_no_events_note(
+def _patch_build_async(monkeypatch, *, ok, clip_count, error=None):
+    """Replace timelapse.build_async with a PURE-async fake (no thread, no
+    ffmpeg) so the route's background build completes deterministically in
+    the event loop. The route maps the result → status; build()'s own logic
+    is covered by test_timelapse_build_real_ffmpeg.py."""
+    from pathlib import Path as _P
+    from app.services import timelapse as _tl
+    from app.services.timelapse import TimelapseResult
+
+    async def _fake(date):
+        return TimelapseResult(
+            output_path=_P("/tmp/{0}.mp4".format(date)),
+            clip_count=clip_count,
+            ok=ok,
+            error=error,
+        )
+
+    monkeypatch.setattr(_tl, "build_async", _fake)
+
+
+def _poll_status(client: TestClient, date, tries=60):
+    """Drive the loop via repeated status GETs until the background build
+    settles (building=False). No fixed sleep — each GET advances the loop."""
+    st = None
+    for _ in range(tries):
+        st = client.get(f"/api/system/timelapse/status?date={date}").json()
+        if not st["building"]:
+            return st
+    return st
+
+
+def test_when_no_clips_for_day_then_status_reports_no_events_error(
     client: TestClient, tmp_path, monkeypatch
 ):
-    """iter-306 changed iter-213's stub-with-note path. Without
-    clips on that day, the route still returns 200 + a `note` so
-    the iter-211 client toast pattern fires honestly."""
-    # arrange — no events seeded, so the day has zero clips.
+    """Async build: POST returns building:true immediately; the 'no clips
+    that day' outcome surfaces via the status endpoint, not the POST body."""
+    # arrange
     _patch_timelapses(tmp_path, monkeypatch)
+    _patch_build_async(monkeypatch, ok=False, clip_count=0)
 
-    # act
-    r = client.post(
-        "/api/system/timelapse",
-        json={"date": "2026-04-30"},
-    )
+    # act — kick off the background build
+    r = client.post("/api/system/timelapse", json={"date": "2026-04-30"})
 
-    # assert
+    # assert immediate response
     assert r.status_code == 200
     body = r.json()
-    assert body["ok"] is True
-    assert "note" in body
-    assert "no recorded events" in body["note"].lower()
+    assert body["ok"] is True and body["building"] is True
     assert body["date"] == "2026-04-30"
     assert body["url"] == "/api/timelapses/2026-04-30.mp4"
+
+    # assert outcome via status poll
+    st = _poll_status(client, "2026-04-30")
+    assert st["building"] is False and st["ready"] is False
+    assert "no recorded events" in (st["error"] or "").lower()
 
 
 def test_system_timelapse_rejects_malformed_date(client: TestClient):
@@ -354,6 +445,50 @@ def test_list_timelapses_returns_files_sorted_newest_first(
     assert items[0]["url"] == "/api/timelapses/2026-05-01.mp4"
     assert items[0]["size_bytes"] == 50
     assert items[1]["size_bytes"] == 100
+
+
+# --- timestamp sidecar (de-overlap + overlay feature) ----------------------
+
+
+def test_given_a_sidecar_when_listing_then_manifest_url_is_exposed(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """The reel list advertises the `<date>.json` timestamp sidecar URL when
+    present (so the client can fetch the offset→time map); reels built before
+    the feature have no sidecar and report manifest_url=None."""
+    target = _patch_timelapses(tmp_path, monkeypatch)
+    (target / "2026-05-02.mp4").write_bytes(b"\x00" * 10)
+    (target / "2026-05-02.json").write_text('{"v":1,"date":"2026-05-02","segments":[]}')
+    (target / "2026-05-03.mp4").write_bytes(b"\x00" * 10)  # no sidecar
+    r = client.get("/api/system/timelapses")
+    assert r.status_code == 200
+    by_date = {it["date"]: it for it in r.json()["items"]}
+    assert by_date["2026-05-02"]["manifest_url"] == "/api/timelapses/2026-05-02.json"
+    assert by_date["2026-05-03"]["manifest_url"] is None
+
+
+def test_given_a_sidecar_when_fetched_then_served_as_json(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """The auth-gated timelapse file route serves the `<date>.json` sidecar
+    (not only the mp4) so the overlay can load the offset→time map."""
+    target = _patch_timelapses(tmp_path, monkeypatch)
+    payload = '{"v":1,"date":"2026-05-02","segments":[{"offset_s":0,"capture_ts":1.5}]}'
+    (target / "2026-05-02.json").write_text(payload)
+    r = client.get("/api/timelapses/2026-05-02.json")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.json()["segments"][0]["capture_ts"] == 1.5
+
+
+def test_given_missing_sidecar_when_fetched_then_404(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """A reel with no sidecar (older build) yields a benign 404 — the client
+    degrades to no overlay."""
+    _patch_timelapses(tmp_path, monkeypatch)
+    r = client.get("/api/timelapses/2026-05-02.json")
+    assert r.status_code == 404
 
 
 def test_system_update_returns_ok_with_scaffold_note(client: TestClient):
@@ -474,105 +609,98 @@ def test_list_timelapses_filters_non_matching_files(
 # iter-306 (user "wireup the timelapse please"): added the ffmpeg-
 # based builder. Pin the new branches.
 
-def test_when_clips_exist_but_ffmpeg_missing_then_returns_ffmpeg_error_note(
+def test_when_ffmpeg_fails_then_status_reports_error(
     client: TestClient, tmp_path, monkeypatch
 ):
-    """iter-306: dev host doesn't have ffmpeg in PATH; the route
-    catches the FileNotFoundError and reports it via `note`. Pre-
-    iter-306 this would 500."""
+    """Build failure (e.g. ffmpeg missing) surfaces via the status
+    endpoint as ready:false + a human error — the POST still returns
+    building:true immediately."""
     # arrange
     _patch_timelapses(tmp_path, monkeypatch)
-    # Patch recordings_dir + seed an event whose clip_url resolves
-    # to an existing file on disk.
-    from app.config import settings
-    from app.services import events_db
-    from app.services.event_bus import make_detection_event
-    rec_dir = tmp_path / "recordings"
-    rec_dir.mkdir()
-    monkeypatch.setattr(settings, "recordings_dir", rec_dir)
-    e = make_detection_event(label="person", score=0.9, boxes=[])
-    e["clip_url"] = f"/api/events/{e['id']}/clip"
-    # `clip_id == event.id` per the iter-306 _resolve_clip_path logic.
-    (rec_dir / f"{e['id']}.mp4").write_bytes(b"fake-mp4-bytes")
-    # Place the event INSIDE 2026-04-30 local-time.
-    import time as _time
-    e["ts"] = _time.mktime((2026, 4, 30, 12, 0, 0, 0, 0, -1))
-    events_db.insert_event(settings.events_db_path, e)
-    # Force ffmpeg lookup failure.
-    import shutil
-    real_which = shutil.which
-
-    def fake_which(cmd, *a, **k):
-        if cmd == "ffmpeg":
-            return None
-        return real_which(cmd, *a, **k)
-    # (subprocess.run still tries PATH; easier: use monkeypatch on
-    # subprocess.run inside the timelapse module.)
-    from app.services import timelapse as _tl
-
-    def fake_run(*a, **k):
-        raise FileNotFoundError("ffmpeg")
-    monkeypatch.setattr(_tl.subprocess, "run", fake_run)
-
-    # act
-    r = client.post(
-        "/api/system/timelapse",
-        json={"date": "2026-04-30"},
+    _patch_build_async(
+        monkeypatch, ok=False, clip_count=5, error="ffmpeg not in container"
     )
 
-    # assert
-    body = r.json()
-    assert body["ok"] is True
-    assert "note" in body
-    assert "couldn't build" in body["note"].lower() or "ffmpeg" in body["note"].lower()
+    # act
+    r = client.post("/api/system/timelapse", json={"date": "2026-04-30"})
+
+    # assert immediate
+    assert r.json()["building"] is True
+
+    # assert outcome
+    st = _poll_status(client, "2026-04-30")
+    assert st["building"] is False and st["ready"] is False
+    assert "ffmpeg" in (st["error"] or "").lower()
+    assert st["url"] is None  # no playable video to point at
 
 
-def test_when_clips_exist_and_ffmpeg_succeeds_then_no_note_in_response(
+def test_when_build_succeeds_then_status_reports_ready_with_url(
     client: TestClient, tmp_path, monkeypatch
 ):
-    """iter-306 success path: drops the `note` field so the iter-211
-    client toast pattern flips to the success branch ("Timelapse
-    requested")."""
+    """Success path: status flips to ready:true with the playable URL."""
     # arrange
     _patch_timelapses(tmp_path, monkeypatch)
-    from app.config import settings
-    from app.services import events_db
-    from app.services.event_bus import make_detection_event
-    rec_dir = tmp_path / "recordings"
-    rec_dir.mkdir()
-    monkeypatch.setattr(settings, "recordings_dir", rec_dir)
-    e = make_detection_event(label="person", score=0.9, boxes=[])
-    e["clip_url"] = f"/api/events/{e['id']}/clip"
-    (rec_dir / f"{e['id']}.mp4").write_bytes(b"fake-mp4-bytes")
-    import time as _time
-    e["ts"] = _time.mktime((2026, 4, 30, 12, 0, 0, 0, 0, -1))
-    events_db.insert_event(settings.events_db_path, e)
-    # Stub ffmpeg as a successful no-op.
-    from app.services import timelapse as _tl
-    output_path = settings.timelapses_dir / "2026-04-30.mp4"
-
-    class _FakeResult:
-        returncode = 0
-        stdout = b""
-        stderr = b""
-
-    def fake_run(*a, **k):
-        # Pretend ffmpeg wrote the output file.
-        output_path.write_bytes(b"fake-output")
-        return _FakeResult()
-    monkeypatch.setattr(_tl.subprocess, "run", fake_run)
+    _patch_build_async(monkeypatch, ok=True, clip_count=3)
 
     # act
-    r = client.post(
-        "/api/system/timelapse",
-        json={"date": "2026-04-30"},
-    )
+    r = client.post("/api/system/timelapse", json={"date": "2026-04-30"})
 
-    # assert
+    # assert immediate
     body = r.json()
-    assert body["ok"] is True
-    assert "note" not in body, f"success path must not return a note (got {body})"
+    assert body["ok"] is True and body["building"] is True
     assert body["url"] == "/api/timelapses/2026-04-30.mp4"
+
+    # assert outcome
+    st = _poll_status(client, "2026-04-30")
+    assert st["building"] is False and st["ready"] is True
+    assert st["error"] is None
+    assert st["url"] == "/api/timelapses/2026-04-30.mp4"
+
+
+def test_when_build_already_running_then_second_post_dedupes(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """A second POST while a build is in flight must NOT spawn a second
+    concurrent ffmpeg (they'd race on the same .tmp) — it reports
+    'already building'."""
+    # arrange — seed an in-flight build for the day.
+    from app.routes import control as _control
+
+    _patch_timelapses(tmp_path, monkeypatch)
+    _control._TIMELAPSE_STATUS["2026-04-30"] = {
+        "building": True, "ready": False, "error": None,
+    }
+
+    # act
+    r = client.post("/api/system/timelapse", json={"date": "2026-04-30"})
+
+    # assert
+    body = r.json()
+    assert body["ok"] is True and body["building"] is True
+    assert "already building" in body["note"].lower()
+
+    # cleanup the module-global so it doesn't leak to other tests.
+    _control._TIMELAPSE_STATUS.pop("2026-04-30", None)
+
+
+def test_status_falls_back_to_file_existence_when_no_memory_record(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """After a server restart there's no in-memory status; the endpoint
+    falls back to whether the <date>.mp4 exists on disk."""
+    # arrange — a finished timelapse on disk, no in-memory record.
+    from app.routes import control as _control
+
+    target = _patch_timelapses(tmp_path, monkeypatch)
+    _control._TIMELAPSE_STATUS.pop("2026-04-30", None)
+    (target / "2026-04-30.mp4").write_bytes(b"a-finished-video")
+
+    # act
+    st = client.get("/api/system/timelapse/status?date=2026-04-30").json()
+
+    # assert
+    assert st["building"] is False and st["ready"] is True
+    assert st["url"] == "/api/timelapses/2026-04-30.mp4"
 
 
 # iter-309 (user "add the ability to delete timelapsed videos"):
@@ -587,13 +715,20 @@ def test_when_timelapse_exists_and_delete_called_then_returns_deleted_true(
     from app.config import settings
     (settings.timelapses_dir / "2026-04-30.mp4").write_bytes(b"fake")
 
+    # arrange — also drop a sibling timestamp sidecar.
+    (settings.timelapses_dir / "2026-04-30.json").write_text(
+        '{"v":1,"date":"2026-04-30","segments":[]}'
+    )
+
     # act
     r = client.delete("/api/system/timelapse?date=2026-04-30")
 
-    # assert
+    # assert — both the reel AND its sidecar are removed (a stale sidecar
+    # would otherwise survive a rebuild with the wrong offset→time map).
     assert r.status_code == 200
     assert r.json() == {"deleted": True, "date": "2026-04-30"}
     assert not (settings.timelapses_dir / "2026-04-30.mp4").exists()
+    assert not (settings.timelapses_dir / "2026-04-30.json").exists()
 
 
 def test_when_timelapse_missing_and_delete_called_then_returns_deleted_false(

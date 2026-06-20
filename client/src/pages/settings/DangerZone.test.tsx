@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 // iter-356.C (mobile-redesign Slice C — security clarity): Reboot
@@ -27,9 +27,23 @@ vi.mock('../../lib/confirm', () => ({
 }))
 
 const showToast = vi.fn()
-vi.mock('../../lib/toast', () => ({
-  useToast: () => ({ showToast }),
-}))
+// useReportError mirrors the real pairing (log.error + error toast).
+// Under vitest (MODE === 'test') lib/log ship() is disabled, so
+// log.error only hits console.error — observed via spy in the tests.
+vi.mock('../../lib/toast', async () => {
+  const { log } = await vi.importActual<typeof import('../../lib/log')>(
+    '../../lib/log',
+  )
+  return {
+    useToast: () => ({ showToast }),
+    useReportError:
+      () =>
+      (event: string, message: string, fields: Record<string, unknown> = {}) => {
+        log.error(event, fields)
+        showToast(message, 'error')
+      },
+  }
+})
 
 import { DangerZone } from './DangerZone'
 
@@ -176,5 +190,54 @@ describe('DangerZone copy de-IT-ification (premium-launch slice — Frank top-3)
     expect(
       screen.queryByText(/backup snapshot/i),
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('DangerZone — high-consequence op failure logging (docs/logging_plan.md §2)', () => {
+  it('Given the operator confirms a Reboot, When rebootJetson rejects, Then the error toast is paired with an error log carrying the status', async () => {
+    // arrange — confirm resolves true so the op fires; reboot rejects.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    confirmFn.mockResolvedValue(true)
+    const err = Object.assign(new Error('host down'), { status: 502 })
+    rebootJetson.mockRejectedValue(err)
+    const user = userEvent.setup()
+
+    // act
+    render(<DangerZone />)
+    await user.click(screen.getByRole('button', { name: /restart camera box/i }))
+
+    // assert — toast-only is no longer the whole story; a durable log
+    // records WHY the highest-consequence op failed.
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringMatching(/reboot failed/i),
+        'error',
+      ),
+    )
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[dangerZone:reboot-failed]',
+      expect.objectContaining({ status: 502 }),
+    )
+  })
+
+  it('Given the restore form opens, When listBackups rejects, Then the silent empty-dropdown fallback still logs the reason', async () => {
+    // arrange — listBackups rejects; the form falls back to an empty
+    // list that reads identically to "no backups yet".
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const err = Object.assign(new Error('nope'), { status: 500 })
+    listBackups.mockReset().mockRejectedValue(err)
+    const user = userEvent.setup()
+
+    // act
+    render(<DangerZone />)
+    await user.click(screen.getByRole('button', { name: /restore from backup/i }))
+
+    // assert
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[dangerZone:list-backups-failed]',
+        expect.objectContaining({ status: 500 }),
+      ),
+    )
   })
 })

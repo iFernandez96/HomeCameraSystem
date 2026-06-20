@@ -350,6 +350,23 @@ export type WorkerMetrics = {
    * or the library isn't installed).
    */
   face_recog_names?: string[]
+  /**
+   * docs/logging_plan.md §1.2 — cumulative failure-rate counters since
+   * worker start. Individual failures are logged to journald at their
+   * call site; these let the UI/operator see the RATE over time. All
+   * stay at 0 in healthy operation; a rising value points at the named
+   * subsystem.
+   */
+  /** Clip recordings skipped because the in-flight recorder cap was hit. */
+  clips_dropped_capacity?: number
+  /** ffmpeg clip-recorder spawns that failed to start (missing binary, dir, RTSP down). */
+  clip_start_failures?: number
+  /** Face-recognition passes that raised (face_locations/face_encodings/decode). */
+  face_recog_failures?: number
+  /** Detection-event POSTs to the server that failed (network / non-2xx). Each is a LOST event. */
+  event_post_failures?: number
+  /** Thumbnail saves that failed (encode / write / retention sweep). */
+  thumb_save_failures?: number
 }
 
 /**

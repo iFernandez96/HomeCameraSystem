@@ -67,7 +67,11 @@ def _resolve_under_root(*parts: str) -> Path:
     try:
         resolved = target.resolve()
         resolved.relative_to(root.resolve())
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        # Traversal-escape or unresolvable path. The _NAME_RE/_FILENAME_RE
+        # charset already blocks the obvious cases, so reaching here is a
+        # probe — DEBUG (the route still 404s; flip log level to triage).
+        log.debug("face capture path rejected for parts=%r: %s", parts, e)
         raise HTTPException(status_code=404, detail="not found")
     return resolved
 
@@ -85,7 +89,11 @@ def _list_jpegs(directory: Path) -> list[Path]:
             if not _FILENAME_RE.match(child.name):
                 continue
             out.append(child)
-    except OSError:
+    except OSError as e:
+        # Dir unreadable (perms / unmounted) — returns empty, which the
+        # caller reads as "no captures". WARN so a vanished mount that
+        # hides every crop isn't silent.
+        log.warning("face captures iterdir failed on %s: %s", directory, e)
         return []
     return out
 
@@ -119,7 +127,8 @@ def _capture_dirs_sync(root: Path) -> dict[str, object]:
     out: list[dict[str, object]] = []
     try:
         children = sorted(root.iterdir(), key=lambda p: p.name.lower())
-    except OSError:
+    except OSError as e:
+        log.warning("face captures dir iterdir failed on %s: %s", root, e)
         return {"dirs": []}
     for child in children:
         if not child.is_dir() or not _NAME_RE.match(child.name):
@@ -380,11 +389,16 @@ async def get_capture_file(name: str, filename: str) -> FileResponse:
     keeps the contract uniform with the snapshots route.
     """
     if not _NAME_RE.match(name):
+        log.debug("face crop fetch rejected: bad name charset %r", name)
         raise HTTPException(status_code=404, detail="not found")
     if not _FILENAME_RE.match(filename):
+        log.debug("face crop fetch rejected: bad filename charset %r", filename)
         raise HTTPException(status_code=404, detail="not found")
     target = _resolve_under_root(name, filename)
     if not target.is_file():
+        # Missing on disk — usually the worker's LRU evicted it between
+        # the gallery list and this fetch. DEBUG breadcrumb.
+        log.debug("face crop 404: %s/%s not on disk", name, filename)
         raise HTTPException(status_code=404, detail="not found")
     return FileResponse(path=str(target), media_type="image/jpeg")
 
@@ -461,7 +475,11 @@ async def move_capture(name: str, filename: str, body: _MoveBody) -> dict:
         raise HTTPException(status_code=404, detail="not found")
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    except OSError as e:
+        log.error(
+            "face capture move: mkdir failed for target %r: %s",
+            body.target_name, e,
+        )
         raise HTTPException(status_code=500, detail="could not create target dir")
 
     final_name = _suffix_on_collision(target_dir, filename)
@@ -471,7 +489,11 @@ async def move_capture(name: str, filename: str, body: _MoveBody) -> dict:
         # always is); cross-filesystem moves would EXDEV but that's
         # not a real case here. If it ever became one, swap to shutil.move.
         os.rename(str(src), str(dst))
-    except OSError:
+    except OSError as e:
+        log.error(
+            "face capture move failed: %s/%s -> %s/%s: %s",
+            name, filename, body.target_name, final_name, e,
+        )
         raise HTTPException(status_code=500, detail="move failed")
     # iter-355a: also move the sidecar JSON if present. The new dst
     # filename uses the SAME basename as the JPEG (with .json), so
@@ -483,11 +505,15 @@ async def move_capture(name: str, filename: str, body: _MoveBody) -> dict:
     if src_sidecar.is_file():
         try:
             os.rename(str(src_sidecar), str(dst_sidecar))
-        except OSError:
+        except OSError as e:
             # Sidecar move is best-effort — the JPEG already moved.
             # Worst case the operator sees the crop with default
-            # predicted_name (the destination dir name).
-            pass
+            # predicted_name (the destination dir name). Log WHY the
+            # sidecar was orphaned (was previously a silent swallow).
+            log.warning(
+                "face capture move: sidecar rename failed %s -> %s: %s",
+                src_sidecar.name, dst_sidecar.name, e,
+            )
     return {"ok": True, "moved_to": "{}/{}".format(body.target_name, final_name)}
 
 
@@ -513,17 +539,26 @@ async def delete_capture(name: str, filename: str) -> dict:
         raise HTTPException(status_code=404, detail="not found")
     try:
         os.remove(str(target))
-    except OSError:
+    except OSError as e:
+        log.error(
+            "face capture delete failed: %s/%s: %s", name, filename, e
+        )
         raise HTTPException(status_code=500, detail="delete failed")
     # iter-355a: also drop the sidecar JSON if present. Best-effort:
     # an orphaned sidecar without its JPEG is harmless (the list
     # route reads sidecars BY jpeg basename, so an orphan never
-    # surfaces).
+    # surfaces). FileNotFound is the normal "no sidecar" case — only
+    # log a genuine unlink failure.
     sidecar = target.with_suffix(".json")
     try:
         os.remove(str(sidecar))
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError as e:
+        log.warning(
+            "face capture delete: sidecar remove failed for %s: %s",
+            sidecar.name, e,
+        )
     return {"ok": True}
 
 
@@ -599,11 +634,15 @@ async def bootstrap_face(
     try:
         # Resolve check BEFORE mkdir (iter-353a E1 pattern).
         target_dir.resolve().relative_to(settings.face_captures_dir.resolve())
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        log.debug("face bootstrap path rejected for name %r: %s", name, e)
         raise HTTPException(status_code=404, detail="not found")
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    except OSError as e:
+        log.error(
+            "face bootstrap: mkdir failed for name %r: %s", name, e
+        )
         raise HTTPException(status_code=500, detail="could not create dir")
 
     import time as _time
@@ -625,7 +664,10 @@ async def bootstrap_face(
             os.write(fd, contents)
         finally:
             os.close(fd)
-    except OSError:
+    except OSError as e:
+        log.error(
+            "face bootstrap write failed for %s/%s: %s", name, filename, e
+        )
         raise HTTPException(status_code=500, detail="write failed")
     return {
         "ok": True,

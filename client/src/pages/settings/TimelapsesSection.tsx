@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   deleteTimelapse,
+  getTimelapseManifest,
+  getTimelapseStatus,
   listTimelapses,
   triggerTimelapse,
 } from '../../lib/api'
 import { useConfirm } from '../../lib/confirm'
 import { formatBytes, formatError } from '../../lib/format'
-import { useToast } from '../../lib/toast'
-import type { TimelapseItem } from '../../lib/api'
+import { log, errFields } from '../../lib/log'
+import { useReportError, useToast } from '../../lib/toast'
+import type { TimelapseItem, TimelapseSegment } from '../../lib/api'
+import {
+  formatClock,
+  isUsableManifest,
+  reelTimeToCaptureTs,
+} from '../../lib/timelapseClock'
 import { CatEmptyState } from '../../components/CatEmptyState'
 import { Section } from './parts'
 
@@ -36,6 +44,14 @@ import { Section } from './parts'
 
 const _DATE_RE = /^[0-9]{4}-[01][0-9]-[0-3][0-9]$/
 
+// Background-build polling: every 3 s, up to ~20 min. A busy day's concat
+// is large+slow on the Nano (a measured 342-clip / 3.2 GB day took ~12.5
+// min), so the budget must outlast it for the video to auto-reveal. Past
+// the budget the build may still finish server-side (the file appears in
+// the list on next load).
+const _POLL_INTERVAL_MS = 3000
+const _POLL_MAX_ATTEMPTS = 400
+
 function _todayStr(): string {
   // YYYY-MM-DD in LOCAL time (matches the iter-301 container TZ +
   // CLAUDE.md iter-222/223 sharp edge: server bucketing also uses
@@ -56,8 +72,95 @@ function _yesterdayStr(): string {
   return `${y}-${m}-${day}`
 }
 
+// Inline timelapse player with a forward-ticking wall-clock overlay.
+//
+// The reel is a de-overlapped concat of the day's event clips, so the
+// playhead runs strictly forward in real time. The server writes a sibling
+// `<date>.json` sidecar mapping reel-offset → original capture time; we fetch
+// it LAZILY on first play (preserving the iter-311 `preload="none"` win — no
+// network on Settings-tab mount) and, on each `timeupdate`, paint the local
+// HH:MM:SS of the footage under the playhead top-right (the lib/drawBoxes.ts
+// paint-over-video pattern). Reels built before this feature have no sidecar
+// (manifest_url null / 404) → the overlay simply stays hidden; playback is
+// unaffected.
+function TimelapseVideo({ item }: { item: TimelapseItem }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [segments, setSegments] = useState<TimelapseSegment[] | null>(null)
+  const [clock, setClock] = useState<string | null>(null)
+  // Latch so the manifest is fetched at most once, even across replays.
+  const fetchedRef = useRef(false)
+
+  const ensureManifest = () => {
+    if (fetchedRef.current || !item.manifest_url) return
+    fetchedRef.current = true
+    getTimelapseManifest(item.manifest_url)
+      .then((m) => {
+        if (isUsableManifest(m)) setSegments(m.segments)
+      })
+      .catch((e) => {
+        // No sidecar (older reel → 404) or a transient blip — the overlay
+        // just stays hidden, so DEBUG (not an operator-actionable failure).
+        log.debug('timelapses:manifest-failed', {
+          date: item.date,
+          ...errFields(e),
+        })
+      })
+  }
+
+  const onTimeUpdate = () => {
+    const v = videoRef.current
+    if (!v || !segments) return
+    const ts = reelTimeToCaptureTs(segments, v.currentTime)
+    setClock(ts === null ? null : formatClock(ts))
+  }
+
+  return (
+    <div className="relative w-full lg:max-w-xl">
+      {/* preload="none" (iter-311): no range request until the user presses
+          play. playsInline (iter-319): no iOS fullscreen takeover.
+          jsx-a11y wants a <track>; timelapses are silent, nothing to caption. */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <video
+        ref={videoRef}
+        src={item.url}
+        controls
+        playsInline
+        preload="none"
+        onPlay={ensureManifest}
+        onTimeUpdate={onTimeUpdate}
+        onError={(e) => {
+          // docs/logging_plan.md §2: log the MediaError code + failing url so
+          // the operator can tell "file gone" from "device can't decode".
+          const el = e.currentTarget
+          log.warn('timelapses:video-error', {
+            date: item.date,
+            url: item.url,
+            mediaErrorCode: el.error?.code ?? null,
+            networkState: el.networkState,
+          })
+        }}
+        className="w-full bg-black rounded border border-[var(--color-border)]"
+        aria-label={`Timelapse video for ${item.date}`}
+      />
+      {clock && (
+        // Paints over video pixels (like drawBoxes.ts), so a literal
+        // translucent-black pill + white text is correct here, not a token.
+        // aria-hidden: a ticking clock would be screen-reader noise, and the
+        // row already exposes the date textually above.
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute top-2 right-2 rounded bg-black/60 px-2 py-1 font-mono text-xs tabular-nums text-white"
+        >
+          {clock}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function TimelapsesSection() {
   const { showToast } = useToast()
+  const reportError = useReportError()
   const confirm = useConfirm()
   const [timelapses, setTimelapses] = useState<TimelapseItem[] | null>(null)
   // iter-304: default to yesterday (the most common build target —
@@ -67,6 +170,15 @@ export function TimelapsesSection() {
     _yesterdayStr(),
   )
   const [timelapseGenerating, setTimelapseGenerating] = useState(false)
+  // Background builds are polled (a busy day takes minutes). This ref is
+  // flipped on unmount so the poll loop stops touching state after the
+  // user navigates away mid-build.
+  const pollAbortRef = useRef(false)
+  useEffect(() => {
+    return () => {
+      pollAbortRef.current = true
+    }
+  }, [])
 
   // iter-214: load timelapses on mount. `cancelled` flag pattern
   // mirrors the iter-208 filters effect. 401/403 should never fire
@@ -79,7 +191,13 @@ export function TimelapsesSection() {
         if (cancelled) return
         setTimelapses(r.items)
       })
-      .catch(() => {
+      .catch((e) => {
+        // docs/logging_plan.md §2 (Daily timelapse): the empty-array
+        // fallback HIDES any timelapses that were on screen before a
+        // transient list failure — it looks identical to "none yet".
+        // Log the reason (status / network) BEFORE the cancelled guard
+        // so an in-flight failure during unmount is still recorded.
+        log.warn('timelapses:list-failed', errFields(e))
         if (cancelled) return
         setTimelapses([])
       })
@@ -92,29 +210,59 @@ export function TimelapsesSection() {
     const date = timelapseDate.trim()
     if (!_DATE_RE.test(date) || timelapseGenerating) return
     setTimelapseGenerating(true)
+    pollAbortRef.current = false
     try {
-      const r = await triggerTimelapse(date)
-      if (r.note) {
-        showToast(
-          "Timelapse isn't set up yet on the camera box. No video was made.",
-          'info',
-        )
-      } else {
-        showToast(`Timelapse requested for ${date}`, 'success')
+      // Kick off the BACKGROUND build — returns immediately. A busy day is
+      // 300+ clips / ~1 GB and takes minutes on the camera box, so we poll
+      // the status endpoint rather than block on one long request.
+      await triggerTimelapse(date)
+      showToast(`Building your ${date} video — this can take a minute…`, 'info')
+      for (let i = 0; i < _POLL_MAX_ATTEMPTS; i++) {
+        await new Promise((res) => setTimeout(res, _POLL_INTERVAL_MS))
+        if (pollAbortRef.current) return
+        let st
+        try {
+          st = await getTimelapseStatus(date)
+        } catch (e) {
+          // Transient poll failure (network blip) — keep trying, but log.
+          log.warn('timelapses:status-poll-failed', { date, ...errFields(e) })
+          continue
+        }
+        if (st.ready) {
+          showToast(`Your ${date} video is ready`, 'success')
+          try {
+            const next = await listTimelapses()
+            if (!pollAbortRef.current) setTimelapses(next.items)
+          } catch (e) {
+            log.warn('timelapses:list-refresh-failed', { date, ...errFields(e) })
+          }
+          return
+        }
+        if (!st.building) {
+          // Settled without a video → a real failure (no clips / ffmpeg).
+          reportError(
+            'timelapses:build-failed',
+            st.error || `Couldn't build the ${date} video.`,
+            { date },
+          )
+          return
+        }
+        // still building → keep polling
       }
-      // Refresh the listing — even on stubbed responses the call is
-      // cheap, and once slice 2 ships the file may already be there.
-      try {
-        const next = await listTimelapses()
-        setTimelapses(next.items)
-      } catch {
-        // Listing failure is non-fatal; the trigger toast already
-        // told the user the request landed.
-      }
+      // Exhausted the poll budget — the build may still finish server-side.
+      showToast(
+        `Still building your ${date} video — check back here shortly.`,
+        'info',
+      )
     } catch (e) {
-      showToast('Timelapse failed: ' + formatError(e), 'error')
+      // The trigger POST itself failed (auth / network). Pair the toast
+      // with a structured log naming the day + status (docs/logging_plan §2).
+      reportError('timelapses:build-failed', 'Timelapse failed: ' + formatError(e), {
+        date,
+        ...errFields(e),
+      })
     } finally {
-      setTimelapseGenerating(false)
+      if (!pollAbortRef.current) setTimelapseGenerating(false)
     }
   }
 
@@ -147,7 +295,10 @@ export function TimelapsesSection() {
       showToast(`Removed timelapse for ${date}`, 'success')
     } catch (e) {
       setTimelapses(snapshot)
-      showToast('Could not delete: ' + formatError(e), 'error')
+      reportError('timelapses:delete-failed', 'Could not delete: ' + formatError(e), {
+        date,
+        ...errFields(e),
+      })
     }
   }
 
@@ -275,37 +426,11 @@ export function TimelapsesSection() {
                   {formatBytes(t.size_bytes)}
                 </span>
               </div>
-              {/* iter-304: inline `<video controls>` so the user can
-                  PLAY in place instead of mandatory download.
-                  iter-311 (performance-auditor #2): `preload="none"`
-                  was `preload="metadata"`. With N rows, every Settings
-                  System-tab open fired N parallel HTTP range requests
-                  for the moov atom of each MP4 — N SD-card reads
-                  competing with detection's `latest.jpg` writes, and
-                  N RTTs on cellular Tailscale. `preload="none"` means
-                  the browser doesn't touch the file until the user
-                  clicks play. Cost: a ~250 ms first-frame delay on
-                  press-play; benefit: zero work on mount.
-                  jsx-a11y wants a <track>; timelapses are silent
-                  speed-ramped video with no spoken content, so
-                  there's nothing to caption. */}
-              {/* iter-319 (mobile-view-auditor C1): `playsInline`
-                  prevents iOS Safari from launching the system
-                  fullscreen player on tap (which strips PWA chrome
-                  and may flip orientation). Same as VideoTile's
-                  WHEP <video> at iter-? */}
-              {/* iter-321 (desktop-view-auditor #3): cap inline
-                  video at lg:max-w-xl so a 720p MP4 doesn't upscale
-                  to 900px+ on a 1920p monitor. Mobile keeps w-full. */}
-              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-              <video
-                src={t.url}
-                controls
-                playsInline
-                preload="none"
-                className="w-full lg:max-w-xl bg-black rounded border border-[var(--color-border)]"
-                aria-label={`Timelapse video for ${t.date}`}
-              />
+              {/* Inline player with a forward-ticking wall-clock overlay.
+                  The detailed rationale (preload="none", playsInline,
+                  lg:max-w-xl cap, onError logging) + the timestamp-sidecar
+                  fetch live in the TimelapseVideo component below. */}
+              <TimelapseVideo item={t} />
               {/* iter-321 (ux-grandpa Frank Gripe #3): Download +
                   Delete were two text-xs links sitting next to each
                   other → fat-finger risk. Now: Download is a left-

@@ -9,6 +9,8 @@ path without spawning ffmpeg).
 """
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -364,20 +366,162 @@ def test_given_clip_disappears_mid_zip_when_export_called_then_manifest_records_
     assert manifest["events"][0]["clip_included"] is False
 
 
-def test_export_semaphore_caps_concurrent_zip_builds_at_two(
+def test_given_idle_export_semaphore_when_probed_then_capacity_is_one(
     client: TestClient, rec_dir,
 ):
-    # arrange (iter-337 systems-eng C1): pin that the route holds
-    # an asyncio.Semaphore(2) so 8 concurrent exports don't saturate
-    # the thread pool. Probe the module-level semaphore directly to
-    # confirm its capacity.
+    """Given the export route, When the module-level semaphore is
+    probed, Then its capacity is 1.
+
+    logging-plan §2 lowered the cap 2→1: the production
+    "stitch all captures fails" bug was a 512MB-cgroup OOM-kill, and
+    Semaphore(2) permitted two concurrent in-RAM builds (>800MB). The
+    build now streams to disk, but the cap stays at 1 so two large
+    exports can't race for the thread pool / disk I/O. Pins the value
+    so a future change can't silently restore the OOM-permitting cap.
+    """
+    # arrange
     from app.routes import clips as _clips_mod
 
     # act
     sem = _clips_mod._EXPORT_SEMAPHORE
 
-    # assert — the semaphore exists with the documented value of 2.
-    assert hasattr(sem, "_value")
-    # asyncio.Semaphore stores its remaining capacity in _value;
+    # assert — asyncio.Semaphore stores remaining capacity in _value;
     # at idle that equals the initial value.
-    assert sem._value == 2  # noqa: SLF001
+    assert hasattr(sem, "_value")
+    assert sem._value == 1  # noqa: SLF001
+
+
+# logging-plan (docs/logging_plan.md §2 "Export ZIP"): the export now
+# builds the ZIP to a temp file on disk and returns it via FileResponse
+# with a BackgroundTask that unlinks the temp file after the response is
+# sent. This was the fix for the production "stitch all captures fails"
+# OOM bug (the old in-RAM StreamingResponse double-copy OOM-killed the
+# 512MB container). These tests pin: the FileResponse contract still
+# yields a valid ZIP (same filename + members), the temp file is cleaned
+# up afterward, and a clip swept mid-export is skipped + logged (WARN),
+# not a 500.
+
+
+def _export_temp_files(rec_dir):
+    """Helper: list any leftover export temp ZIPs in the recordings
+    dir. The build writes them with the `homecam_export_` prefix."""
+    if not rec_dir.exists():
+        return []
+    return [p for p in rec_dir.iterdir() if p.name.startswith("homecam_export_")]
+
+
+def test_given_event_with_clip_when_export_then_fileresponse_zip_and_temp_cleaned_up(
+    client: TestClient, rec_dir,
+):
+    """Given a seeded event with a clip on disk, When export is called,
+    Then the response is a valid ZIP (same filename + members as before)
+    AND no export temp file is left behind on the data volume.
+
+    logging-plan §2: the response moved from StreamingResponse(BytesIO)
+    to FileResponse(temp file) + BackgroundTask unlink. The downloaded
+    contract is unchanged; the temp file must not leak (a leak on the
+    8.6GB data volume would eventually fill it and break the recorder).
+    """
+    # arrange
+    rec_dir.mkdir()
+    _seed_event("evt-fr-1")
+    (rec_dir / "evt-fr-1.mp4").write_bytes(b"FAKE_MP4_BYTES")
+
+    # act
+    r = client.post("/api/events/export", json={"event_ids": ["evt-fr-1"]})
+
+    # assert — same wire contract: zip content-type, attachment
+    # disposition with the homecam_events.zip filename, members intact.
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    disp = r.headers.get("content-disposition", "")
+    assert disp.startswith("attachment")
+    assert "homecam_events.zip" in disp
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = set(zf.namelist())
+    assert "manifest.json" in names
+    assert "evt-fr-1.mp4" in names
+    assert zf.read("evt-fr-1.mp4") == b"FAKE_MP4_BYTES"
+    # assert — temp file cleaned up. With TestClient the BackgroundTask
+    # runs after the response body is fully consumed (r.content above).
+    assert _export_temp_files(rec_dir) == [], (
+        "export temp ZIP leaked — BackgroundTask unlink did not fire"
+    )
+
+
+def test_given_clip_swept_mid_export_when_export_then_skipped_logged_not_500(
+    client: TestClient, rec_dir, monkeypatch, caplog,
+):
+    """Given a clip that vanishes between clip_exists() and zf.write(),
+    When export is called, Then the route returns 200 (clip skipped, not
+    500) AND a WARN names the swept event_id.
+
+    logging-plan §2: the race (retention sweep deletes the file mid-zip)
+    must be skipped + logged, never crash the whole export.
+    """
+    # arrange — seed event + clip, then make ZipFile.write raise OSError
+    # on the mp4 to simulate the sweep deleting it mid-write.
+    rec_dir.mkdir()
+    _seed_event("evt-swept")
+    (rec_dir / "evt-swept.mp4").write_bytes(b"FAKE")
+    import zipfile as _zf_mod
+
+    real_write = _zf_mod.ZipFile.write
+
+    def fake_write(self, filename, *a, **kw):
+        if str(filename).endswith("evt-swept.mp4"):
+            raise OSError("file vanished")
+        return real_write(self, filename, *a, **kw)
+
+    monkeypatch.setattr(_zf_mod.ZipFile, "write", fake_write)
+
+    # act
+    with caplog.at_level(logging.WARNING, logger="app.routes.clips"):
+        r = client.post("/api/events/export", json={"event_ids": ["evt-swept"]})
+
+    # assert — still 200; manifest records the clip as NOT included.
+    assert r.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert "evt-swept.mp4" not in set(zf.namelist())
+    manifest = _json.loads(zf.read("manifest.json"))
+    assert manifest["events"][0]["clip_included"] is False
+    # assert — a WARN naming the swept event_id was logged.
+    warn_lines = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+    ]
+    assert any(
+        "swept mid-export" in m and "evt-swept" in m for m in warn_lines
+    ), "expected a WARN naming the swept event_id; got {!r}".format(warn_lines)
+    # assert — no temp file leaked even on the partial-skip path.
+    assert _export_temp_files(rec_dir) == []
+
+
+def test_given_zero_events_resolved_when_export_then_404_and_info_logged(
+    client: TestClient, rec_dir, caplog,
+):
+    """Given requested ids that resolve to no events, When export is
+    called, Then it 404s AND logs an INFO noting 0-of-N resolved.
+
+    logging-plan §2: a stale client selection (events swept since the
+    list loaded) should be diagnosable, not silent.
+    """
+    # arrange — fresh DB per-test; no matching rows.
+
+    # act
+    with caplog.at_level(logging.INFO, logger="app.routes.clips"):
+        r = client.post(
+            "/api/events/export", json={"event_ids": ["nope-1", "nope-2"]},
+        )
+
+    # assert
+    assert r.status_code == 404
+    info_lines = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.INFO
+    ]
+    assert any(
+        "0 events resolved" in m and "2 requested" in m for m in info_lines
+    ), "expected INFO noting 0-of-2 resolved; got {!r}".format(info_lines)

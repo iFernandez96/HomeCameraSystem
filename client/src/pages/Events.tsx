@@ -23,11 +23,12 @@ import {
 } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
 import { clockTime } from '../lib/eventLabel'
+import { log, errFields } from '../lib/log'
 import { useAuth } from '../lib/auth'
 import { useConfirm } from '../lib/confirm'
 import { formatError } from '../lib/format'
 import { useStatus } from '../lib/useStatus'
-import { useToast } from '../lib/toast'
+import { useReportError, useToast } from '../lib/toast'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
 
@@ -58,6 +59,9 @@ export function Events() {
   const isOwner = user?.role === 'owner' || user?.role === 'admin'
   const confirm = useConfirm()
   const { showToast } = useToast()
+  // docs/logging_plan.md §1.3: pair destructive/export error-toasts
+  // with structured log.error so the user message + device log align.
+  const reportError = useReportError()
   // iter-356.24 (Frank carryover): pull worker_alive + detection_active
   // so the EventList empty state can branch between "all is calm" and
   // "camera is offline" instead of showing the same sleeping cat for
@@ -253,6 +257,15 @@ export function Events() {
       const r = await searchEvents(filters)
       setEvents(r.items)
     } catch (e) {
+      // docs/logging_plan.md §2 (Events): load fail ERROR with the op
+      // name so the operator can tell which fetch surfaced the
+      // ErrorState — this is the day-filtered search path.
+      log.error('events:load-failed', {
+        op: 'searchEvents:day',
+        since,
+        until,
+        ...errFields(e),
+      })
       setError(e)
     } finally {
       setLoading(false)
@@ -292,6 +305,9 @@ export function Events() {
     try {
       setEvents(await fetchEvents())
     } catch (e) {
+      // docs/logging_plan.md §2 (Events): load fail ERROR (op name) —
+      // clearing the day filter re-fetches the recent list.
+      log.error('events:load-failed', { op: 'clearDayFilter', ...errFields(e) })
       setError(e)
     } finally {
       setLoading(false)
@@ -328,6 +344,15 @@ export function Events() {
           if (!cancelled) setEvents(evs)
         })
         .catch((e) => {
+          // docs/logging_plan.md §2 (Events): initial / refresh load
+          // fail ERROR (op name). Logged BEFORE the cancelled guard
+          // (§1.3) so an in-flight failure during unmount / tab-switch
+          // is still recorded. `seeded` tells deep-link search apart
+          // from the default fetchEvents fast-path.
+          log.error('events:load-failed', {
+            op: seeded !== 'all' ? 'searchEvents:seeded' : 'fetchEvents',
+            ...errFields(e),
+          })
           if (!cancelled) setError(e)
         })
         .finally(() => {
@@ -348,8 +373,12 @@ export function Events() {
         }
         nav.clearAppBadge?.().catch(() => {})
       })
-      .catch(() => {
-        // Best-effort; the next /unread_count poll will reconcile.
+      .catch((e) => {
+        // docs/logging_plan.md §2 (Events): mark-seen drift WARN. Still
+        // best-effort (the next /unread_count poll reconciles), but a
+        // persistent failure means the home-screen badge never clears —
+        // worth a WARN rather than full silence.
+        log.warn('events:mark-all-seen-failed', errFields(e))
       })
     const unsub = subscribeEvents((e) => {
       if (e.type === 'detection') {
@@ -450,6 +479,9 @@ export function Events() {
     try {
       setEvents(await fetchEvents())
     } catch (e) {
+      // docs/logging_plan.md §2 (Events): load fail ERROR (op name) —
+      // user-initiated Retry from the ErrorState.
+      log.error('events:load-failed', { op: 'retry', ...errFields(e) })
       setError(e)
     } finally {
       setLoading(false)
@@ -510,7 +542,14 @@ export function Events() {
       ) {
         setHasMore(false)
       }
-    } catch {
+    } catch (e) {
+      // docs/logging_plan.md §2 (Events): loadMore catch{} ERROR.
+      // Pre-fix this swallowed silently and set hasMore=false, so a
+      // pagination failure was INDISTINGUISHABLE from a genuine
+      // end-of-history (the Load more button just disappears). Log the
+      // reason so the operator can tell "server 500'd mid-scroll" from
+      // "user reached the last page."
+      log.error('events:load-more-failed', { op: 'searchEvents:loadMore', ...errFields(e) })
       // Stop offering Load more on network/auth failure — the user
       // can re-arm via the existing Retry button (clears + refetches).
       setHasMore(false)
@@ -551,7 +590,12 @@ export function Events() {
       .then(() => {
         window.dispatchEvent(new CustomEvent('homecam:badge-reconcile'))
       })
-      .catch(() => {})
+      .catch((err) => {
+        // docs/logging_plan.md §2 (Events): mark-seen drift WARN. A
+        // 422 here means the client/worker event-id drifted; any
+        // failure leaves this event stuck unread in the badge count.
+        log.warn('events:mark-seen-failed', { eventId: e.id, ...errFields(err) })
+      })
   }, [])
 
   // iter-333 (missing-feature #4 follow-up): bulk-download up to 50
@@ -612,11 +656,13 @@ export function Events() {
         'success',
       )
     } catch (e) {
-      showToast(
-        e instanceof Error
-          ? `Download failed: ${e.message}`
-          : 'Download failed',
-        'error',
+      // docs/logging_plan.md §2 (Events): bulk export fail ERROR with
+      // the id count + status so a 413 over-cap / 503 semaphore is
+      // greppable rather than toast-only.
+      reportError(
+        'events:bulk-export-failed',
+        e instanceof Error ? `Download failed: ${e.message}` : 'Download failed',
+        { count: ids.length, ...errFields(e) },
       )
     } finally {
       setBulkDownloading(false)
@@ -665,9 +711,15 @@ export function Events() {
       showToast('Event deleted', 'success')
     } catch (err) {
       setEvents(snapshot)
-      showToast('Could not delete event: ' + formatError(err), 'error')
+      // docs/logging_plan.md §2 (Events): delete fail ERROR with the
+      // event id + status (destructive op rolled back optimistically).
+      reportError(
+        'events:delete-failed',
+        'Could not delete event: ' + formatError(err),
+        { eventId: e.id, ...errFields(err) },
+      )
     }
-  }, [isOwner, confirm, showToast])
+  }, [isOwner, confirm, showToast, reportError])
 
   const onBulkDelete = async () => {
     if (!isOwner || selectedIds.size === 0 || bulkDeleting) return
@@ -692,6 +744,24 @@ export function Events() {
     try {
       const results = await Promise.allSettled(ids.map((id) => deleteEvent(id)))
       const failed = results.filter((r) => r.status === 'rejected').length
+      if (failed > 0) {
+        // docs/logging_plan.md §2 (Events): bulk delete per-id reasons.
+        // The allSettled rejections were only COUNTED before; surface
+        // each failed id + its express reason so a partial failure
+        // ("3 of 10 failed") is actually diagnosable.
+        const reasons = results
+          .map((r, i) =>
+            r.status === 'rejected'
+              ? { id: ids[i], ...errFields(r.reason) }
+              : null,
+          )
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+        log.error('events:bulk-delete-partial', {
+          requested: count,
+          failed,
+          reasons: reasons.slice(0, 20),
+        })
+      }
       if (failed === 0) {
         showToast(`Deleted ${count} event${count === 1 ? '' : 's'}`, 'success')
       } else if (failed < count) {
@@ -707,7 +777,13 @@ export function Events() {
       exitSelectionMode()
     } catch (err) {
       setEvents(snapshot)
-      showToast('Bulk delete failed: ' + formatError(err), 'error')
+      // docs/logging_plan.md §2 (Events): bulk delete threw outright
+      // (not a per-id rejection) — log the op + reason.
+      reportError(
+        'events:bulk-delete-failed',
+        'Bulk delete failed: ' + formatError(err),
+        { requested: count, ...errFields(err) },
+      )
     } finally {
       setBulkDeleting(false)
     }
@@ -735,7 +811,13 @@ export function Events() {
       // remains.
       await clearDayFilter()
     } catch (err) {
-      showToast('Could not delete events: ' + formatError(err), 'error')
+      // docs/logging_plan.md §2 (Events): delete-by-day fail ERROR with
+      // the day + status (destructive owner-only op).
+      reportError(
+        'events:delete-day-failed',
+        'Could not delete events: ' + formatError(err),
+        { day: selectedDay, ...errFields(err) },
+      )
     }
   }
 

@@ -89,3 +89,13 @@ class MediaMtxWatchdog:
         recovery."""
         self.last_restart_at = now
         self.restart_count += 1
+        # Restart is a degraded/self-healing event the operator must be
+        # able to see: a flapping count (restart_count climbing) means
+        # MediaMTX/libargus isn't recovering. WARNING with the express
+        # reason (consecutive capture failures) + the running kick
+        # count so repeated kicks are greppable as flapping.
+        log.warning(
+            "mediamtx_watchdog: kicking MediaMTX after %d consecutive "
+            "capture failures (threshold %d) - restart #%d this run",
+            self.failures, self.fail_threshold, self.restart_count,
+        )

@@ -232,13 +232,17 @@ async def test_send_all_swallows_non_webpush_exceptions(
 
     assert sent == 0
     assert len(service.subs) == 1
-    # Log line names the exception type so a future operator can grep
-    # journalctl for "push transient error (ConnectionError)" and find
-    # the failure class without reading the message body.
+    # Log line names the exception type + the endpoint HOST (never the
+    # full endpoint — it carries a device secret) so a future operator
+    # can grep journalctl for "transient error (ConnectionError)" and
+    # find the failure class without reading the message body.
     assert any(
-        "push transient error" in r.message and "ConnectionError" in r.message
+        "transient error" in r.message and "ConnectionError" in r.message
         for r in caplog.records
     )
+    # GUARDRAIL: the per-device endpoint secret (the path after the
+    # host) must NEVER appear in any log line.
+    assert not any("/x" in r.getMessage() for r in caplog.records)
 
 
 def test_load_keys_handles_corrupt_pem_gracefully(tmp_path, monkeypatch, caplog):

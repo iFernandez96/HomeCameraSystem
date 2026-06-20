@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import asdict
 from typing import Annotated
@@ -143,7 +144,20 @@ async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, obj
         raise HTTPException(
             status_code=422, detail="at least one field must be provided"
         )
-    new = detection_config.update(**patch)
+    # Audit which config knobs an owner changed. Log the KEY SET only —
+    # never the values (zones carry coordinate geometry, classes/labels
+    # are operator PII-adjacent). Sorted for stable grep.
+    log.info("detection config patch: keys=%s", sorted(patch.keys()))
+    try:
+        new = detection_config.update(**patch)
+    except Exception:
+        # The store may warn-and-return internally on a persist failure,
+        # but a hard exception here means the patch was rejected/lost.
+        # Surface WHY before re-raising so the 500 isn't opaque.
+        log.exception(
+            "detection config update failed: keys=%s", sorted(patch.keys())
+        )
+        raise
     return asdict(new)
 
 
@@ -225,6 +239,14 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
     # land UNDER that root. Catches `..` smuggled in via symlinks,
     # absolute paths the regex didn't trip on, etc.
     if ".." in body.backup_path:
+        # Security event: an owner-authed caller (or a compromised
+        # owner credential on the tailnet) tried to smuggle a parent-dir
+        # traversal past the Pydantic regex. Log the rejected raw value
+        # (it's just a path fragment, not a secret) so the operator can
+        # spot probing in journald.
+        log.warning(
+            "restore rejected: '..' in backup_path %r", body.backup_path
+        )
         raise HTTPException(
             status_code=400,
             detail="backup_path may not contain '..'",
@@ -233,7 +255,11 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
     try:
         candidate = (target_root / body.backup_path).resolve()
         candidate.relative_to(target_root)
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        log.warning(
+            "restore rejected: backup_path %r escapes target root: %s",
+            body.backup_path, e,
+        )
         raise HTTPException(
             status_code=400,
             detail="backup_path must resolve under the configured backup target",
@@ -264,47 +290,116 @@ class _TimelapseBody(BaseModel):
     date: str = Field(min_length=10, max_length=10, pattern=_DATE_PATTERN)
 
 
+# Timelapse builds run in the BACKGROUND (a busy day = 300+ clips / ~1 GB /
+# multiple minutes of ffmpeg on the Nano — awaiting it inline blocked the
+# HTTP request until the browser/proxy timed out, so big days "failed" even
+# when the build would have succeeded). The POST kicks off the build and
+# returns instantly with `building: true`; the client polls
+# GET /system/timelapse/status?date=… until ready/error. The service writes
+# to a `.tmp` sidecar and atomic-renames, so the GET /api/timelapses route
+# never sees a partial.
+#
+# `_TIMELAPSE_STATUS[date] = {building, ready, error}` is the poll source.
+# `_TIMELAPSE_TASKS` holds strong refs so the GC can't collect an in-flight
+# build mid-run (CPython #44665, same pattern as _internal._BACKGROUND_TASKS).
+_TIMELAPSE_STATUS: dict[str, dict] = {}
+_TIMELAPSE_TASKS: set[asyncio.Task] = set()
+
+
+async def _run_timelapse_build(date: str) -> None:
+    """Background worker: build the day's timelapse and record the outcome
+    in `_TIMELAPSE_STATUS` for the status endpoint to report."""
+    from ..services import timelapse as _timelapse_service
+    try:
+        result = await _timelapse_service.build_async(date)
+        if result.ok:
+            log.info("timelapse built for %s: %d clips", date, result.clip_count)
+            _TIMELAPSE_STATUS[date] = {"building": False, "ready": True, "error": None}
+        elif result.clip_count == 0:
+            log.info("timelapse skipped for %s: no clips", date)
+            _TIMELAPSE_STATUS[date] = {
+                "building": False,
+                "ready": False,
+                "error": "No recorded events on that day yet — nothing to build.",
+            }
+        else:
+            log.warning("timelapse build failed for %s: %s", date, result.error)
+            _TIMELAPSE_STATUS[date] = {
+                "building": False,
+                "ready": False,
+                "error": "Couldn't build timelapse: {0}".format(
+                    result.error or "unknown error"
+                ),
+            }
+    except Exception:
+        log.exception("timelapse background build crashed for %s", date)
+        _TIMELAPSE_STATUS[date] = {
+            "building": False,
+            "ready": False,
+            "error": "Timelapse build crashed — see server logs.",
+        }
+
+
 @router.post(
     "/system/timelapse",
     dependencies=[Depends(require_role("owner"))],
 )
 async def system_timelapse(body: _TimelapseBody) -> dict[str, object]:
-    # iter-306: ffmpeg-based timelapse builder (was stub-with-note
-    # since iter-213). The service concatenates every recorded
-    # event clip from the requested day into a single MP4 — see
-    # `services/timelapse.py` for the design notes.
-    #
-    # Wire shape preserved from iter-213:
-    #   - On no-clips day: `{ok: True, note: "no events that day", ...}`.
-    #     Client toast is honest ("nothing was made").
-    #   - On ffmpeg failure: `{ok: True, note: "ffmpeg error: ...", ...}`.
-    #     The 200 + note pattern (NOT a 500) because the route
-    #     itself succeeded; only the work product is missing.
-    #   - On success: `{ok: True, date, url}` (NO note). The client
-    #     branches on `r.note` truthy, so dropping it flips the
-    #     toast to the success path.
-    from ..services import timelapse as _timelapse_service
-    result = await _timelapse_service.build_async(body.date)
     expected_url = f"/api/timelapses/{body.date}.mp4"
-    if result.ok:
-        log.info("timelapse built for %s: %d clips", body.date, result.clip_count)
-        return {"ok": True, "date": body.date, "url": expected_url}
-    if result.clip_count == 0:
-        log.info("timelapse skipped for %s: no clips", body.date)
+    existing = _TIMELAPSE_STATUS.get(body.date)
+    if existing is not None and existing.get("building"):
+        # De-dupe: a build for this day is already running. Don't spawn a
+        # second concurrent ffmpeg (they'd race on the same .tmp).
         return {
             "ok": True,
-            "note": "No recorded events on that day yet — nothing to build.",
+            "building": True,
             "date": body.date,
             "url": expected_url,
+            "note": "Already building this day's video — it'll appear shortly.",
         }
-    log.warning(
-        "timelapse build failed for %s: %s", body.date, result.error,
-    )
+    # Mark building SYNCHRONOUSLY (before create_task) so two rapid POSTs
+    # can't both pass the guard above.
+    _TIMELAPSE_STATUS[body.date] = {"building": True, "ready": False, "error": None}
+    task = asyncio.create_task(_run_timelapse_build(body.date))
+    _TIMELAPSE_TASKS.add(task)
+    task.add_done_callback(_TIMELAPSE_TASKS.discard)
+    log.info("timelapse build started (background) for %s", body.date)
     return {
         "ok": True,
-        "note": f"Couldn't build timelapse: {result.error or 'unknown error'}",
+        "building": True,
         "date": body.date,
         "url": expected_url,
+        "note": "Building your day video — it'll appear here in a minute.",
+    }
+
+
+@router.get(
+    "/system/timelapse/status",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def system_timelapse_status(
+    date: Annotated[str, Query(min_length=10, max_length=10, pattern=_DATE_PATTERN)],
+) -> dict[str, object]:
+    """Poll target for the client. Reports {building, ready, error, url}.
+    Falls back to on-disk existence when there's no in-memory record (server
+    restarted mid/after a build, or it was built in a prior session)."""
+    expected_url = f"/api/timelapses/{date}.mp4"
+    st = _TIMELAPSE_STATUS.get(date)
+    if st is None:
+        exists = (settings.timelapses_dir / f"{date}.mp4").exists()
+        return {
+            "date": date,
+            "building": False,
+            "ready": exists,
+            "error": None,
+            "url": expected_url if exists else None,
+        }
+    return {
+        "date": date,
+        "building": st["building"],
+        "ready": st["ready"],
+        "error": st["error"],
+        "url": expected_url if st["ready"] else None,
     }
 
 
@@ -360,8 +455,21 @@ async def list_backups() -> dict[str, object]:
 
     target = settings.backup_target_dir
     items: list[dict[str, object]] = []
-    if target.exists():
-        for child in target.iterdir():
+    if not target.exists():
+        # Empty dropdown here usually means the operator hasn't pointed
+        # backup_target_dir at a real mount yet — a misconfig, not an
+        # error. INFO so it's visible at default level without alarming.
+        log.info("list backups: target dir does not exist: %s", target)
+    else:
+        try:
+            children = list(target.iterdir())
+        except OSError as e:
+            # Dir exists but is unreadable (perms / unmounted mid-scan).
+            # Distinct from "no dir" — this hides real backups behind an
+            # empty dropdown, so WARN.
+            log.warning("list backups: iterdir failed on %s: %s", target, e)
+            children = []
+        for child in children:
             if not child.is_file():
                 continue
             name = child.name
@@ -413,8 +521,17 @@ async def list_timelapses() -> dict[str, object]:
 
     target = settings.timelapses_dir
     items: list[dict[str, object]] = []
-    if target.exists():
-        for child in target.iterdir():
+    if not target.exists():
+        log.info("list timelapses: target dir does not exist: %s", target)
+    else:
+        try:
+            children = list(target.iterdir())
+        except OSError as e:
+            # Dir exists but unreadable — hides built timelapses behind an
+            # empty list, so WARN (distinct from the benign no-dir case).
+            log.warning("list timelapses: iterdir failed on %s: %s", target, e)
+            children = []
+        for child in children:
             if not child.is_file():
                 continue
             name = child.name
@@ -427,10 +544,19 @@ async def list_timelapses() -> dict[str, object]:
                 size = child.stat().st_size
             except OSError:
                 continue
+            # iter (timelapse de-overlap + timestamp overlay): the builder
+            # writes a sibling `<date>.json` map of reel-offset → capture time
+            # so the client can paint a wall-clock overlay. Expose its URL
+            # when present; older reels built before this feature have none,
+            # and the client degrades to no overlay.
+            sidecar = target / f"{stem}.json"
             items.append({
                 "date": stem,
                 "url": f"/api/timelapses/{name}",
                 "size_bytes": size,
+                "manifest_url": (
+                    f"/api/timelapses/{stem}.json" if sidecar.exists() else None
+                ),
             })
     # Newest first by date — descending lexicographic on YYYY-MM-DD
     # IS chronological because the format sorts naturally.
@@ -467,7 +593,13 @@ async def delete_timelapse(
     try:
         resolved = target.resolve()
         resolved.relative_to(settings.timelapses_dir.resolve())
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        # The Pydantic date regex already validated `date`, so reaching
+        # here is anomalous (regex loosening / symlink under the dir) —
+        # treat as a security signal, WARN.
+        log.warning(
+            "timelapse delete rejected: path escape for date %r: %s", date, e
+        )
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="invalid path")
     if not resolved.exists():
@@ -475,9 +607,19 @@ async def delete_timelapse(
     try:
         resolved.unlink()
     except OSError as e:
+        log.warning("timelapse delete failed for %s: %s", date, e)
         from fastapi import HTTPException
         raise HTTPException(
             status_code=500, detail=f"could not delete: {e!r}",
         )
+    # Best-effort: remove the sibling timestamp sidecar so a later rebuild
+    # doesn't serve a stale offset→time map. A missing/failed sidecar unlink
+    # never fails the delete (the reel — the thing the user asked to delete —
+    # is already gone).
+    sidecar = settings.timelapses_dir / f"{date}.json"
+    try:
+        sidecar.unlink()
+    except OSError:
+        pass
     log.info("timelapse deleted for %s", date)
     return {"deleted": True, "date": date}

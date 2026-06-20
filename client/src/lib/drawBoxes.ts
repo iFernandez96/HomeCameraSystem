@@ -1,4 +1,12 @@
+import { log } from './log'
 import type { DetectionBox } from './types'
+
+// drawBoxes runs on a hot redraw path (per live-event / per ClipModal frame),
+// so a degenerate-dimension condition that persists must NOT log per frame.
+// This once-flag latches on the first occurrence and re-arms once a healthy
+// (positive-dimension) draw happens, so a transient layout glitch logs once
+// and a recurrence after recovery logs again.
+let _degenerateWarned = false
 
 /**
  * Renders normalized [0,1] detection boxes onto `canvas`, sized to the
@@ -22,6 +30,22 @@ export function drawBoxes(
 ): void {
   const w = video.clientWidth
   const h = video.clientHeight
+  // Degenerate dims (video not laid out yet, detached, or display:none) mean
+  // every box scales to a zero/NaN rect — nothing draws and the operator sees
+  // "boxes disappeared" with no clue why. WARN (once) when there ARE boxes to
+  // draw but the surface has no size; bail rather than paint garbage.
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    if (boxes.length > 0 && !_degenerateWarned) {
+      _degenerateWarned = true
+      log.warn('drawBoxes:degenerate-dims', {
+        width: w,
+        height: h,
+        boxes: boxes.length,
+      })
+    }
+    return
+  }
+  _degenerateWarned = false
   if (canvas.width !== w) canvas.width = w
   if (canvas.height !== h) canvas.height = h
   ctx.clearRect(0, 0, w, h)

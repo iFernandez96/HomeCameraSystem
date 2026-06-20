@@ -34,6 +34,8 @@ import json
 import os
 import re
 
+import applog
+
 
 # Mirror of `recording_service._VALID_EVENT_ID` and the iter-202
 # ClipRecorder's filename guard. Keep these regexes aligned — the
@@ -107,6 +109,16 @@ def write_sidecar(recordings_dir, event_id, payload):
     JSON, never a half-written file.
     """
     if not event_id or not _VALID_EVENT_ID_RE.match(event_id):
+        # Charset reject: a worker/server drift in the event_id rules
+        # surfaces here as a quiet /tracks 404 (the server resolves the
+        # sidecar against the same regex). Name the offending id so the
+        # drift is greppable rather than invisible.
+        applog.emit(
+            "tracks",
+            "write_sidecar rejected event_id=%r (failed charset "
+            "%s) - sidecar NOT written, clip falls back to static "
+            "overlay" % (event_id, _VALID_EVENT_ID_RE.pattern),
+        )
         return False
     final_path = os.path.join(
         recordings_dir, "{}.tracks.json".format(event_id),
@@ -124,12 +136,22 @@ def write_sidecar(recordings_dir, event_id, payload):
             os.fsync(f.fileno())
         os.rename(tmp_path, final_path)
         return True
-    except (OSError, IOError, ValueError, TypeError):
-        # Fail-quiet: the merge thread + clip MP4 are independent;
-        # a missing sidecar just means the client falls back to the
-        # static `event.boxes` overlay (same code path as legacy
-        # clips pre-iter-356.53). Defense-in-depth: clean up any
-        # half-written tmp.
+    except (OSError, IOError, ValueError, TypeError) as e:
+        # Fail-quiet for the caller (the merge thread + clip MP4 are
+        # independent; a missing sidecar just means the client falls
+        # back to the static `event.boxes` overlay, same code path as
+        # legacy clips pre-iter-356.53). But this False return was
+        # previously swallowed with no caller try/except, so the
+        # degrade was invisible. Log WHY at the False site: the
+        # operation, the express reason (exc type + text), and the
+        # event_id so the degraded clip is identifiable.
+        applog.emit(
+            "tracks",
+            "write_sidecar failed for event_id=%s at %s: %s: %s - "
+            "sidecar NOT written, clip degrades to static overlay"
+            % (event_id, final_path, type(e).__name__, e),
+        )
+        # Defense-in-depth: clean up any half-written tmp.
         try:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, WebSocket, Web
 from ..auth import tokens, users_db
 from ..auth.dependencies import get_current_user, require_role
 from ..config import settings
+from ..log import auth_rejected
 from ..services.event_bus import SubscriberCapReached, event_bus
 
 router = APIRouter()
@@ -104,18 +105,40 @@ async def search_events(
     # one-line fix; the helpers stay sync (no aiosqlite migration
     # — flagged as anti-recommendation by the auditor because it
     # would re-introduce a connection-pool sharp edge).
-    items = await asyncio.to_thread(
-        events_db.search,
-        settings.events_db_path,
-        camera_id=camera_id,
-        person_name=person_name,
-        label=label,
-        since_ts=since_ts,
-        until_ts=until_ts,
-        before_ts=before_ts,
-        limit=limit,
-        face_unrecognized=face_unrecognized,
-    )
+    try:
+        items = await asyncio.to_thread(
+            events_db.search,
+            settings.events_db_path,
+            camera_id=camera_id,
+            person_name=person_name,
+            label=label,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            before_ts=before_ts,
+            limit=limit,
+            face_unrecognized=face_unrecognized,
+        )
+    except Exception:
+        # iter-logging: a swallowed DB read here surfaces to the client
+        # as a bare 500 with no journal trail. Log the operation + every
+        # filter param at exception level (with the stack) so a locked /
+        # corrupt events.db is diagnosable, then re-raise so the route
+        # still 500s (behaviour unchanged). NEVER log token/cookie bytes.
+        log.exception(
+            "events_db.search failed on %s: "
+            "camera_id=%r person_name=%r label=%r since_ts=%r "
+            "until_ts=%r before_ts=%r limit=%r face_unrecognized=%r",
+            settings.events_db_path,
+            camera_id,
+            person_name,
+            label,
+            since_ts,
+            until_ts,
+            before_ts,
+            limit,
+            face_unrecognized,
+        )
+        raise
     # next_cursor convention: only set when this page is full
     # (len == limit) so the client can stop paginating cleanly on
     # the last page. Cursor value = oldest item's ts on this page,
@@ -162,16 +185,33 @@ async def events_count_by_day(
     # iter-273: same to_thread wrap as /events/search above. Heatmap
     # refetches on visibility-resume can re-issue this 30 d×N query
     # on every tab focus — keep it off the asyncio loop.
-    counts = await asyncio.to_thread(
-        events_db.count_by_day,
-        settings.events_db_path,
-        camera_id=camera_id,
-        person_name=person_name,
-        label=label,
-        since_ts=since_ts,
-        until_ts=until_ts,
-        face_unrecognized=face_unrecognized,
-    )
+    try:
+        counts = await asyncio.to_thread(
+            events_db.count_by_day,
+            settings.events_db_path,
+            camera_id=camera_id,
+            person_name=person_name,
+            label=label,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            face_unrecognized=face_unrecognized,
+        )
+    except Exception:
+        # iter-logging: same DB-read wrap as /events/search — log op +
+        # filter params + stack, then re-raise (route still 500s).
+        log.exception(
+            "events_db.count_by_day failed on %s: "
+            "camera_id=%r person_name=%r label=%r since_ts=%r "
+            "until_ts=%r face_unrecognized=%r",
+            settings.events_db_path,
+            camera_id,
+            person_name,
+            label,
+            since_ts,
+            until_ts,
+            face_unrecognized,
+        )
+        raise
     body = {"counts": counts}
     body_json = json.dumps(body, sort_keys=True, separators=(",", ":"))
     etag = '"' + hashlib.md5(body_json.encode("utf-8")).hexdigest() + '"'
@@ -222,6 +262,15 @@ async def events_mark_seen(
     if not re.match(_EVENT_ID_PATTERN, event_id):
         from fastapi import HTTPException
 
+        # iter-logging: a malformed event id on mark-seen means the
+        # client (or worker) minted an id outside the shared charset —
+        # an id-drift bug worth a WARNING, not a silent 422. Log the
+        # rejected id so the drift source is greppable.
+        log.warning(
+            "events_mark_seen 422: malformed event_id=%r (client/worker "
+            "id drift)",
+            event_id,
+        )
         raise HTTPException(status_code=422, detail="invalid event id")
     from ..services import events_db
 
@@ -252,9 +301,14 @@ _DAY_PATTERN = r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$"
 
 @router.delete(
     "/events/{event_id}",
-    dependencies=[Depends(require_role("owner"))],
 )
-async def events_delete_one(event_id: str) -> dict:
+async def events_delete_one(
+    event_id: str,
+    # iter-logging: take the resolved owner so the destructive delete
+    # can be audited with an actor. `require_role` returns the username
+    # (the `sub` claim) — already in the DB, safe to log.
+    actor: str = Depends(require_role("owner")),
+) -> dict:
     """iter-299 (user "be able to delete events manually with a
     confirmation"): owner-only single-event delete. Confirm dialog
     is client-side; the server is the destructive boundary.
@@ -268,18 +322,43 @@ async def events_delete_one(event_id: str) -> dict:
     if not re.match(_EVENT_ID_PATTERN, event_id):
         from fastapi import HTTPException
 
+        log.warning(
+            "events_delete_one 422: malformed event_id=%r (client/worker "
+            "id drift) actor=%r",
+            event_id,
+            actor,
+        )
         raise HTTPException(status_code=422, detail="invalid event id")
     from ..services import events_db
 
-    deleted = await asyncio.to_thread(
-        events_db.delete, settings.events_db_path, event_id
+    try:
+        deleted = await asyncio.to_thread(
+            events_db.delete, settings.events_db_path, event_id
+        )
+    except Exception:
+        # iter-logging: destructive owner-only op with no audit today —
+        # a swallowed DB error here loses the operator's delete intent
+        # with no trail. Log op + actor + target id + stack, re-raise.
+        log.exception(
+            "events_db.delete failed on %s: event_id=%r actor=%r",
+            settings.events_db_path,
+            event_id,
+            actor,
+        )
+        raise
+    # iter-logging: INFO audit for the destructive boundary — who
+    # deleted what, and whether a row actually went away.
+    log.info(
+        "event deleted: event_id=%r deleted=%s actor=%r",
+        event_id,
+        deleted,
+        actor,
     )
     return {"deleted": deleted}
 
 
 @router.delete(
     "/events",
-    dependencies=[Depends(require_role("owner"))],
 )
 async def events_delete_by_day(
     day: str = Query(
@@ -287,6 +366,8 @@ async def events_delete_by_day(
         pattern=_DAY_PATTERN,
         description="YYYY-MM-DD (server-local-time bucketing)",
     ),
+    # iter-logging: resolved owner for the destructive bulk-delete audit.
+    actor: str = Depends(require_role("owner")),
 ) -> dict:
     """iter-299 (user "delete all events for a day"): owner-only
     bulk delete. The `day` Query parameter is required + regex-
@@ -297,8 +378,27 @@ async def events_delete_by_day(
     """
     from ..services import events_db
 
-    n = await asyncio.to_thread(
-        events_db.delete_by_day, settings.events_db_path, day
+    try:
+        n = await asyncio.to_thread(
+            events_db.delete_by_day, settings.events_db_path, day
+        )
+    except Exception:
+        # iter-logging: destructive owner-only bulk delete with no audit
+        # today. Log op + actor + day + stack, re-raise so the route
+        # still 500s.
+        log.exception(
+            "events_db.delete_by_day failed on %s: day=%r actor=%r",
+            settings.events_db_path,
+            day,
+            actor,
+        )
+        raise
+    # iter-logging: INFO audit — actor + day + how many rows were removed.
+    log.info(
+        "events deleted by day: day=%r deleted=%s actor=%r",
+        day,
+        n,
+        actor,
     )
     return {"deleted": n}
 
@@ -347,14 +447,26 @@ async def list_people(
     # instead of T_summary + T_total. On the Nano's class-10 SD card
     # each connection open is ~0.5-1 ms; saves one connect/close
     # cycle per cache-miss request.
-    items, total = await asyncio.gather(
-        asyncio.to_thread(
-            events_db.people_summary, settings.events_db_path, limit=limit,
-        ),
-        asyncio.to_thread(
-            events_db.people_total, settings.events_db_path,
-        ),
-    )
+    try:
+        items, total = await asyncio.gather(
+            asyncio.to_thread(
+                events_db.people_summary, settings.events_db_path, limit=limit,
+            ),
+            asyncio.to_thread(
+                events_db.people_total, settings.events_db_path,
+            ),
+        )
+    except Exception:
+        # iter-logging: people_summary leans on a window function
+        # (SQLite >= 3.25) — a silent landmine on an older eMMC build.
+        # Log the op + db path + limit at exception level, re-raise so
+        # the route still 500s.
+        log.exception(
+            "events_db.people_summary/people_total failed on %s: limit=%r",
+            settings.events_db_path,
+            limit,
+        )
+        raise
     body = {"items": items, "total": total}
     body_json = json.dumps(body, sort_keys=True, separators=(",", ":"))
     etag = '"' + hashlib.md5(body_json.encode("utf-8")).hexdigest() + '"'
@@ -380,11 +492,24 @@ async def events_ws(ws: WebSocket) -> None:
     origin = ws.headers.get("origin")
     host = ws.headers.get("host")
     if not _origin_matches_host(origin, host):
-        log.info(
-            "ws rejected: origin=%r does not match host=%r",
-            origin,
-            host,
-        )
+        # iter-logging: split the two distinct rejection causes. A
+        # present-but-mismatched Origin is a cross-origin probe (a
+        # malicious LAN page) — security-relevant, WARNING. A missing
+        # Origin is benign-suspicious (a non-browser tool, or a stripped
+        # header) — INFO. Splitting lets an operator tell a real attack
+        # apart from a misconfigured proxy at a glance.
+        if origin:
+            log.warning(
+                "ws rejected: origin=%r does not match host=%r "
+                "(cross-origin)",
+                origin,
+                host,
+            )
+        else:
+            log.info(
+                "ws rejected: missing Origin header (host=%r)",
+                host,
+            )
         await ws.close(code=1008, reason="origin mismatch")
         return
     # iter-185 (Auth Plan Phase 6): cookie precondition. Both
@@ -393,17 +518,43 @@ async def events_ws(ws: WebSocket) -> None:
     # iter-182 client side's no-auto-retry treatment applies. The
     # client's AuthProvider listens for `homecam:auth-failed` events
     # dispatched on 1008 close to drop session state.
+    # iter-logging: all four auth branches log at WARNING (today they
+    # were silent while the origin gate above logged — an asymmetry that
+    # hid every WS auth rejection). Tailnet exposure makes auth-rejection
+    # a security signal. NEVER log the token / cookie bytes — only the
+    # reason token, the `sub` username (where decoded), and a
+    # cookie-present bool so "no session" vs "bad session" is clear.
     access_token = ws.cookies.get("homecam_access")
     if not access_token:
+        auth_rejected(
+            log, "WS", "/api/events/ws", "no cookie", cookie_present=False
+        )
         await ws.close(code=1008, reason="auth required")
         return
     try:
         claims = tokens.decode(access_token, kind="access")
     except tokens.InvalidToken:
+        # Covers expired / bad-signature / malformed AND the load-bearing
+        # kind-mismatch re-check (a refresh token in the access slot).
+        auth_rejected(
+            log,
+            "WS",
+            "/api/events/ws",
+            "invalid or kind-mismatched token",
+            cookie_present=True,
+        )
         await ws.close(code=1008, reason="auth required")
         return
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        auth_rejected(
+            log,
+            "WS",
+            "/api/events/ws",
+            "malformed sub claim",
+            sub=sub,
+            cookie_present=True,
+        )
         await ws.close(code=1008, reason="auth required")
         return
     # User-row lookup: refuses to revive a session whose user was
@@ -414,6 +565,16 @@ async def events_ws(ws: WebSocket) -> None:
     # so the upper bound on staleness is the access TTL (15 min).
     user = users_db.get_user(settings.users_db_path, sub)
     if user is None:
+        # Token was TTL-valid but the user row is gone (deleted while the
+        # access token was still live) — a security-relevant event.
+        auth_rejected(
+            log,
+            "WS",
+            "/api/events/ws",
+            "user row gone",
+            sub=sub,
+            cookie_present=True,
+        )
         await ws.close(code=1008, reason="auth required")
         return
     # iter-263 (security-auditor F1): bus-level subscriber cap. We
@@ -422,10 +583,23 @@ async def events_ws(ws: WebSocket) -> None:
     # Again Later) tells the iter-158 client reconnect logic to back
     # off — distinct from the 1008 policy-violation closes that
     # signal a configuration / auth problem.
+    # iter-logging: identify the connecting client (the authed `sub` +
+    # the request client host) so a capacity rejection / stream crash is
+    # attributable. `client` is the (host, port) starlette Address or
+    # None behind some proxies.
+    client = ws.client.host if ws.client else None
     try:
         queue = event_bus.subscribe()
-    except SubscriberCapReached:
-        log.warning("ws rejected: bus at capacity")
+    except SubscriberCapReached as exc:
+        # iter-logging: name the count/cap (carried in the exception
+        # message as "(N/MAX)") + who got turned away so an operator can
+        # tell a real subscriber leak from a momentary burst.
+        log.warning(
+            "ws rejected: bus at capacity (%s) sub=%r client=%s",
+            exc,
+            sub,
+            client,
+        )
         await ws.close(code=1013, reason="server at capacity")
         return
     await ws.accept()
@@ -446,6 +620,10 @@ async def events_ws(ws: WebSocket) -> None:
         # except Exception: log + recover`."
         raise
     except Exception:
-        log.exception("events websocket crashed")
+        # iter-logging: attribute the crash to a subscriber + client so a
+        # repeated stream-loop fault is traceable to one device.
+        log.exception(
+            "events websocket crashed: sub=%r client=%s", sub, client
+        )
     finally:
         event_bus.unsubscribe(queue)

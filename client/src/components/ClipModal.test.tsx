@@ -1,6 +1,29 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
+
+// docs/logging_plan.md §2/§5 (ClipModal): spy on the client log shim
+// so the export-fail test can assert a structured ERROR (with the
+// discarded HTTP status) fires at the swallow site. The real
+// useReportError in lib/toast calls log.error under the hood, so
+// mocking the log module captures it whether the report path is the
+// direct log.error or the reportError pairing.
+const logError = vi.fn()
+const logWarn = vi.fn()
+vi.mock('../lib/log', () => ({
+  log: {
+    error: (...a: unknown[]) => logError(...a),
+    warn: (...a: unknown[]) => logWarn(...a),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+  errFields: (e: unknown) => ({
+    status: (e as { status?: number })?.status,
+    value: String(e),
+  }),
+}))
+
 import { ClipModal } from './ClipModal'
+import { HttpError } from '../lib/api'
 import type { DetectionEvent } from '../lib/types'
 
 
@@ -200,6 +223,34 @@ describe('ClipModal', () => {
     expect(exportSpy).toHaveBeenCalledWith(['evt-export'])
     expect(createObjectURLSpy).toHaveBeenCalledWith(fakeBlob)
     expect(anchorClickSpy).toHaveBeenCalled()
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  // docs/logging_plan.md §2/§5 (ClipModal): export failure must log a
+  // structured ERROR carrying the discarded HTTP status (toast-only
+  // before) so a 413 over-cap / 503 semaphore is diagnosable.
+  it('given a clicked Download, when exportEvents rejects with a 413, then a structured ERROR is logged with the status (logging plan §2)', async () => {
+    // arrange
+    logError.mockReset()
+    vi.spyOn(await import('../lib/api'), 'exportEvents').mockRejectedValue(
+      new HttpError('/api/events/export', 413, 'too many'),
+    )
+
+    // act
+    render(<ClipModal event={makeEvent({ id: 'evt-413' })} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /save clip/i }))
+
+    // assert — export-failed ERROR with the event id + the 413 status.
+    await vi.waitFor(() =>
+      expect(logError).toHaveBeenCalledWith(
+        'clipModal:export-failed',
+        expect.objectContaining({ eventId: 'evt-413', status: 413 }),
+      ),
+    )
 
     // cleanup
     vi.restoreAllMocks()
@@ -541,9 +592,7 @@ describe('ClipModal', () => {
     HTMLVideoElement.prototype.addEventListener = function (
       this: HTMLVideoElement,
       type: string,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       listener: any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       options?: any,
     ) {
       seen.add(type)

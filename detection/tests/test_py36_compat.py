@@ -46,6 +46,7 @@ import pytest
 # are relative to the repo root, resolved via `_repo_root()` below.
 _GUARDED_MODULES = (
     "detection/detect.py",
+    "detection/applog.py",
     "detection/box_norm.py",
     "detection/memory_guard.py",
     "detection/thermal_guard.py",
@@ -56,6 +57,7 @@ _GUARDED_MODULES = (
     "detection/recording.py",
     "detection/preroll.py",
     "detection/tracks.py",
+    "detection/presence.py",
     "detection/face_recog/recognizer.py",
     "detection/face_recog/encode_known_faces.py",
     "detection/face_recog/capture.py",

@@ -1,3 +1,4 @@
+import { log, errFields } from './log'
 import type {
   DetectionConfig,
   DetectionEvent,
@@ -55,10 +56,19 @@ async function _attemptRefresh(): Promise<boolean> {
       // requests all 401 simultaneously. Other refresh failures
       // (network, 5xx) leave state alone — might be transient.
       if (res.status === 401 && typeof window !== 'undefined') {
+        // Session genuinely expired (refresh cookie gone / secret rotated).
+        log.info('api:session-expired', { via: 'refresh-401' })
         window.dispatchEvent(new CustomEvent('homecam:session-expired'))
       }
       return res.ok
-    } catch {
+    } catch (e) {
+      // Network-level refresh failure (offline / server unreachable). Leave
+      // auth state alone — might be transient — but record WHY the retry was
+      // abandoned so a stuck "everything 401s" state is explainable.
+      log.warn('api:refresh-network-fail', {
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        ...errFields(e),
+      })
       return false
     }
   })()
@@ -81,12 +91,28 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     })
-  let res = await doFetch()
+  let res: Response
+  try {
+    res = await doFetch()
+  } catch (e) {
+    // Network-level reject: `fetch` rejects with a TypeError that has NO
+    // `.status`, so it falls through every caller's `err.status` branch
+    // silently. This is the chokepoint that distinguishes "server down" /
+    // "client offline" from an HTTP error response. Log WHY before rethrow.
+    log.error('api:network-fail', {
+      method: init?.method ?? 'GET',
+      path,
+      online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      ...errFields(e),
+    })
+    throw e
+  }
   // Silent refresh + single retry on 401, EXCEPT for the auth routes
   // themselves (login/refresh/logout/me) — recursing into refresh on
   // a refresh-401 would loop forever, and the AuthProvider in Phase 4
   // wants to see the raw 401 from /api/auth/me to know we're anonymous.
   if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    log.debug('api:retry-after-refresh', { method: init?.method ?? 'GET', path })
     if (await _attemptRefresh()) {
       res = await doFetch()
     }
@@ -96,12 +122,28 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const text = await res.text()
       if (text) detail = `: ${text.slice(0, 200)}`
-    } catch {
+    } catch (e) {
       // body unreadable — proceed with status only
+      log.debug('api:body-read-fail', { path, status: res.status, ...errFields(e) })
     }
+    // Central non-2xx log so NO REST failure is fully silent regardless of
+    // which of the (4-of-8) callers swallow the throw.
+    log.error('api:request-failed', {
+      method: init?.method ?? 'GET',
+      path,
+      status: res.status,
+      detail: detail ? detail.slice(0, 200) : '',
+    })
     throw new HttpError(path, res.status, detail)
   }
-  return res.json() as Promise<T>
+  try {
+    return (await res.json()) as T
+  } catch (e) {
+    // 2xx but body isn't JSON — almost always the SPA index.html served
+    // where a JSON route was expected (mis-mounted route / proxy fallthrough).
+    log.error('api:json-parse-fail', { method: init?.method ?? 'GET', path, status: res.status, ...errFields(e) })
+    throw e
+  }
 }
 
 export const getStatus = (init?: RequestInit) =>
@@ -279,14 +321,51 @@ export type TimelapseItem = {
   date: string
   url: string
   size_bytes: number
+  // URL of the sibling `<date>.json` timestamp sidecar, or null/absent for
+  // reels built before the de-overlap+timestamp feature. The player fetches
+  // it to paint a forward-ticking wall-clock overlay; absence → no overlay.
+  manifest_url?: string | null
 }
+
+// Timestamp sidecar for a stitched reel: a versioned map of each forward-
+// running segment's start offset (seconds into the reel) → original capture
+// time (unix epoch seconds). Lets the player show what wall-clock time the
+// footage under the playhead was recorded. See server timelapse._write_sidecar.
+export type TimelapseSegment = {
+  offset_s: number
+  capture_ts: number
+}
+export type TimelapseManifest = {
+  v: number
+  date: string
+  segments: TimelapseSegment[]
+}
+// `url` is the item's `manifest_url` (already an /api/timelapses/<date>.json
+// path). Auth-gated like the MP4; throws HttpError on 404 (no sidecar).
+export const getTimelapseManifest = (url: string) =>
+  req<TimelapseManifest>(url)
+// Kicks off a BACKGROUND build (server returns immediately with
+// building:true). Poll `getTimelapseStatus` until ready/error.
 export const triggerTimelapse = (date: string) =>
-  req<{ ok: boolean; note?: string; date: string; url: string }>(
+  req<{ ok: boolean; building?: boolean; note?: string; date: string; url: string }>(
     '/api/system/timelapse',
     {
       method: 'POST',
       body: JSON.stringify({ date }),
     },
+  )
+
+export type TimelapseStatus = {
+  date: string
+  building: boolean
+  ready: boolean
+  error: string | null
+  url: string | null
+}
+
+export const getTimelapseStatus = (date: string) =>
+  req<TimelapseStatus>(
+    `/api/system/timelapse/status?date=${encodeURIComponent(date)}`,
   )
 export const listTimelapses = () =>
   req<{ items: TimelapseItem[] }>('/api/system/timelapses')
@@ -357,13 +436,26 @@ export async function getCachedJSON<T>(url: string): Promise<T> {
   if (cached) headers['If-None-Match'] = cached.etag
   const doFetch = () =>
     fetch(`${BASE}${url}`, { credentials: 'include', headers })
-  let res = await doFetch()
+  let res: Response
+  try {
+    res = await doFetch()
+  } catch (e) {
+    log.error('api:network-fail', {
+      method: 'GET',
+      path: url,
+      online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      ...errFields(e),
+    })
+    throw e
+  }
   if (res.status === 401 && !url.startsWith('/api/auth/')) {
+    log.debug('api:retry-after-refresh', { method: 'GET', path: url })
     if (await _attemptRefresh()) {
       res = await doFetch()
     }
   }
   if (res.status === 304 && cached) {
+    log.debug('api:cache-304', { path: url })
     return cached.body as T
   }
   if (!res.ok) {
@@ -371,12 +463,25 @@ export async function getCachedJSON<T>(url: string): Promise<T> {
     try {
       const text = await res.text()
       if (text) detail = `: ${text.slice(0, 200)}`
-    } catch {
+    } catch (e) {
       // unreadable body
+      log.debug('api:body-read-fail', { path: url, status: res.status, ...errFields(e) })
     }
+    log.error('api:request-failed', {
+      method: 'GET',
+      path: url,
+      status: res.status,
+      detail: detail ? detail.slice(0, 200) : '',
+    })
     throw new HttpError(url, res.status, detail)
   }
-  const body = (await res.json()) as T
+  let body: T
+  try {
+    body = (await res.json()) as T
+  } catch (e) {
+    log.error('api:json-parse-fail', { method: 'GET', path: url, status: res.status, ...errFields(e) })
+    throw e
+  }
   const etag = res.headers.get('ETag') || res.headers.get('etag')
   if (etag) {
     // Refresh insertion order so this URL isn't first to evict.
@@ -590,22 +695,46 @@ export const bootstrapFace = (
     method: 'POST',
     credentials: 'include',
     body: fd,
-  }).then(async (res) => {
-    if (!res.ok) {
-      let detail = ''
-      try {
-        detail = (await res.text()).slice(0, 200)
-      } catch {
-        // ignore
-      }
-      throw new HttpError(
-        '/api/face/bootstrap',
-        res.status,
-        detail ? `: ${detail}` : '',
-      )
-    }
-    return res.json()
   })
+    .catch((e) => {
+      // Multipart path bypasses req()'s central refresh + network log,
+      // so log the network-level reject here too.
+      log.error('api:network-fail', {
+        method: 'POST',
+        path: '/api/face/bootstrap',
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        ...errFields(e),
+      })
+      throw e
+    })
+    .then(async (res) => {
+      if (!res.ok) {
+        let detail = ''
+        try {
+          detail = (await res.text()).slice(0, 200)
+        } catch (e) {
+          log.debug('api:body-read-fail', {
+            path: '/api/face/bootstrap',
+            status: res.status,
+            ...errFields(e),
+          })
+        }
+        // 413 here = the server's 1MB body cap rejected the multipart upload
+        // (image too large) — a distinct, otherwise-mysterious failure.
+        log.error('api:request-failed', {
+          method: 'POST',
+          path: '/api/face/bootstrap',
+          status: res.status,
+          detail,
+        })
+        throw new HttpError(
+          '/api/face/bootstrap',
+          res.status,
+          detail ? `: ${detail}` : '',
+        )
+      }
+      return res.json()
+    })
 }
 
 export const retrainFace = () =>

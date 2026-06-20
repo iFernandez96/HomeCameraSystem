@@ -143,6 +143,63 @@ def test_given_owner_when_post_consent_then_consent_json_written_with_0o600(
     assert on_disk == rec
 
 
+def test_given_consent_post_when_recorded_then_audit_logs_actor_and_grant(
+    client, isolated_capture_dirs, caplog,
+):
+    """Given an owner records a consent decision, When the route runs,
+    Then a legal-record audit line captures actor + name + grant state +
+    wording version — the durable trail for the household member."""
+    import logging
+
+    # arrange
+    caplog.set_level(logging.INFO, logger="app.routes.training_admin")
+    body = {"granted": True, "consent_text_version": "v1"}
+
+    # act
+    r = client.post("/api/face/captures/alice/consent", json=body)
+
+    # assert
+    assert r.status_code == 200, r.text
+    audit = [
+        rec for rec in caplog.records
+        if "consent recorded" in rec.getMessage()
+    ]
+    assert audit, "expected a 'consent recorded' audit line"
+    msg = audit[0].getMessage()
+    assert "alice" in msg
+    assert "testuser" in msg  # actor
+    assert "v1" in msg
+
+
+def test_given_corrupt_consent_json_when_get_then_warns_and_default_denies(
+    client, isolated_capture_dirs, caplog,
+):
+    """Given consent.json is corrupt on disk (tamper / partial write),
+    When the owner reads it, Then the route default-denies AND emits a
+    WARNING so the silent grant->deny flip is visible."""
+    import logging
+
+    # arrange — write garbage bytes into the consent file
+    face_root, _ = isolated_capture_dirs
+    alice = face_root / "alice"
+    alice.mkdir(parents=True, exist_ok=True)
+    (alice / "consent.json").write_text("{not valid json")
+    caplog.set_level(logging.WARNING, logger="app.routes.training_admin")
+
+    # act
+    r = client.get("/api/face/captures/alice/consent")
+
+    # assert
+    assert r.status_code == 200, r.text
+    assert r.json()["granted"] is False
+    warnings = [
+        rec for rec in caplog.records
+        if rec.levelno == logging.WARNING
+        and "consent record corrupt" in rec.getMessage()
+    ]
+    assert warnings, "expected a 'consent record corrupt' WARNING"
+
+
 def test_given_post_consent_with_unknown_field_then_422(
     client, isolated_capture_dirs,
 ):

@@ -35,6 +35,12 @@ def test_snapshot_returns_all_documented_fields():
         # iter-302: stream-stale + nvargus-escalation signals.
         "last_frame_ts",
         "argus_restarts",
+        # logging-plan §1.2: failure-rate counters.
+        "clips_dropped_capacity",
+        "clip_start_failures",
+        "face_recog_failures",
+        "event_post_failures",
+        "thumb_save_failures",
     }
 
 

@@ -612,3 +612,190 @@ def test_iter356_61_ensure_capacity_for_grows_and_restarts(monkeypatch, tmp_path
     spawned_args = fake_popen.call_args[0][0]
     wrap_idx = spawned_args.index("-segment_wrap")
     assert spawned_args[wrap_idx + 1] == "65"
+
+
+# --- docs/logging_plan.md §2/§5: failure-point logging pins ---
+# These verify the pre-roll buffer EXPLAINS why a failure occurred
+# instead of returning a bare False / []. Subprocess-mocked + py3.6-clean.
+
+
+def test_given_run_concat_pipes_stderr_when_rc_nonzero_then_tail_logged(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given run_concat is invoked, When ffmpeg exits non-zero, Then
+    subprocess.run was called with stderr=PIPE (deadlock-safe under a
+    synchronous run + timeout) and the stderr tail is logged with the
+    rc (docs/logging_plan.md §2 preroll.py run_concat DEVNULL->PIPE)."""
+    # arrange
+    import subprocess as _subprocess
+    list_path = tmp_path / "list.txt"
+    list_path.write_text("file 'foo.mp4'\n")
+    out = tmp_path / "evt.mp4.tmp"
+    fake_result = MagicMock()
+    fake_result.returncode = 1
+    fake_result.stderr = b"[concat] Impossible to open 'seg_008.mp4'\n"
+    captured_run = MagicMock(return_value=fake_result)
+    monkeypatch.setattr("preroll.subprocess.run", captured_run)
+
+    # act
+    ok = run_concat("ffmpeg", str(list_path), str(out))
+    captured = capsys.readouterr()
+
+    # assert — False return preserved, but now the WHY is logged.
+    assert ok is False
+    # stderr was captured as a PIPE (NOT DEVNULL) so the tail exists.
+    run_kwargs = captured_run.call_args[1]
+    assert run_kwargs["stderr"] is _subprocess.PIPE
+    combined = captured.out + captured.err
+    assert "[preroll]" in combined
+    assert "rc=1" in combined
+    assert "Impossible to open" in combined
+
+
+def test_given_run_concat_timeout_when_invoked_then_timeout_logged(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given subprocess.run raises TimeoutExpired, When run_concat runs,
+    Then it logs a TIMEOUT reason (distinct from OSError / rc!=0) and
+    returns False (docs/logging_plan.md §2 preroll.py run_concat)."""
+    # arrange
+    import subprocess as _subprocess
+    list_path = tmp_path / "list.txt"
+    list_path.write_text("file 'foo.mp4'\n")
+    out = tmp_path / "evt.mp4.tmp"
+    monkeypatch.setattr(
+        "preroll.subprocess.run",
+        MagicMock(side_effect=_subprocess.TimeoutExpired("ffmpeg", 30.0)),
+    )
+
+    # act
+    ok = run_concat("ffmpeg", str(list_path), str(out))
+    captured = capsys.readouterr()
+
+    # assert
+    assert ok is False
+    combined = captured.out + captured.err
+    assert "[preroll]" in combined
+    assert "TIMED OUT" in combined
+
+
+def test_given_ffmpeg_missing_when_start_then_error_names_binary(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given Popen raises FileNotFoundError, When start() runs, Then an
+    ERROR line names the ffmpeg binary so the spawn failure is
+    attributable (docs/logging_plan.md §2 preroll.py spawn fail — caller
+    detect.py only said 'failed to start')."""
+    # arrange
+    pb = PrerollBuffer(
+        rtsp_url="rtsp://localhost:8554/cam",
+        buffer_dir=str(tmp_path / "preroll"),
+        ffmpeg_bin="/no/such/ffmpeg",
+    )
+    monkeypatch.setattr(
+        "preroll.subprocess.Popen",
+        MagicMock(side_effect=FileNotFoundError("nope")),
+    )
+
+    # act
+    ok = pb.start()
+    captured = capsys.readouterr()
+
+    # assert
+    assert ok is False
+    combined = captured.out + captured.err
+    assert "[preroll]" in combined
+    assert "ERROR" in combined
+    assert "/no/such/ffmpeg" in combined
+
+
+def test_given_buffer_dir_unreadable_when_segments_in_window_then_warn_once(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given os.listdir raises OSError (buffer dir unmounted), When
+    segments_in_window runs, Then it returns [] AND logs a WARNING once
+    (docs/logging_plan.md §2 preroll.py segments_in_window listdir)."""
+    # arrange
+    pb = PrerollBuffer(
+        rtsp_url="rtsp://localhost:8554/cam",
+        buffer_dir=str(tmp_path / "preroll"),
+    )
+    monkeypatch.setattr(
+        "preroll.os.listdir",
+        MagicMock(side_effect=OSError("transport endpoint not connected")),
+    )
+
+    # act
+    result = pb.segments_in_window(now=time.time(), pre_roll_s=5)
+    first = capsys.readouterr()
+    # second call should NOT re-log (once-flag still armed).
+    pb.segments_in_window(now=time.time(), pre_roll_s=5)
+    second = capsys.readouterr()
+
+    # assert
+    assert result == []
+    first_combined = first.out + first.err
+    assert "[preroll]" in first_combined
+    assert "transport endpoint not connected" in first_combined
+    # Once-flagged: the second call is silent.
+    assert "transport endpoint not connected" not in (second.out + second.err)
+
+
+def test_given_write_concat_list_oserror_then_error_logged_and_reraised(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given the concat-list open() raises OSError, When write_concat_list
+    runs, Then it logs an ERROR and re-raises so the caller's cleanup
+    still fires (docs/logging_plan.md §2 preroll.py write_concat_list
+    guard)."""
+    # arrange — point the list at a path whose dir doesn't exist so
+    # open() raises a real OSError.
+    bad_path = str(tmp_path / "nonexistent_dir" / "list.txt")
+
+    # act / assert — the OSError still propagates (caller relies on it),
+    # but the reason is logged first.
+    with pytest.raises((OSError, IOError)):
+        write_concat_list(bad_path, [str(tmp_path / "a.mp4")])
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "[preroll]" in combined
+    assert "ERROR write_concat_list failed" in combined
+
+
+def test_given_dead_subprocess_when_watchdog_restarts_then_consecutive_counter_logged(
+    tmp_path, monkeypatch, capsys,
+):
+    """Given the segment-recorder keeps dying, When the watchdog restarts
+    it, Then each restart logs a rising consecutive-restart counter so a
+    flapping (RTSP/MediaMTX-down) buffer is greppable (docs/logging_plan.md
+    §2 preroll.py watchdog restart counter)."""
+    # arrange — every Popen returns a "dead" proc so the watchdog keeps
+    # restarting and the consecutive counter climbs.
+    import time as _time
+    dead_proc = MagicMock()
+    dead_proc.poll = MagicMock(return_value=1)  # always exited
+    monkeypatch.setattr(
+        "preroll.subprocess.Popen", MagicMock(return_value=dead_proc)
+    )
+    pb = PrerollBuffer(
+        rtsp_url="rtsp://localhost:8554/cam",
+        buffer_dir=str(tmp_path / "preroll"),
+    )
+    pb.start()
+
+    # act — fast cadence; wait for at least two restart cycles.
+    pb.start_watchdog(interval_s=1.0)
+    deadline = _time.time() + 4.0
+    combined = ""
+    while _time.time() < deadline:
+        out = capsys.readouterr()
+        combined += out.out + out.err
+        if "consecutive=2" in combined:
+            break
+        _time.sleep(0.1)
+    pb.stop()
+
+    # assert — the flap counter rose past 1.
+    assert "[preroll]" in combined
+    assert "watchdog restarting" in combined
+    assert "consecutive=2" in combined

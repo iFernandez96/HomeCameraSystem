@@ -21,10 +21,24 @@ vi.mock('../../lib/api', () => ({
 }))
 
 const showToast = vi.fn()
-vi.mock('../../lib/toast', () => ({
-  useToast: () => ({ showToast }),
-  ToastProvider: ({ children }: { children: React.ReactNode }) => children,
-}))
+// useReportError mirrors the real pairing (log.error + error toast).
+// Under vitest (MODE === 'test') lib/log ship() is disabled, so
+// log.error only hits console.error — observed via spy in the tests.
+vi.mock('../../lib/toast', async () => {
+  const { log } = await vi.importActual<typeof import('../../lib/log')>(
+    '../../lib/log',
+  )
+  return {
+    useToast: () => ({ showToast }),
+    useReportError:
+      () =>
+      (event: string, message: string, fields: Record<string, unknown> = {}) => {
+        log.error(event, fields)
+        showToast(message, 'error')
+      },
+    ToastProvider: ({ children }: { children: React.ReactNode }) => children,
+  }
+})
 
 import { DetectionSection } from './DetectionSection'
 
@@ -135,5 +149,31 @@ describe('DetectionSection', () => {
     expect(scheduleCall).toBeDefined()
     expect(scheduleCall![0].schedule_off_start).toBe('23:00')
     expect(scheduleCall![0].schedule_off_end).toBe('06:00')
+  })
+
+  it('Given a setting commit rejects, When patchDetectionConfig fails, Then the error toast is paired with a log naming the patch KEYS + status (NOT the values — §4 guardrail)', async () => {
+    // arrange — toggling "person" off issues a patch { classes: [...] }.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const err = Object.assign(new Error('save blew up'), { status: 500 })
+    patchDetectionConfig.mockRejectedValue(err)
+    const user = userEvent.setup()
+    render(<DetectionSection />)
+    const personChip = await screen.findByRole('button', { name: /^person$/i })
+
+    // act
+    await user.click(personChip)
+
+    // assert — toast + paired log carrying the changed KEY ('classes')
+    // and the status, but not the geometry/values.
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringMatching(/could not save settings/i),
+        'error',
+      ),
+    )
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[detectionSettings:save-failed]',
+      expect.objectContaining({ keys: ['classes'], status: 500 }),
+    )
   })
 })

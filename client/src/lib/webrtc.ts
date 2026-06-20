@@ -1,6 +1,39 @@
+import { log, errFields } from './log'
+
 export type WhepConnection = {
   pc: RTCPeerConnection
   close: () => void
+}
+
+/**
+ * Summarize an SDP's ICE candidates WITHOUT leaking private IPs. Returns the
+ * count plus per-type counts (host / srflx / relay / prflx) derived from the
+ * `a=candidate:` lines' `typ` token. `srflx` present is the load-bearing
+ * signal for cellular NAT traversal (see ICE_SERVERS note). NEVER log the
+ * full SDP — `m=`/`a=candidate` lines carry LAN + Tailscale IPs.
+ */
+export function summarizeCandidates(sdp: string | null | undefined): {
+  total: number
+  host: number
+  srflx: number
+  relay: number
+  prflx: number
+  srflxPresent: boolean
+} {
+  const out = { total: 0, host: 0, srflx: 0, relay: 0, prflx: 0, srflxPresent: false }
+  if (!sdp) return out
+  const lines = sdp.split('\n')
+  for (const line of lines) {
+    if (line.indexOf('a=candidate:') === -1) continue
+    out.total++
+    const m = line.match(/ typ (host|srflx|relay|prflx)/)
+    if (m) {
+      const typ = m[1] as 'host' | 'srflx' | 'relay' | 'prflx'
+      out[typ]++
+    }
+  }
+  out.srflxPresent = out.srflx > 0
+  return out
 }
 
 // iter cellular-ice (2026-06-17): ICE servers.
@@ -110,9 +143,12 @@ export async function warmWhepConnection(): Promise<void> {
       return
     }
     _warmed = { pc, createdAt: Date.now() }
-  } catch {
+  } catch (e) {
     // Warmup is best-effort. A transient failure here must not
-    // poison subsequent connectWhep calls.
+    // poison subsequent connectWhep calls — but log at DEBUG so an
+    // ALWAYS-failing warmup (which silently forces every connect onto the
+    // slow cold path) is visible during triage.
+    log.debug('webrtc:warmup-failed', { ...errFields(e) })
     if (pc) {
       try {
         pc.close()
@@ -197,39 +233,100 @@ export async function connectWhep(
   }
 
   pc.ontrack = (e) => {
+    // Breadcrumb: ontrack firing is the proof the media path negotiated. Its
+    // ABSENCE (connect "succeeds" but no frame) is the symptom we diagnose by
+    // checking whether this line appears. DEBUG — fires at most once.
+    log.debug('webrtc:ontrack', { streams: e.streams.length })
     if (video.srcObject !== e.streams[0]) {
       video.srcObject = e.streams[0]
     }
   }
 
-  // Cold path (no warmup): generate offer + gather ICE now.
-  // Warm path: pc.localDescription is already populated with the
-  // pre-baked host-candidate SDP — skip straight to the network
-  // round-trip.
-  if (!pc.localDescription) {
-    const offer = await pc.createOffer()
-    await pc.setLocalDescription(offer)
-    await iceGatheringComplete(pc)
-  }
+  // PC-LEAK FIX (iter logging): pc.close() previously ran ONLY in the
+  // `!res.ok` branch, so a reject from createOffer / setLocalDescription /
+  // setRemoteDescription / the fetch itself returned through the await with
+  // the RTCPeerConnection (and its ICE agent + sockets) still open. Wrap the
+  // whole negotiation in try/finally and close on EVERY error path.
+  let succeeded = false
+  try {
+    // Cold path (no warmup): generate offer + gather ICE now.
+    // Warm path: pc.localDescription is already populated with the
+    // pre-baked host-candidate SDP — skip straight to the network
+    // round-trip.
+    if (!pc.localDescription) {
+      let offer: RTCSessionDescriptionInit
+      try {
+        offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+      } catch (e) {
+        // Local SDP generation failed — a browser/codec fault, NOT network.
+        log.error('webrtc:offer-failed', { url, ...errFields(e) })
+        throw e
+      }
+      await iceGatheringComplete(pc)
+    }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/sdp' },
-    body: pc.localDescription!.sdp,
-  })
-  if (!res.ok) {
-    pc.close()
-    throw new Error(`WHEP ${res.status} ${await res.text()}`)
-  }
-  const answerSdp = await res.text()
-  await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: pc.localDescription!.sdp,
+      })
+    } catch (e) {
+      // WHEP POST network reject (MediaMTX unreachable / offline). Distinct
+      // from an HTTP error response below.
+      log.error('webrtc:whep-network-fail', {
+        url,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        ...errFields(e),
+      })
+      throw e
+    }
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '')
+      // status disambiguates the failure mode: 404 → wrong/absent rung,
+      // 503 → MediaMTX cold/no-publisher. Log the body TAIL only (never the
+      // full SDP answer, which carries private candidate IPs).
+      log.error('webrtc:whep-failed', {
+        url,
+        status: res.status,
+        bodyTail: bodyText.slice(-200),
+      })
+      throw new Error(`WHEP ${res.status} ${bodyText}`)
+    }
+    const answerSdp = await res.text()
+    try {
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+    } catch (e) {
+      // Answer rejected — the classic transcode-rung B-frame / H264-profile
+      // failure (see CLAUDE.md). Log candidate COUNTS from the answer, never
+      // the SDP itself.
+      log.error('webrtc:set-remote-failed', {
+        url,
+        answerCandidates: summarizeCandidates(answerSdp),
+        ...errFields(e),
+      })
+      throw e
+    }
 
-  return {
-    pc,
-    close: () => {
-      pc.getReceivers().forEach((r) => r.track?.stop())
-      pc.close()
-    },
+    succeeded = true
+    return {
+      pc,
+      close: () => {
+        pc.getReceivers().forEach((r) => r.track?.stop())
+        pc.close()
+      },
+    }
+  } finally {
+    if (!succeeded) {
+      // Any error path above leaks the PC unless we close it here.
+      try {
+        pc.close()
+      } catch {
+        /* ignore — mock / already-closed */
+      }
+    }
   }
 }
 
@@ -237,15 +334,28 @@ function iceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve()
     let done = false
-    const finish = () => {
+    const finish = (timedOut: boolean) => {
       if (done) return
       done = true
       pc.removeEventListener('icegatheringstatechange', onChange)
       clearTimeout(timer)
+      if (timedOut) {
+        // THE documented cellular root cause, 100% silent until now. Hitting
+        // the 2500ms cap means gathering did NOT reach `complete` — most
+        // critically, if the STUN srflx candidate hasn't arrived yet, the
+        // WHEP POST goes out with host-only candidates and cellular media
+        // silently never connects. Log the gathering state + candidate
+        // breakdown (counts only, NO IPs) so srflx-absent is greppable.
+        log.warn('webrtc:ice-gathering-timeout', {
+          gatheringState: pc.iceGatheringState,
+          ...summarizeCandidates(pc.localDescription?.sdp),
+          timeoutMs: 2500,
+        })
+      }
       resolve()
     }
     const onChange = () => {
-      if (pc.iceGatheringState === 'complete') finish()
+      if (pc.iceGatheringState === 'complete') finish(false)
     }
     pc.addEventListener('icegatheringstatechange', onChange)
     // iter cellular-ice: this cap was 250 ms when iceServers was `[]`
@@ -258,6 +368,6 @@ function iceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
     // still resolves as soon as gathering actually finishes (≈ STUN RTT,
     // ~tens of ms on a good link), so on LAN/wifi this rarely waits the
     // full cap; the cap is just the upper bound if STUN is slow/blocked.
-    const timer = setTimeout(finish, 2500)
+    const timer = setTimeout(() => finish(true), 2500)
   })
 }
