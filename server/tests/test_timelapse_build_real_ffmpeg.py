@@ -391,14 +391,24 @@ def test_given_concat_fails_when_build_then_no_partial_left_at_final_path(
     assert not tmp.exists(), "failed build leaked a .tmp file"
 
 
-def test_ffmpeg_timeout_scales_with_clip_count(tl_env):
-    """The concat timeout must grow with the day's size (the old flat 120 s
-    silently truncated 300+ clip days)."""
+def test_ffmpeg_timeout_scales_with_input_size_not_just_count(tl_env):
+    """The concat timeout must grow with total INPUT BYTES, not just clip
+    count. The shipped bug (user-hit 2026-06-20): a few-but-HUGE-clip day —
+    32 clips of ~90 s / ~45 MB = 1.44 GB — scored 32 clips → floored to 120 s
+    and TIMED OUT, though the real build needs 212 s. Days with many small
+    clips were fine; days with few large clips silently failed."""
     # arrange + act + assert
     timelapse = _import_timelapse()
-    assert timelapse._ffmpeg_timeout_for(3) == 120.0        # floor
-    assert timelapse._ffmpeg_timeout_for(342) == 855.0      # ~2.5s/clip
-    assert timelapse._ffmpeg_timeout_for(100000) == 1800.0  # ceiling
+    GB = 1_000_000_000
+    # tiny day → floor.
+    assert timelapse._ffmpeg_timeout_for(3, 30_000_000) == 120.0
+    # THE regression: 32 clips alone is only 32 s, but 1.44 GB must buy a
+    # timeout comfortably above the measured 212 s build time.
+    t = timelapse._ffmpeg_timeout_for(32, int(1.44 * GB))
+    assert t > 212.0, "1.44 GB day must out-budget its 212 s real build time"
+    assert t == pytest.approx(1.44 * 300 + 32, abs=1.0)
+    # pathological all-day camera → 30-min ceiling.
+    assert timelapse._ffmpeg_timeout_for(100000, 50 * GB) == 1800.0
 
 
 def test_clip_has_video_classifies_valid_zero_byte_truncated_and_missing(tmp_path):

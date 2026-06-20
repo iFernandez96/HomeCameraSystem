@@ -74,14 +74,31 @@ _VALID_EVENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 # so a generous timeout costs nothing — it just lets big days finish.
 _FFMPEG_TIMEOUT_FLOOR_S = 120.0
 _FFMPEG_TIMEOUT_CEIL_S = 1800.0
+# Seconds of build-budget per GB of input. The concat is a `-c copy` read of
+# every input PLUS a `+faststart` second pass over the whole output, so
+# wall-clock is driven by BYTES, not clip count. Measured on the Nano eMMC:
+# a 1.44 GB / 32-clip day took 212 s (~147 s/GB) and a 3.2 GB / 342-clip day
+# took ~680 s (~213 s/GB). 300 s/GB gives ~40% headroom over the worst point.
+_FFMPEG_TIMEOUT_S_PER_GB = 300.0
 
 
-def _ffmpeg_timeout_for(clip_count):
-    """Scale the concat timeout to the day's size, floored at 120 s and
-    capped at 30 min. Measured on the Nano eMMC: a 342-clip / 3.2 GB day
-    (with the `+faststart` second pass) took ~680 s, so 2.5 s/clip leaves
-    headroom; the 30-min ceiling covers even a pathological all-day camera."""
-    return min(_FFMPEG_TIMEOUT_CEIL_S, max(_FFMPEG_TIMEOUT_FLOOR_S, clip_count * 2.5))
+def _ffmpeg_timeout_for(clip_count, total_bytes=0):
+    """Scale the concat timeout to the day's actual I/O WORK — total input
+    bytes — not just clip count, floored at 120 s and capped at 30 min.
+
+    The shipped bug (user-hit 2026-06-20): a few-but-HUGE-clip day — a long
+    post-roll makes 32 clips of ~90 s / ~45 MB = 1.44 GB — scored `32 * 2.5 =
+    80 s` under the old count-only formula, floored to 120 s, and TIMED OUT at
+    120 s even though the build genuinely needs 212 s. Days with many small
+    clips were fine; days with few large clips silently failed. Scaling by
+    bytes fixes both. A tiny per-clip term covers concat-list overhead on
+    many-clip days; the 30-min ceiling bounds a pathological all-day camera."""
+    by_bytes = (total_bytes / 1e9) * _FFMPEG_TIMEOUT_S_PER_GB
+    by_count = clip_count * 1.0
+    return min(
+        _FFMPEG_TIMEOUT_CEIL_S,
+        max(_FFMPEG_TIMEOUT_FLOOR_S, by_bytes + by_count),
+    )
 
 
 def _unlink_quiet(path: Path) -> None:
@@ -567,10 +584,20 @@ def build(day: str) -> TimelapseResult:
         # (both the mp4 scratch and the sidecar-json scratch).
         _unlink_quiet(tmp_out)
         _unlink_quiet(settings.timelapses_dir / "{0}.json.tmp".format(day))
-        timeout_s = _ffmpeg_timeout_for(len(clips))
+        # Total input bytes drive the build time (the -c copy read + the
+        # +faststart second pass over the whole output), so the timeout scales
+        # by SIZE, not just clip count — a few huge long-post-roll clips need
+        # far longer than their count implies.
+        total_bytes = 0
+        for _seg in clips:
+            try:
+                total_bytes += _seg.path.stat().st_size
+            except OSError:
+                pass
+        timeout_s = _ffmpeg_timeout_for(len(clips), total_bytes)
         log.info(
-            "building timelapse for %s: %d clips (timeout %.0fs) → %s",
-            day, len(clips), timeout_s, output_path,
+            "building timelapse for %s: %d clips, %.2f GB (timeout %.0fs) → %s",
+            day, len(clips), total_bytes / 1e9, timeout_s, output_path,
         )
         ok, err = _run_ffmpeg_concat(list_path, tmp_out, timeout_s)
         if not ok:
