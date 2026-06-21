@@ -29,9 +29,17 @@ deploy/cross-deploy-server.sh            # one-time setup: docker run --privileg
 
 # Deploy detection
 rsync detection/ jetson:.../detection/ && ssh jetson 'sudo systemctl restart homecam-detect'
+
+# Fetch REAL data for offline analysis (Jetson is often OFF — don't block on it).
+# Read-only snapshot → ./.jetson-snapshot/ (gitignored): events.db SQL dump,
+# recent clips, journald, config. Run when the Jetson is on; analyze offline.
+# Gated real-data tests (server/tests/test_real_snapshot.py) skip until present.
+deploy/fetch-jetson-data.sh [host] [clip_count] [log_days]   # host: jetson | homecam
 ```
 
 `ssh jetson` (key auth, NOPASSWD sudo). Tailscale URL `https://homecam.tail4a6525.ts.net`.
+
+**Dev runs Jetson-OFF.** All vitest / pytest / typecheck / lint / build run locally; the Jetson is only for deploy + live-verify. Need real data? Run `deploy/fetch-jetson-data.sh` when it's on, analyze the snapshot offline. Keep hardware-touching code modular with a pure, separately-tested core (e.g. `detection/presence.py`+`tests/test_presence.py`).
 
 ## Repo lives on exFAT
 

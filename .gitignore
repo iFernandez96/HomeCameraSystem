@@ -79,3 +79,7 @@ client/public.zip
 # Caveman:compress backups (pre-compression copies of memory/*.md,
 # kept locally so the operator can revert if compression is too lossy)
 memory/*.original.md
+
+# Read-only real-data snapshot pulled by deploy/fetch-jetson-data.sh for
+# offline analysis + gated real-data tests. Never commit production data.
+/.jetson-snapshot/
