@@ -837,6 +837,10 @@ _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_stat
 # Don't auto-reboot more than once per this window — a reboot that doesn't fix
 # the wedge would otherwise boot-loop the Jetson.
 _REBOOT_MIN_INTERVAL_S = 1800.0
+# Interval between systemd sd_notify WATCHDOG=1 pings (the unit's WatchdogSec is
+# ~4-5x this). Pinged from a dedicated thread so it never sits behind a blocking
+# camera.Capture (which broke the first per-loop attempt).
+_SD_WATCHDOG_PING_S = 20.0
 
 
 def _load_watchdog_state(path):
@@ -1323,6 +1327,26 @@ def main():
     # restarts us — and the persisted escalation state resumes recovery. No-op
     # when not run under systemd (dev host / tests).
     sdnotify.ready()
+    # systemd liveness: ping WATCHDOG=1 from a DEDICATED daemon thread, NOT the
+    # main loop. A per-loop ping proved unreliable — the loop can block inside
+    # camera.Capture() during stream startup, so the ping didn't refresh the
+    # timer and WatchdogSec restart-cycled the worker. This thread only pings +
+    # sleeps, so it can't block; it proves the PROCESS is alive and scheduling
+    # threads (an OOM/kernel freeze stops it → systemd restarts the unit, and
+    # the persisted escalation state resumes recovery). The capture-wedge "no
+    # frames" case is the mediamtx_watchdog's job, not this. No-op off-systemd.
+    if sdnotify.enabled():
+        def _sd_watchdog_loop():
+            pings = 0
+            while True:
+                sdnotify.watchdog()
+                pings += 1
+                if pings == 1 or pings % 30 == 0:
+                    log.info("sd-watchdog: process-liveness ping #%d", pings)
+                time.sleep(_SD_WATCHDOG_PING_S)
+        threading.Thread(
+            target=_sd_watchdog_loop, daemon=True, name="sd-watchdog",
+        ).start()
     liveness.bump()
 
     # iter-272 (camera-algorithm-auditor B1): per-(label, camera_id)
@@ -1451,9 +1475,6 @@ def main():
     # `_read_thermal_zone_by_name` syscall per ~10 s — negligible.
     thermal_check_every_n_frames = 10
     while True:
-        # systemd WatchdogSec liveness: proves THIS loop is running (a hung
-        # loop stops pinging → systemd restarts us). Cheap no-op off-systemd.
-        sdnotify.watchdog()
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
         # 2000 ms timeout in jetson-utils handles transient RTSP hiccups

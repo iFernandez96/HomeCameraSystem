@@ -13,18 +13,22 @@ StartLimitBurst=5
 StartLimitIntervalSec=60
 
 [Service]
-# iter (camera-recovery 2026-06-20): sd_notify Type=notify + WatchdogSec was
-# attempted here but DEFERRED — on the live worker, READY=1 was accepted yet
-# the per-loop WATCHDOG=1 pings did not refresh the systemd watchdog timer
-# (WatchdogTimestamp never advanced past READY), so WatchdogSec kept firing and
-# restart-cycled the worker. Root cause still under investigation (likely the
-# `_latest.jpg` saver runs in a side thread while the ping sits on a slower
-# path, or a NOTIFY_SOCKET reuse quirk). The escalating mediamtx_watchdog +
-# BindsTo + the GStreamer watchdog element already cover the real failure
-# modes; the systemd liveness watchdog is belt-and-suspenders for a TRUE
-# worker hang and will be re-enabled once the ping path is verified. The
-# detect.py sd_notify calls are no-ops while NOTIFY_SOCKET is unset (Type=simple).
-Type=simple
+# iter (camera-recovery 2026-06-20): sd_notify liveness watchdog. detect.py
+# sends READY=1 once the model + camera are up (so the long TRT load doesn't
+# count against WatchdogSec), then pings WATCHDOG=1 from a DEDICATED thread
+# every ~20 s. The first attempt pinged from the MAIN LOOP and cycle-failed —
+# the loop can block in camera.Capture() during stream startup, so the ping
+# missed the window. The dedicated thread can't block, so it reliably refreshes
+# the timer; it proves the PROCESS is alive (an OOM/kernel freeze stops the
+# thread → systemd restarts, persisted escalation resumes). NotifyAccess=all is
+# REQUIRED: run-detect.sh (main PID) forks python, so the pings come from a
+# CHILD — the default NotifyAccess=main rejects them. WatchdogSec is generous
+# (4.5x the ping interval). TimeoutStartSec is long for the first-ever TRT
+# COMPILE before READY (cached deserialise is ~6 s).
+Type=notify
+NotifyAccess=all
+WatchdogSec=90
+TimeoutStartSec=600
 User=israel
 Group=israel
 # `video` is required for jetson-utils' `videoSource` to open NVDEC for
