@@ -17,6 +17,7 @@ import {
   reelTimeToCaptureTs,
 } from '../../lib/timelapseClock'
 import { CatEmptyState } from '../../components/CatEmptyState'
+import { PlaybackSpeedControl } from '../../components/PlaybackSpeedControl'
 import { Section } from './parts'
 
 // iter-292: extracted from Settings.tsx (~85 lines of inline JSX +
@@ -87,8 +88,15 @@ function TimelapseVideo({ item }: { item: TimelapseItem }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [segments, setSegments] = useState<TimelapseSegment[] | null>(null)
   const [clock, setClock] = useState<string | null>(null)
+  const [playbackRate, setPlaybackRate] = useState(1)
   // Latch so the manifest is fetched at most once, even across replays.
   const fetchedRef = useRef(false)
+
+  // Apply the chosen playback speed to the <video> (no `playbackRate` prop in
+  // React). The element resets to 1x on remount, same pattern as ClipModal.
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = playbackRate
+  }, [playbackRate])
 
   const ensureManifest = () => {
     if (fetchedRef.current || !item.manifest_url) return
@@ -115,7 +123,8 @@ function TimelapseVideo({ item }: { item: TimelapseItem }) {
   }
 
   return (
-    <div className="relative w-full lg:max-w-xl">
+    <div className="space-y-2">
+      <div className="relative w-full lg:max-w-xl">
       {/* preload="none" (iter-311): no range request until the user presses
           play. playsInline (iter-319): no iOS fullscreen takeover.
           jsx-a11y wants a <track>; timelapses are silent, nothing to caption. */}
@@ -154,6 +163,15 @@ function TimelapseVideo({ item }: { item: TimelapseItem }) {
           {clock}
         </div>
       )}
+      </div>
+      {/* iter (user speed multipliers): scan a day reel at .25x–4x. Same
+          shared control as ClipModal; `surface` variant for the light page. */}
+      <PlaybackSpeedControl
+        rate={playbackRate}
+        onRateChange={setPlaybackRate}
+        variant="surface"
+        className="lg:max-w-xl pt-1"
+      />
     </div>
   )
 }

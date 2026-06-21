@@ -256,17 +256,17 @@ describe('ClipModal', () => {
     vi.restoreAllMocks()
   })
 
-  it('given the modal renders the video, when the speed-pill row is shown, then 0.5x / 1x / 2x radio buttons are present (iter-331)', () => {
+  it('given the modal renders the video, when the speed-pill row is shown, then the speed radios are present with 1x selected (iter-331; shared PlaybackSpeedControl)', () => {
     // arrange / act
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
 
-    // assert — radiogroup with 3 radios; "1×" selected by default.
+    // assert — the shared radiogroup with the full speed set; 1× selected.
     const group = screen.getByRole('radiogroup', { name: /playback speed/i })
     expect(group).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Slow' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Normal' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Fast' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Normal' })).toHaveAttribute(
+    expect(screen.getByRole('radio', { name: '0.25 times speed' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '1.5 times speed' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '4 times speed' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Normal speed' })).toHaveAttribute(
       'aria-checked',
       'true',
     )
@@ -282,11 +282,11 @@ describe('ClipModal', () => {
     const user = userEvent.setup()
 
     // act
-    await user.click(screen.getByRole('radio', { name: 'Fast' }))
+    await user.click(screen.getByRole('radio', { name: '2 times speed' }))
 
     // assert — useEffect ran; ref.current.playbackRate updated.
     expect(video.playbackRate).toBe(2)
-    expect(screen.getByRole('radio', { name: 'Fast' })).toHaveAttribute(
+    expect(screen.getByRole('radio', { name: '2 times speed' })).toHaveAttribute(
       'aria-checked',
       'true',
     )
@@ -310,90 +310,10 @@ describe('ClipModal', () => {
     expect(loopBtn).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('given the speed radiogroup, when 1× is the current selection, then ONLY the selected pill has tabIndex=0 (iter-335: roving tabindex)', () => {
-    // arrange / act
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-
-    // assert — default is 1×; only that pill in the Tab order.
-    expect(
-      screen.getByRole('radio', { name: 'Normal' }).getAttribute('tabindex'),
-    ).toBe('0')
-    expect(
-      screen.getByRole('radio', { name: 'Slow' }).getAttribute('tabindex'),
-    ).toBe('-1')
-    expect(
-      screen.getByRole('radio', { name: 'Fast' }).getAttribute('tabindex'),
-    ).toBe('-1')
-  })
-
-  it('given focus on the 1× pill, when ArrowRight is pressed, then 2× becomes selected and focused (iter-335)', async () => {
-    // arrange
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const oneX = screen.getByRole('radio', { name: 'Normal' }) as HTMLButtonElement
-    oneX.focus()
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.keyboard('{ArrowRight}')
-
-    // assert — selection moved to 2×; tabIndex follows.
-    const twoX = screen.getByRole('radio', { name: 'Fast' })
-    expect(twoX).toHaveAttribute('aria-checked', 'true')
-    expect(twoX.getAttribute('tabindex')).toBe('0')
-    expect(oneX.getAttribute('tabindex')).toBe('-1')
-  })
-
-  it('given focus on the 1× pill, when ArrowLeft is pressed, then 0.5× becomes selected (iter-335)', async () => {
-    // arrange
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const oneX = screen.getByRole('radio', { name: 'Normal' }) as HTMLButtonElement
-    oneX.focus()
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.keyboard('{ArrowLeft}')
-
-    // assert
-    const halfX = screen.getByRole('radio', { name: 'Slow' })
-    expect(halfX).toHaveAttribute('aria-checked', 'true')
-  })
-
-  it('given focus on the 0.5× pill (leftmost), when ArrowLeft is pressed, then wraps to 2× (iter-335)', async () => {
-    // arrange — click 0.5× first to make it the selection, focus it.
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('radio', { name: 'Slow' }))
-    const halfX = screen.getByRole('radio', { name: 'Slow' }) as HTMLButtonElement
-    halfX.focus()
-
-    // act
-    await user.keyboard('{ArrowLeft}')
-
-    // assert — wraps from 0.5× back to 2× (last in array).
-    expect(
-      screen.getByRole('radio', { name: 'Fast' }),
-    ).toHaveAttribute('aria-checked', 'true')
-  })
-
-  it('given the speed radiogroup, when End is pressed, then 2× (last) becomes selected (iter-335)', async () => {
-    // arrange
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const oneX = screen.getByRole('radio', { name: 'Normal' }) as HTMLButtonElement
-    oneX.focus()
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.keyboard('{End}')
-
-    // assert
-    expect(
-      screen.getByRole('radio', { name: 'Fast' }),
-    ).toHaveAttribute('aria-checked', 'true')
-  })
+  // Roving-tabindex + arrow/Home/End keyboard nav for the speed pills is now
+  // tested in isolation in PlaybackSpeedControl.test.tsx (the shared control).
+  // ClipModal keeps the integration tests (control present, click → playbackRate)
+  // and its own focus-trap tests below.
 
   it('given Tab from the LAST focusable, then focus wraps to the FIRST focusable inside the dialog (iter-336 → iter-356.58 split-pane)', () => {
     // arrange — iter-356.58 (LAYOUT REBUILD) added the right-pane
@@ -457,24 +377,6 @@ describe('ClipModal', () => {
     // my handler doesn't preventDefault on the mid case, and
     // jsdom doesn't simulate native Tab focus shift either way).
     expect(dialog.contains(document.activeElement)).toBe(true)
-  })
-
-  it('given the speed radiogroup, when Home is pressed, then 0.5× (first) becomes selected (iter-335)', async () => {
-    // arrange — start at 2× via click.
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('radio', { name: 'Fast' }))
-    const twoX = screen.getByRole('radio', { name: 'Fast' }) as HTMLButtonElement
-    twoX.focus()
-
-    // act
-    await user.keyboard('{Home}')
-
-    // assert
-    expect(
-      screen.getByRole('radio', { name: 'Slow' }),
-    ).toHaveAttribute('aria-checked', 'true')
   })
 
   it('given the clip errored to the snapshot fallback, when the modal renders, then the speed-pill row is hidden (iter-331: no controls when there is no video)', () => {

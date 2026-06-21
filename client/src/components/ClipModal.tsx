@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { nextRovingIndex } from '../lib/a11y'
 import { exportEvents, fetchEventTracks } from '../lib/api'
 import { drawBoxes } from '../lib/drawBoxes'
 import {
@@ -12,6 +11,7 @@ import {
 import { log, errFields } from '../lib/log'
 import { useReportError, useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
+import { PlaybackSpeedControl } from './PlaybackSpeedControl'
 import { Button } from './primitives/Button'
 
 /**
@@ -61,12 +61,6 @@ export function ClipModal({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [playbackRate, setPlaybackRate] = useState<number>(1)
   const [loop, setLoop] = useState<boolean>(false)
-  // iter-335 (a11y blocker #1): roving-tabindex refs for the speed
-  // radiogroup. Each pill registers itself into this array via the
-  // `ref={el => speedPillRefs.current[idx] = el}` callback so the
-  // keydown handler can call `.focus()` on the next/prev pill after
-  // arrow-key navigation.
-  const speedPillRefs = useRef<Array<HTMLButtonElement | null>>([])
   // iter-336 (a11y blocker #2): focus-trap host. Tab cycles within
   // focusable descendants of this div instead of escaping to the
   // browser chrome / page behind the modal.
@@ -686,57 +680,15 @@ export function ClipModal({
           cycle within the group and Tab moves to the next widget. */}
       {!clipErrored && (
         <div className="relative px-4 pb-2 flex items-center justify-center gap-2 flex-wrap">
-          <div
-            role="radiogroup"
-            aria-label="Playback speed"
-            // tabIndex={-1} satisfies jsx-a11y/interactive-supports-focus
-            // for the container (which has onKeyDown). The container is
-            // NOT in the Tab order; the roving-tabindex on the inner
-            // radios IS — arrow keys move within, Tab moves out, per
-            // the WAI-ARIA radiogroup pattern.
-            tabIndex={-1}
-            className="flex gap-1 bg-white/10 rounded-full p-1 border border-white/15"
-            onKeyDown={(e) => {
-              const idx = SPEED_RATES.indexOf(playbackRate)
-              if (idx === -1) return
-              const next = nextRovingIndex(e.key, idx, SPEED_RATES.length)
-              if (next === null) return
-              e.preventDefault()
-              setPlaybackRate(SPEED_RATES[next])
-              // requestAnimationFrame: tabIndex flips in next paint
-              // before .focus() so the browser doesn't refuse to
-              // focus a tabIndex=-1 element.
-              requestAnimationFrame(() => {
-                speedPillRefs.current[next]?.focus()
-              })
-            }}
-          >
-            {SPEED_RATES.map((rate, idx) => (
-              <button
-                key={rate}
-                ref={(el) => {
-                  speedPillRefs.current[idx] = el
-                }}
-                type="button"
-                role="radio"
-                aria-checked={playbackRate === rate}
-                tabIndex={playbackRate === rate ? 0 : -1}
-                onClick={() => setPlaybackRate(rate)}
-                className={`min-w-[44px] min-h-[44px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-                  playbackRate === rate
-                    ? 'bg-white text-black'
-                    : 'text-[var(--color-text-primary)]/80 hover:text-[var(--color-text-primary)] active:text-[var(--color-text-primary)]'
-                }`}
-              >
-                {/* iter-347 (Frank D1): "Slow"/"Normal"/"Fast"
-                    visible labels — Frank reads "0.5×" as "zero
-                    point five ex". The numeric is preserved for
-                    SR users via the radiogroup aria-label and the
-                    iter-? aria-checked semantics. */}
-                {rate === 0.5 ? 'Slow' : rate === 1 ? 'Normal' : 'Fast'}
-              </button>
-            ))}
-          </div>
+          {/* iter (user "1.25x/1.5x/2x/4x + .25x/.5x/.75x"): the speed strip
+              is now the shared <PlaybackSpeedControl> (8 rates, numeric
+              labels, same WAI-ARIA radiogroup + roving-tabindex). `overlay`
+              variant = white-on-video styling. */}
+          <PlaybackSpeedControl
+            rate={playbackRate}
+            onRateChange={setPlaybackRate}
+            variant="overlay"
+          />
           <button
             type="button"
             onClick={() => setLoop((v) => !v)}
@@ -901,13 +853,6 @@ export function ClipModal({
     </div>
   )
 }
-
-// iter-335 (a11y blocker #1): WAI-ARIA Authoring Practices radiogroup
-// pattern. ArrowLeft/Up = previous, ArrowRight/Down = next, Home =
-// first, End = last. Wraps at boundaries. Selection moves WITH focus
-// per the "automatic" radiogroup variant (pressing arrow both updates
-// the selected value AND focuses the new pill).
-const SPEED_RATES: ReadonlyArray<number> = [0.5, 1, 2]
 
 /** iter-336 (a11y blocker #2): list focusable descendants in DOM
  *  order so the Tab focus trap can cycle through them. Excludes
