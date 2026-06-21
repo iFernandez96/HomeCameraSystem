@@ -400,6 +400,10 @@ class VisitRunner(object):
         # Injected for tests: run the finalize synchronously instead of a
         # daemon thread. Default spawns a real daemon thread.
         self._spawn = spawn if spawn is not None else self._spawn_thread
+        # The current frame's box list (set by observe()), read by the
+        # synchronous _on_open for the open-event POST. None until first
+        # observe / on tick-driven paths (which never open).
+        self._pending_boxes = None
 
     # -- per-frame entrypoints ------------------------------------------------
 
@@ -412,9 +416,17 @@ class VisitRunner(object):
         self._handle(transitions, now)
 
     def observe(self, key, box, now, pre_roll_s, absence_finalize_s,
-                max_visit_s):
+                max_visit_s, boxes=None):
         """Present-frame observe: feed the detection into the tracker and
-        handle its open/extend/finalize transitions."""
+        handle its open/extend/finalize transitions.
+
+        ``box`` is the single (L,T,R,B) the tracker uses for IoU continuity;
+        ``boxes`` is the frame's full server-valid normalized box list used
+        for the open-event POST (the server requires >=1 box). Stashed so the
+        synchronous ``_on_open`` below can read it without re-plumbing the
+        transition dicts.
+        """
+        self._pending_boxes = boxes
         transitions = self.tracker.observe(
             key, box, now, pre_roll_s, absence_finalize_s, max_visit_s,
         )
@@ -456,8 +468,10 @@ class VisitRunner(object):
         self._persist()
         # POST the open event today (clip_url points at /api/events/<id>/clip;
         # the no-clip-url-at-open + clip-ready WS update is S6/R4, not here).
+        # _pending_boxes is the frame's server-valid box list from observe()
+        # (the server requires >=1 box); None on a tick-driven/test path.
         try:
-            self._post_event(visit_id, key, start_ts)
+            self._post_event(visit_id, key, start_ts, self._pending_boxes)
         except Exception as e:
             applog.emit(
                 "visit",

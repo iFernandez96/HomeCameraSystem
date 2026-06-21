@@ -1003,17 +1003,32 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
     Factored out of ``main()`` so the wiring is small + the loop body stays
     focused. The callables themselves are thin adapters; the heavy lifting is
     in ``recording.finalize_visit`` / ``preroll.copy_new_segments`` (S2/S3)."""
-    def _post_open(visit_id, key, start_ts):
+    def _post_open(visit_id, key, start_ts, boxes):
         # event_id == visit_id (plan: "pick an event_id (= visit_id)"). POST
         # the open event today with clip_url pointing at the eventual clip
         # (R4's no-clip-url-at-open is S6's job, NOT here). label is the part
         # of the emit key before ":".
+        #
+        # `boxes` is the frame's already-normalized box list (server-valid
+        # dicts from `normalize_box`), threaded from the observe call site —
+        # the server's DetectionPayload requires `Field(min_length=1)` on
+        # boxes, so an empty list would 422 (S4 shipped boxes:[] as a known
+        # gap; this is the S6 fix). An open is always triggered by a present
+        # detection, so `boxes` has >=1 entry here; guard defensively anyway.
         label = key.split(":", 1)[0] if isinstance(key, str) else "person"
+        if not boxes:
+            applog.emit(
+                "visit",
+                "open POST for visit {} had no boxes — skipping POST (clip "
+                "still finalizes); should not happen on a present "
+                "detection".format(visit_id),
+            )
+            return
         payload = {
             "id": visit_id,
             "label": label,
             "score": 1.0,
-            "boxes": [],
+            "boxes": list(boxes),
             "camera_id": camera_id,
             "clip_url": "/api/events/{}/clip".format(visit_id),
         }
@@ -2022,10 +2037,14 @@ def main():
         # and short-circuit: one visit = one clip, no per-event start_clip.
         if _VISIT_RUNNER is not None:
             top_box_cc = (top_d.Left, top_d.Top, top_d.Right, top_d.Bottom)
+            # Pass the full normalized `boxes` (>=1 here) so the open POST
+            # carries server-valid boxes; `top_box_cc` (pixel L/T/R/B) is the
+            # single box the tracker uses for IoU continuity.
             _VISIT_RUNNER.observe(
                 emit_key, top_box_cc, now,
                 float(runtime.clip_pre_roll_s),
                 runtime.absence_finalize_s, runtime.max_visit_s,
+                boxes=boxes,
             )
             del img
             continue

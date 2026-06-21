@@ -300,8 +300,8 @@ def _make_runner(tmp_path, spawn=None):
     SYNCHRONOUSLY (spawn = call-immediately) so assertions are deterministic."""
     events = {"open": [], "copy": [], "finalize": []}
 
-    def post_event(visit_id, key, start_ts):
-        events["open"].append((visit_id, key, start_ts))
+    def post_event(visit_id, key, start_ts, boxes=None):
+        events["open"].append((visit_id, key, start_ts, boxes))
 
     def copy_segments(visit_id, start_ts, until_ts, scratch, already):
         events["copy"].append((visit_id, start_ts, until_ts))
@@ -323,6 +323,26 @@ def _make_runner(tmp_path, spawn=None):
         spawn=spawn if spawn is not None else _sync_spawn,
     )
     return runner, events
+
+
+def test_given_observe_with_boxes_when_open_then_post_carries_those_boxes(tmp_path):
+    # arrange — the S6 fix: the open POST must carry the frame's real boxes
+    # (server DetectionPayload requires >=1 box; S4 shipped boxes:[]).
+    runner, events = _make_runner(tmp_path)
+    frame_boxes = [
+        {"label": "person", "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.3, "score": 0.9},
+    ]
+
+    # act — a present detection opens a visit, passing the full box list.
+    runner.observe("person:cam1", (0.0, 0.0, 0.1, 0.1), now=100.0,
+                   pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0,
+                   boxes=frame_boxes)
+
+    # assert — the open POST received the non-empty boxes (not []).
+    assert len(events["open"]) == 1
+    posted_boxes = events["open"][0][3]
+    assert posted_boxes == frame_boxes
+    assert posted_boxes, "open POST must carry >=1 box or the server 422s"
 
 
 def test_given_open_visit_when_all_absent_frames_tick_then_finalize_at_deadline(
