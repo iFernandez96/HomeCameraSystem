@@ -94,6 +94,13 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         "face_recog_failures",
         "event_post_failures",
         "thumb_save_failures",
+        # Continuous-capture observability (plan S6, feat/continuous-capture).
+        # Only non-zero when the worker runs with DETECT_CONTINUOUS_CAPTURE=1.
+        # visits_finalized counts completed one-clip-per-visit recordings;
+        # clips_dropped_disk_floor counts opens refused by the worker disk
+        # floor (S4.5/B2). Both go through the numeric path below.
+        "visits_finalized",
+        "clips_dropped_disk_floor",
     }
 )
 

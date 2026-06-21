@@ -387,6 +387,15 @@ export type WorkerMetrics = {
   event_post_failures?: number
   /** Thumbnail saves that failed (encode / write / retention sweep). */
   thumb_save_failures?: number
+  /**
+   * Continuous-capture observability (feat/continuous-capture, plan S6).
+   * Only non-zero when the worker runs with continuous capture enabled;
+   * both stay 0 / absent on the legacy fixed-clip path.
+   */
+  /** Visits that reached finalize — one continuous clip per visit. */
+  visits_finalized?: number
+  /** Opens refused because free disk fell below the worker floor (S4.5). A rising value means the card is filling faster than eviction reclaims. */
+  clips_dropped_disk_floor?: number
 }
 
 /**

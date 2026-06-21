@@ -41,6 +41,9 @@ def test_snapshot_returns_all_documented_fields():
         "face_recog_failures",
         "event_post_failures",
         "thumb_save_failures",
+        # plan S6: continuous-capture observability counters.
+        "visits_finalized",
+        "clips_dropped_disk_floor",
     }
 
 

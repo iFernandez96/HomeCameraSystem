@@ -83,6 +83,9 @@ def test_given_free_space_below_floor_when_open_then_refuses_no_post_no_record(
     # assert — NO open POST, NO persisted visit (refused).
     assert events["open"] == [], "below the floor the open must be refused"
     assert visit_runtime.read_open_visits(str(tmp_path)) == {}
+    # plan S6 observability: the refused open is counted for the heartbeat.
+    assert runner.clips_dropped_disk_floor == 1
+    assert runner.visits_finalized == 0
 
 
 def test_given_free_space_above_floor_when_open_then_opens_normally(tmp_path):
@@ -99,6 +102,8 @@ def test_given_free_space_above_floor_when_open_then_opens_normally(tmp_path):
     # assert — opened: POST fired AND the visit persisted.
     assert len(events["open"]) == 1
     assert "vid1" in visit_runtime.read_open_visits(str(tmp_path))
+    # plan S6: an accepted open is NOT counted as a disk-floor drop.
+    assert runner.clips_dropped_disk_floor == 0
 
 
 def test_given_refused_open_when_subject_persists_then_tracker_rolled_back(
@@ -184,6 +189,32 @@ def test_given_unreadable_free_space_when_open_then_does_not_block(tmp_path):
 
     # assert — opened despite the unreadable stat.
     assert len(events["open"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# 2b. visits_finalized counter (plan S6 observability)                         #
+# --------------------------------------------------------------------------- #
+
+def test_given_open_visit_when_absence_finalizes_then_visits_finalized_incremented(
+    tmp_path,
+):
+    # arrange — open a visit comfortably above the floor.
+    above = visit_runtime.WORKER_MIN_FREE_BYTES + (50 * 1024 * 1024)
+    runner, events = _make_runner(tmp_path, free_bytes=above)
+    runner.set_absence_finalize_s(10.0)
+    box = (0.0, 0.0, 0.2, 0.2)
+    runner.observe("person:cam1", box, now=100.0, pre_roll_s=0.0,
+                   absence_finalize_s=10.0, max_visit_s=150.0,
+                   boxes=[{"label": "person"}])
+    assert runner.visits_finalized == 0, "no finalize yet while present"
+
+    # act — subject leaves; a tick past the absence deadline finalizes.
+    runner.tick(now=200.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    # assert — exactly one finalize ran AND the counter advanced once.
+    assert len(events["finalize"]) == 1
+    assert runner.visits_finalized == 1
+    assert runner.clips_dropped_disk_floor == 0
 
 
 # --------------------------------------------------------------------------- #

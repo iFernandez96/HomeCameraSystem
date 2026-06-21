@@ -1810,6 +1810,14 @@ def main():
             _VISIT_RUNNER.tick(
                 now, runtime.absence_finalize_s, runtime.max_visit_s,
             )
+            # plan S6: mirror the runner's observability counters onto the
+            # metrics heartbeat (same pattern as face_recog_names below).
+            # Cheap plain-int reads; runner increments them on the main
+            # thread so there's no torn read.
+            metrics.visits_finalized = _VISIT_RUNNER.visits_finalized
+            metrics.clips_dropped_disk_floor = (
+                _VISIT_RUNNER.clips_dropped_disk_floor
+            )
         # If the user has disabled detection (manually or via the schedule
         # window), drop the frame without running inference. Worker thus
         # burns no CUDA while still consuming the RTSP stream so it doesn't

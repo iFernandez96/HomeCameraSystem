@@ -435,6 +435,12 @@ class VisitRunner(object):
         # synchronous _on_open for the open-event POST. None until first
         # observe / on tick-driven paths (which never open).
         self._pending_boxes = None
+        # Observability counters (plan S6). Incremented at their main-thread
+        # choke points and mirrored onto the metrics heartbeat by detect.py.
+        #  - visits_finalized: visits handed to a (de-duped) finalize.
+        #  - clips_dropped_disk_floor: opens refused by the disk floor (B2).
+        self.visits_finalized = 0
+        self.clips_dropped_disk_floor = 0
 
     # -- disk floor (plan S4.5 / B2) ------------------------------------------
 
@@ -512,6 +518,7 @@ class VisitRunner(object):
         # never opened. The server evictor (floor ABOVE which this sits) gets a
         # chance to reclaim before we resume. Log-only (no metric — S6).
         if self._disk_below_floor():
+            self.clips_dropped_disk_floor += 1
             free = self._free_space(self.recordings_dir)
             applog.emit(
                 "visit",
@@ -612,6 +619,10 @@ class VisitRunner(object):
         if visit_id in self._finalizing_ids:
             return
         self._finalizing_ids.add(visit_id)
+        # One increment per (de-duped) visit reaching finalize — the
+        # single main-thread choke point for both the absence/cap path and
+        # the watchdog-escalation path (plan S6 observability).
+        self.visits_finalized += 1
         scratch = scratch_dir_for(self.recordings_dir, visit_id)
 
         def _run():

@@ -111,6 +111,15 @@ class Metrics:
         self.face_recog_failures = 0
         self.event_post_failures = 0
         self.thumb_save_failures = 0
+        # Continuous-capture observability (plan S6). Only meaningful when the
+        # worker runs with DETECT_CONTINUOUS_CAPTURE=1; both stay 0 on the
+        # legacy fixed-clip path. detect.py mirrors these from the live
+        # VisitRunner before each heartbeat.
+        #  - visits_finalized: visits that reached finalize (one clip each).
+        #  - clips_dropped_disk_floor: opens REFUSED because free space was
+        #    below the worker disk floor (S4.5/B2) — the clip was skipped.
+        self.visits_finalized = 0
+        self.clips_dropped_disk_floor = 0
         self.started = time.time()
 
     def fps(self):
@@ -188,4 +197,6 @@ class Metrics:
             "face_recog_failures": self.face_recog_failures,
             "event_post_failures": self.event_post_failures,
             "thumb_save_failures": self.thumb_save_failures,
+            "visits_finalized": self.visits_finalized,
+            "clips_dropped_disk_floor": self.clips_dropped_disk_floor,
         }

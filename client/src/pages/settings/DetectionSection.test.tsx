@@ -57,6 +57,9 @@ const defaultConfig = {
   audio_enabled: false,
   face_capture_enabled: false,
   face_capture_retention_days: 30,
+  continuous_capture: false,
+  max_visit_s: 150,
+  absence_finalize_s: 10,
 }
 
 beforeEach(() => {
@@ -175,5 +178,51 @@ describe('DetectionSection', () => {
       '[detectionSettings:save-failed]',
       expect.objectContaining({ keys: ['classes'], status: 500 }),
     )
+  })
+
+  // feat/continuous-capture (plan S6): operator opt-in toggle + the two
+  // per-visit knobs that only appear once it's on.
+  it('Given continuous capture is off, When the user flips the toggle on, Then patchDetectionConfig commits { continuous_capture: true }', async () => {
+    // arrange
+    const user = userEvent.setup()
+    render(<DetectionSection />)
+    const toggle = await screen.findByRole('button', {
+      name: /enable continuous per-visit recording/i,
+    })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    // while off, the per-visit sliders stay hidden.
+    expect(
+      screen.queryByLabelText(/maximum length of a single visit clip/i),
+    ).not.toBeInTheDocument()
+
+    // act
+    await user.click(toggle)
+
+    // assert
+    await waitFor(() => {
+      expect(patchDetectionConfig).toHaveBeenCalledWith({
+        continuous_capture: true,
+      })
+    })
+  })
+
+  it('Given continuous capture is on, When the section renders, Then the grace-period and longest-clip sliders are present', async () => {
+    // arrange — server returns config with the feature already enabled.
+    getDetectionConfig.mockResolvedValue(
+      structuredClone({ ...defaultConfig, continuous_capture: true }),
+    )
+
+    // act
+    render(<DetectionSection />)
+
+    // assert — both per-visit knobs render, bound to the live values.
+    expect(
+      await screen.findByLabelText(
+        /seconds to wait after the subject leaves/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText(/maximum length of a single visit clip/i),
+    ).toBeInTheDocument()
   })
 })

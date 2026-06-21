@@ -298,6 +298,73 @@ export function DetectionSection() {
         </p>
       </Section>
 
+      {/* feat/continuous-capture (plan S6): one clip per VISIT instead of
+          one per detection. When a person is seen the camera records
+          continuously until they leave, waits out the grace period, and
+          finalizes a single clip — killing the overlapping-clips
+          "teleport" in the daily reel. Off by default; the worker reads
+          these off its config-poll, so no restart is needed. */}
+      <Section title="Continuous recording">
+        <Row
+          label="Record one clip per visit"
+          right={
+            <Toggle
+              checked={config?.continuous_capture ?? false}
+              onChange={(v) => commitConfig({ continuous_capture: v })}
+              disabled={config === null}
+              ariaLabel="Enable continuous per-visit recording"
+            />
+          }
+        />
+        <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-primary)]">
+          When on, the camera follows a person through their whole visit
+          and saves a single continuous clip instead of several
+          overlapping ones. Better daily recap videos; uses more disk per
+          visit.
+        </p>
+        {config?.continuous_capture ? (
+          <>
+            <Slider
+              label="Grace period after they leave"
+              value={config?.absence_finalize_s ?? 10}
+              min={DETECTION_LIMITS.absenceFinalizeMin}
+              max={DETECTION_LIMITS.absenceFinalizeMax}
+              step={1}
+              format={(v) => `${v.toFixed(0)} s`}
+              onChange={(v) =>
+                setConfig((c) => (c ? { ...c, absence_finalize_s: v } : c))
+              }
+              onCommit={(v) => commitConfig({ absence_finalize_s: v })}
+              disabled={config === null}
+              ariaLabel="Seconds to wait after the subject leaves before finalizing the visit clip"
+            />
+            <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-secondary)]">
+              If they come back within this window, the same clip keeps
+              going instead of starting a new one.
+            </p>
+            <Slider
+              label="Longest single clip"
+              value={config?.max_visit_s ?? 150}
+              min={DETECTION_LIMITS.maxVisitMin}
+              max={DETECTION_LIMITS.maxVisitMax}
+              step={10}
+              format={formatClipDuration}
+              onChange={(v) =>
+                setConfig((c) => (c ? { ...c, max_visit_s: v } : c))
+              }
+              onCommit={(v) => commitConfig({ max_visit_s: v })}
+              disabled={config === null}
+              ariaLabel="Maximum length of a single visit clip in seconds"
+            />
+            <p className="px-4 -mt-2 pb-3 text-xs text-[var(--color-text-secondary)]">
+              A safety cap so a stuck detection cannot fill the disk with
+              one endless clip. Long visits split into back-to-back clips
+              at this length.
+            </p>
+          </>
+        ) : null}
+      </Section>
+
       <Section title="What to detect">
         <div className="px-4 py-3 space-y-2">
           <p className="text-xs text-[var(--color-text-secondary)]">

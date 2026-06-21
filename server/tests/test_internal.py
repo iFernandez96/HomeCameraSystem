@@ -1364,6 +1364,9 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         "face_recog_failures": 0,
         "event_post_failures": 0,
         "thumb_save_failures": 0,
+        # plan S6: continuous-capture observability counters.
+        "visits_finalized": 0,
+        "clips_dropped_disk_floor": 0,
     }
     # If this assertion fires, _ALLOWED_METRIC_FIELDS has grown a key
     # the test doesn't know about — add it to `payload` above.
