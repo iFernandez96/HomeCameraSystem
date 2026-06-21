@@ -45,6 +45,27 @@ ENV_ABSENCE_FINALIZE_S = "DETECT_ABSENCE_FINALIZE_S"
 DEFAULT_MAX_VISIT_S = 150.0
 DEFAULT_ABSENCE_FINALIZE_S = 10.0
 
+# --- worker disk floor (plan S4.5 / blocker B2) ---
+#
+# Before OPENING a new visit, and on every EXTEND, the worker checks free
+# space at recordings_dir. Below WORKER_MIN_FREE_BYTES it REFUSES (doesn't open
+# / stops extending → the visit finalizes what it already has) and logs.
+#
+# This floor MUST sit strictly ABOVE the server's SERVER_MIN_FREE_BYTES
+# (server/app/services/recording_service.py, ~300 MB): the worker stops
+# CREATING footage before the server is ever forced to start DELETING it.
+# If the two were equal/inverted, the worker would keep opening visits that
+# the server immediately evicts — a live-lock where the card thrashes and no
+# visit ever completes. We keep ~150 MB of headroom above the server floor so
+# there's room for in-flight finalize scratch + the next visit's segments
+# between the two thresholds.
+#
+# Kept as a literal here (NOT imported from the server) because detection/ runs
+# Python 3.6 on the Jetson host and has no path to the FastAPI package. The
+# ordering invariant (WORKER_MIN_FREE_BYTES > SERVER_MIN_FREE_BYTES) is pinned
+# by test_disk_floor_ordering.py, which imports BOTH constants.
+WORKER_MIN_FREE_BYTES = 450 * 1024 * 1024  # ~450 MB (> server's ~300 MB)
+
 # Per-visit lifecycle states persisted in .open_visits.json (plan B4).
 STATE_OPEN = "OPEN"
 STATE_FINALIZING = "FINALIZING"
@@ -378,11 +399,21 @@ class VisitRunner(object):
     """
 
     def __init__(self, recordings_dir, post_event, copy_segments,
-                 finalize_visit, tracker=None, spawn=None):
+                 finalize_visit, tracker=None, spawn=None,
+                 free_space=None, min_free_bytes=WORKER_MIN_FREE_BYTES):
         self.recordings_dir = str(recordings_dir)
         self._post_event = post_event
         self._copy_segments = copy_segments
         self._finalize_visit = finalize_visit
+        # Disk floor (plan S4.5 / B2). ``free_space(path) -> int free bytes`` is
+        # injectable for offline tests; default wraps ``shutil.disk_usage`` so
+        # the live worker reads the real card. ``min_free_bytes`` is the refuse
+        # threshold; below it _on_open won't open and _on_extend stops copying.
+        self._min_free_bytes = min_free_bytes
+        if free_space is not None:
+            self._free_space = free_space
+        else:
+            self._free_space = self._default_free_space
         self.tracker = tracker if tracker is not None else VisitTracker()
         # Persisted open-visit table {visit_id: record}. Seeded from disk so a
         # construction after recovery doesn't lose surviving entries (recovery
@@ -404,6 +435,28 @@ class VisitRunner(object):
         # synchronous _on_open for the open-event POST. None until first
         # observe / on tick-driven paths (which never open).
         self._pending_boxes = None
+
+    # -- disk floor (plan S4.5 / B2) ------------------------------------------
+
+    @staticmethod
+    def _default_free_space(path):
+        """Default free-space reader: free bytes at ``path`` via
+        ``shutil.disk_usage``. Returns None if it can't be read (so callers
+        treat an unreadable stat as "don't block" — a transient statvfs error
+        must NOT silently stop all recording)."""
+        try:
+            return shutil.disk_usage(str(path)).free
+        except OSError:
+            return None
+
+    def _disk_below_floor(self):
+        """True iff free space at recordings_dir is KNOWN to be below the
+        worker floor. An unreadable free-space stat returns False (bias toward
+        recording — a missed event is worse than a transient stat hiccup)."""
+        free = self._free_space(self.recordings_dir)
+        if free is None:
+            return False
+        return free < self._min_free_bytes
 
     # -- per-frame entrypoints ------------------------------------------------
 
@@ -453,6 +506,25 @@ class VisitRunner(object):
         visit_id = tr["visit_id"]
         key = tr["key"]
         start_ts = tr["start_ts"]
+        # Disk floor (plan S4.5 / B2): REFUSE to open a new visit when free
+        # space is below the worker floor. Don't POST, don't record, and roll
+        # the tracker back so it doesn't keep emitting extends for a visit we
+        # never opened. The server evictor (floor ABOVE which this sits) gets a
+        # chance to reclaim before we resume. Log-only (no metric — S6).
+        if self._disk_below_floor():
+            free = self._free_space(self.recordings_dir)
+            applog.emit(
+                "visit",
+                "disk floor: REFUSING to open visit {} (key {}) — free space "
+                "{} bytes < worker floor {} bytes; clip skipped".format(
+                    visit_id, key, free, self._min_free_bytes,
+                ),
+            )
+            try:
+                self.tracker.forget(key)
+            except Exception:
+                pass
+            return
         rec = {
             "state": STATE_OPEN,
             "key": key,
@@ -487,8 +559,25 @@ class VisitRunner(object):
         rec = self._open.get(visit_id)
         if rec is None:
             return
-        rec["last_extend"] = end_ts
         rec["last_seen"] = now
+        # Disk floor (plan S4.5 / B2): when free space is below the worker
+        # floor, STOP COPYING new segments into scratch. We deliberately do NOT
+        # advance ``last_extend`` (the recovery window bound) — it stays pinned
+        # to the last MOMENT WE ACTUALLY COPIED, so any later finalize bounds
+        # the clip to the footage that exists on disk rather than a window that
+        # grew past it. The visit still finalizes normally on absence or at the
+        # max-visit cap; it simply stops growing while the card is full.
+        if self._disk_below_floor():
+            free = self._free_space(self.recordings_dir)
+            applog.emit(
+                "visit",
+                "disk floor: stopping copy-on-extend for visit {} — free "
+                "space {} bytes < worker floor {} bytes; visit will finalize "
+                "what it has".format(visit_id, free, self._min_free_bytes),
+            )
+            self._persist()
+            return
+        rec["last_extend"] = end_ts
         # Incremental copy-on-extend (B3): copy completed ring segments into
         # the visit scratch BEFORE the ring can wrap them.
         scratch = scratch_dir_for(self.recordings_dir, visit_id)

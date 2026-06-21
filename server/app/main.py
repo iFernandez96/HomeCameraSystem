@@ -119,6 +119,25 @@ async def lifespan(_app: FastAPI):
             settings.events_db_path, exc_info=True,
         )
         raise
+    # iter (S4.5 / blocker B2): retention catch-up. Runs the time-based
+    # clip sweep AND the age-independent byte-budget evictor together (in
+    # that order) on every boot so a card that filled while the server was
+    # down — e.g. an "always present" detection that out-paced the
+    # retention window — is reclaimed before the recorder resumes writing.
+    # Non-fatal: a sweep/evict failure must NOT abort boot (the camera is
+    # the load-bearing service; clips are best-effort storage).
+    try:
+        from .services.recording_service import sweep_and_evict
+        _ret = sweep_and_evict()
+        log.info(
+            "lifespan: retention catch-up swept=%d evicted=%d freed=%d bytes",
+            _ret["swept"], _ret["evicted"], _ret["freed_bytes"],
+        )
+    except Exception:
+        log.warning(
+            "lifespan: retention catch-up (sweep+evict) failed — continuing "
+            "boot (clips are best-effort storage)", exc_info=True,
+        )
     try:
         await camera_service.start()
     except Exception:

@@ -149,3 +149,204 @@ def test_sweep_with_default_retention_uses_settings(rec_dir, monkeypatch):
     _os.utime(old, (time.time() - 30 * 86400, time.time() - 30 * 86400))
 
     assert recording_service.sweep_old_clips() == 1
+
+
+# --- evict_to_free_space (byte-budget, plan S4.5 / B2) ---
+
+
+def _fake_disk_usage(free_bytes):
+    """A drop-in for shutil.disk_usage returning a namedtuple-ish object with
+    just `.free` (the only field the evictor reads). Accepts an int or a
+    zero-arg callable so a test can model free space rising as clips delete."""
+    from collections import namedtuple
+
+    _Usage = namedtuple("_Usage", ["total", "used", "free"])
+
+    def _du(_path):
+        free = free_bytes() if callable(free_bytes) else free_bytes
+        return _Usage(total=0, used=0, free=free)
+
+    return _du
+
+
+def _write_clip_with_mtime(rec_dir, name, size, age_s):
+    """Write a `<name>` file of `size` bytes, backdated by `age_s` seconds."""
+    import os as _os
+
+    p = rec_dir / name
+    p.write_bytes(b"x" * size)
+    _os.utime(p, (time.time() - age_s, time.time() - age_s))
+    return p
+
+
+def test_evict_noops_when_already_above_floor(rec_dir):
+    """Free space at/above the floor → nothing deleted."""
+    # arrange
+    rec_dir.mkdir()
+    clip = rec_dir / "evt.mp4"
+    clip.write_bytes(b"x" * 100)
+    floor = 300 * 1024 * 1024
+
+    # act — disk_usage reports plenty of free space.
+    result = recording_service.evict_to_free_space(
+        min_free_bytes=floor, disk_usage=_fake_disk_usage(floor + 1)
+    )
+
+    # assert
+    assert result == {"deleted": 0, "freed_bytes": 0}
+    assert clip.exists()
+
+
+def test_evict_returns_zero_when_dir_missing(rec_dir):
+    """No recordings dir yet → no-op, no crash."""
+    # arrange — rec_dir intentionally NOT created.
+    # act
+    result = recording_service.evict_to_free_space(
+        min_free_bytes=100, disk_usage=_fake_disk_usage(0)
+    )
+    # assert
+    assert result == {"deleted": 0, "freed_bytes": 0}
+
+
+def test_evict_deletes_oldest_first_until_above_floor(rec_dir):
+    """Below the floor → delete OLDEST clips first; stop as soon as free space
+    crosses the floor. Models free space rising 100 bytes per deletion."""
+    # arrange — three clips, distinct ages (oldest → newest).
+    rec_dir.mkdir()
+    oldest = _write_clip_with_mtime(rec_dir, "oldest.mp4", 100, age_s=300)
+    middle = _write_clip_with_mtime(rec_dir, "middle.mp4", 100, age_s=200)
+    newest = _write_clip_with_mtime(rec_dir, "newest.mp4", 100, age_s=100)
+
+    floor = 250
+    # Start at free=0; each deleted 100-byte clip frees 100 bytes. Need 3
+    # deletions to reach 300 >= 250 — but free crosses the floor after the
+    # 3rd... model it so only 3 are needed; assert oldest-first ordering by
+    # checking which survive after a SMALLER floor.
+    deleted_count = {"n": 0}
+
+    def _free():
+        return deleted_count["n"] * 100
+
+    def _du(_path):
+        from collections import namedtuple
+
+        _Usage = namedtuple("_Usage", ["total", "used", "free"])
+        return _Usage(0, 0, _free())
+
+    # Wrap unlink-counting by patching list_clips to bump the counter as the
+    # evictor deletes — simplest is to let the real unlink happen and recount.
+    # Instead: floor reachable after deleting 2 (free 0→needs >=200). We make
+    # the reader count surviving-deleted via the real filesystem.
+    def _du_fs(_path):
+        from collections import namedtuple
+
+        _Usage = namedtuple("_Usage", ["total", "used", "free"])
+        remaining = len([e for e in rec_dir.iterdir() if e.suffix == ".mp4"])
+        deleted = 3 - remaining
+        return _Usage(0, 0, deleted * 100)
+
+    # act — floor 200 → free must reach >=200 → exactly 2 deletions.
+    result = recording_service.evict_to_free_space(
+        min_free_bytes=200, disk_usage=_du_fs
+    )
+
+    # assert — oldest two gone, newest survives; counts reported.
+    assert not oldest.exists()
+    assert not middle.exists()
+    assert newest.exists()
+    assert result["deleted"] == 2
+    assert result["freed_bytes"] == 200
+
+
+def test_evict_stops_when_no_clips_left(rec_dir):
+    """Free space never recovers but clips run out → stops cleanly, reports
+    what it managed to delete (never loops forever / raises)."""
+    # arrange — two clips; disk_usage always reports 0 free (below any floor).
+    rec_dir.mkdir()
+    a = _write_clip_with_mtime(rec_dir, "a.mp4", 100, age_s=300)
+    b = _write_clip_with_mtime(rec_dir, "b.mp4", 100, age_s=100)
+
+    # act
+    result = recording_service.evict_to_free_space(
+        min_free_bytes=10 ** 12, disk_usage=_fake_disk_usage(0)
+    )
+
+    # assert — both deleted, then it stopped (no infinite loop).
+    assert not a.exists()
+    assert not b.exists()
+    assert result["deleted"] == 2
+
+
+def test_evict_ignores_non_mp4_files(rec_dir):
+    """Only `.mp4` clips are evictable; operator work-files are left alone."""
+    # arrange
+    rec_dir.mkdir()
+    clip = _write_clip_with_mtime(rec_dir, "evt.mp4", 100, age_s=300)
+    log_file = rec_dir / "ffmpeg.log"
+    log_file.write_bytes(b"x" * 100)
+
+    # act — floor unreachable so it deletes every clip it can.
+    recording_service.evict_to_free_space(
+        min_free_bytes=10 ** 12, disk_usage=_fake_disk_usage(0)
+    )
+
+    # assert — clip gone, non-mp4 untouched.
+    assert not clip.exists()
+    assert log_file.exists()
+
+
+# --- sweep_and_evict (combined pass: time-sweep THEN byte-evict) ---
+
+
+def test_sweep_and_evict_runs_time_sweep_then_byte_evict(rec_dir, monkeypatch):
+    """The combined pass deletes genuinely-old clips (time) FIRST, then evicts
+    the oldest survivors to recover space (bytes). Order is observable: the
+    expired clip is gone via the AGE path; a fresh-but-oldest clip is gone via
+    the BYTE path only because the card is still under the floor."""
+    # arrange — `expired` is 30d old (past 7d retention); `fresh_old` and
+    # `fresh_new` are recent but the card is under the floor.
+    monkeypatch.setattr(settings, "recordings_retention_days", 7)
+    rec_dir.mkdir()
+    expired = _write_clip_with_mtime(rec_dir, "expired.mp4", 100, age_s=30 * 86400)
+    fresh_old = _write_clip_with_mtime(rec_dir, "fresh_old.mp4", 100, age_s=200)
+    fresh_new = _write_clip_with_mtime(rec_dir, "fresh_new.mp4", 100, age_s=100)
+
+    call_order = []
+    real_sweep = recording_service.sweep_old_clips
+    real_evict = recording_service.evict_to_free_space
+
+    def _spy_sweep(*a, **k):
+        call_order.append("sweep")
+        return real_sweep(*a, **k)
+
+    def _spy_evict(*a, **k):
+        call_order.append("evict")
+        # Inject a fake disk_usage that mirrors the filesystem: free rises as
+        # clips delete; floor reachable after evicting one of the survivors.
+        from collections import namedtuple
+
+        _Usage = namedtuple("_Usage", ["total", "used", "free"])
+
+        def _du(_path):
+            remaining = len(
+                [e for e in rec_dir.iterdir() if e.suffix == ".mp4"]
+            )
+            # start of evict: expired already swept → 2 left. Need 1 byte-evict.
+            return _Usage(0, 0, (2 - remaining) * 100)
+
+        return real_evict(min_free_bytes=100, disk_usage=_du)
+
+    monkeypatch.setattr(recording_service, "sweep_old_clips", _spy_sweep)
+    monkeypatch.setattr(recording_service, "evict_to_free_space", _spy_evict)
+
+    # act
+    result = recording_service.sweep_and_evict()
+
+    # assert — sweep ran BEFORE evict; expired gone by age, fresh_old (oldest
+    # survivor) gone by bytes, fresh_new survives.
+    assert call_order == ["sweep", "evict"]
+    assert not expired.exists()
+    assert not fresh_old.exists()
+    assert fresh_new.exists()
+    assert result["swept"] == 1
+    assert result["evicted"] == 1

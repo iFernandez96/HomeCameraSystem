@@ -190,6 +190,14 @@ class VisitTracker(object):
             return None
         return rec["visit_id"]
 
+    def forget(self, key):
+        """Drop all state for ``key`` so the next detection on it opens a fresh
+        visit. Used by the runtime layer to ROLL BACK an open the side-effect
+        layer refused (e.g. the disk floor blocked the new visit): without this
+        the tracker would keep PRESENT state and re-emit extends for a visit the
+        runner never actually opened. No-op if the key is unknown."""
+        self._visits.pop(key, None)
+
     def snapshot(self):
         """A plain JSON-serializable dict of all live per-key state (for the
         future crash-persist / recovery layer). Excludes IDLE records."""
