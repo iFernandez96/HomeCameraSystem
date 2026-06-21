@@ -188,6 +188,7 @@ import sdnotify  # noqa: E402  (systemd Type=notify liveness; no-op off-systemd)
 from memory_guard import MemoryGuard, read_mem_available_mb  # noqa: E402
 from metrics import Metrics  # noqa: E402
 from presence import PresenceTracker  # noqa: E402
+import visit_runtime  # noqa: E402  (continuous-capture wiring + recovery, S4)
 from schedule import in_off_window  # noqa: E402
 from thermal_guard import ThermalGuard, read_gpu_temp_c  # noqa: E402
 from zones import any_box_center_inside_any_zone, sanitize_zones  # noqa: E402
@@ -376,6 +377,15 @@ class RuntimeConfig:
         # ignored until iter-255 lands the rolling-segment recorder.
         self.clip_post_roll_s = 8.0
         self.clip_pre_roll_s = 0.0
+        # Continuous-capture (person-following) feature, plan S4. Default OFF
+        # (hard XOR with the legacy start_clip path). The flag + knobs are
+        # resolved from env + this polled config via
+        # `visit_runtime.resolve_continuous_config`; the loop reads them live
+        # so an operator can flip the toggle / drag the sliders without a
+        # worker restart. Seeded from env at construction in main().
+        self.continuous_capture = False
+        self.max_visit_s = 150.0
+        self.absence_finalize_s = 10.0
 
     def schedule_says_off(self):
         """True if the current local time is inside the off-window.
@@ -464,6 +474,33 @@ def apply_config(runtime, data):
             runtime.clip_pre_roll_s = float(data["clip_pre_roll_s"])
         except (TypeError, ValueError) as e:
             warnings.append(("clip_pre_roll_s", "{}".format(e)))
+    # Continuous-capture flag + knobs (plan S4). Config-poll overrides the
+    # env-seeded values so the operator can flip the feature live. Resolution
+    # (incl. precedence + bad-cast guarding) lives in visit_runtime, but we
+    # re-apply onto `runtime` field-by-field here so the existing per-field
+    # warning machinery still reports a fat-fingered slider.
+    if "continuous_capture" in data:
+        runtime.continuous_capture = bool(data["continuous_capture"])
+    if "max_visit_s" in data:
+        try:
+            v = float(data["max_visit_s"])
+            if v > 0:
+                runtime.max_visit_s = v
+            else:
+                warnings.append(("max_visit_s", "non-positive {!r}".format(v)))
+        except (TypeError, ValueError) as e:
+            warnings.append(("max_visit_s", "{}".format(e)))
+    if "absence_finalize_s" in data:
+        try:
+            v = float(data["absence_finalize_s"])
+            if v > 0:
+                runtime.absence_finalize_s = v
+            else:
+                warnings.append(
+                    ("absence_finalize_s", "non-positive {!r}".format(v))
+                )
+        except (TypeError, ValueError) as e:
+            warnings.append(("absence_finalize_s", "{}".format(e)))
     return warnings
 
 
@@ -834,6 +871,12 @@ def escalate_argus_recovery():
 # reboot didn't clear the wedge, we must NOT reboot again immediately.
 _WATCHDOG_STATE = {}          # type: ignore[var-annotated]
 _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_state.json
+# Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
+# continuous_capture flag is on; None otherwise (legacy start_clip path). The
+# capture-failure handler reads it to finalize any open visit at last_seen
+# BEFORE the watchdog restarts mediamtx/nvargus or reboots, so a mid-visit
+# wedge yields a short VALID clip rather than one spanning the gap.
+_VISIT_RUNNER = None          # type: ignore[var-annotated]
 # Don't auto-reboot more than once per this window — a reboot that doesn't fix
 # the wedge would otherwise boot-loop the Jetson.
 _REBOOT_MIN_INTERVAL_S = 1800.0
@@ -953,6 +996,79 @@ def _do_reboot():
     return True
 
 
+def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
+                        event_url, camera_id):
+    """Construct a ``visit_runtime.VisitRunner`` with the three side-effect
+    callables wired to the real recorder/preroll/POST path (plan S4 item 2).
+    Factored out of ``main()`` so the wiring is small + the loop body stays
+    focused. The callables themselves are thin adapters; the heavy lifting is
+    in ``recording.finalize_visit`` / ``preroll.copy_new_segments`` (S2/S3)."""
+    def _post_open(visit_id, key, start_ts):
+        # event_id == visit_id (plan: "pick an event_id (= visit_id)"). POST
+        # the open event today with clip_url pointing at the eventual clip
+        # (R4's no-clip-url-at-open is S6's job, NOT here). label is the part
+        # of the emit key before ":".
+        label = key.split(":", 1)[0] if isinstance(key, str) else "person"
+        payload = {
+            "id": visit_id,
+            "label": label,
+            "score": 1.0,
+            "boxes": [],
+            "camera_id": camera_id,
+            "clip_url": "/api/events/{}/clip".format(visit_id),
+        }
+        post_event(event_url, payload)
+
+    def _copy_segments(visit_id, start_ts, until_ts, scratch_dir, already):
+        if preroll_buffer is None:
+            return [], (already if already is not None else set())
+        return preroll_buffer.copy_new_segments(
+            start_ts, until_ts, scratch_dir, already_copied=already,
+        )
+
+    def _finalize(visit_id, scratch_dir, start_ts, end_ts):
+        return clip_recorder.finalize_visit(
+            visit_id, scratch_dir, start_ts, end_ts,
+            recordings_dir=recordings_dir,
+        )
+
+    return visit_runtime.VisitRunner(
+        recordings_dir=recordings_dir,
+        post_event=_post_open,
+        copy_segments=_copy_segments,
+        finalize_visit=_finalize,
+    )
+
+
+def _recover_open_visits(recordings_dir, clip_recorder, runner,
+                         absence_finalize_s):
+    """Boot crash recovery (plan B4). Delegates to
+    ``visit_runtime.recover_open_visits`` with the recorder's ffprobe gate as
+    the idempotency validator and the recorder's ``finalize_visit`` as the
+    surviving-scratch finalizer. Kept here (not in visit_runtime) only to bind
+    the recorder; the LOGIC + idempotency property are in + tested via
+    visit_runtime."""
+    def _validate(path):
+        # Reuse the recorder's real-decode validator? No — that needs the
+        # nominal window. For the idempotency gate a structural moov/ffprobe
+        # check is the right "is this a good file" test (a valid clip from a
+        # prior life). `_probe_duration` returns a positive float iff ffprobe
+        # parsed the container + a sane duration.
+        return clip_recorder._probe_duration(path) is not None
+
+    def _finalize(visit_id, scratch_dir, start_ts, end_ts):
+        return clip_recorder.finalize_visit(
+            visit_id, scratch_dir, start_ts, end_ts,
+            recordings_dir=recordings_dir,
+        )
+
+    return visit_runtime.recover_open_visits(
+        recordings_dir, _validate, _finalize,
+        now=time.time(),
+        default_absence_finalize_s=absence_finalize_s,
+    )
+
+
 def open_camera(uri, attempts=30, retry_s=2.0):
     """Wait for the upstream RTSP to come up (mediamtx may still be starting)."""
     last_err = None
@@ -1012,6 +1128,18 @@ def _handle_capture_failure(
         # worker-restart RESUMES the ladder instead of resetting to
         # mediamtx-only (the 2026-06-20 reachability fix).
         _capture_wedge_diagnostics(action)
+        # plan R5: finalize any open continuous-capture visit at last_seen and
+        # persist .open_visits.json BEFORE the recovery action (esp. reboot) —
+        # a short valid clip, not one spanning the wedge gap. No-op when the
+        # legacy path is active (_VISIT_RUNNER is None).
+        if _VISIT_RUNNER is not None:
+            try:
+                _VISIT_RUNNER.finalize_open_visits_for_escalation(now)
+            except Exception as e:
+                print(
+                    "[detect] WATCHDOG: visit finalize-on-escalation failed: "
+                    "{}: {}".format(type(e).__name__, e), flush=True,
+                )
         if action == ACTION_RESTART_MEDIAMTX:
             if restart_mediamtx():
                 metrics.mediamtx_restarts += 1
@@ -1296,6 +1424,13 @@ def main():
     # `_internal` mirror that the rest of the worker → server traffic
     # already uses.
     runtime = RuntimeConfig(threshold=threshold, cooldown_s=cooldown)
+    # Seed the continuous-capture flag + knobs from env (plan S4). The
+    # config-poll later overrides these live; resolving here means a boot-time
+    # env override is honored before the server has spoken. Default OFF.
+    _cc = visit_runtime.resolve_continuous_config(env=os.environ)
+    runtime.continuous_capture = _cc["enabled"]
+    runtime.max_visit_s = _cc["max_visit_s"]
+    runtime.absence_finalize_s = _cc["absence_finalize_s"]
     metrics_known_names = (
         sorted(set(recognizer.names)) if recognizer is not None else []
     )
@@ -1368,6 +1503,43 @@ def main():
     # See detection/presence.py and the gate below. The old `cooldown_s` now
     # acts as the min-gap floor between emits for one key.
     presence_tracker = PresenceTracker()
+    # --- continuous-capture runner + crash recovery (plan S4) -------------
+    # HARD XOR with the legacy ClipRecorder.start_clip path: the runner is
+    # built ONLY when the flag is on, and the loop branches on it so both
+    # paths never run for one detection. The legacy recorder stays armed as
+    # the rollback (flipping the flag off reverts to it with no restart).
+    global _VISIT_RUNNER
+    _VISIT_RUNNER = None
+    if runtime.continuous_capture and recordings_dir and clip_recorder is not None:
+        _vr = _build_visit_runner(
+            recordings_dir, clip_recorder, preroll_buffer, event_url,
+            camera_id,
+        )
+        _VISIT_RUNNER = _vr
+        # Boot recovery (B4) + orphan sweep (R8) BEFORE the loop opens any new
+        # visit. Idempotent: a visit whose <id>.mp4 already validates is
+        # marked done and skipped (never re-finalized / never os.replace'd).
+        try:
+            _recover_open_visits(
+                recordings_dir, clip_recorder, _vr, runtime.absence_finalize_s,
+            )
+        except Exception as e:
+            log.error(
+                "continuous-capture recovery failed: %s: %s",
+                type(e).__name__, e,
+            )
+        try:
+            visit_runtime.sweep_orphans(recordings_dir)
+        except Exception as e:
+            log.error(
+                "continuous-capture orphan sweep failed: %s: %s",
+                type(e).__name__, e,
+            )
+        log.info(
+            "continuous-capture ARMED (max_visit=%ss, absence_finalize=%ss) "
+            "— legacy start_clip path SUPPRESSED",
+            runtime.max_visit_s, runtime.absence_finalize_s,
+        )
     # iter-356.53 (bbox-track sidecar, Feature #1 follow-up):
     # rolling deque of (frame_ts, boxes) for the last ~64 s of
     # inferences (covers the absolute pre-roll ceiling). Single-
@@ -1612,6 +1784,17 @@ def main():
         # active_fps (default 5 Hz). This keeps the GPU off the thermal
         # throttle while still giving prompt response on motion.
         now = time.time()
+        # plan B5: continuous-capture tick at the TOP of the loop body, BEFORE
+        # any detection logic or early-continue (off / scheduled-off / zone-
+        # reject / no-detection all early-continue below — exactly the absent
+        # frames the absence deadline needs to fire on). Unconditional when the
+        # runner is armed; no-op on the legacy path. The tracker is pure, so a
+        # frame where the subject is gone still drives finalize at the deadline.
+        if _VISIT_RUNNER is not None:
+            _VISIT_RUNNER.set_absence_finalize_s(runtime.absence_finalize_s)
+            _VISIT_RUNNER.tick(
+                now, runtime.absence_finalize_s, runtime.max_visit_s,
+            )
         # If the user has disabled detection (manually or via the schedule
         # window), drop the frame without running inference. Worker thus
         # burns no CUDA while still consuming the RTSP stream so it doesn't
@@ -1831,6 +2014,21 @@ def main():
         # iter-272 (camera-algorithm-auditor B1): per-(label, camera_id) key so
         # two concurrent classes (person + dog) are tracked independently.
         emit_key = "{}:{}".format(top_label, camera_id)
+        # plan S4: continuous-capture path (HARD XOR with the legacy presence-
+        # coalescing + start_clip path below). The keepalive bump above stays
+        # ABOVE this gate (CLAUDE.md pin) so a coalesced-but-present subject
+        # holds active fps. When the runner is armed we feed the present
+        # detection into the visit tracker (open/extend/finalize handled inside)
+        # and short-circuit: one visit = one clip, no per-event start_clip.
+        if _VISIT_RUNNER is not None:
+            top_box_cc = (top_d.Left, top_d.Top, top_d.Right, top_d.Bottom)
+            _VISIT_RUNNER.observe(
+                emit_key, top_box_cc, now,
+                float(runtime.clip_pre_roll_s),
+                runtime.absence_finalize_s, runtime.max_visit_s,
+            )
+            del img
+            continue
         # Presence-coalescing gate (replaces the old flat per-key cooldown).
         # While this same subject keeps appearing in roughly the same place
         # (IoU-matched) AND its clip is still recording, suppress the re-fire —

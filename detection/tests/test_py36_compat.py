@@ -59,6 +59,7 @@ _GUARDED_MODULES = (
     "detection/tracks.py",
     "detection/presence.py",
     "detection/visit.py",
+    "detection/visit_runtime.py",
     "detection/sdnotify.py",
     "detection/face_recog/recognizer.py",
     "detection/face_recog/encode_known_faces.py",
