@@ -17,7 +17,7 @@ import {
   reelTimeToCaptureTs,
 } from '../../lib/timelapseClock'
 import { CatEmptyState } from '../../components/CatEmptyState'
-import { PlaybackSpeedControl } from '../../components/PlaybackSpeedControl'
+import { VideoPlayer } from '../../components/VideoPlayer'
 import { Section } from './parts'
 
 // iter-292: extracted from Settings.tsx (~85 lines of inline JSX +
@@ -85,18 +85,10 @@ function _yesterdayStr(): string {
 // (manifest_url null / 404) → the overlay simply stays hidden; playback is
 // unaffected.
 function TimelapseVideo({ item }: { item: TimelapseItem }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
   const [segments, setSegments] = useState<TimelapseSegment[] | null>(null)
   const [clock, setClock] = useState<string | null>(null)
-  const [playbackRate, setPlaybackRate] = useState(1)
   // Latch so the manifest is fetched at most once, even across replays.
   const fetchedRef = useRef(false)
-
-  // Apply the chosen playback speed to the <video> (no `playbackRate` prop in
-  // React). The element resets to 1x on remount, same pattern as ClipModal.
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = playbackRate
-  }, [playbackRate])
 
   const ensureManifest = () => {
     if (fetchedRef.current || !item.manifest_url) return
@@ -115,64 +107,46 @@ function TimelapseVideo({ item }: { item: TimelapseItem }) {
       })
   }
 
-  const onTimeUpdate = () => {
-    const v = videoRef.current
-    if (!v || !segments) return
+  // VideoPlayer hands us the <video> on each tick; map the playhead to the
+  // original capture time for the corner clock.
+  const onTimeUpdate = (v: HTMLVideoElement) => {
+    if (!segments) return
     const ts = reelTimeToCaptureTs(segments, v.currentTime)
     setClock(ts === null ? null : formatClock(ts))
   }
 
+  // iter (user "same as youtube"): the timelapse reel now uses the custom
+  // VideoPlayer — play/scrub/time + in-player speed menu (.25×–4×) + repeat +
+  // fullscreen. preload="none" preserves the iter-311 no-fetch-until-play win.
   return (
-    <div className="space-y-2">
-      <div className="relative w-full lg:max-w-xl">
-      {/* preload="none" (iter-311): no range request until the user presses
-          play. playsInline (iter-319): no iOS fullscreen takeover.
-          jsx-a11y wants a <track>; timelapses are silent, nothing to caption. */}
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <video
-        ref={videoRef}
-        src={item.url}
-        controls
-        playsInline
-        preload="none"
-        onPlay={ensureManifest}
-        onTimeUpdate={onTimeUpdate}
-        onError={(e) => {
-          // docs/logging_plan.md §2: log the MediaError code + failing url so
-          // the operator can tell "file gone" from "device can't decode".
-          const el = e.currentTarget
-          log.warn('timelapses:video-error', {
-            date: item.date,
-            url: item.url,
-            mediaErrorCode: el.error?.code ?? null,
-            networkState: el.networkState,
-          })
-        }}
-        className="w-full bg-black rounded border border-[var(--color-border)]"
-        aria-label={`Timelapse video for ${item.date}`}
-      />
-      {clock && (
-        // Paints over video pixels (like drawBoxes.ts), so a literal
-        // translucent-black pill + white text is correct here, not a token.
-        // aria-hidden: a ticking clock would be screen-reader noise, and the
-        // row already exposes the date textually above.
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute top-2 right-2 rounded bg-black/60 px-2 py-1 font-mono text-xs tabular-nums text-white"
-        >
-          {clock}
-        </div>
-      )}
-      </div>
-      {/* iter (user speed multipliers): scan a day reel at .25x–4x. Same
-          shared control as ClipModal; `surface` variant for the light page. */}
-      <PlaybackSpeedControl
-        rate={playbackRate}
-        onRateChange={setPlaybackRate}
-        variant="surface"
-        className="lg:max-w-xl pt-1"
-      />
-    </div>
+    <VideoPlayer
+      src={item.url}
+      ariaLabel={`Timelapse video for ${item.date}`}
+      preload="none"
+      onPlay={ensureManifest}
+      onTimeUpdate={onTimeUpdate}
+      onError={(v) =>
+        log.warn('timelapses:video-error', {
+          date: item.date,
+          url: item.url,
+          mediaErrorCode: v.error?.code ?? null,
+          networkState: v.networkState,
+        })
+      }
+      containerClassName="w-full lg:max-w-xl rounded border border-[var(--color-border)]"
+      overlay={
+        clock ? (
+          // Top-right so it never collides with the bottom control bar.
+          // aria-hidden: a ticking clock is SR noise; the row shows the date.
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute top-2 right-2 z-10 rounded bg-black/60 px-2 py-1 font-mono text-xs tabular-nums text-white"
+          >
+            {clock}
+          </div>
+        ) : null
+      }
+    />
   )
 }
 

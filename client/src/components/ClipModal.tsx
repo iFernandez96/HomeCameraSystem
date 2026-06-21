@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { exportEvents, fetchEventTracks } from '../lib/api'
 import { drawBoxes } from '../lib/drawBoxes'
 import {
@@ -11,7 +11,7 @@ import {
 import { log, errFields } from '../lib/log'
 import { useReportError, useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
-import { PlaybackSpeedControl } from './PlaybackSpeedControl'
+import { VideoPlayer } from './VideoPlayer'
 import { Button } from './primitives/Button'
 
 /**
@@ -59,48 +59,20 @@ export function ClipModal({
   // / Safari — the speed strip below covers the mobile gap. Loop
   // toggle for "watch the dog walk past again" without re-tapping.
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [playbackRate, setPlaybackRate] = useState<number>(1)
-  const [loop, setLoop] = useState<boolean>(false)
+  // VideoPlayer hands us its <video> element here; store it in our own ref so
+  // the bbox-overlay effect can bind to it. Memoized so VideoPlayer's
+  // forwarding effect doesn't re-fire every render.
+  const handleVideoEl = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el
+  }, [])
   // iter-336 (a11y blocker #2): focus-trap host. Tab cycles within
   // focusable descendants of this div instead of escaping to the
   // browser chrome / page behind the modal.
   const dialogRef = useRef<HTMLDivElement | null>(null)
-  // Apply playbackRate to the live <video> element whenever it
-  // changes. Using a ref + effect (instead of a `playbackRate` prop
-  // which React doesn't have) is the canonical pattern.
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.playbackRate = playbackRate
-    }
-    // iter-342 (perf B1 from iter-333 broad audit): drop `clipUrl`
-    // from deps. The `<video key={clipUrl}>` remount already resets
-    // playbackRate to 1 (default), so re-applying the rate on
-    // clipUrl change was redundant. Effect now fires only on actual
-    // playbackRate change.
-  }, [playbackRate])
-  // iter-356.56 (mobile audit C2): best-effort autoplay.
-  // Replaces the `autoPlay` attribute that iOS Safari silently ignored
-  // for unmuted video re-mounted via React `key=`. Calling .play()
-  // imperatively from this effect runs in the same tick as the modal
-  // mount and inherits the user-gesture activation token from the
-  // tap that opened the modal. iOS Safari still rejects unmuted
-  // .play() in many cases — that's expected; the native controls
-  // surface the play button. The promise reject is swallowed so
-  // it doesn't show up in dev console as an unhandled rejection.
-  useEffect(() => {
-    const v = videoRef.current
-    if (!v) return
-    const p = v.play()
-    if (p && typeof p.catch === 'function') {
-      p.catch((e) => {
-        // docs/logging_plan.md §2 (ClipModal): iOS autoplay reject
-        // DEBUG. Expected on iOS Safari (user taps native play); a
-        // breadcrumb so an unexpectedly-always-rejecting play() on a
-        // platform that should allow it is diagnosable under triage.
-        log.debug('clipModal:autoplay-rejected', errFields(e))
-      })
-    }
-  }, [clipUrl])
+  // iter (user "same as youtube"): playback speed, loop, best-effort
+  // autoplay, scrub/play and fullscreen are now owned by the <VideoPlayer>
+  // control bar. ClipModal keeps `videoRef` ONLY so its bbox-overlay effect
+  // can attach to the <video> element (VideoPlayer forwards it).
   const { showToast } = useToast()
   // docs/logging_plan.md §1.3: pair error-toasts with a structured
   // log.error so the user message + device log can't drift.
@@ -408,83 +380,66 @@ export function ClipModal({
     // dialogue or narration to caption); the empty `<track>` element
     // here satisfies the lint rule without adding fake captions.
     // Disable would also work but explicit is clearer.
+    // iter (user "same as youtube"): the clip viewer now uses the custom
+    // <VideoPlayer> (play/scrub/time + in-player speed menu + repeat +
+    // fullscreen). VideoPlayer forwards its <video> element to `videoRef`, so
+    // the bbox-overlay effect (which binds to the element's timeupdate/seek/
+    // rVFC events) keeps working unchanged. The container shrink-wraps the
+    // video (inline-block) so the absolutely-positioned bbox canvas stays
+    // pixel-aligned to the frame; preload="metadata" + autoplay preserve the
+    // iOS behaviour that used to live on the bare <video>.
     body = (
-      <div className="relative max-w-full max-h-full">
-        {/* iter-356.56 (mobile audit C2): dropped `autoPlay`. iOS
-            Safari 16.x silently refuses autoplay on unmuted video
-            unless the play() call lands synchronously inside a user
-            gesture. The tap that opened this modal IS a user gesture
-            but the async `key={clipUrl}` remount + load fires AFTER
-            the gesture context closes. Result on iOS: frozen first
-            frame, native play button, no audio prompt visible at
-            first glance. The ref-driven .play() in the effect below
-            is best-effort — succeeds on Chrome/Firefox/desktop, falls
-            back to the native play button on iOS where it correctly
-            requires a tap. */}
-        <video
-          ref={videoRef}
-          key={clipUrl}
-          src={clipUrl}
-          controls
-          playsInline
-          // iter-356.66 (iOS edge-cases audit #3): preload="metadata"
-          // commits iOS Safari to fetching the moov atom even on
-          // Low-Power Mode, where the default `auto` is opportunistically
-          // downgraded to `none`. Without it, the modal opens to a
-          // black void with no scrubber, indistinguishable from "clip
-          // unavailable." disableRemotePlayback suppresses the AirPlay
-          // pill on the native controlbar — mirroring a 5-second
-          // detection clip from a self-hosted box is a confusing
-          // affordance that the camera audio mute can't explain.
-          preload="metadata"
-          disableRemotePlayback
-          loop={loop}
-          onError={() => setErroredClipUrl(clipUrl)}
-          aria-label={`Clip of ${event.person_name ?? event.label} event from ${humanCameraName(event.camera_id)}`}
-          className="max-w-full max-h-full rounded-xl shadow-2xl border border-[var(--color-border)] bg-black"
-        >
-          <track kind="captions" />
-        </video>
-        {/* iter-356.44: bbox overlay. pointer-events-none so the
-            native <video> controls (play/pause/scrub/fullscreen) stay
-            clickable through the canvas. data-testid for unit tests. */}
-        <canvas
-          ref={overlayCanvasRef}
-          data-testid="clip-bbox-canvas"
-          aria-hidden="true"
-          className="absolute inset-0 pointer-events-none rounded-xl"
-        />
-        {/* iter-356.44: bbox visibility toggle, mirror of the
-            VideoTile button. Same localStorage key + same
-            aria-pressed semantics so a screen-reader user gets a
-            consistent affordance across live + recorded surfaces. */}
-        {event.boxes.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setBoxesVisible((v) => !v)}
-            aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
-            aria-pressed={boxesVisible}
-            className={`absolute bottom-3 right-3 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-              boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
-            }`}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+      <VideoPlayer
+        key={clipUrl}
+        src={clipUrl}
+        ariaLabel={`Clip of ${event.person_name ?? event.label} event from ${humanCameraName(event.camera_id)}`}
+        onVideoEl={handleVideoEl}
+        preload="metadata"
+        autoPlay
+        onError={() => setErroredClipUrl(clipUrl)}
+        containerClassName="inline-block max-w-full max-h-[80vh] rounded-xl shadow-2xl border border-[var(--color-border)]"
+        videoClassName="max-w-full max-h-[80vh]"
+        overlay={
+          <>
+            {/* iter-356.44: bbox overlay. pointer-events-none so the control
+                bar stays clickable through the canvas. */}
+            <canvas
+              ref={overlayCanvasRef}
+              data-testid="clip-bbox-canvas"
               aria-hidden="true"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              {boxesVisible ? null : <path d="M4 4l16 16" />}
-            </svg>
-          </button>
-        )}
-      </div>
+              className="absolute inset-0 pointer-events-none"
+            />
+            {/* Bbox visibility toggle — TOP-right so it clears the bottom
+                control bar (was bottom-right under native controls). */}
+            {event.boxes.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setBoxesVisible((v) => !v)}
+                aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
+                aria-pressed={boxesVisible}
+                className={`absolute top-3 right-3 z-10 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+                  boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
+                }`}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  {boxesVisible ? null : <path d="M4 4l16 16" />}
+                </svg>
+              </button>
+            )}
+          </>
+        }
+      />
     )
   } else if (event.thumb_url && !imgErrored) {
     body = (
@@ -666,46 +621,9 @@ export function ClipModal({
       <div className="relative flex-1 flex items-center justify-center p-4 min-h-0 overflow-hidden">
         {body}
       </div>
-      {/* iter-331: playback speed + loop. Only render when the clip
-          is actually playing (not the snapshot fallback or empty
-          state — those don't have a playbackRate to set). The
-          speed pills are role="radiogroup" so a screen reader
-          announces "1 of 3 selected" on focus.
-          iter-335 (a11y blocker #1): roving-tabindex pattern so
-          ArrowLeft/Right + Home/End move BOTH selection and focus
-          per the WAI-ARIA Authoring Practices radiogroup spec.
-          Pre-iter-335 NVDA users heard "tab list" but arrows did
-          nothing; only Tab worked, eating 3 stops. Post-iter-335
-          only the selected pill is in the Tab order; arrow keys
-          cycle within the group and Tab moves to the next widget. */}
-      {!clipErrored && (
-        <div className="relative px-4 pb-2 flex items-center justify-center gap-2 flex-wrap">
-          {/* iter (user "1.25x/1.5x/2x/4x + .25x/.5x/.75x"): the speed strip
-              is now the shared <PlaybackSpeedControl> (8 rates, numeric
-              labels, same WAI-ARIA radiogroup + roving-tabindex). `overlay`
-              variant = white-on-video styling. */}
-          <PlaybackSpeedControl
-            rate={playbackRate}
-            onRateChange={setPlaybackRate}
-            variant="overlay"
-          />
-          <button
-            type="button"
-            onClick={() => setLoop((v) => !v)}
-            aria-pressed={loop}
-            // iter-347 (Frank D2): "Repeat" reads as standard
-            // media-player vocabulary; "Loop" was sewing-term ambiguous.
-            aria-label="Repeat clip"
-            className={`min-h-[44px] px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-              loop
-                ? 'bg-white text-black border-white'
-                : 'bg-white/10 text-[var(--color-text-primary)]/80 hover:text-[var(--color-text-primary)] active:text-[var(--color-text-primary)] border-white/15'
-            }`}
-          >
-            Repeat
-          </button>
-        </div>
-      )}
+      {/* Playback speed, repeat, scrub/play and fullscreen now live IN the
+          VideoPlayer control bar (the user's "same as youtube"), so the old
+          pill strip below the video is gone. */}
       {/* iter-356.3b (Maya iter-356.2 Critical 3 deferred): action-bar
           inversion fix.
           iter-356.63 (Slice D a11y): the duplicate "Close" button at

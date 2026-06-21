@@ -256,40 +256,22 @@ describe('ClipModal', () => {
     vi.restoreAllMocks()
   })
 
-  it('given the modal renders the video, when the speed-pill row is shown, then the speed radios are present with 1x selected (iter-331; shared PlaybackSpeedControl)', () => {
-    // arrange / act
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-
-    // assert — the shared radiogroup with the full speed set; 1× selected.
-    const group = screen.getByRole('radiogroup', { name: /playback speed/i })
-    expect(group).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: '0.25 times speed' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: '1.5 times speed' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: '4 times speed' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Normal speed' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    )
-  })
-
-  it('given the user clicks the 2x speed pill, when the click fires, then the video element\'s playbackRate becomes 2 (iter-331)', async () => {
-    // arrange — render and grab the live <video> element so we can
-    // assert against its real `playbackRate` after the user click.
+  it('given the in-player speed menu, when a speed is picked, then the video element playbackRate updates (YouTube-style)', async () => {
+    // arrange — speed now lives in the VideoPlayer control bar's settings menu
+    // (detailed behavior covered in VideoPlayer.test.tsx); this pins the
+    // ClipModal integration.
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
     const video = screen.getByLabelText(/clip of person event/i) as HTMLVideoElement
     expect(video.playbackRate).toBe(1)
     const userEvent = (await import('@testing-library/user-event')).default
     const user = userEvent.setup()
 
-    // act
-    await user.click(screen.getByRole('radio', { name: '2 times speed' }))
+    // act — open the speed menu, choose 2×.
+    await user.click(screen.getByRole('button', { name: /playback speed/i }))
+    await user.click(screen.getByRole('menuitemradio', { name: '2×' }))
 
-    // assert — useEffect ran; ref.current.playbackRate updated.
+    // assert — the effect applied it to the element.
     expect(video.playbackRate).toBe(2)
-    expect(screen.getByRole('radio', { name: '2 times speed' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    )
   })
 
   it('given the user clicks the Loop button, when the click fires, then the video element receives loop=true (iter-331)', async () => {
@@ -299,7 +281,7 @@ describe('ClipModal', () => {
     expect(video.loop).toBe(false)
     const userEvent = (await import('@testing-library/user-event')).default
     const user = userEvent.setup()
-    const loopBtn = screen.getByRole('button', { name: /repeat clip/i })
+    const loopBtn = screen.getByRole('button', { name: /repeat/i })
     expect(loopBtn).toHaveAttribute('aria-pressed', 'false')
 
     // act
@@ -310,10 +292,9 @@ describe('ClipModal', () => {
     expect(loopBtn).toHaveAttribute('aria-pressed', 'true')
   })
 
-  // Roving-tabindex + arrow/Home/End keyboard nav for the speed pills is now
-  // tested in isolation in PlaybackSpeedControl.test.tsx (the shared control).
-  // ClipModal keeps the integration tests (control present, click → playbackRate)
-  // and its own focus-trap tests below.
+  // Speed menu, scrub, play/pause, repeat and fullscreen are tested in
+  // isolation in VideoPlayer.test.tsx. ClipModal keeps the integration tests
+  // (player present, speed menu → playbackRate) and its focus-trap tests below.
 
   it('given Tab from the LAST focusable, then focus wraps to the FIRST focusable inside the dialog (iter-336 → iter-356.58 split-pane)', () => {
     // arrange — iter-356.58 (LAYOUT REBUILD) added the right-pane
@@ -379,17 +360,18 @@ describe('ClipModal', () => {
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
-  it('given the clip errored to the snapshot fallback, when the modal renders, then the speed-pill row is hidden (iter-331: no controls when there is no video)', () => {
+  it('given the clip errored to the snapshot fallback, when the modal renders, then the player controls are gone (no video to control)', () => {
     // arrange
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
     fireEvent.error(screen.getByLabelText(/clip of person event/i))
 
-    // assert — speed/loop UI absent in the snapshot-fallback state.
+    // assert — the VideoPlayer (and its speed/repeat controls) is replaced by
+    // the snapshot fallback, so its controls are absent.
     expect(
-      screen.queryByRole('radiogroup', { name: /playback speed/i }),
+      screen.queryByRole('button', { name: /playback speed/i }),
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: /repeat clip/i }),
+      screen.queryByRole('button', { name: /repeat/i }),
     ).not.toBeInTheDocument()
   })
 
