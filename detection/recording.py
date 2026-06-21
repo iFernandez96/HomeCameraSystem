@@ -36,11 +36,72 @@ camera pipeline live. Unit tests cover argument construction,
 subprocess invocation, and concurrency capping via mock; the
 operator verifies end-to-end on a slice-2 deploy.
 """
+import json
 import os
+import shutil
 import subprocess
 import threading
 
 import applog
+
+
+# ---- continuous-capture / S3: finalize_visit constants ----
+#
+# One-visit-one-clip finalize. A visit's already-copied scratch segments
+# (S2 `preroll.copy_new_segments` -> `000000.mp4, 000001.mp4, …`) are
+# concatenated into ONE `<event_id>.mp4`. See docs/continuous_capture_plan.md.
+
+# Bytes-scaled finalize timeout (plan R9): REPLACES the old hard 30s/120s.
+# The concat is a `-c copy` read of every input plus (for small outputs) a
+# `+faststart` second pass over the whole file, so wall-clock is driven by
+# BYTES. Mirrors server timelapse `_ffmpeg_timeout_for`: ~300 s/GB measured
+# on the Nano eMMC, floored so a tiny clip still gets a sane budget, ceiled
+# so a pathological max-visit fill can't hang forever. A per-clip term covers
+# concat-list overhead. (A capped visit is ~37-56 MB -> floor; a stuck-
+# detection max-visit fill is the case the ceiling bounds.)
+_FINALIZE_TIMEOUT_FLOOR_S = 60.0
+_FINALIZE_TIMEOUT_CEIL_S = 1800.0
+_FINALIZE_TIMEOUT_S_PER_GB = 300.0
+
+# +faststart relocates the moov atom to the front for HTTP <video> first-frame,
+# at the cost of a SECOND full-file pass. For a normal capped visit (~tens of
+# MB) that pass is cheap and worth it. For a pathological max-visit fill on the
+# slow eMMC it is not (plan R9: "consider dropping +faststart for large
+# finalized clips"). Above this many bytes we drop +faststart: the clip still
+# plays over HTTP, it just buffers the moov at the end first.
+_FINALIZE_FASTSTART_MAX_BYTES = 256 * 1024 * 1024  # 256 MB
+
+# Duration tolerance for the post-validate window check (plan R1: edge
+# precision is ±~1 GOP ≈ 4.3s, ACCEPTED — whole-segment concat, no sub-GOP
+# trim). We allow ~2 GOPs of slack (one at each edge) plus a small float
+# margin so a legitimately-on-window clip is never refused.
+_FINALIZE_DURATION_TOLERANCE_S = 10.0
+
+# Substrings in the real-decode (`-f null -`) stderr that mean the output is
+# genuinely CORRUPT (plan B1). ffprobe-rc=0 alone passes broken output; a real
+# decode pass is the only honest gate.
+#
+# DELIBERATELY NOT here: "non monotonic dts to muxer". Concatenating the live
+# ring's `-c copy` NVENC GOPs makes the `-f null -` decode emit that warning at
+# every GOP join — VERIFIED on real Jetson clips: ~264 such lines on a 2-clip
+# concat, yet duration was exact and the DISPLAY PTS had ZERO backward jumps
+# over 10,819 frames (perfect HTTP `<video>` playback). It only matters for a
+# WebRTC/transcode reader, which these download/`<video>`-only clips never feed
+# (the CLAUDE.md NVENC-PTS pin). Treating it as fatal would REJECT EVERY REAL
+# CLIP → finalize always fails → zero clips on the Jetson. Genuine corruption
+# still trips the markers below (or the duration check). The synthetic libx264
+# test fixture does NOT reproduce this — only real NVENC content does.
+_FINALIZE_DECODE_BAD_MARKERS = (
+    "invalid data",         # "Invalid data found when processing input"
+    "moov atom not found",
+    "error while decoding",
+)
+
+# plan R8: serialize finalize across visits. The Nano has a 512 MB container
+# cap / 2 GB host; two concurrent `-c copy` + faststart passes over big clips
+# OOM-killed the export route historically. A module-level semaphore caps
+# in-flight finalizes at one. (Module-level so every ClipRecorder shares it.)
+_FINALIZE_SEMAPHORE = threading.Semaphore(1)
 
 
 class ClipRecorder(object):
@@ -848,3 +909,457 @@ class ClipRecorder(object):
                     )
             except OSError:
                 pass
+
+    # ---- continuous-capture / S3: finalize_visit ----
+
+    def _ffprobe_bin(self):
+        """Resolve the sibling ffprobe binary from ``self.ffmpeg_bin``
+        (mirrors ``_filter_valid_segments``). ``ffmpeg`` -> ``ffprobe``;
+        anything else is returned unchanged (caller passed a full path)."""
+        ffprobe_bin = self.ffmpeg_bin
+        if ffprobe_bin.endswith("ffmpeg"):
+            ffprobe_bin = ffprobe_bin[:-len("ffmpeg")] + "ffprobe"
+        return ffprobe_bin
+
+    @staticmethod
+    def _finalize_timeout_for(total_bytes):
+        """Bytes-scaled finalize timeout (plan R9). Mirrors the server
+        timelapse ``_ffmpeg_timeout_for``: scale by total input BYTES (the
+        ``-c copy`` read + optional ``+faststart`` second pass dominate
+        wall-clock), floor so a tiny clip still gets a sane budget, ceil so a
+        pathological max-visit fill can't hang. NOT a hard 30s/120s."""
+        try:
+            by_bytes = (float(total_bytes) / 1e9) * _FINALIZE_TIMEOUT_S_PER_GB
+        except (TypeError, ValueError):
+            by_bytes = 0.0
+        if by_bytes < 0:
+            by_bytes = 0.0
+        return min(
+            _FINALIZE_TIMEOUT_CEIL_S,
+            max(_FINALIZE_TIMEOUT_FLOOR_S, by_bytes),
+        )
+
+    def _build_finalize_args(self, list_path, output_path, use_faststart):
+        """ffmpeg argv for the whole-segment visit concat (plan B1/R1).
+
+        Whole-segment ``-c copy`` concat — NO ``inpoint``/``outpoint``
+        (edge precision ±~4.3s GOP is accepted; one-visit-one-clip means
+        there are no sibling clips to de-overlap, so the timelapse
+        "teleport" is gone at the source). ``-f mp4`` is load-bearing: the
+        output is ``<event_id>.mp4.tmp`` and ffmpeg cannot infer the muxer
+        from a ``.tmp`` extension (CLAUDE.md pin, same as the recorder /
+        timelapse). ``-safe 0`` allows the absolute paths we generate.
+
+        On the DTS flag set (plan B1 CRUX): we keep the SAME minimal flag set
+        as ``preroll.run_concat`` (no ``+genpts`` / ``make_zero`` /
+        ``max_interleave_delta`` — verified no-ops). What matters is the
+        DISPLAY timeline: VERIFIED on REAL Jetson NVENC clips, a 2-clip
+        ``-c copy`` concat has exact duration and ZERO backward display-PTS
+        jumps over 10,819 frames (perfect HTTP ``<video>`` playback) — yet
+        the ``-f null -`` decode emits ~264 "non monotonic dts to muxer"
+        lines at the GOP joins. That muxer-DTS complaint is BENIGN for our
+        download/``<video>``-only clips (it only breaks a WebRTC/transcode
+        reader, which these never feed — CLAUDE.md NVENC-PTS pin), so the
+        post-validate deliberately does NOT treat it as fatal (see
+        ``_FINALIZE_DECODE_BAD_MARKERS``). The validate still refuses genuine
+        corruption (invalid data / missing moov / decode error) and
+        off-window duration. NOTE: the synthetic libx264 test fixture does
+        not reproduce the NVENC DTS warning — the real-snapshot test does.
+        """
+        cmd = [
+            self.ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", list_path,
+            "-c", "copy",
+        ]
+        if use_faststart:
+            # moov up-front for HTTP <video> first-frame. Dropped above the
+            # byte threshold (plan R9) to skip the full-file second pass on
+            # the slow eMMC for a pathological max-visit fill.
+            cmd += ["-movflags", "+faststart"]
+        cmd += ["-f", "mp4", output_path]
+        return cmd
+
+    def _decode_validate(self, path, expected_duration_s, event_id):
+        """Real-decode post-validate (plan B1). ``ffprobe`` rc=0 is NOT
+        enough — it passes a broken ``-c copy`` concat. Run a full decode
+        pass (``ffmpeg -v error -i <path> -f null -``) and refuse the clip
+        if stderr contains a DTS/corruption marker, OR if the probed output
+        duration is not within ~one GOP of the nominal window.
+
+        Returns True iff the output is cleanly playable AND on-window.
+        Fail-closed on any probe/decode error (missing binary, timeout).
+        """
+        # Pass 1: real decode. stderr=PIPE is deadlock-safe here — this is a
+        # bounded synchronous subprocess.run (run() drains the pipe), unlike
+        # the async long-lived recorder subprocesses.
+        try:
+            result = subprocess.run(
+                [
+                    self.ffmpeg_bin,
+                    "-nostdin",
+                    "-hide_banner",
+                    "-v", "error",
+                    "-i", path,
+                    "-f", "null", "-",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=120.0,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            applog.emit(
+                "recording",
+                "ERROR finalize decode-validate failed for event_id={}: "
+                "{}: {} — refusing clip".format(
+                    event_id, type(e).__name__, e,
+                ),
+            )
+            return False
+        stderr = b""
+        if getattr(result, "stderr", None):
+            stderr = result.stderr
+        text = stderr.decode("utf-8", "replace").lower()
+        for marker in _FINALIZE_DECODE_BAD_MARKERS:
+            if marker in text:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize decode-validate found {!r} in output for "
+                    "event_id={} (corrupt/truncated clip — not publishing) "
+                    "— refusing".format(
+                        marker, event_id,
+                    ),
+                )
+                return False
+        if result.returncode != 0:
+            applog.emit(
+                "recording",
+                "ERROR finalize decode-validate ffmpeg rc={} for "
+                "event_id={} — refusing clip".format(
+                    result.returncode, event_id,
+                ),
+            )
+            return False
+        # Pass 2: duration ≈ window (plan R1: ±~1 GOP accepted). A clip that
+        # decodes clean but is far shorter/longer than the visit window means
+        # we dropped/over-included footage — refuse rather than publish a
+        # misleading clip.
+        if expected_duration_s is not None and expected_duration_s > 0:
+            probed = self._probe_duration(path)
+            if probed is None:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize could not probe output duration for "
+                    "event_id={} — refusing clip".format(event_id),
+                )
+                return False
+            if abs(probed - expected_duration_s) > _FINALIZE_DURATION_TOLERANCE_S:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize output duration {:.1f}s for event_id={} "
+                    "off window {:.1f}s by > {:.0f}s — refusing clip".format(
+                        probed, event_id, expected_duration_s,
+                        _FINALIZE_DURATION_TOLERANCE_S,
+                    ),
+                )
+                return False
+        return True
+
+    def _probe_duration(self, path):
+        """Probe ``path`` for its format duration in seconds. Returns a
+        float > 0 or None on any error / non-positive duration. Fail-quiet."""
+        try:
+            result = subprocess.run(
+                [
+                    self._ffprobe_bin(),
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    path,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=10.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            value = float(result.stdout.decode("utf-8", "replace").strip())
+        except (ValueError, AttributeError):
+            return None
+        return value if value > 0 else None
+
+    def finalize_visit(self, event_id, scratch_dir, start_ts, end_ts,
+                       recordings_dir=None, preroll_module=None):
+        """Concat a visit's already-copied scratch segments into ONE
+        ``<event_id>.mp4`` (continuous-capture S3, plan "S3 recorder
+        finalize"). Returns True iff a validated final clip was published.
+
+        Steps (see docs/continuous_capture_plan.md B1/R8/R9/R1):
+          1. List + sort scratch segments by name (= chronological play
+             order, S2 writes ``000000.mp4, 000001.mp4, …``). Empty → ERROR,
+             no output, return False (the route 404s honestly).
+          2. ffprobe-validate each segment (``_filter_valid_segments``); drop
+             moov-less / 0-byte ones (WARN). All dropped → fail-closed.
+          3. Whole-segment ``-c copy -f mp4`` concat to ``<id>.mp4.tmp``
+             (NO inpoint/outpoint — ±~4.3s edge precision accepted).
+          4. Bytes-scaled timeout (R9); drop ``+faststart`` above the byte
+             threshold to skip the full-file second pass on big clips.
+          5. Real-decode post-validate (B1): ``ffmpeg -v error -f null -`` +
+             DTS-marker grep + duration ≈ window. ffprobe-rc=0 is NOT enough.
+          6. Success → atomic ``os.replace(tmp, final)``. ANY failure →
+             unlink ``.tmp``, leave NO final file, ERROR, return False.
+          7. R8: the per-visit ``scratch_dir`` is ``rmtree(ignore_errors=
+             True)``'d in a ``try/finally`` on EVERY exit path; the whole
+             body holds a module-level ``Semaphore(1)`` (Nano OOM history);
+             makedirs/IO failures degrade, never crash.
+
+        ``recordings_dir`` defaults to ``self.recordings_dir``. ``end_ts -
+        start_ts`` is the nominal visit window used by the duration check;
+        pass them as the visit's wall-clock bounds. ``preroll_module`` lets
+        callers/tests inject the concat-list writer; defaults to importing
+        ``preroll`` (detection/ is on sys.path, not a package).
+        """
+        rec_dir = recordings_dir if recordings_dir is not None else self.recordings_dir
+        final_path = os.path.join(rec_dir, "{}.mp4".format(event_id))
+        tmp_path = final_path + ".tmp"
+        list_path = final_path + ".visit.concat.txt"
+        try:
+            expected_duration = float(end_ts) - float(start_ts)
+        except (TypeError, ValueError):
+            expected_duration = None
+        if expected_duration is not None and expected_duration <= 0:
+            expected_duration = None
+
+        # plan R8: serialize finalizes (Nano OOM history) AND guarantee the
+        # per-visit scratch dir is reaped on EVERY exit path.
+        _FINALIZE_SEMAPHORE.acquire()
+        try:
+            return self._finalize_visit_locked(
+                event_id, scratch_dir, rec_dir, final_path, tmp_path,
+                list_path, expected_duration, preroll_module,
+            )
+        finally:
+            # Reap the per-visit scratch dir no matter how we exited (plan R8
+            # "try/finally rmtree on every exit path"). ignore_errors so a
+            # partial cleanup never raises into the caller.
+            try:
+                if scratch_dir:
+                    shutil.rmtree(scratch_dir, ignore_errors=True)
+                    if os.path.exists(scratch_dir):
+                        applog.emit(
+                            "recording",
+                            "DEBUG event_id={} visit scratch dir not fully "
+                            "removed: {} (slow-disk leak?)".format(
+                                event_id, scratch_dir,
+                            ),
+                        )
+            except OSError:
+                pass
+            _FINALIZE_SEMAPHORE.release()
+
+    def _finalize_visit_locked(self, event_id, scratch_dir, rec_dir,
+                               final_path, tmp_path, list_path,
+                               expected_duration, preroll_module):
+        """Body of ``finalize_visit`` (runs under the semaphore). Separated
+        so the ``try/finally`` rmtree + semaphore release in the caller stay
+        tiny and impossible to skip. Returns True on a published clip."""
+        # Step 1: list + sort scratch segments by NAME (chronological play
+        # order — S2's copy_new_segments writes 000000.mp4, 000001.mp4, …).
+        try:
+            names = sorted(
+                n for n in os.listdir(scratch_dir)
+                if n.endswith(".mp4")
+            )
+        except OSError as e:
+            applog.emit(
+                "recording",
+                "ERROR finalize: scratch_dir unreadable for event_id={} "
+                "(dir={!r}): {}: {} — no clip".format(
+                    event_id, scratch_dir, type(e).__name__, e,
+                ),
+            )
+            return False
+        if not names:
+            applog.emit(
+                "recording",
+                "ERROR finalize: no scratch segments for event_id={} "
+                "(dir={!r}) — no clip produced (/clips will 404)".format(
+                    event_id, scratch_dir,
+                ),
+            )
+            return False
+        segments = [os.path.join(scratch_dir, n) for n in names]
+
+        # Step 2: ffprobe-drop moov-less / 0-byte segments (reuse the
+        # recorder's filter). All dropped → fail-closed.
+        valid = self._filter_valid_segments(segments, event_id)
+        if not valid:
+            applog.emit(
+                "recording",
+                "ERROR finalize: ALL {} scratch segment(s) invalid for "
+                "event_id={} — no clip produced".format(
+                    len(segments), event_id,
+                ),
+            )
+            return False
+
+        # ensure recordings_dir exists (degrade, never crash).
+        try:
+            os.makedirs(rec_dir, exist_ok=True)
+        except OSError as e:
+            applog.emit(
+                "recording",
+                "ERROR finalize: makedirs failed for recordings_dir={!r} "
+                "event_id={}: {}: {} — no clip".format(
+                    rec_dir, event_id, type(e).__name__, e,
+                ),
+            )
+            return False
+
+        # Clean any stale .tmp from a prior crashed finalize so we never
+        # publish a partial.
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+
+        # Step 4 (prep): bytes-scaled timeout + faststart decision.
+        total_bytes = 0
+        for seg in valid:
+            try:
+                total_bytes += os.path.getsize(seg)
+            except OSError:
+                pass
+        timeout_s = self._finalize_timeout_for(total_bytes)
+        use_faststart = total_bytes <= _FINALIZE_FASTSTART_MAX_BYTES
+
+        if preroll_module is None:
+            import preroll as preroll_module  # noqa: detection/ on sys.path
+
+        # Step 3: whole-segment concat to the .tmp sidecar.
+        try:
+            try:
+                preroll_module.write_concat_list(list_path, valid)
+            except (OSError, IOError) as e:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize: concat-list write failed for "
+                    "event_id={} ({!r}): {}: {} — no clip".format(
+                        event_id, list_path, type(e).__name__, e,
+                    ),
+                )
+                self._finalize_unlink(tmp_path)
+                return False
+
+            cmd = self._build_finalize_args(list_path, tmp_path, use_faststart)
+            applog.emit(
+                "recording",
+                "finalize event_id={}: {} segment(s), {:.1f} MB, "
+                "faststart={} (timeout {:.0f}s)".format(
+                    event_id, len(valid), total_bytes / 1e6,
+                    use_faststart, timeout_s,
+                ),
+            )
+            try:
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=timeout_s,
+                )
+            except subprocess.TimeoutExpired:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize: concat TIMED OUT after {:.0f}s for "
+                    "event_id={} — no clip".format(timeout_s, event_id),
+                )
+                self._finalize_unlink(tmp_path)
+                return False
+            except OSError as e:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize: ffmpeg spawn failed (bin={!r}) for "
+                    "event_id={}: {}: {} — no clip".format(
+                        self.ffmpeg_bin, event_id, type(e).__name__, e,
+                    ),
+                )
+                self._finalize_unlink(tmp_path)
+                return False
+            if result.returncode != 0:
+                tail = ""
+                if getattr(result, "stderr", None):
+                    tail = result.stderr.decode(
+                        "utf-8", "replace",
+                    ).replace("\n", " | ")[-1000:]
+                applog.emit(
+                    "recording",
+                    "ERROR finalize: concat ffmpeg rc={} for event_id={}{} "
+                    "— no clip".format(
+                        result.returncode, event_id,
+                        (" stderr_tail=" + tail) if tail else "",
+                    ),
+                )
+                self._finalize_unlink(tmp_path)
+                return False
+
+            # Step 5: real-decode post-validate (B1). ffprobe-rc=0 is NOT
+            # enough — a broken -c copy concat passes it; only a full decode
+            # pass + duration check is honest.
+            if not (os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0):
+                applog.emit(
+                    "recording",
+                    "ERROR finalize: concat reported success but output "
+                    "missing/empty for event_id={} — no clip".format(event_id),
+                )
+                self._finalize_unlink(tmp_path)
+                return False
+            if not self._decode_validate(tmp_path, expected_duration, event_id):
+                self._finalize_unlink(tmp_path)
+                return False
+
+            # Step 6: atomic publish. Same-filesystem rename is atomic, so
+            # the /clips route serves either nothing or the complete clip,
+            # never a partial.
+            try:
+                os.replace(tmp_path, final_path)
+            except OSError as e:
+                applog.emit(
+                    "recording",
+                    "ERROR finalize: publish rename failed for event_id={} "
+                    "({} -> {}): {}: {} — /clips 404-forever".format(
+                        event_id, tmp_path, final_path, type(e).__name__, e,
+                    ),
+                )
+                self._finalize_unlink(tmp_path)
+                return False
+            applog.emit(
+                "recording",
+                "finalize event_id={} published ({} bytes)".format(
+                    event_id,
+                    os.path.getsize(final_path)
+                    if os.path.exists(final_path) else "?",
+                ),
+            )
+            return True
+        finally:
+            # Always drop the concat-list temp + any leftover .tmp.
+            self._finalize_unlink(list_path)
+
+    @staticmethod
+    def _finalize_unlink(path):
+        """Best-effort unlink; never raises. Keeps a failed finalize from
+        leaving a partial .tmp (which the /clips route must never serve) or
+        a leaked concat-list."""
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
