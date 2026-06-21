@@ -162,6 +162,17 @@ paths:
     # path, and 2.5 Mbps CBR is achievable. Smaller GOP-time
     # (iframeinterval=8 / 60 fps = 133 ms) gives crisper recovery on
     # any packet loss — beneficial side-effect.
+    #
+    # iter (camera-recovery 2026-06-20, deep-research-backed): the `watchdog`
+    # element (gst-plugins-bad) after h264parse posts an ERROR to the bus if no
+    # encoded buffers flow for `timeout` ms — i.e. the sensor/libargus wedged
+    # MID-STREAM (the pipeline was running but stopped producing). That exits
+    # the gst-launch, and `runOnInitRestart: yes` respawns it. Placed on the
+    # post-encoder (regular-memory) boundary, not on the NVMM sensor caps, so
+    # it can't perturb the zero-copy path. timeout=5000 = 5 s ≈ 300 dropped
+    # frames at 60 fps (clearly a stall, not a hiccup). The deeper "Failed to
+    # create CaptureSession" startup wedge is handled by the systemd BindsTo +
+    # the escalating detection watchdog (restart nvargus-daemon).
     runOnInit: >-
       gst-launch-1.0 -e
       nvarguscamerasrc sensor-mode=1 !
@@ -170,6 +181,7 @@ paths:
       'video/x-raw(memory:NVMM),width=1280,height=720' !
       nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true !
       h264parse !
+      watchdog timeout=5000 !
       rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam
     runOnInitRestart: yes
 

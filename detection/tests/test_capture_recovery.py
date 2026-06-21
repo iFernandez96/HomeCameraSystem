@@ -90,24 +90,25 @@ def test_given_capture_returns_none_n_times_when_handler_runs_then_failures_accu
     # assert — failures should have accumulated.
     assert consecutive_failures == 29
     assert watchdog.failures == 29
-    # One short of the 30-fail threshold; not yet ready to restart.
-    assert watchdog.should_restart(now=100.0) is False
+    # One short of the 30-fail threshold; the ladder doesn't act yet.
+    assert watchdog.next_action(now=100.0) is None
 
 
-def test_given_30_consecutive_capture_failures_when_handler_runs_then_watchdog_signals_restart(
+def test_given_30_consecutive_capture_failures_when_handler_runs_then_watchdog_acts(
     monkeypatch,
 ):
-    # arrange — stub out the actual subprocess restart so the test
-    # doesn't try to systemctl restart anything on the dev host.
+    # arrange — stub the subprocess restart AND the diagnostics probes so the
+    # test doesn't systemctl restart anything or shell out on the dev host.
     monkeypatch.setattr(detect, "restart_mediamtx", lambda: True)
+    monkeypatch.setattr(detect, "_capture_wedge_diagnostics", lambda action: None)
     watchdog = MediaMtxWatchdog(fail_threshold=30, cooldown_s=60.0)
     metrics = Metrics()
     liveness = _FakeLiveness()
     consecutive_failures = 0
 
-    # act — 30 None-captures in a row. The 30th call sees
-    # `should_restart` flip True, which calls restart_mediamtx +
-    # mark_restarted, which RESETS watchdog.failures to 0.
+    # act — 30 None-captures in a row. The 30th call trips the threshold →
+    # next_action returns the first rung (restart_mediamtx), executes it, and
+    # climbs the ladder one step (resetting the failure tally for the cooldown).
     for _ in range(30):
         consecutive_failures = detect._handle_capture_failure(
             "timeout (None)",
@@ -117,11 +118,13 @@ def test_given_30_consecutive_capture_failures_when_handler_runs_then_watchdog_s
             liveness,
         )
 
-    # assert — watchdog fired exactly once. metrics counter records it.
-    assert watchdog.restart_count == 1
+    # assert — exactly one action fired (cheap mediamtx restart), the ladder
+    # climbed to level 1, and the metric recorded it.
+    assert watchdog.action_count == 1
+    assert watchdog.level == 1
     assert metrics.mediamtx_restarts == 1
-    # consecutive_failures (the local) keeps incrementing; only the
-    # watchdog's internal counter resets on mark_restarted.
+    # consecutive_failures (the local) keeps incrementing; only the watchdog's
+    # internal failure tally resets when it acts.
     assert consecutive_failures == 30
 
 
@@ -166,8 +169,9 @@ def test_given_100_consecutive_failures_when_handler_runs_then_systemexit_fires(
     Restart=on-failure cycles the worker. Pin that the threshold
     works."""
     # arrange — pretend the watchdog restart succeeded so the
-    # restart-mediamtx subprocess doesn't actually run.
+    # restart-mediamtx subprocess doesn't actually run; stub diagnostics too.
     monkeypatch.setattr(detect, "restart_mediamtx", lambda: True)
+    monkeypatch.setattr(detect, "_capture_wedge_diagnostics", lambda action: None)
     watchdog = MediaMtxWatchdog(fail_threshold=30, cooldown_s=60.0)
     metrics = Metrics()
     liveness = _FakeLiveness()

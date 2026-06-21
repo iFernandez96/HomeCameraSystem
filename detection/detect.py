@@ -178,7 +178,13 @@ _PERSON_DEDUP_IOU = 0.5
 _PRESENCE_GAP_S = 20.0
 
 from box_norm import normalize_box  # noqa: E402
-from mediamtx_watchdog import MediaMtxWatchdog  # noqa: E402
+from mediamtx_watchdog import (  # noqa: E402
+    ACTION_REBOOT,
+    ACTION_RESTART_MEDIAMTX,
+    ACTION_RESTART_NVARGUS,
+    MediaMtxWatchdog,
+)
+import sdnotify  # noqa: E402  (systemd Type=notify liveness; no-op off-systemd)
 from memory_guard import MemoryGuard, read_mem_available_mb  # noqa: E402
 from metrics import Metrics  # noqa: E402
 from presence import PresenceTracker  # noqa: E402
@@ -768,8 +774,8 @@ def escalate_argus_recovery():
 
     This function automates that escalation. The caller (in
     `_handle_capture_failure`) only invokes it after N consecutive
-    mediamtx-only restarts have failed to recover the stream — see
-    `mediamtx_watchdog.should_escalate`. Heavy-hammer: kills + restarts
+    mediamtx-only restarts have failed to recover the stream — see the
+    escalation ladder in `mediamtx_watchdog`. Heavy-hammer: kills + restarts
     the daemon that owns the camera sensor, which blanks every
     consumer for 5-10 s. Worth it on a stuck-feed but never on a
     transient blip — that's why it's gated behind 2 prior restart
@@ -815,6 +821,134 @@ def escalate_argus_recovery():
     return True
 
 
+# --- escalating-watchdog persistence + diagnostics + guarded reboot --------
+#
+# THE FIX (root-caused 2026-06-20): the nvargus escalation was unreachable
+# because the watchdog's in-memory level reset every time systemd recycled the
+# worker (~60-75 s under a fast-failing wedge), so it never climbed past a
+# mediamtx restart. Persisting `level`/`last_action_at` to a file on the data
+# volume lets the ladder keep climbing ACROSS worker restarts → nvargus restart
+# (which clears the libargus wedge) is reached in ~3 min, reboot only after.
+#
+# `_WATCHDOG_STATE` also carries `last_reboot_at` — the boot-loop guard: if a
+# reboot didn't clear the wedge, we must NOT reboot again immediately.
+_WATCHDOG_STATE = {}          # type: ignore[var-annotated]
+_WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_state.json
+# Don't auto-reboot more than once per this window — a reboot that doesn't fix
+# the wedge would otherwise boot-loop the Jetson.
+_REBOOT_MIN_INTERVAL_S = 1800.0
+
+
+def _load_watchdog_state(path):
+    """Read the persisted escalation state ({level, last_action_at,
+    last_reboot_at}). Survives the systemd worker-restart so the escalation
+    ladder keeps climbing. Returns {} on any error (fresh start)."""
+    try:
+        with open(str(path)) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_watchdog_state(path, state):
+    """Atomically persist the escalation state. Best-effort — a save failure
+    just means escalation can't span a restart, never a crash."""
+    if path is None:
+        return
+    try:
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, str(path))
+    except OSError as e:
+        print("[detect] watchdog state save failed: {}".format(e), flush=True)
+
+
+def _persist_watchdog_level(watchdog):
+    """After an action, write the new ladder level so a worker restart resumes
+    the escalation instead of dropping back to mediamtx-only."""
+    snap = watchdog.snapshot()
+    _WATCHDOG_STATE["level"] = snap["level"]
+    _WATCHDOG_STATE["last_action_at"] = snap["last_action_at"]
+    _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
+
+
+def _clear_watchdog_escalation():
+    """On recovery (a real frame), reset the persisted ladder to the bottom —
+    but KEEP last_reboot_at so the boot-loop guard survives."""
+    if _WATCHDOG_STATE.get("level"):
+        _WATCHDOG_STATE["level"] = 0
+        _WATCHDOG_STATE["last_action_at"] = None
+        _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
+
+
+def _capture_wedge_diagnostics(action):
+    """Snapshot thermal / power / memory / nvargus / kernel state when the
+    watchdog escalates, so the (still-undiagnosed) ROOT cause of the libargus
+    wedge becomes greppable from the journal. Runs only on escalation (rare),
+    best-effort, bounded, never raises."""
+    print(
+        "[detect] === WATCHDOG DIAGNOSTICS (escalating -> {}) ===".format(action),
+        flush=True,
+    )
+    probes = (
+        ("memory", ["free", "-m"]),
+        ("tegrastats", ["timeout", "2", "tegrastats"]),
+        ("nvargus", ["sh", "-c", "ps -o pid=,rss=,etime=,cmd= -C nvargus-daemon || true"]),
+        ("dmesg-tail", ["sh", "-c", "sudo -n dmesg 2>/dev/null | tail -15 || true"]),
+        ("thermal", ["sh", "-c",
+                     "for z in /sys/class/thermal/thermal_zone*/temp; do "
+                     "echo \"$z=$(cat $z 2>/dev/null)\"; done"]),
+    )
+    for name, cmd in probes:
+        try:
+            out = subprocess.run(
+                cmd, timeout=4.0,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            text = out.stdout.decode("utf-8", "replace").strip()[:1500]
+            print("[detect] [diag:{}]\n{}".format(name, text), flush=True)
+        except Exception as e:
+            print("[detect] [diag:{}] probe failed: {}".format(name, e), flush=True)
+
+
+def _do_reboot():
+    """Last-resort reboot, with a boot-loop guard. If we rebooted within
+    `_REBOOT_MIN_INTERVAL_S`, a reboot clearly isn't fixing the wedge — DON'T
+    loop; fall back to a nvargus-daemon restart instead."""
+    now = time.time()
+    last = _WATCHDOG_STATE.get("last_reboot_at") or 0.0
+    if (now - last) < _REBOOT_MIN_INTERVAL_S:
+        print(
+            "[detect] WATCHDOG: reboot SUPPRESSED — last reboot {:.0f}s ago "
+            "(< {:.0f}s boot-loop guard); falling back to nvargus restart".format(
+                now - last, _REBOOT_MIN_INTERVAL_S,
+            ),
+            flush=True,
+        )
+        return escalate_argus_recovery()
+    _WATCHDOG_STATE["last_reboot_at"] = now
+    _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
+    print(
+        "[detect] WATCHDOG: REBOOTING Jetson — camera wedged and mediamtx + "
+        "nvargus-daemon restarts did not clear it (set "
+        "DETECT_WATCHDOG_ALLOW_REBOOT=0 to disable)",
+        flush=True,
+    )
+    try:
+        subprocess.run(
+            ["sudo", "-n", "systemctl", "reboot"],
+            timeout=10.0, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    except Exception as e:
+        print("[detect] WATCHDOG: reboot command failed: {}".format(e), flush=True)
+        return False
+    return True
+
+
 def open_camera(uri, attempts=30, retry_s=2.0):
     """Wait for the upstream RTSP to come up (mediamtx may still be starting)."""
     last_err = None
@@ -848,9 +982,10 @@ def _handle_capture_failure(
        POSTing after 30 s and the UI shows worker_alive=false
        prematurely (iter-172).
     4. Print every 10 failures (with `reason` in the message).
-    5. Watchdog restart check; iter-172 unconditional `mark_restarted`
-       so a wedged sudo doesn't burn ~10 s every iteration.
-    6. SystemExit at 100 — systemd recovers.
+    5. Watchdog `next_action` check → execute the escalation rung
+       (mediamtx -> nvargus -> reboot) + persist the level.
+    6. SystemExit at 100 — systemd recovers (but the PERSISTED ladder
+       lets the next worker life resume the escalation).
 
     Returns the new `consecutive_failures` count. Raises SystemExit
     on giving up.
@@ -865,21 +1000,23 @@ def _handle_capture_failure(
             flush=True,
         )
     now = time.time()
-    if mediamtx_watchdog.should_restart(now):
-        # iter-302: escalation tier. After 2 mediamtx-only restarts
-        # have failed to recover the stream, the next watchdog kick
-        # restarts nvargus-daemon FIRST (the iter-300 wedge that
-        # mediamtx alone couldn't unstick) then mediamtx. Both
-        # paths bump mark_restarted so cooldown applies regardless.
-        if mediamtx_watchdog.restart_count >= 2:
-            success = escalate_argus_recovery()
-            if success:
+    action = mediamtx_watchdog.next_action(now)
+    if action is not None:
+        # The watchdog chose a recovery rung (mediamtx -> nvargus -> reboot).
+        # Capture diagnostics FIRST (the wedge's root cause is still unknown),
+        # then execute, then persist the new escalation level so a systemd
+        # worker-restart RESUMES the ladder instead of resetting to
+        # mediamtx-only (the 2026-06-20 reachability fix).
+        _capture_wedge_diagnostics(action)
+        if action == ACTION_RESTART_MEDIAMTX:
+            if restart_mediamtx():
+                metrics.mediamtx_restarts += 1
+        elif action == ACTION_RESTART_NVARGUS:
+            if escalate_argus_recovery():
                 metrics.argus_restarts += 1
-        else:
-            success = restart_mediamtx()
-            if success:
-                metrics.mediamtx_restarts = mediamtx_watchdog.restart_count + 1
-        mediamtx_watchdog.mark_restarted(now)
+        elif action == ACTION_REBOOT:
+            _do_reboot()
+        _persist_watchdog_level(mediamtx_watchdog)
     if consecutive_failures > 100:
         print(
             "[detect] giving up after 100 consecutive capture failures "
@@ -1178,6 +1315,14 @@ def main():
     log.info("opening source %s", source_uri)
     camera = open_camera(source_uri)
     log.info("source open; sending events to %s", event_url)
+    # Worker is fully up (model loaded + camera open). Tell systemd we're READY
+    # (Type=notify) so the WatchdogSec liveness timer starts NOW — the long TRT
+    # load above must not count against it. Each main-loop iteration then pings
+    # WATCHDOG=1; if the loop HANGS (a true deadlock, distinct from a capture
+    # wedge that the mediamtx_watchdog handles) the pings stop and systemd
+    # restarts us — and the persisted escalation state resumes recovery. No-op
+    # when not run under systemd (dev host / tests).
+    sdnotify.ready()
     liveness.bump()
 
     # iter-272 (camera-algorithm-auditor B1): per-(label, camera_id)
@@ -1263,7 +1408,26 @@ def main():
     # would just reconnect to the same dead RTSP path. Tuned so a single
     # mediamtx kick happens around the 60 s mark; if THAT doesn't clear
     # it, the existing 100-failure exit will hand recovery to systemd.
-    mediamtx_watchdog = MediaMtxWatchdog(fail_threshold=30, cooldown_s=60.0)
+    # Escalating, PERSISTENT recovery ladder (2026-06-20): mediamtx restart ->
+    # nvargus-daemon restart (clears the libargus "Failed to create
+    # CaptureSession" wedge) -> reboot. Level/last_action_at are persisted to
+    # the data volume so the ladder keeps climbing ACROSS systemd worker
+    # restarts — the old in-memory restart_count reset every restart, so the
+    # nvargus rung was unreachable and it flapped on mediamtx forever.
+    global _WATCHDOG_STATE, _WATCHDOG_STATE_PATH
+    _WATCHDOG_STATE_PATH = os.path.join(str(recordings_dir), ".watchdog_state.json")
+    _WATCHDOG_STATE = _load_watchdog_state(_WATCHDOG_STATE_PATH)
+    _allow_reboot = _env("DETECT_WATCHDOG_ALLOW_REBOOT", "1") not in (
+        "0", "false", "False", "no", "off",
+    )
+    mediamtx_watchdog = MediaMtxWatchdog(
+        fail_threshold=30, cooldown_s=60.0, allow_reboot=_allow_reboot,
+    )
+    # Resume the escalation ladder where the last worker life left off.
+    mediamtx_watchdog.restore(
+        _WATCHDOG_STATE.get("level", 0),
+        _WATCHDOG_STATE.get("last_action_at"),
+    )
     # Memory guard: pauses inference (not capture) when the host runs
     # critically low on RAM. Worker keeps draining frames so the RTSP
     # pipeline doesn't back up, and metrics keep flowing — the user can
@@ -1287,6 +1451,9 @@ def main():
     # `_read_thermal_zone_by_name` syscall per ~10 s — negligible.
     thermal_check_every_n_frames = 10
     while True:
+        # systemd WatchdogSec liveness: proves THIS loop is running (a hung
+        # loop stops pinging → systemd restarts us). Cheap no-op off-systemd.
+        sdnotify.watchdog()
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
         # 2000 ms timeout in jetson-utils handles transient RTSP hiccups
@@ -1319,10 +1486,10 @@ def main():
             # UNCONDITIONALLY after Capture() returned, BEFORE this
             # None check. So a None return immediately reset both
             # counters, then the handler bumped consecutive_failures
-            # to 1 — and the cycle repeated forever. Watchdog
-            # `should_restart` never returned True (`failures` reset
-            # every iteration to 0 then 1), the 100-failure
-            # SystemExit never fired, and the worker logged
+            # to 1 — and the cycle repeated forever. The watchdog
+            # never acted (`failures` reset every iteration to 0 then
+            # 1), the 100-failure SystemExit never fired, and the
+            # worker logged
             # "[detect] capture timeout (None) #1" 1460 times in
             # an hour with zero recovery action. Move the success
             # reset BELOW this check so it only runs on a real
@@ -1339,7 +1506,10 @@ def main():
         # counter AND the watchdog tally. Pre-iter-300 these were
         # at the top of the try block — see comment above.
         consecutive_failures = 0
-        mediamtx_watchdog.on_capture_ok()
+        if mediamtx_watchdog.on_capture_ok():
+            # Recovered from an escalated state — reset the PERSISTED ladder so
+            # the next incident starts cheap (mediamtx restart), not mid-ladder.
+            _clear_watchdog_escalation()
         # iter-302: timestamp of the most recent real frame. The
         # heartbeat thread forwards this; server derives
         # `seconds_since_last_frame` from it on /api/status. Without

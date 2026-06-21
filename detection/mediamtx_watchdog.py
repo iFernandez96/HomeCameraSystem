@@ -1,101 +1,178 @@
-"""Decide when to kick MediaMTX on persistent capture failure.
+"""Decide HOW to recover when the camera feed wedges — an escalating,
+persistent ladder, not a flat "kick mediamtx".
 
 Background — what this guards against:
     The encoder pipeline lives in MediaMTX's `runOnInit` GStreamer
-    `gst-launch-1.0 nvarguscamerasrc ! ... ! rtspclientsink`. We've seen
-    this pipeline stay alive in the cgroup (so systemd thinks mediamtx is
-    healthy) while no longer producing frames — libargus hangs, or
-    NvMMLite hits an internal block error, or the H.264 encoder gets
-    stuck. Detection then sees nothing but Capture() timeouts.
+    `gst-launch-1.0 nvarguscamerasrc ! ... ! rtspclientsink`. We've seen this
+    pipeline stay alive in the cgroup (so systemd thinks mediamtx is healthy)
+    while no longer producing frames — libargus hangs with "Failed to create
+    CaptureSession", or the H.264 encoder gets stuck. Detection then sees
+    nothing but Capture() failures.
 
-    The detection worker has its own systemd-restart trigger (100
-    consecutive failures → exit(1) → systemd restart), but that only
-    cycles detect.py — and detect immediately reconnects to the same
-    dead RTSP path and times out again. The fix has to restart mediamtx,
-    not detect.
+Why the OLD design failed (root-caused 2026-06-20):
+    The previous watchdog kicked mediamtx, and only escalated to a
+    nvargus-daemon restart after `restart_count >= 2`. But `restart_count`
+    was IN-MEMORY. When the camera is fully wedged, Capture() fails FAST (not
+    2 s timeouts), so the worker hits its 100-failure SystemExit in ~60-75 s
+    → systemd restarts the worker → a FRESH watchdog with restart_count=0.
+    With a 60 s cooldown the worker only ever did ~1 mediamtx kick per life,
+    so restart_count never reached 2 and the nvargus escalation was
+    UNREACHABLE. Result: an 80x mediamtx restart flap that never cleared the
+    Argus wedge (a deep-research-confirmed fact: only a nvargus-daemon restart
+    clears it).
 
-How this works:
-    The watchdog tallies consecutive `Capture()` failures and, once a
-    failure threshold trips AND we're past a cooldown window since the
-    previous restart attempt, signals "kick mediamtx now." After a
-    successful capture the failure tally resets. If we're past the
-    cooldown but failures keep accumulating, the watchdog signals again.
+How this works now:
+    The watchdog walks an escalation LADDER — restart mediamtx (cheap, fixes a
+    transient encoder stall) → restart nvargus-daemon (the only thing that
+    clears the libargus wedge) → reboot (last resort). Each rung fires once
+    per cooldown window. The `level` (ladder index) and `last_action_at` are
+    PERSISTED by the caller across worker restarts (see detect.py), so the
+    ladder keeps climbing even though the worker is being recycled by systemd —
+    the fix for the unreachable-escalation bug above. A real frame
+    (`on_capture_ok`) means recovery → de-escalate to the bottom rung.
 
-    Pure stdlib so the module is unit-testable without jetson_inference
-    or any host-only dependency.
+    Pure stdlib + no I/O so the decision logic is unit-testable without
+    jetson_inference or any host-only dependency; the caller owns persistence
+    and the actual subprocess side-effects.
 
-    Must stay Python-3.6-compatible — JetPack 4.x ships 3.6 on the host
-    where detect.py imports this module. Don't add `from __future__
-    import annotations` or PEP-604 unions.
+    Must stay Python-3.6-compatible — JetPack 4.x ships 3.6 on the host where
+    detect.py imports this module. No `from __future__ import annotations`,
+    PEP-604 unions, f-strings in a way that matters, walrus, or match.
 """
 import logging
 
 log = logging.getLogger(__name__)
 
 
+# Escalation actions returned by `next_action`. The caller maps each to a
+# concrete side-effect (systemctl restart ... / reboot).
+ACTION_RESTART_MEDIAMTX = "restart_mediamtx"
+ACTION_RESTART_NVARGUS = "restart_nvargus"
+ACTION_REBOOT = "reboot"
+
+# Default ladder: try the cheap pipeline restart twice (handles a transient
+# encoder/pipeline stall), then the Argus-clearing nvargus-daemon restart
+# twice (deep-research-confirmed as the only thing that clears "Failed to
+# create CaptureSession"), then a reboot as the last resort. Climbing one rung
+# per cooldown, with state persisted across worker restarts, nvargus is reached
+# in ~3 cooldowns (~3 min) and reboot only after that all failed.
+_DEFAULT_LADDER = (
+    ACTION_RESTART_MEDIAMTX,
+    ACTION_RESTART_MEDIAMTX,
+    ACTION_RESTART_NVARGUS,
+    ACTION_RESTART_NVARGUS,
+    ACTION_REBOOT,
+)
+
+
 class MediaMtxWatchdog:
-    """Decide whether to restart mediamtx after a burst of capture failures.
+    """Escalating recovery decision-maker for a wedged camera feed.
 
     Args:
-        fail_threshold: consecutive failures that must accumulate before
-            the watchdog fires. At ~2 s per Capture() timeout, the
-            default 30 means roughly a 60 s observation window.
-        cooldown_s: minimum gap between restart signals, so a single bad
-            burst only kicks mediamtx once even if recovery takes a few
-            seconds.
+        fail_threshold: consecutive Capture() failures before a rung may fire
+            (a debounce so a single dropped frame doesn't act).
+        cooldown_s: minimum gap between actions, so a wedged subsystem is never
+            hammered — and the escalation paces ~one rung per cooldown.
+        ladder: the escalation sequence (defaults to `_DEFAULT_LADDER`).
+        allow_reboot: when False, the reboot rung degrades to a nvargus restart
+            (operator opt-out of the nuclear option).
     """
 
-    def __init__(self, fail_threshold: int = 30, cooldown_s: float = 60.0):
+    def __init__(self, fail_threshold=30, cooldown_s=60.0, ladder=None,
+                 allow_reboot=True):
         self.fail_threshold = fail_threshold
         self.cooldown_s = cooldown_s
+        self.ladder = tuple(ladder) if ladder is not None else _DEFAULT_LADDER
+        self.allow_reboot = allow_reboot
         self.failures = 0
-        # `-inf` so the first restart is never blocked by the cooldown
-        # check — any real wall-clock `now` is ≥ -inf + cooldown_s.
-        self.last_restart_at = float("-inf")
-        self.restart_count = 0
+        # `-inf` so the first action is never blocked by the cooldown check.
+        self.last_action_at = float("-inf")
+        # Index into the ladder — PERSISTED across worker restarts by the
+        # caller so escalation survives the systemd recycle that reset the old
+        # in-memory restart_count.
+        self.level = 0
+        # Total actions taken this run — a greppable flap signal in the journal.
+        self.action_count = 0
 
-    def on_capture_ok(self) -> None:
-        """Reset the failure tally — RTSP is alive again."""
+    def on_capture_ok(self):
+        """A real frame arrived — the feed recovered. Clear the failure tally
+        and de-escalate to the bottom rung so the NEXT incident starts cheap.
+        Returns True if this was a recovery FROM an escalated state (so the
+        caller can clear persisted state + log), else False."""
         self.failures = 0
+        if self.level != 0:
+            log.info(
+                "mediamtx_watchdog: frames recovered — de-escalating from "
+                "level %d to 0", self.level,
+            )
+            self.level = 0
+            return True
+        return False
 
-    def on_capture_fail(self) -> None:
+    def on_capture_fail(self):
         """Bump the consecutive-failure tally."""
         self.failures += 1
 
-    def should_restart(self, now: float) -> bool:
-        """True iff failures have reached the threshold AND we're past
-        the cooldown window since the last restart signal. The caller is
-        responsible for actually performing the restart and then calling
-        `mark_restarted(now)` so the watchdog can enter cooldown."""
+    def next_action(self, now):
+        """Return the recovery action to take NOW (one of the ACTION_*
+        constants) or None. Escalates one rung per fire; cooldown-gated so a
+        wedged subsystem is never hammered. The caller executes the returned
+        action and then persists `level`/`last_action_at`."""
         if self.failures < self.fail_threshold:
-            return False
-        return (now - self.last_restart_at) >= self.cooldown_s
-
-    def mark_restarted(self, now: float) -> None:
-        """Record that mediamtx was kicked at `now`.
-
-        iter-300 (camera-library/algorithm auditor convergent #1):
-        Pre-iter-300 this also reset `self.failures = 0`. That created
-        a 60 s "blind window" if the kick didn't recover the stream:
-        failures had to re-accumulate to the 30-fail threshold AFTER
-        the cooldown expired before a second kick could fire — total
-        downtime 120 s per failed-recovery cycle.
-
-        Now we only record the timestamp + bump the count. The
-        cooldown gate in `should_restart` still prevents back-to-back
-        re-fires inside the cooldown window. The `on_capture_ok` path
-        is the only legitimate place to clear the failure tally —
-        and that fires on a real frame, which is the actual signal of
-        recovery."""
-        self.last_restart_at = now
-        self.restart_count += 1
-        # Restart is a degraded/self-healing event the operator must be
-        # able to see: a flapping count (restart_count climbing) means
-        # MediaMTX/libargus isn't recovering. WARNING with the express
-        # reason (consecutive capture failures) + the running kick
-        # count so repeated kicks are greppable as flapping.
+            return None
+        if (now - self.last_action_at) < self.cooldown_s:
+            return None
+        action = self._resolve_action(self.level)
+        prev_level = self.level
+        triggered_failures = self.failures
+        self.last_action_at = now
+        # Give the action a cooldown window to take effect before re-counting.
+        self.failures = 0
+        self.action_count += 1
+        # Climb one rung, clamping at the top (keep retrying the last action
+        # until a real frame de-escalates us).
+        self.level = min(self.level + 1, len(self.ladder) - 1)
         log.warning(
-            "mediamtx_watchdog: kicking MediaMTX after %d consecutive "
-            "capture failures (threshold %d) - restart #%d this run",
-            self.failures, self.fail_threshold, self.restart_count,
+            "mediamtx_watchdog: camera feed wedged — escalation level %d -> "
+            "action=%s (action #%d this run; %d consecutive failures, "
+            "threshold %d)",
+            prev_level, action, self.action_count, triggered_failures,
+            self.fail_threshold,
         )
+        return action
+
+    def _resolve_action(self, level):
+        """Map a ladder index to an action, honoring `allow_reboot`."""
+        action = self.ladder[min(level, len(self.ladder) - 1)]
+        if action == ACTION_REBOOT and not self.allow_reboot:
+            # Reboot disabled by the operator → keep hammering the strongest
+            # non-reboot remedy (nvargus restart) instead of escalating.
+            return ACTION_RESTART_NVARGUS
+        return action
+
+    # --- persistence helpers (the caller owns the file) --------------------
+
+    def snapshot(self):
+        """Serializable escalation state to persist across worker restarts.
+        `last_action_at` is None when never acted (the -inf sentinel doesn't
+        round-trip cleanly through JSON)."""
+        la = self.last_action_at
+        return {
+            "level": self.level,
+            "last_action_at": None if la == float("-inf") else la,
+        }
+
+    def restore(self, level, last_action_at):
+        """Re-seed escalation state loaded from disk on worker startup so the
+        ladder continues climbing instead of resetting to mediamtx-only."""
+        try:
+            self.level = max(0, min(int(level), len(self.ladder) - 1))
+        except (TypeError, ValueError):
+            self.level = 0
+        if last_action_at is None:
+            self.last_action_at = float("-inf")
+        else:
+            try:
+                self.last_action_at = float(last_action_at)
+            except (TypeError, ValueError):
+                self.last_action_at = float("-inf")

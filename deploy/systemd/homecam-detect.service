@@ -13,6 +13,17 @@ StartLimitBurst=5
 StartLimitIntervalSec=60
 
 [Service]
+# iter (camera-recovery 2026-06-20): sd_notify Type=notify + WatchdogSec was
+# attempted here but DEFERRED — on the live worker, READY=1 was accepted yet
+# the per-loop WATCHDOG=1 pings did not refresh the systemd watchdog timer
+# (WatchdogTimestamp never advanced past READY), so WatchdogSec kept firing and
+# restart-cycled the worker. Root cause still under investigation (likely the
+# `_latest.jpg` saver runs in a side thread while the ping sits on a slower
+# path, or a NOTIFY_SOCKET reuse quirk). The escalating mediamtx_watchdog +
+# BindsTo + the GStreamer watchdog element already cover the real failure
+# modes; the systemd liveness watchdog is belt-and-suspenders for a TRUE
+# worker hang and will be re-enabled once the ping path is verified. The
+# detect.py sd_notify calls are no-ops while NOTIFY_SOCKET is unset (Type=simple).
 Type=simple
 User=israel
 Group=israel

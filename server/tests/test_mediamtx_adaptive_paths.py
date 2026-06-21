@@ -134,3 +134,19 @@ def test_Given_hq_cam_path_When_inspected_Then_keeps_hardware_encoder(paths):
     # assert
     assert "nvv4l2h264enc" in command, "HQ cam path must keep the hardware encoder"
     assert "nvarguscamerasrc" in command, "HQ cam path is the single capture path"
+
+
+def test_Given_hq_cam_path_When_inspected_Then_has_mid_stream_stall_watchdog(paths):
+    """camera-recovery 2026-06-20: the publish pipeline carries a `watchdog`
+    element so a mid-stream sensor/libargus stall errors the pipeline (→
+    runOnInitRestart respawns) instead of silently producing no frames. It
+    sits AFTER h264parse (post-encoder, regular memory) so it can't perturb
+    the NVMM zero-copy path."""
+    # arrange / act
+    command = _normalize(paths["cam"]["runOnInit"])
+    # assert — watchdog present, with a finite (non-zero = enabled) timeout,
+    # and downstream of the encoder/parser (not on the NVMM sensor caps).
+    assert "watchdog timeout=5000" in command, "publish pipeline must have a stall watchdog"
+    assert command.index("h264parse") < command.index("watchdog"), (
+        "watchdog must sit after h264parse (post-encoder regular memory)"
+    )
