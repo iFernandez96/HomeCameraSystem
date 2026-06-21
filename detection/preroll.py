@@ -429,6 +429,194 @@ class PrerollBuffer(object):
         candidates.sort(key=lambda t: t[0])
         return [path for _m, path in candidates]
 
+    # ---- iter continuous-capture / S2: ring-range API + incremental copy ----
+    #
+    # The pre-roll `segments_in_window(now, pre_roll_s)` selects a window
+    # ENDING at `now`. The continuous-capture finalize layer (S3) instead
+    # needs a CLOSED BAND `[start_ts, end_ts]` (the wall-clock window of a
+    # whole visit), selected by OVERLAP — segments are GOP-floored to
+    # ~4.3s (plan R1), NOT 1s, so equality/granularity assumptions would
+    # drop boundary segments. A segment is modelled as covering the window
+    # `[mtime - segment_s, mtime]` (mtime ≈ end-of-segment, ffmpeg writes
+    # in order then renames). The band [start_ts, end_ts] is CLOSED at
+    # both ends; a segment is included iff its window intersects it.
+
+    def segments_in_range(self, start_ts, end_ts):
+        """Return segment paths whose recorded time-window OVERLAPS the
+        closed band [start_ts, end_ts], in CHRONOLOGICAL (play) order.
+
+        Each segment is treated as covering ``[mtime - segment_s, mtime]``
+        (mtime ≈ end-of-segment-window). Overlap with the closed band
+        ``[start_ts, end_ts]`` is:
+
+            seg_start <= end_ts  AND  seg_end >= start_ts
+
+        i.e. the boundary segment straddling ``start_ts`` (its window
+        reaches past start_ts) and the one straddling ``end_ts`` (its
+        window starts before end_ts) are BOTH included — selection is by
+        overlap, not exact equality, because the recorded GOP is ~4.3s
+        (plan R1), not 1s. Returns ``[]`` if the buffer dir is missing /
+        unreadable or no segments have been written yet.
+
+        Like ``segments_in_window`` we tolerate a little clock skew: the
+        ``- segment_s`` on the leading edge of each segment's window is the
+        skew margin; we don't additionally pad the band itself.
+        """
+        if end_ts < start_ts:
+            # Degenerate band — caller confusion. Don't guess; empty.
+            return []
+        try:
+            entries = os.listdir(self.buffer_dir)
+        except OSError as e:
+            # docs/logging_plan.md §2: same failure mode as
+            # segments_in_window — buffer dir unmounted / perms. Without
+            # a log the finalized visit clip would silently lose footage.
+            # Once-flagged so a persistent failure doesn't flood.
+            if not getattr(self, "_segrange_listdir_warned", False):
+                applog.emit(
+                    "preroll",
+                    "segments_in_range listdir failed for "
+                    "buffer_dir={!r}: {}: {} — visit footage unavailable "
+                    "(buffer dir unmounted?)".format(
+                        self.buffer_dir, type(e).__name__, e,
+                    ),
+                )
+                self._segrange_listdir_warned = True
+            return []
+        # Re-arm so a transient failure logs again next time.
+        self._segrange_listdir_warned = False
+        candidates = []
+        for name in entries:
+            if not (name.startswith("seg_") and name.endswith(".mp4")):
+                continue
+            path = os.path.join(self.buffer_dir, name)
+            try:
+                m = os.path.getmtime(path)
+            except OSError:
+                continue
+            # Segment window is [seg_start, seg_end]; mtime ≈ seg_end.
+            seg_end = m
+            seg_start = m - self.segment_s
+            # Closed-band overlap test.
+            if seg_start <= end_ts and seg_end >= start_ts:
+                candidates.append((m, path))
+        candidates.sort(key=lambda t: t[0])
+        return [path for _m, path in candidates]
+
+    def copy_new_segments(self, start_ts, until_ts, scratch_dir,
+                          already_copied=None):
+        """Incremental copy-on-extend (plan B3 / iter-356.51 defense).
+
+        Select ring segments overlapping the closed band
+        ``[start_ts, until_ts]`` via ``segments_in_range`` and ``copy2``
+        each one whose ``(basename, mtime)`` identity is NOT already in
+        ``already_copied`` into ``scratch_dir`` (created if missing).
+        Idempotent — an identity already copied is skipped, so repeated
+        ticks never re-copy an unchanged slot.
+
+        Meant to run on EVERY extend tick so a completed ring segment is
+        copied into per-visit scratch BEFORE the ring's ``-segment_wrap``
+        can rewrite that slot. Once copied, ring rotation is harmless to
+        the visit's footage (mirrors recording.py:454-466's copy-before-
+        wait race fix, but driven incrementally as the visit grows).
+
+        Pure file ops — NO ffmpeg here (concat/validate is S3's job).
+
+        Args:
+            start_ts, until_ts: closed wall-clock band so far.
+            scratch_dir: per-visit dir to copy completed segments into.
+            already_copied: opaque accumulator from a prior call (a set of
+                ``(basename, mtime)`` identities) or a list of the same.
+                ``None`` => start fresh.
+
+        Returns a 2-tuple ``(newly_copied_dest_paths, already_copied)``:
+            - ``newly_copied_dest_paths``: list of dest paths copied THIS
+              call, in chronological (play) order.
+            - ``already_copied``: the SAME set passed in (mutated in place)
+              — or a fresh set when ``None``/a list was passed — now
+              holding every ``(basename, mtime)`` copied so far.
+
+        Why ``(basename, mtime)`` and not just the basename: the ring reuses
+        slot NAMES (``seg_NNN.mp4``) after a ``-segment_wrap``, so a slot
+        freshly OVERWRITTEN with new footage has the SAME name but a new
+        mtime. Keying on the name alone would skip that new generation,
+        silently dropping footage for any visit that outlasts the ring
+        window (max_visit can exceed the wrap span). Keying on (name, mtime)
+        copies the new generation instead. Dest files are named by a
+        monotonic counter (``000000.mp4`` …) so successive generations
+        never collide and sort chronologically — S3's finalize just orders
+        the scratch dir by name.
+
+        A slot that vanished mid-copy (the ring already wrapped + the
+        finalize hasn't caught up) is logged + skipped — the caller
+        tolerates a slightly short clip rather than crashing the worker.
+        """
+        # Normalise already_copied to a mutable set we own. We keep the
+        # caller's object when it's a set (mutate in place, as documented);
+        # for a list we copy into a set but ALSO return that set — the
+        # caller rebinds to our return value either way.
+        if already_copied is None:
+            seen = set()
+        elif isinstance(already_copied, set):
+            seen = already_copied
+        else:
+            seen = set(already_copied)
+
+        try:
+            os.makedirs(scratch_dir, exist_ok=True)
+        except OSError as e:
+            # docs/logging_plan.md §2: per-visit scratch makedirs failed
+            # (volume RO / full). Nothing copies → finalize gets no
+            # footage. ERROR naming the dir + reason; return what we have
+            # (nothing) so the caller degrades to a short/empty clip
+            # rather than crashing.
+            applog.emit(
+                "preroll",
+                "ERROR copy_new_segments makedirs failed for "
+                "scratch_dir={!r}: {}: {} — visit footage will be "
+                "incomplete".format(scratch_dir, type(e).__name__, e),
+            )
+            return [], seen
+
+        import shutil
+
+        newly_copied = []
+        for src in self.segments_in_range(start_ts, until_ts):
+            try:
+                mtime = os.path.getmtime(src)
+            except OSError:
+                # Vanished between listing and stat (ring wrapped it) —
+                # skip; a later tick may find a fresh slot under this name.
+                continue
+            ident = (os.path.basename(src), mtime)
+            if ident in seen:
+                continue
+            # Unique, chronologically-sortable dest name. segments_in_range
+            # yields chronological order and we only ever append, so the
+            # monotonic counter (= len(seen)) names successive generations
+            # in play order. A skipped (failed) copy doesn't grow seen, so
+            # the next success reuses the index — no gaps, no collisions.
+            dst = os.path.join(scratch_dir, "{:06d}.mp4".format(len(seen)))
+            try:
+                shutil.copy2(src, dst)
+            except (OSError, IOError) as e:
+                # The slot vanished / was rewritten mid-copy because the
+                # ring already wrapped it (B3 race we lost on this slot),
+                # or the dest is unwritable. Skip it — DON'T mark it seen
+                # (a later tick may find a fresh, intact slot under the
+                # same name + new mtime). The caller tolerates a short clip.
+                applog.emit(
+                    "preroll",
+                    "copy_new_segments skipped {!r} -> {!r}: {}: {} — "
+                    "ring likely wrapped the slot mid-copy".format(
+                        src, dst, type(e).__name__, e,
+                    ),
+                )
+                continue
+            seen.add(ident)
+            newly_copied.append(dst)
+        return newly_copied, seen
+
 
 def write_concat_list(list_path, segment_paths):
     """Write the ffmpeg concat-demuxer input file. Mirrors the
