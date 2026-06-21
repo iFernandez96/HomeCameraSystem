@@ -137,6 +137,11 @@ def test_get_returns_current_config(client: TestClient):
         # operator opt-out + TTL.
         "face_capture_enabled": True,
         "face_capture_retention_days": 30,
+        # S5: continuous-capture (visit) feature. Defaults OFF; the
+        # worker reads these off the config-poll verbatim.
+        "continuous_capture": False,
+        "max_visit_s": 150.0,
+        "absence_finalize_s": 10.0,
     }
 
 
@@ -905,3 +910,146 @@ def test_given_internal_config_endpoint_when_get_then_face_capture_fields_presen
     body = r.json()
     assert "face_capture_enabled" in body
     assert "face_capture_retention_days" in body
+
+
+# --- Slice 5: continuous-capture (visit) config knobs --------------------
+
+
+def test_when_loaded_default_then_continuous_capture_off_with_visit_defaults(
+    client: TestClient,
+):
+    # arrange / act
+    body = client.get("/api/detection/config").json()
+
+    # assert — feature ships OFF; the worker reads these names verbatim.
+    assert body["continuous_capture"] is False
+    assert body["max_visit_s"] == 150.0
+    assert body["absence_finalize_s"] == 10.0
+
+
+def test_given_continuous_capture_patch_when_get_then_round_trips(
+    client: TestClient,
+):
+    # arrange / act
+    r = client.patch(
+        "/api/detection/config",
+        json={"continuous_capture": True},
+    )
+
+    # assert
+    assert r.status_code == 200, r.text
+    body = client.get("/api/detection/config").json()
+    assert body["continuous_capture"] is True
+
+
+def test_given_max_visit_s_out_of_bounds_when_patch_then_rejected(
+    client: TestClient,
+):
+    # arrange / act — above MAX_VISIT_MAX (600) and below MIN (30)
+    r_high = client.patch("/api/detection/config", json={"max_visit_s": 9999})
+    r_low = client.patch("/api/detection/config", json={"max_visit_s": 5})
+
+    # assert
+    assert r_high.status_code == 422
+    assert r_low.status_code == 422
+
+
+def test_given_max_visit_s_in_bounds_when_patch_then_round_trips(
+    client: TestClient,
+):
+    # arrange / act
+    r = client.patch("/api/detection/config", json={"max_visit_s": 200.0})
+
+    # assert
+    assert r.status_code == 200, r.text
+    assert client.get("/api/detection/config").json()["max_visit_s"] == 200.0
+
+
+def test_given_absence_finalize_s_out_of_bounds_when_patch_then_rejected(
+    client: TestClient,
+):
+    # arrange / act — above ABSENCE_FINALIZE_MAX (60) and below MIN (3)
+    r_high = client.patch(
+        "/api/detection/config", json={"absence_finalize_s": 120}
+    )
+    r_low = client.patch("/api/detection/config", json={"absence_finalize_s": 1})
+
+    # assert
+    assert r_high.status_code == 422
+    assert r_low.status_code == 422
+
+
+def test_given_absence_finalize_s_in_bounds_when_patch_then_round_trips(
+    client: TestClient,
+):
+    # arrange / act
+    r = client.patch(
+        "/api/detection/config", json={"absence_finalize_s": 20.0}
+    )
+
+    # assert
+    assert r.status_code == 200, r.text
+    assert (
+        client.get("/api/detection/config").json()["absence_finalize_s"] == 20.0
+    )
+
+
+def test_given_visit_fields_when_store_reloaded_then_persist(tmp_path):
+    # arrange
+    from app.services.detection_config import DetectionConfigStore
+    path = tmp_path / "cfg.json"
+    s = DetectionConfigStore(path=path)
+    s.update(continuous_capture=True, max_visit_s=300.0, absence_finalize_s=25.0)
+
+    # act
+    s2 = DetectionConfigStore(path=path)
+
+    # assert
+    assert s2.get().continuous_capture is True
+    assert s2.get().max_visit_s == 300.0
+    assert s2.get().absence_finalize_s == 25.0
+
+
+def test_given_disk_load_with_out_of_range_visit_fields_when_loaded_then_clamped(
+    tmp_path,
+):
+    # arrange — manually-edited config with crazy visit knobs
+    from app.services.detection_config import (
+        ABSENCE_FINALIZE_MAX,
+        ABSENCE_FINALIZE_MIN,
+        DetectionConfigStore,
+        MAX_VISIT_MAX,
+        MAX_VISIT_MIN,
+    )
+    path = tmp_path / "cfg.json"
+    path.write_text('{"max_visit_s": 99999, "absence_finalize_s": 99999}')
+
+    # act
+    s = DetectionConfigStore(path=path)
+
+    # assert — clamped to the ceilings
+    assert s.get().max_visit_s == MAX_VISIT_MAX
+    assert s.get().absence_finalize_s == ABSENCE_FINALIZE_MAX
+
+    path.write_text('{"max_visit_s": -10, "absence_finalize_s": -10}')
+    s2 = DetectionConfigStore(path=path)
+    assert s2.get().max_visit_s == MAX_VISIT_MIN
+    assert s2.get().absence_finalize_s == ABSENCE_FINALIZE_MIN
+
+
+def test_given_internal_config_endpoint_when_get_then_visit_fields_present(
+    client_anon: TestClient,
+):
+    """The worker polls /api/_internal/detection/config (unauth) for the
+    continuous-capture knobs (resolve_continuous_config reads
+    continuous_capture / max_visit_s / absence_finalize_s verbatim).
+    Surface them on the worker-mirror wire."""
+    # arrange / act
+    r = client_anon.get("/api/_internal/detection/config")
+
+    # assert
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "continuous_capture" in body
+    assert "max_visit_s" in body
+    assert "absence_finalize_s" in body

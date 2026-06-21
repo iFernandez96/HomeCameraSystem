@@ -166,12 +166,16 @@ def test_detection_limits_match_server_bounds():
     accept).
     """
     from app.services.detection_config import (
+        ABSENCE_FINALIZE_MAX,
+        ABSENCE_FINALIZE_MIN,
         CLIP_POST_ROLL_MAX,
         CLIP_POST_ROLL_MIN,
         CLIP_PRE_ROLL_MAX,
         CLIP_PRE_ROLL_MIN,
         COOLDOWN_MAX,
         COOLDOWN_MIN,
+        MAX_VISIT_MAX,
+        MAX_VISIT_MIN,
         THRESHOLD_MAX,
         THRESHOLD_MIN,
     )
@@ -188,6 +192,11 @@ def test_detection_limits_match_server_bounds():
         ("clipPostRollMax", CLIP_POST_ROLL_MAX),
         ("clipPreRollMin", CLIP_PRE_ROLL_MIN),
         ("clipPreRollMax", CLIP_PRE_ROLL_MAX),
+        # S5: continuous-capture (visit) feature bounds.
+        ("maxVisitMin", MAX_VISIT_MIN),
+        ("maxVisitMax", MAX_VISIT_MAX),
+        ("absenceFinalizeMin", ABSENCE_FINALIZE_MIN),
+        ("absenceFinalizeMax", ABSENCE_FINALIZE_MAX),
     )
 
     for camel_name, server_value in expected_pairs:
@@ -231,6 +240,10 @@ def test_extract_detection_limits_finds_all_keys():
         "clipPostRollMax",
         "clipPreRollMin",
         "clipPreRollMax",
+        "maxVisitMin",
+        "maxVisitMax",
+        "absenceFinalizeMin",
+        "absenceFinalizeMax",
     }
     assert set(pairs) == expected, (
         "Parser found {} but expected {}. The "

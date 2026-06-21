@@ -1348,6 +1348,10 @@ describe('lib/api', () => {
       audio_enabled: false,
       face_capture_enabled: true,
       face_capture_retention_days: 30,
+      // S5: continuous-capture (visit) knobs — defaults OFF.
+      continuous_capture: false,
+      max_visit_s: 150,
+      absence_finalize_s: 10,
     }
     mockJson(cfg)
     const { getDetectionConfig } = await import('./api')
@@ -1358,6 +1362,52 @@ describe('lib/api', () => {
     // assert
     expect(r.face_capture_enabled).toBe(true)
     expect(r.face_capture_retention_days).toBe(30)
+  })
+
+  it('test_get_detection_config_includes_continuous_capture_fields', async () => {
+    // arrange — DetectionConfig with the S5 visit knobs. Pin the wire
+    // shape so a server route rename doesn't silently de-sync.
+    const cfg = {
+      threshold: 0.55,
+      cooldown_s: 5,
+      enabled: true,
+      schedule_off_start: null,
+      schedule_off_end: null,
+      classes: ['person'],
+      zones: [],
+      clip_post_roll_s: 5,
+      clip_pre_roll_s: 5,
+      clip_retention_preset: 'month',
+      camera_label: 'Front Door',
+      audio_enabled: false,
+      face_capture_enabled: true,
+      face_capture_retention_days: 30,
+      continuous_capture: false,
+      max_visit_s: 150,
+      absence_finalize_s: 10,
+    }
+    mockJson(cfg)
+    const { getDetectionConfig } = await import('./api')
+
+    // act
+    const r = await getDetectionConfig()
+
+    // assert — the worker reads these names verbatim off the poll.
+    expect(r.continuous_capture).toBe(false)
+    expect(r.max_visit_s).toBe(150)
+    expect(r.absence_finalize_s).toBe(10)
+  })
+
+  it('test_detection_limits_expose_visit_bounds', async () => {
+    // arrange / act — DETECTION_LIMITS mirrors the server MIN/MAX
+    // consts; the S6 slider binds its min/max props to these.
+    const { DETECTION_LIMITS } = await import('./types')
+
+    // assert
+    expect(DETECTION_LIMITS.maxVisitMin).toBe(30)
+    expect(DETECTION_LIMITS.maxVisitMax).toBe(600)
+    expect(DETECTION_LIMITS.absenceFinalizeMin).toBe(3)
+    expect(DETECTION_LIMITS.absenceFinalizeMax).toBe(60)
   })
 })
 

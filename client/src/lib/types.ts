@@ -192,6 +192,18 @@ export type DetectionConfig = {
   /** iter-356.6X: bounded retention for the face/person capture
    * trees. Server clamps to [1, 365]. */
   face_capture_retention_days: number
+  /** Continuous-capture (visit) feature — S5. When true, the worker
+   * records one clip per VISIT (presence span) instead of one per
+   * detection. Defaults false until the operator opts in. The worker
+   * reads this off the config-poll. */
+  continuous_capture: boolean
+  /** S5: hard cap on a single visit's duration (seconds). Caps
+   * stuck-detection disk fill. Server clamps to [30, 600]. */
+  max_visit_s: number
+  /** S5: post-roll grace (seconds) after the subject leaves before
+   * the visit clip is finalized. NEW field (plan R3) — distinct from
+   * the deprecated `clip_post_roll_s`. Server clamps to [3, 60]. */
+  absence_finalize_s: number
 }
 
 /** A curated pick-list of common COCO classes shown as chips in Settings. */
@@ -220,6 +232,14 @@ export const DETECTION_LIMITS = {
   clipPostRollMax: 1800, // 30 min — week preset cap
   clipPreRollMin: 0,
   clipPreRollMax: 300, // 5 min — week preset cap
+  // Continuous-capture (visit) feature — S5. Mirrors
+  // MAX_VISIT_MIN/MAX + ABSENCE_FINALIZE_MIN/MAX in
+  // server/app/services/detection_config.py. The slider UI (S6)
+  // binds its min/max props to these.
+  maxVisitMin: 30,
+  maxVisitMax: 600,
+  absenceFinalizeMin: 3,
+  absenceFinalizeMax: 60,
 } as const
 
 // iter-257: retention/clip-cap presets. Mirrored from

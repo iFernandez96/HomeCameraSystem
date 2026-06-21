@@ -95,6 +95,24 @@ FACE_CAPTURE_RETENTION_MIN = 1
 FACE_CAPTURE_RETENTION_MAX = 365
 FACE_CAPTURE_RETENTION_DEFAULT = 30
 
+# Continuous-capture (visit) feature config knobs — Slice 5 (S5).
+# The worker reads these verbatim off the config-poll
+# (detection/visit_runtime.py::resolve_continuous_config):
+#   continuous_capture (bool), max_visit_s (float), absence_finalize_s (float).
+# Feature defaults OFF — `continuous_capture=False` keeps the legacy
+# per-event clip path until the operator opts in (S7 live bake).
+# `max_visit_s` is the HARD CAP on a single visit's duration (caps
+# stuck-detection disk fill); plan B2/R3 default 150s (between the
+# 120-180s band). `absence_finalize_s` is the post-roll grace window
+# after the subject leaves before the visit clip is finalized — a NEW
+# field per plan R3; do NOT reinterpret the deprecated `clip_post_roll_s`.
+MAX_VISIT_MIN = 30.0
+MAX_VISIT_MAX = 600.0
+MAX_VISIT_DEFAULT = 150.0
+ABSENCE_FINALIZE_MIN = 3.0
+ABSENCE_FINALIZE_MAX = 60.0
+ABSENCE_FINALIZE_DEFAULT = 10.0
+
 CLASSES_MAX = 30  # cap to keep config files sane and validation cheap
 # Cap the length of any individual class name. Longest real COCO label
 # is "kitchen scissors" at 16 chars; 64 is generous. Without this, a
@@ -213,6 +231,18 @@ class DetectionConfig:
     # in face_capture_sweeper.py honours this. Bounded
     # [FACE_CAPTURE_RETENTION_MIN, FACE_CAPTURE_RETENTION_MAX].
     face_capture_retention_days: int = FACE_CAPTURE_RETENTION_DEFAULT
+    # Continuous-capture (visit) feature — Slice 5. The worker reads
+    # these off the unauth config-poll (visit_runtime.py). Feature
+    # defaults OFF; `clip_post_roll_s` above stays for the legacy
+    # per-event path and is NOT repurposed (plan R3).
+    continuous_capture: bool = False
+    # Hard cap on a single visit's duration (seconds). Clamped
+    # [MAX_VISIT_MIN, MAX_VISIT_MAX] on PATCH + disk-load.
+    max_visit_s: float = MAX_VISIT_DEFAULT
+    # Post-roll grace after the subject leaves before finalizing the
+    # visit clip. NEW field (plan R3) — distinct from clip_post_roll_s.
+    # Clamped [ABSENCE_FINALIZE_MIN, ABSENCE_FINALIZE_MAX].
+    absence_finalize_s: float = ABSENCE_FINALIZE_DEFAULT
 
 
 # Length cap for `camera_label`. iter-305: 32 chars covers
@@ -507,6 +537,27 @@ class DetectionConfigStore:
                 if data.get("clip_retention_preset") in RETENTION_PRESETS
                 else RETENTION_PRESET_DEFAULT
             ),
+            continuous_capture=(
+                bool(data["continuous_capture"])
+                if data.get("continuous_capture") is not None
+                else self.config.continuous_capture
+            ),
+            max_visit_s=_clamp(
+                _safe_float(
+                    data.get("max_visit_s", self.config.max_visit_s),
+                    self.config.max_visit_s,
+                ),
+                MAX_VISIT_MIN,
+                MAX_VISIT_MAX,
+            ),
+            absence_finalize_s=_clamp(
+                _safe_float(
+                    data.get("absence_finalize_s", self.config.absence_finalize_s),
+                    self.config.absence_finalize_s,
+                ),
+                ABSENCE_FINALIZE_MIN,
+                ABSENCE_FINALIZE_MAX,
+            ),
         )
         log.info("loaded detection config: %s", asdict(self.config))
 
@@ -611,6 +662,27 @@ class DetectionConfigStore:
             if "clip_pre_roll_s" in patch and patch["clip_pre_roll_s"] is not None
             else _clamp(cur.clip_pre_roll_s, CLIP_PRE_ROLL_MIN, pre_max)
         )
+        continuous_capture = (
+            bool(patch["continuous_capture"])
+            if "continuous_capture" in patch
+            and patch["continuous_capture"] is not None
+            else cur.continuous_capture
+        )
+        max_visit_s = (
+            _clamp(patch["max_visit_s"], MAX_VISIT_MIN, MAX_VISIT_MAX)
+            if "max_visit_s" in patch and patch["max_visit_s"] is not None
+            else cur.max_visit_s
+        )
+        absence_finalize_s = (
+            _clamp(
+                patch["absence_finalize_s"],
+                ABSENCE_FINALIZE_MIN,
+                ABSENCE_FINALIZE_MAX,
+            )
+            if "absence_finalize_s" in patch
+            and patch["absence_finalize_s"] is not None
+            else cur.absence_finalize_s
+        )
         self.config = DetectionConfig(
             threshold=threshold,
             cooldown_s=cooldown_s,
@@ -626,6 +698,9 @@ class DetectionConfigStore:
             audio_enabled=audio_enabled,
             face_capture_enabled=face_capture_enabled,
             face_capture_retention_days=face_capture_retention_days,
+            continuous_capture=continuous_capture,
+            max_visit_s=max_visit_s,
+            absence_finalize_s=absence_finalize_s,
         )
         self._save()
         return self.config

@@ -15,6 +15,8 @@ from ..config import settings
 from ..services.camera import camera_service
 from ..services.detection import detection_service
 from ..services.detection_config import (
+    ABSENCE_FINALIZE_MAX,
+    ABSENCE_FINALIZE_MIN,
     CLASS_NAME_MAX,
     CLIP_POST_ROLL_MAX,
     CLIP_POST_ROLL_MIN,
@@ -24,6 +26,8 @@ from ..services.detection_config import (
     COOLDOWN_MIN,
     FACE_CAPTURE_RETENTION_MAX,
     FACE_CAPTURE_RETENTION_MIN,
+    MAX_VISIT_MAX,
+    MAX_VISIT_MIN,
     HHMM_PATTERN,
     THRESHOLD_MAX,
     THRESHOLD_MIN,
@@ -102,6 +106,18 @@ class DetectionConfigPatch(BaseModel):
         default=None,
         ge=FACE_CAPTURE_RETENTION_MIN,
         le=FACE_CAPTURE_RETENTION_MAX,
+    )
+    # Continuous-capture (visit) feature — Slice 5. The worker reads
+    # these off the unauth config-poll. Feature defaults OFF.
+    continuous_capture: bool | None = None
+    # Hard cap on a single visit's duration (s).
+    max_visit_s: float | None = Field(
+        default=None, ge=MAX_VISIT_MIN, le=MAX_VISIT_MAX
+    )
+    # Post-roll grace after the subject leaves before finalize. NEW
+    # field (plan R3) — distinct from the deprecated clip_post_roll_s.
+    absence_finalize_s: float | None = Field(
+        default=None, ge=ABSENCE_FINALIZE_MIN, le=ABSENCE_FINALIZE_MAX
     )
 
 
