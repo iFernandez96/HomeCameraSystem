@@ -83,3 +83,4 @@ memory/*.original.md
 # Read-only real-data snapshot pulled by deploy/fetch-jetson-data.sh for
 # offline analysis + gated real-data tests. Never commit production data.
 /.jetson-snapshot/
+.playwright-mcp/

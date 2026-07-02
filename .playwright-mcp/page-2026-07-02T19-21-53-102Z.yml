@@ -1,6 +1,0 @@
-- generic [ref=f8e3]:
-  - link "Skip to content" [ref=f8e4] [cursor=pointer]:
-    - /url: "#main"
-  - main [ref=f8e5]:
-    - status "Loading camera" [ref=f8e7]:
-      - generic [ref=f8e8]: Loading camera
