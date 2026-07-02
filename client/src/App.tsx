@@ -9,7 +9,6 @@ import { SideRail } from './components/SideRail'
 import { WatchRibbon } from './components/WatchRibbon'
 import { AuthProvider, useAuth } from './lib/auth'
 import { useUnreadBadge } from './lib/badge'
-import { useCatsEnabled } from './lib/catPref'
 import { ConfirmProvider } from './lib/confirm'
 import { ToastProvider } from './lib/toast'
 
@@ -20,7 +19,10 @@ import { ToastProvider } from './lib/toast'
 // The named-export → default-export shim is needed because pages
 // export `export function X` (matches the rest of the codebase)
 // while React.lazy wants a default export.
-const Live = lazy(() => import('./pages/Live').then((m) => ({ default: m.Live })))
+// Structural overhaul (2026-07-02): Watch replaces Live as the home
+// route — live video pinned on top + today's timeline below (user-
+// approved Google-Home/Ring hybrid). The old Live page is retired.
+const Watch = lazy(() => import('./pages/Watch').then((m) => ({ default: m.Watch })))
 const Events = lazy(() =>
   import('./pages/Events').then((m) => ({ default: m.Events })),
 )
@@ -55,9 +57,6 @@ const Review = lazy(() =>
 // behind a code-split boundary that fires at the same time the
 // guard would have. Estimated save: ~8-9 KB gzip off the shell;
 // Login chunk shrinks back close to its 6 KB pre-iter-356.4 size.
-const CatLayer = lazy(() =>
-  import('./components/CatLayer').then((m) => ({ default: m.CatLayer })),
-)
 
 // iter-356.20 (Maya 14th CRITICAL #1): bare-spinner page fallback
 // kept for non-Live routes (Events / People / Settings / Training /
@@ -86,13 +85,12 @@ function AppShell() {
   const location = useLocation()
   // iter-248: home-screen app-icon badge wiring.
   useUnreadBadge()
-  const [catsEnabled] = useCatsEnabled()
   // iter-356.58 (layout rebuild): cats only walk on Live. The
   // mobile-architect brief flagged the cat strip overlapping the
   // empty-state cat illustration on People + Settings. Restricting
   // to /live keeps the brand atmosphere while removing the visual
   // register collision on other routes.
-  const isLiveRoute = location.pathname === '/live' || location.pathname === '/'
+  const isWatchRoute = location.pathname === '/' || location.pathname === '/live'
   // iter-356.58: hide the entire shell chrome on Login. Login owns
   // the full viewport with its own brand block.
   const isLoginRoute = location.pathname === '/login'
@@ -110,7 +108,17 @@ function AppShell() {
                 ribbon carries identity universally.
           This is the load-bearing layout move. SaaS-template
           sidebar pattern dies here. */}
-      {showShell && <WatchRibbon />}
+      {/* Structural overhaul: on the Watch home the armed state lives
+          ON the video scrim, so the ribbon would say the same thing
+          twice on a phone. Desktop keeps it (brand + jump action). */}
+      {showShell &&
+        (isWatchRoute ? (
+          <div className="hidden lg:block">
+            <WatchRibbon />
+          </div>
+        ) : (
+          <WatchRibbon />
+        ))}
       {showShell && <SideRail />}
       {/* iter-269 (accessibility-auditor D top-3): skip-to-main link.
           Visible only when keyboard-focused. Closes the iter-261
@@ -148,14 +156,14 @@ function AppShell() {
         // ~120 px (the CatLayer strip height = SPRITE_HEIGHT + 56 +
         // the 80-px bottom offset) so scrolling to the end reveals
         // the ambient cats walking ABOVE the BottomNav. CatLayer
-        // only mounts on /live (see isLiveRoute below), so other
+        // only mounts on /live (see isWatchRoute below), so other
         // routes use the base nav-clearance pb only — pre-gating
         // they got 120 px of empty cream on iPhone with no cats to
         // fill it, the "horrible bottom space" report. Desktop (lg+)
         // keeps the original pb-6 because lg has no BottomNav and
         // the SideRail handles nav.
         className={`flex-1 overflow-y-auto overscroll-y-contain ${
-          isLiveRoute
+          isWatchRoute
             ? 'pb-[calc(5rem+env(safe-area-inset-bottom)+7.5rem)]'
             : 'pb-[calc(5rem+env(safe-area-inset-bottom))]'
         } lg:pb-6 w-full ${
@@ -173,17 +181,18 @@ function AppShell() {
           <Suspense fallback={<PageFallback />}>
             <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/" element={<Navigate to="/live" replace />} />
             <Route
-              path="/live"
+              path="/"
               element={
                 <RequireAuth>
-                  <ErrorBoundary label="Live">
-                    <Live />
+                  <ErrorBoundary label="Watch">
+                    <Watch />
                   </ErrorBoundary>
                 </RequireAuth>
               }
             />
+            {/* Old bookmark/deep-link compat: /live → the new home. */}
+            <Route path="/live" element={<Navigate to="/" replace />} />
             <Route
               path="/events"
               element={
@@ -263,11 +272,13 @@ function AppShell() {
           page keeps the brand atmosphere where it belongs (the
           camera IS the cats' domain) and clears bottom space on
           every other route. */}
-      {showShell && catsEnabled && isLiveRoute && (
-        <Suspense fallback={null}>
-          <CatLayer />
-        </Suspense>
-      )}
+      {/* Structural overhaul (2026-07-02): the ambient CatLayer is
+          UNMOUNTED. On the old Live page the cats walked over empty
+          space; the Watch home fills that space with the today-
+          timeline and the sprites walked straight over event cards.
+          The brand stays via the trio mark, paw nav, and cat empty
+          states. The component + cat toggle remain for a future
+          surface that has real floor space. */}
     </div>
   )
 }

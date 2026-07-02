@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // the React.lazy promise resolves instantly when Live mounts.
     // Errors are swallowed because the React.lazy will surface its
     // own retry path through Suspense if the chunk genuinely fails.
-    void import('../pages/Live').catch(() => {})
+    void import('../pages/Watch').catch(() => {})
     getMe()
       .then((res) => {
         if (cancelled) return

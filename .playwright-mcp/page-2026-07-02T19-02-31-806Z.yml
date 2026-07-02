@@ -1,0 +1,30 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e3]: LIVE VIEW — FRONT DOOR
+  - generic [ref=f1e4]:
+    - generic [ref=f1e6]: On watch
+    - generic [ref=f1e7]: · Front Door
+    - generic [ref=f1e8]: 2s ago
+  - generic [ref=f1e9]:
+    - generic [ref=f1e10]: ◉
+    - generic [ref=f1e11]: ⏺
+    - generic [ref=f1e12]: 🔊
+  - generic [ref=f1e13]:
+    - heading "TODAY AT THE DOOR 12 events →" [level=2] [ref=f1e15]:
+      - text: TODAY AT THE DOOR
+      - emphasis [ref=f1e16]: 12 events →
+    - generic [ref=f1e17]:
+      - paragraph [ref=f1e20]:
+        - generic [ref=f1e21]: Person · Israel
+        - text: 2:41 PM
+      - paragraph [ref=f1e24]:
+        - generic [ref=f1e25]: Delivery
+        - text: 11:07 AM
+      - paragraph [ref=f1e28]:
+        - generic [ref=f1e29]: Stranger
+        - text: 9:56 AM
+      - paragraph [ref=f1e32]:
+        - generic [ref=f1e33]: Coco spotted
+        - text: 8:12 AM
+    - generic [ref=f1e35]:
+      - text: Panther is on watch
+      - generic [ref=f1e36]: Detection armed · alerts on

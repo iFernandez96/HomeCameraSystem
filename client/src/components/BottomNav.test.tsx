@@ -25,9 +25,9 @@ describe('BottomNav', () => {
     ).toBeInTheDocument()
   })
 
-  it('when rendered, then exposes one link per configured tab (iter-356.x: five tabs after Training surfaced for active-learning loop)', () => {
+  it('when rendered, then exposes one link per configured tab (structural overhaul: four tabs — Watch/History/People/Settings; Training lives inside People)', () => {
     // arrange
-    renderAt('/live')
+    renderAt('/')
 
     // act
     const links = screen.getAllByRole('link')
@@ -35,12 +35,11 @@ describe('BottomNav', () => {
     // assert: getAllByRole returns ALL links; if a future tab is
     // added or removed without updating this test it'll fail loudly.
     // Pin both the count and the labels so a rename also fires.
-    expect(links).toHaveLength(5)
+    expect(links).toHaveLength(4)
     expect(links.map((el) => el.textContent?.toLowerCase())).toEqual([
-      expect.stringContaining('live'),
-      expect.stringContaining('events'),
+      expect.stringContaining('watch'),
+      expect.stringContaining('history'),
       expect.stringContaining('people'),
-      expect.stringContaining('train'),
       expect.stringContaining('settings'),
     ])
   })
@@ -51,19 +50,17 @@ describe('BottomNav', () => {
 
     // act
     const hrefs = {
-      live: screen.getByRole('link', { name: /live/i }).getAttribute('href'),
-      events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
+      watch: screen.getByRole('link', { name: /watch/i }).getAttribute('href'),
+      history: screen.getByRole('link', { name: /history/i }).getAttribute('href'),
       people: screen.getByRole('link', { name: /people/i }).getAttribute('href'),
-      training: screen.getByRole('link', { name: /train/i }).getAttribute('href'),
       settings: screen.getByRole('link', { name: /settings/i }).getAttribute('href'),
     }
 
     // assert
     expect(hrefs).toEqual({
-      live: '/live',
-      events: '/events',
+      watch: '/',
+      history: '/events',
       people: '/people',
-      training: '/training',
       settings: '/settings',
     })
   })
@@ -79,21 +76,24 @@ describe('BottomNav', () => {
     // aria-current="page" on the matching route; assistive tech
     // consumes that.
     expect(
-      screen.getByRole('link', { name: /events/i }),
+      screen.getByRole('link', { name: /history/i }),
     ).toHaveAttribute('aria-current', 'page')
   })
 
-  it('given the route is /live, when BottomNav renders, then non-matching links do NOT carry aria-current="page" (iter-338)', () => {
+  it('given the route is the Watch home, when BottomNav renders, then non-matching links do NOT carry aria-current="page" (iter-338; `end` matching keeps / from claiming every route)', () => {
     // arrange
-    renderAt('/live')
+    renderAt('/')
 
     // act / assert
     expect(
       screen.getByRole('link', { name: /settings/i }),
     ).not.toHaveAttribute('aria-current', 'page')
     expect(
-      screen.getByRole('link', { name: /events/i }),
+      screen.getByRole('link', { name: /history/i }),
     ).not.toHaveAttribute('aria-current', 'page')
+    expect(
+      screen.getByRole('link', { name: /watch/i }),
+    ).toHaveAttribute('aria-current', 'page')
   })
 
   it('Given a notched landscape phone PWA, When BottomNav renders, Then the inner tab strip carries lateral safe-area-inset padding so no tab sits under the Dynamic Island or home-indicator (premium-launch slice — mobile-view-auditor A2)', () => {

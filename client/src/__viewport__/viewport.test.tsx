@@ -321,7 +321,7 @@ async function mountAt(width: number, path: string, element: ReactNode) {
 
 // ─── Page imports ────────────────────────────────────────────────
 import { Login } from '../pages/Login'
-import { Live } from '../pages/Live'
+import { Watch } from '../pages/Watch'
 import { Events } from '../pages/Events'
 import { Training } from '../pages/Training'
 import { Settings } from '../pages/Settings'
@@ -336,7 +336,7 @@ const PAGES: Array<{
   authState: 'authed' | 'anon'
 }> = [
   { name: 'Login', path: '/login', element: <Login />, primaryAction: /sign in/i, authState: 'anon' },
-  { name: 'Live', path: '/live', element: <Live />, primaryAction: /(snapshot|tap to (resume|pause) detection|talk)/i, authState: 'authed' },
+  { name: 'Watch', path: '/', element: <Watch />, primaryAction: /(snapshot|full screen)/i, authState: 'authed' },
   { name: 'Events', path: '/events', element: <Events />, primaryAction: /./, authState: 'authed' },
   { name: 'Training', path: '/training', element: <Training />, primaryAction: /./, authState: 'authed' },
   { name: 'Settings', path: '/settings', element: <Settings />, primaryAction: /./, authState: 'authed' },

@@ -1,0 +1,12 @@
+- generic [ref=e3]:
+  - link "Skip to content" [ref=e4] [cursor=pointer]:
+    - /url: "#main"
+  - main [ref=e5]:
+    - status "Loading events" [ref=e7]:
+      - list [ref=e11]:
+        - listitem [ref=e13]
+        - listitem [ref=e22]
+        - listitem [ref=e31]
+        - listitem [ref=e40]
+        - listitem [ref=e49]
+        - listitem [ref=e58]

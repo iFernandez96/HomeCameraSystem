@@ -26,6 +26,7 @@ export function VideoTile({
   lowMemory = null,
   thermal = null,
   streamStaleSeconds = null,
+  fit = 'cover',
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -74,6 +75,14 @@ export function VideoTile({
    * isn't flowing).
    */
   streamStaleSeconds?: number | null
+  /**
+   * Structural overhaul (Watch): how the <video> fills the tile.
+   * 'cover' (default) crops to fill — right when the WRAPPER owns a
+   * 16:9 aspect box (docked Watch viewport). 'contain' letterboxes —
+   * right in the full-bleed portrait mode where cropping a security
+   * feed would hide the edges of the scene.
+   */
+  fit?: 'cover' | 'contain'
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -510,11 +519,15 @@ export function VideoTile({
       // the frame's chrome gets the paper-card treatment (warm shadow +
       // strong border) so the tile reads as a framed window on the
       // linen page rather than a floating dark slab.
-      className="relative aspect-video bg-black overflow-hidden rounded-2xl border border-[var(--color-border-strong)] shadow-[var(--shadow-card)]"
+      // Structural overhaul (Watch home): the tile is FLUSH — no
+      // rounding/border/shadow, fills whatever box the parent gives
+      // it. The old card chrome belonged to the retired Live page
+      // grid; on Watch the video is the screen's top edge.
+      className="relative w-full h-full bg-black overflow-hidden"
     >
       <video
         ref={videoRef}
-        className="w-full h-full object-cover"
+        className={`w-full h-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`}
         autoPlay
         playsInline
         muted
@@ -856,7 +869,10 @@ function StatusPill({ status }: { status: Status }) {
     // iter-356.56 (Dana E1+E2): pill text was inheriting near-black
     // --color-text-primary on bg-black/60 — measured 1.05:1 contrast,
     // catastrophic WCAG fail. text-white is ~10:1 on the same backdrop.
-    <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white">
+    // Structural overhaul (Watch): dropped from top-3 to top-12 — the
+    // Watch scrim owns the top strip (armed state + camera + age) and
+    // the connection pill was rendering directly behind its text.
+    <div className="absolute top-12 left-3 flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white">
       <span className={`w-2 h-2 rounded-full ${dot}`} />
       {label}
     </div>

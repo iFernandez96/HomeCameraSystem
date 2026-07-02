@@ -42,8 +42,8 @@ type NavItem = {
 // BottomNav.tsx). The iter-356.65 IA collapse traded discoverability
 // for visual quietness — that trade is reversed.
 const NAV_ITEMS: NavItem[] = [
-  { to: '/live',     label: 'Live',     icon: (a) => <LiveIcon active={a} /> },
-  { to: '/events',   label: 'Events',   icon: () => <EventsIcon /> },
+  { to: '/',         label: 'Watch',    icon: (a) => <LiveIcon active={a} /> },
+  { to: '/events',   label: 'History',  icon: () => <EventsIcon /> },
   { to: '/people',   label: 'People',   icon: () => <PeopleIcon /> },
   { to: '/training', label: 'Training', icon: () => <TrainingIcon /> },
   { to: '/settings', label: 'Settings', icon: () => <SettingsIcon /> },
@@ -62,6 +62,7 @@ export function SideRail() {
           <li key={t.to} className="w-full flex justify-center">
             <NavLink
               to={t.to}
+              end={t.to === '/'}
               className={({ isActive }) =>
                 `group relative flex items-center justify-center w-12 h-12 rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                   isActive

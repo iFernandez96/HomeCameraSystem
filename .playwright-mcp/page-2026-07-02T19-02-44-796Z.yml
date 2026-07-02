@@ -1,0 +1,51 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - generic [ref=f2e3]:
+      - heading "The house is quiet." [level=1] [ref=f2e4]
+      - generic [ref=f2e5]: Wed 2:44 PM
+    - generic [ref=f2e6]:
+      - generic [ref=f2e8]:
+        - text: All clear — Panther is on watch
+        - generic [ref=f2e9]: Camera healthy · alerts on · 43°C
+      - generic [ref=f2e10]: ›
+    - generic [ref=f2e11]:
+      - generic [ref=f2e12]:
+        - generic [ref=f2e13]: LIVE
+        - text: FRONT DOOR — LIVE
+      - generic [ref=f2e15]:
+        - generic [ref=f2e16]:
+          - text: Front Door
+          - generic [ref=f2e17]: Live now · 2s ago
+        - generic [ref=f2e18]:
+          - generic [ref=f2e19]: Snapshot
+          - generic [ref=f2e20]: Expand
+    - generic [ref=f2e21]:
+      - generic [ref=f2e22]:
+        - heading "TODAY" [level=3] [ref=f2e23]
+        - generic [ref=f2e24]: "12"
+        - generic [ref=f2e25]: 3 people · 1 delivery
+      - generic [ref=f2e34]:
+        - heading "LAST SEEN" [level=3] [ref=f2e35]
+        - generic [ref=f2e36]: 2:41 PM
+        - generic [ref=f2e37]: Israel, at the door
+      - generic [ref=f2e46]:
+        - generic [ref=f2e48]:
+          - generic [ref=f2e49]: Person at the door — Israel
+          - text: 2:41 PM · 14s clip · recognized
+        - generic [ref=f2e50]: ›
+  - navigation [ref=f2e51]:
+    - generic [ref=f2e52]:
+      - generic [ref=f2e53]: 🏠
+      - text: Home
+    - generic [ref=f2e54]:
+      - generic [ref=f2e55]: 📹
+      - text: Live
+    - generic [ref=f2e56]:
+      - generic [ref=f2e57]: 🔔
+      - text: Events
+    - generic [ref=f2e58]:
+      - generic [ref=f2e59]: 👪
+      - text: People
+    - generic [ref=f2e60]:
+      - generic [ref=f2e61]: ⚙️
+      - text: Settings

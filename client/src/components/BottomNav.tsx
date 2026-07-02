@@ -6,11 +6,14 @@ import { useRipple } from '../lib/ripple'
 // users routinely missed. Adding Training as a peer BottomNav entry
 // surfaces the active-learning loop on mobile. 5 tabs at 390px ≈ 78px
 // each — comfortable for the 22px icons plus a single short label.
+// Structural overhaul (2026-07-02): four tabs. Watch (the new home:
+// live + today) replaces Live; Events reads as History; Training
+// moved off the bar — it lives one tap inside People (its header
+// link), which matches how often a family member actually visits it.
 const tabs = [
-  { to: '/live', label: 'Live', icon: LiveIcon },
-  { to: '/events', label: 'Events', icon: EventsIcon },
+  { to: '/', label: 'Watch', icon: LiveIcon },
+  { to: '/events', label: 'History', icon: EventsIcon },
   { to: '/people', label: 'People', icon: PeopleIcon },
-  { to: '/training', label: 'Train', icon: TrainingIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
@@ -67,6 +70,10 @@ export function BottomNav() {
           <NavLink
             key={t.to}
             to={t.to}
+            // `end` on the home tab — without it NavLink treats '/'
+            // as a prefix of every route and Watch would always
+            // render active.
+            end={t.to === '/'}
             // Material 3 navigation-bar treatment (Android-native slice,
             // 2026-07-02): the active icon sits in a rounded pill
             // (accent-subtle — flips with the theme) with the brand paw
@@ -139,16 +146,6 @@ function PeopleIcon({ active: _active }: { active: boolean }) {
   )
 }
 
-function TrainingIcon({ active: _active }: { active: boolean }) {
-  // Mortarboard glyph — matches the icon used in Training page header
-  // links so the visual identity is consistent.
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 10l10-5 10 5-10 5-10-5z" />
-      <path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" />
-    </svg>
-  )
-}
 
 function SettingsIcon({ active: _active }: { active: boolean }) {
   return (
