@@ -17,10 +17,11 @@ describe('Button primitive', () => {
     // assert
     const btn = screen.getByRole('button', { name: /save/i })
     expect(btn).toHaveAttribute('type', 'button')
-    // Sunroom signature: primary = Panther-ink fill + white label.
-    // Marmalade stays reserved for links / focus / live signal.
+    // Sunroom signature: primary = Panther-ink fill; the label uses the
+    // on-ink token (white in light, ink on the inverted parchment fill
+    // in dark) — a hardcoded text-white would vanish on the dark theme.
     expect(btn.className).toMatch(/bg-\[var\(--color-ink\)\]/)
-    expect(btn.className).toMatch(/text-white/)
+    expect(btn.className).toMatch(/text-\[var\(--color-on-ink\)\]/)
     // Medium size: 44px min-height.
     expect(btn.className).toMatch(/min-h-\[44px\]/)
   })

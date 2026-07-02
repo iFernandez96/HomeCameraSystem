@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { useRipple } from '../lib/ripple'
 
 // iter-356.x (Frank P3-6): pre-fix Training and Review queue were
 // only reachable via the People page header link, which non-technical
@@ -14,6 +15,7 @@ const tabs = [
 ]
 
 export function BottomNav() {
+  const ripple = useRipple()
   return (
     <nav
       aria-label="Bottom navigation"
@@ -65,20 +67,31 @@ export function BottomNav() {
           <NavLink
             key={t.to}
             to={t.to}
-            // iter-356.25: tokenized color + the bottom-paw indicator
-            // appears under the active tab via .bottomnav-paw-active.
-            // Inactive = warm tertiary; active = calico orange accent.
+            // Material 3 navigation-bar treatment (Android-native slice,
+            // 2026-07-02): the active icon sits in a rounded pill
+            // (accent-subtle — flips with the theme) with the brand paw
+            // mark still above via .bottomnav-paw-active; labels stay
+            // visible on every item (M3 style). overflow-hidden contains
+            // the press ripple; the paw sits inside the item bounds so
+            // it isn't clipped.
             className={({ isActive }) =>
-              `relative flex-1 py-3 flex flex-col items-center gap-1 text-xs transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded ${
+              `relative overflow-hidden flex-1 py-2 flex flex-col items-center gap-0.5 text-xs transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded ${
                 isActive
                   ? 'bottomnav-paw-active text-[var(--color-accent-default)] font-semibold'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`
             }
+            onPointerDown={ripple}
           >
             {({ isActive }) => (
               <>
-                <t.icon active={isActive} />
+                <span
+                  className={`flex items-center justify-center w-14 h-7 rounded-full transition-colors duration-150 ${
+                    isActive ? 'bg-[var(--color-accent-subtle)]' : ''
+                  }`}
+                >
+                  <t.icon active={isActive} />
+                </span>
                 <span>{t.label}</span>
               </>
             )}

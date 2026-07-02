@@ -2,6 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Pre-paint theme resolver (dual-theme, 2026-07-02): resolves the
+         stored preference ('system'|'light'|'dark') + prefers-color-scheme
+         to a CONCRETE data-theme on <html> BEFORE any CSS paints, so a
+         dark-pref user never sees a linen flash. Keep this logic exactly
+         in sync with src/lib/theme.ts::resolveTheme, which owns it after
+         boot (live OS-pref tracking, cross-tab sync, meta updates). -->
+    <script>
+      ;(function () {
+        try {
+          var p = localStorage.getItem('homecam:theme')
+          var dark =
+            p === 'dark' ||
+            (p !== 'light' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <!-- iter-356.66 (iOS edge-cases audit A1): apple-touch-icon. iOS
          IGNORES the Web Manifest `icons` array for the home-screen
@@ -35,15 +55,15 @@
          deeper toasted-wheat sets the warm-den identity from the
          very first paint — including the iOS standalone splash and
          Android Chrome status bar. -->
-    <!-- redesign/warm-boutique (2026-07-01): theme-color matches the
-         Sunroom linen page bg `--color-bg` (#f6f1e7) so the Android
-         status bar / iOS standalone chrome paints as the same warm
-         paper surface as the app. MUST stay in lock-step with the
-         manifest theme_color/background_color in vite.config.ts and
-         index.css --color-bg — a mismatch is the "two apps stitched
-         together" tell (see git history, Mira blocker #2). Status-bar
-         style returns to `default` (dark text on light ground). -->
-    <meta name="theme-color" content="#f6f1e7" />
+    <!-- Dual-theme chrome (2026-07-02): media-scoped pair covers the
+         pre-JS window; lib/theme.ts rewrites BOTH contents to the
+         resolved theme's --color-bg on apply (so a manual override
+         beats the media attribute). Values MUST stay in lock-step
+         with index.css --color-bg per theme and THEME_BG in
+         lib/theme.ts — a mismatch is the "two apps stitched
+         together" tell (see git history, Mira blocker #2). -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f1e7" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171310" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="HomeCam" />

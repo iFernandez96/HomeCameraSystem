@@ -365,14 +365,19 @@ function cellTier(count: number, max: number): CellTier {
   // index.css). All tiers are existing tokens defined in `index.css`.
   // redesign/warm-boutique: on the light Sunroom palette the ramp
   // must DARKEN with heat: subtle (#faeeda) → muted (#f3ddbd) →
-  // default (#b3540b) → deep (#8a4008). Text flips ink→white exactly
-  // ONCE, where the cell ground goes dark (accent-bright #d97316 was
-  // too light for white text but too dark for ink — dropped from the
-  // ramp; GitHub's graph uses the same single-flip rule).
+  // default (#b3540b) → deep (#8a4008). Text flips ink→on-accent
+  // exactly ONCE, where the cell ground leaves the text-primary range
+  // (accent-bright #d97316 was too light for white text but too dark
+  // for ink — dropped from the ramp; GitHub's graph uses the same
+  // single-flip rule).
+  // Dual-theme (2026-07-02): the top two tiers use --color-on-accent,
+  // NOT text-white — in dark the ramp BRIGHTENS with heat (glow), so
+  // accent-default/deep become light peach and need ink text; in light
+  // on-accent resolves to white, so nothing changes on the linen theme.
   if (ratio < 0.25) return { bg: 'bg-[var(--color-accent-subtle)]', text: 'text-[var(--color-text-primary)]' }
   if (ratio < 0.5) return { bg: 'bg-[var(--color-accent-muted)]', text: 'text-[var(--color-text-primary)]' }
-  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-white' }
-  return { bg: 'bg-[var(--color-accent-deep)]', text: 'text-white' }
+  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-[var(--color-on-accent)]' }
+  return { bg: 'bg-[var(--color-accent-deep)]', text: 'text-[var(--color-on-accent)]' }
 }
 
 function ChevronLeftIcon() {

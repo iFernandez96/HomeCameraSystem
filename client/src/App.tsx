@@ -130,7 +130,7 @@ function AppShell() {
         // white-vs-orange.
         // redesign/warm-boutique: text-primary is now dark ink — on the
         // marmalade focus bg it fails contrast. White on #b3540b ≈ 4.9:1.
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-[var(--color-accent-default)] focus:text-white focus:rounded-lg focus:outline-2 focus:outline-white focus:outline-offset-2 focus:shadow-[var(--shadow-card)]"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-[var(--color-accent-default)] focus:text-[var(--color-on-accent)] focus:rounded-lg focus:outline-2 focus:outline-white focus:outline-offset-2 focus:shadow-[var(--shadow-card)]"
       >
         Skip to content
       </a>

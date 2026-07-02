@@ -88,6 +88,13 @@
    * text-primary so a text retune can't silently restyle buttons. */
   --color-ink:            #2b2213;
   --color-ink-hover:      #40331d;
+  /* "On-color" tokens (Material-style): the text color that sits ON
+   * an ink fill / an accent fill. Light theme: white on both. The
+   * dark theme INVERTS ink (parchment fill → ink text), so any
+   * component painting text on ink/accent fills MUST use these
+   * instead of text-white. */
+  --color-on-ink:         #ffffff;
+  --color-on-accent:      #ffffff;
 
   /* === Brass (secondary brand — sigil, name-plate, avatar) =======
    * Default darkened #9a742a → #866a24 (Frank audit: 11px brass time
@@ -229,6 +236,96 @@
   --z-modal:   40;  /* ConfirmDialog, ClipModal */
   --z-top:     50;  /* future onboarding overlays */
 }
+
+/* ============================================================
+ * DARK THEME — "Sunroom at night" (redesign/warm-boutique, 2026-07-02)
+ *
+ * Same identity, lights off: deep warm charcoal (never blue-black),
+ * parchment ink, marmalade retuned to its glow range, brass candle-
+ * light. Applied via `data-theme="dark"` on <html>, which a tiny
+ * pre-paint script in index.html resolves from localStorage pref
+ * ('system' | 'light' | 'dark') + prefers-color-scheme BEFORE first
+ * paint (no FOUC), and lib/theme.ts keeps live. CSS never reads the
+ * media query directly — the resolver owns it, so there is exactly
+ * ONE dark block to maintain.
+ *
+ * Lessons already paid for (keep honoring):
+ *  - Semantic colors move to the 400-glow range on dark; the light
+ *    theme's 700-range reads as mud (iter-356.57 pin).
+ *  - Tint densities bump ~1.6× — light washes vanish on dark ground.
+ *  - Shadows go black-alpha; warm-brown alphas vanish on dark.
+ *  - THE INVERSION: --color-ink (primary-button fill) becomes
+ *    parchment, --color-on-ink becomes ink. Components must paint
+ *    button text with on-ink/on-accent, never text-white.
+ * Contrast floors verified: text-primary ~13.6:1 on surface;
+ * secondary ~8.6:1; tertiary ~5:1; accent text ~7:1 on bg;
+ * on-accent ink ~6.3:1 on the accent fill.
+ */
+:root[data-theme='dark'] {
+  --color-accent-subtle:  #3a2712;  /* selected chip bg — ember tint */
+  --color-accent-muted:   #58391a;  /* active control bg */
+  --color-accent-default: #e08b3d;  /* links, focus, accent text — glow range */
+  --color-accent-bright:  #f0a55f;  /* hover */
+  --color-accent-deep:    #f0a55f;  /* heatmap hottest tier — on dark the ramp
+                                       BRIGHTENS with heat (glow), so deep is
+                                       the lightest step; on-accent ink ~8:1 */
+
+  --color-ink:            #f0e6d4;  /* PRIMARY BUTTON FILL — parchment (inverted) */
+  --color-ink-hover:      #ddd0b8;
+  --color-on-ink:         #241c11;  /* text on the parchment fill */
+  --color-on-accent:      #241c11;
+
+  --color-brass-default:  #c9a24a;
+  --color-brass-bright:   #dbb75f;
+  --color-brass-subtle:   #33290f;
+  --color-brass-border:   color-mix(in srgb, var(--color-brass-default) 45%, transparent);
+
+  --color-bg:              #171310;  /* deep warm charcoal */
+  --color-surface:         #211b15;
+  --color-surface-raised:  #2b2319;
+  --color-surface-overlay: #211b15;
+  --color-border-subtle:   #382e20;
+  --color-border:          #4a3d29;
+  --color-border-strong:   #6b593c;
+
+  --color-text-primary:    #f0e6d4;
+  --color-text-secondary:  #c9b795;
+  --color-text-tertiary:   #9c8a68;
+  --color-text-disabled:   #5f5340;
+
+  --color-success:         #5ec27f;
+  --color-warning:         #e0b04f;
+  --color-danger:          #ef7a6d;
+  --color-danger-strong:   #dc2626;  /* fill w/ white text — works both themes */
+  --color-danger-muted:    #4a1d18;
+  --color-info:            #a89478;
+
+  --color-danger-bg:       color-mix(in srgb, var(--color-danger) 16%, transparent);
+  --color-danger-bg-strong: color-mix(in srgb, var(--color-danger) 26%, transparent);
+  --color-danger-border:   color-mix(in srgb, var(--color-danger) 42%, transparent);
+  --color-warning-bg:      color-mix(in srgb, var(--color-warning) 18%, transparent);
+  --color-warning-border:  color-mix(in srgb, var(--color-warning) 42%, transparent);
+  --color-success-bg:      color-mix(in srgb, var(--color-success) 18%, transparent);
+  --color-success-border:  color-mix(in srgb, var(--color-success) 42%, transparent);
+  --color-info-bg:         color-mix(in srgb, var(--color-info) 20%, transparent);
+  --color-accent-bg:       color-mix(in srgb, var(--color-accent-default) 20%, transparent);
+  --color-accent-border:   color-mix(in srgb, var(--color-accent-default) 50%, transparent);
+  --color-surface-scrim:   color-mix(in srgb, var(--color-surface) 92%, transparent);
+
+  --color-skeleton:        #241d15;
+  --color-skeleton-strong: #2e251a;
+
+  --shadow-subtle:  0 1px 2px rgb(0 0 0 / 0.30), 0 1px 1px rgb(0 0 0 / 0.18);
+  --shadow-card:    0 2px 4px rgb(0 0 0 / 0.38), 0 8px 24px rgb(0 0 0 / 0.28);
+  --shadow-overlay: 0 6px 16px rgb(0 0 0 / 0.45), 0 32px 72px rgb(0 0 0 / 0.55);
+  --shadow-card-inset: inset 0 1px 0 rgb(240 230 212 / 0.05);
+}
+
+/* Native form controls + browser UI (scrollbars, inputs) follow the
+ * resolved theme. The resolver sets data-theme to a CONCRETE value
+ * (never 'system'), so this is authoritative. */
+:root[data-theme='dark'] { color-scheme: dark; }
+:root[data-theme='light'] { color-scheme: light; }
 
 /* iter-356.0 — global focus-ring utility. Replaces the repeated
  * `focus-visible:outline-2 focus-visible:outline-blue-500
@@ -426,13 +523,17 @@ h3 { letter-spacing: -0.014em; }
    - `accent-color` token cascades into native form controls
      (checkboxes, radios, range thumbs that DON'T use `appearance:none`)
      so they inherit the brand orange rather than the OS blue. */
+/* Dual-theme sweep (2026-07-02): selection text is --color-on-accent,
+   not literal white — the dark theme's accent sits in the #e08b3d glow
+   range where white text fails contrast; on-accent flips to ink there
+   and stays white on light. */
 ::selection {
   background: var(--color-accent-default);
-  color: #ffffff;
+  color: var(--color-on-accent);
 }
 ::-moz-selection {
   background: var(--color-accent-default);
-  color: #ffffff;
+  color: var(--color-on-accent);
 }
 /* Premium-launch slice (Maya Critical #5): scrollbar tame.
  * Pre-fix the scrollbar thumb painted saturated ember-orange (
@@ -650,4 +751,26 @@ html {
 .sentry-sparkle {
   animation: sentry-sparkle 600ms ease-out 1;
   display: inline-block;
+}
+
+/* Material-style press ripple (lib/ripple.ts — Android-native slice).
+   A span is appended at pointer-down, expands from the touch point in
+   translucent currentColor (~12%) and removes itself after ~400ms.
+   Containment (`relative overflow-hidden`, or a `data-ripple-host`
+   overlay) is supplied by the consumer, not here. Reduced motion:
+   lib/ripple.ts no-ops entirely; the global reduced-motion clamp
+   above would also collapse this animation to 0.01ms. */
+.hc-ripple {
+  position: absolute;
+  border-radius: 50%;
+  background-color: currentColor;
+  opacity: 0.12;
+  pointer-events: none;
+  transform: scale(0);
+  animation: hc-ripple-expand 400ms ease-out forwards;
+}
+@keyframes hc-ripple-expand {
+  0%   { transform: scale(0); opacity: 0.12; }
+  60%  { opacity: 0.12; }
+  100% { transform: scale(1); opacity: 0; }
 }

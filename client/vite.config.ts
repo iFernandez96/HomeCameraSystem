@@ -112,12 +112,13 @@ export default defineConfig({
         name: 'HomeCam — Panther, Mushu & Coco',
         short_name: 'HomeCam',
         description: 'Self-hosted home camera, watched over by three cats.',
-        // redesign/warm-boutique (2026-07-01): manifest theme/bg match
-        // the Sunroom linen page bg (index.css --color-bg + the
-        // index.html theme-color meta — keep all three in lock-step)
-        // so splash + adaptive-icon ground read as the running app.
-        theme_color: '#f6f1e7',
-        background_color: '#f6f1e7',
+        // Dual-theme (2026-07-02): the manifest is static, so splash +
+        // task-switcher chrome pin to the DARK bg (the user's default
+        // Android-native face); the live status bar follows the
+        // resolved theme via the index.html meta pair + lib/theme.ts.
+        // Keep in lock-step with index.css dark --color-bg.
+        theme_color: '#171310',
+        background_color: '#171310',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',

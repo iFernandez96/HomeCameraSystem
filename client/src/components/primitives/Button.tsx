@@ -3,6 +3,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react'
+import { useRipple } from '../../lib/ripple'
 
 /**
  * iter-356.2 — Button primitive (Phase 2 of mega-overhaul).
@@ -60,14 +61,17 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   // primary actions are Panther-INK fills, not marmalade. Ink on linen
   // is the signature move (Things-3-style dark primary on a warm
   // ground); the marmalade accent stays reserved for links / focus /
-  // live signal so a screen never shouts twice. text-white on the ink
-  // fill is the correct pairing (~14:1); the focus ring stays
+  // live signal so a screen never shouts twice. Label uses
+  // --color-on-ink, NOT text-white: the dual theme INVERTS the ink
+  // fill on dark ("Sunroom at night" — ink becomes parchment), so a
+  // hardcoded white label would vanish. on-ink is white on light,
+  // dark ink on dark (~14:1 both ways); the focus ring stays
   // marmalade via BASE_CLASSES.
   // Press feedback: hover lifts to ink-hover, active steps back onto
   // the full ink (one past hover) — paired with the base active:scale
-  // cue so a press never looks identical to a hover.
+  // cue + Material ripple so a press never looks identical to a hover.
   primary:
-    'bg-[var(--color-ink)] text-white ' +
+    'bg-[var(--color-ink)] text-[var(--color-on-ink)] ' +
     'hover:bg-[var(--color-ink-hover)] active:bg-[var(--color-ink)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
   // redesign/warm-boutique: secondary = paper card. Rest state sits on
@@ -91,8 +95,9 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
     'active:bg-[var(--color-surface-raised)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
   // redesign/warm-boutique: destructive is a SOLID --color-danger-strong
-  // fill with white text (the one sanctioned text-white-on-fill besides
-  // primary). The old dark-theme treatment was a translucent danger
+  // fill with white text. text-white here is CORRECT (unlike primary):
+  // danger-strong stays a constant red fill across both themes, so the
+  // white label never inverts. The old dark-theme treatment was a translucent danger
   // tint + danger text — on the light linen ground that reads as a
   // pale pink chip, far too quiet for "Reboot Jetson" / "Delete clip".
   // Hover deepens to the brick --color-danger token.
@@ -117,7 +122,11 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
 
 // active:scale-[0.98] is the toast press idiom — every variant gets a
 // physical press cue distinct from its hover state.
+// `relative overflow-hidden` contains the Material press ripple
+// (lib/ripple.ts): the ripple span is absolutely positioned inside the
+// button and must clip to the rounded-xl bounds.
 const BASE_CLASSES =
+  'relative overflow-hidden ' +
   'inline-flex items-center justify-center font-semibold ' +
   'rounded-xl transition-colors duration-150 active:scale-[0.98] ' +
   'focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ' +
@@ -135,10 +144,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       className,
       children,
       type = 'button',
+      onPointerDown,
       ...rest
     },
     ref,
   ) {
+    const ripple = useRipple()
     const computed =
       `${BASE_CLASSES} ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]}` +
       (fullWidth ? ' w-full' : '') +
@@ -165,6 +176,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           aria-disabled={isDisabled || undefined}
           aria-busy={loading || undefined}
           className={computed}
+          // Material press ripple + the caller's own handler. Disabled
+          // buttons don't fire pointer events in most browsers, but
+          // jsdom does — guard so tests match reality.
+          onPointerDown={(ev) => {
+            if (!isDisabled) ripple(ev)
+            onPointerDown?.(ev)
+          }}
           {...rest}
         >
           {loading ? (

@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { useRipple } from '../lib/ripple'
 
 /**
  * iter-356.58 (layout rebuild) — SideRail replaces SideNav.
@@ -50,6 +51,7 @@ const NAV_ITEMS: NavItem[] = [
 
 export function SideRail() {
   const { user, logout } = useAuth()
+  const ripple = useRipple()
   return (
     <nav
       aria-label="Main navigation"
@@ -74,9 +76,19 @@ export function SideRail() {
               }
               aria-label={t.label}
               title={t.label}
+              onPointerDown={ripple}
             >
               {({ isActive }) => (
                 <>
+                  {/* Ripple host: the tooltip flyout sits OUTSIDE this
+                      item (left-full), so overflow-hidden can't live on
+                      the NavLink — the press ripple clips to this inset
+                      overlay instead (see lib/ripple.ts). */}
+                  <span
+                    aria-hidden="true"
+                    data-ripple-host
+                    className="pointer-events-none absolute inset-0 rounded-xl overflow-hidden"
+                  />
                   {t.icon(isActive)}
                   {/* iter-356.58 — tooltip flyout. Renders only on
                       hover/focus to the right of the icon. Pointer-
@@ -112,8 +124,14 @@ export function SideRail() {
             onClick={logout}
             aria-label="Sign out"
             title="Sign out"
+            onPointerDown={ripple}
             className="group relative flex items-center justify-center w-12 h-12 rounded-xl text-[var(--color-text-secondary)] hover:bg-[var(--color-danger-bg)] hover:text-[var(--color-danger)] focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 transition-colors"
           >
+            <span
+              aria-hidden="true"
+              data-ripple-host
+              className="pointer-events-none absolute inset-0 rounded-xl overflow-hidden"
+            />
             <SignOutIcon />
             <span
               aria-hidden="true"

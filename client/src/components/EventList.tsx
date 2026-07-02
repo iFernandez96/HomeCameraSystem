@@ -503,7 +503,7 @@ function EventCardImpl({
             aria-hidden="true"
             className={`flex-none w-5 h-5 self-center rounded border-2 flex items-center justify-center transition-colors ${
               isSelected
-                ? 'bg-[var(--color-accent-default)] border-[var(--color-accent-default)] text-white'
+                ? 'bg-[var(--color-accent-default)] border-[var(--color-accent-default)] text-[var(--color-on-accent)]'
                 : 'border-[var(--color-border-strong)] bg-[var(--color-surface)]'
             }`}
           >

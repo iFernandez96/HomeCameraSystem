@@ -3,6 +3,7 @@ import { nextRovingIndex } from '../lib/a11y'
 // iter-268..294: every section moved to ./settings/<Name>.tsx.
 // Settings.tsx is now a pure shell — tab state + section composition.
 import { AccountSection } from './settings/AccountSection'
+import { AppearanceSection } from './settings/AppearanceSection'
 import { DangerZone } from './settings/DangerZone'
 import { DebugSection } from './settings/DebugSection'
 import { DetectionSection } from './settings/DetectionSection'
@@ -199,6 +200,10 @@ export function Settings() {
             tabIndex={0}
             className="space-y-6 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
           >
+            {/* Dual-theme upgrade (2026-07-02): Appearance sits first —
+                it's a personal preference every role owns, not an
+                operator knob, so it leads the tab everyone lands on. */}
+            <AppearanceSection />
             <AccountSection />
             <JetsonSection status={status} />
             {isOwner && <TimelapsesSection />}

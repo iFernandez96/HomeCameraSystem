@@ -219,7 +219,7 @@ describe('Login page', () => {
     // act / assert — ink fill + white label + a focus-ring token that
     // is NOT the same token as the button bg.
     expect(cls).toMatch(/bg-\[var\(--color-ink\)\]/)
-    expect(cls).toMatch(/text-white/)
+    expect(cls).toMatch(/text-\[var\(--color-on-ink\)\]/)
     expect(cls).toMatch(
       /focus-visible:outline-\[var\(--color-accent-default\)\]/,
     )
