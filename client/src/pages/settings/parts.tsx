@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { RETENTION_PRESETS, type RetentionPreset } from '../../lib/types'
+import { useRipple } from '../../lib/ripple'
 
 // iter-268: shared layout primitives extracted from Settings.tsx so
 // individual sections can be moved to their own files (the iter-235
@@ -96,16 +97,18 @@ export function Toggle({
   disabled?: boolean
   ariaLabel?: string
 }) {
+  const ripple = useRipple()
   return (
     <button
       type="button"
       onClick={() => !disabled && onChange(!checked)}
+      onPointerDown={disabled ? undefined : ripple}
       disabled={disabled}
       // Sunroom hit-area fix: the visual pill stays 44x24, but the
       // interactive element gains transparent p-2.5 padding cancelled
       // by -m-2.5, lifting the tap target to 44px tall (64px wide)
       // without visibly shifting layout.
-      className="p-2.5 -m-2.5 rounded-full flex items-center disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+      className="relative overflow-hidden p-2.5 -m-2.5 rounded-full flex items-center disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       aria-pressed={checked}
       aria-label={ariaLabel}
     >

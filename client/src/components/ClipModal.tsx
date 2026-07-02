@@ -594,9 +594,11 @@ export function ClipModal({
           <div className="mt-0.5 flex items-center gap-2 text-xs text-white/70">
             <span title={absoluteTime(event.ts)} className="tabular-nums">{timeLabel}</span>
             {personLabel && (
-              // Solid success fill + white text — the light-theme 12%
-              // tint (success-bg) is unreadable over the dark pane.
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-success)] text-white font-medium">
+              // Solid success fill — the light-theme 12% tint
+              // (success-bg) is unreadable over the dark pane. Label is
+              // on-accent (white in light, ink on the dark theme's
+              // glow-green — white on #5ec27f is ~1.9:1).
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-success)] text-[var(--color-on-accent)] font-medium">
                 <span aria-hidden>●</span>
                 <span>
                   Recognized: {personLabel}

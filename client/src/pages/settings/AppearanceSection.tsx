@@ -22,6 +22,7 @@ import {
   THEME_CHANGED_EVENT,
   type ThemePref,
 } from '../../lib/theme'
+import { useRipple } from '../../lib/ripple'
 import { Section } from './parts'
 
 const OPTIONS: { value: ThemePref; label: string; hint: string }[] = [
@@ -32,6 +33,7 @@ const OPTIONS: { value: ThemePref; label: string; hint: string }[] = [
 
 export function AppearanceSection() {
   const [pref, setPref] = useState<ThemePref>(() => getThemePref())
+  const ripple = useRipple()
 
   useEffect(() => {
     // Re-read the stored pref after every apply — covers this
@@ -44,7 +46,7 @@ export function AppearanceSection() {
   return (
     <Section
       title="Appearance"
-      subtitle="System follows your phone's day/night setting."
+      subtitle="System follows your device's day/night setting."
     >
       <div
         className="px-4 py-3"
@@ -60,8 +62,34 @@ export function AppearanceSection() {
                 type="button"
                 role="radio"
                 aria-checked={active}
+                tabIndex={active ? 0 : -1}
                 onClick={() => setThemePref(opt.value)}
-                className={`px-3 py-3 rounded-xl border text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+                onPointerDown={ripple}
+                // Roving tabindex + arrow keys (WAI-ARIA radiogroup
+                // pattern): one Tab stop for the group; arrows move +
+                // select. Handler lives on the focusable radios (the
+                // group div itself isn't focusable — jsx-a11y).
+                onKeyDown={(e) => {
+                  const idx = OPTIONS.findIndex((o) => o.value === pref)
+                  const delta =
+                    e.key === 'ArrowRight' || e.key === 'ArrowDown'
+                      ? 1
+                      : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+                        ? -1
+                        : 0
+                  if (delta === 0) return
+                  e.preventDefault()
+                  const next =
+                    OPTIONS[(idx + delta + OPTIONS.length) % OPTIONS.length]
+                  setThemePref(next.value)
+                  const group = e.currentTarget.closest('[role="radiogroup"]')
+                  window.requestAnimationFrame(() => {
+                    group
+                      ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+                      ?.focus()
+                  })
+                }}
+                className={`relative overflow-hidden px-3 py-3 rounded-xl border text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                   active
                     ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-border)] text-[var(--color-accent-default)]'
                     : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:border-[var(--color-border-strong)]'

@@ -263,7 +263,7 @@
  */
 :root[data-theme='dark'] {
   --color-accent-subtle:  #3a2712;  /* selected chip bg — ember tint */
-  --color-accent-muted:   #58391a;  /* active control bg */
+  --color-accent-muted:   #7a4e1f;  /* active control bg + heatmap tier-2 — lighter than the light theme's inverse so the ramp climbs evenly to the #e08b3d tier-3 (was #58391a: a 4x luminance cliff) */
   --color-accent-default: #e08b3d;  /* links, focus, accent text — glow range */
   --color-accent-bright:  #f0a55f;  /* hover */
   --color-accent-deep:    #f0a55f;  /* heatmap hottest tier — on dark the ramp
@@ -297,7 +297,11 @@
   --color-warning:         #e0b04f;
   --color-danger:          #ef7a6d;
   --color-danger-strong:   #dc2626;  /* fill w/ white text — works both themes */
-  --color-danger-muted:    #4a1d18;
+  --color-danger-muted:    color-mix(in srgb, var(--color-danger) 42%, transparent);
+                                     /* dark: the light theme's solid pale-pink
+                                        fence is ~1.4:1 on charcoal — use the
+                                        42% danger mix so the danger zone keeps
+                                        its border at night */
   --color-info:            #a89478;
 
   --color-danger-bg:       color-mix(in srgb, var(--color-danger) 16%, transparent);
@@ -324,6 +328,15 @@
 /* Native form controls + browser UI (scrollbars, inputs) follow the
  * resolved theme. The resolver sets data-theme to a CONCRETE value
  * (never 'system'), so this is authoritative. */
+/* Night treatment for the raster cat sprites + illustrations (Maya
+ * dark pass): Panther's near-black art vanishes on the charcoal
+ * ground and the cream illustrations glare. A soft parchment halo
+ * separates dark fur from dark ground; a slight dim calms the cream.
+ * Class is applied by CatIcons.tsx::RasterSprite. */
+:root[data-theme='dark'] .cat-sprite-img {
+  filter: drop-shadow(0 0 5px rgb(240 230 212 / 0.30)) brightness(0.92);
+}
+
 :root[data-theme='dark'] { color-scheme: dark; }
 :root[data-theme='light'] { color-scheme: light; }
 

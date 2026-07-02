@@ -371,7 +371,10 @@ function RasterSprite({
         objectPosition: 'center bottom',
         display: 'block',
       }}
-      className={className}
+      // cat-sprite-img: night-treatment hook — on the dark theme
+      // index.css gives it a parchment drop-shadow halo (Panther's
+      // near-black art is invisible on charcoal without it) + slight dim.
+      className={className ? `cat-sprite-img ${className}` : 'cat-sprite-img'}
     />
   )
 }
@@ -450,6 +453,7 @@ export function SleepingCatIllustration({
       <img
         src="/cats/coco-sleep_curled.png"
         alt=""
+        className="cat-sprite-img"
         decoding="async"
         loading="lazy"
         style={{

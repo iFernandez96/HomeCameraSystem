@@ -632,8 +632,8 @@ function ConfidencePill({ score }: { score: number }) {
     score < 0.5
       ? 'bg-[var(--color-danger-strong)] text-white'
       : score < 0.75
-        ? 'bg-[var(--color-warning)] text-[var(--color-bg)]'
-        : 'bg-[var(--color-success)] text-[var(--color-bg)]'
+        ? 'bg-[var(--color-warning)] text-[var(--color-on-accent)]'
+        : 'bg-[var(--color-success)] text-[var(--color-on-accent)]'
   const tierLabel =
     score < 0.5 ? 'low' : score < 0.75 ? 'medium' : 'high'
   return (

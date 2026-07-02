@@ -19,6 +19,7 @@ import {
 import { CatEmptyState } from '../../components/CatEmptyState'
 import { VideoPlayer } from '../../components/VideoPlayer'
 import { Section } from './parts'
+import { useRipple } from '../../lib/ripple'
 
 // iter-292: extracted from Settings.tsx (~85 lines of inline JSX +
 // timelapses state + onGenerateTimelapse handler + listTimelapses
@@ -152,6 +153,7 @@ function TimelapseVideo({ item }: { item: TimelapseItem }) {
 
 export function TimelapsesSection() {
   const { showToast } = useToast()
+  const ripple = useRipple()
   const reportError = useReportError()
   const confirm = useConfirm()
   const [timelapses, setTimelapses] = useState<TimelapseItem[] | null>(null)
@@ -358,9 +360,12 @@ export function TimelapsesSection() {
             type="button"
             onClick={onGenerateTimelapse}
             disabled={!_timelapseDateReady || timelapseGenerating}
+            onPointerDown={
+              _timelapseDateReady && !timelapseGenerating ? ripple : undefined
+            }
             // Sunroom: the section's one primary action — ink fill
             // (marmalade stays reserved for links/active/live).
-            className="text-sm font-medium bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-white disabled:bg-[var(--color-surface-raised)] disabled:text-[var(--color-text-tertiary)] rounded-lg px-4 py-2 min-h-[44px] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="relative overflow-hidden text-sm font-medium bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-[var(--color-on-ink)] disabled:bg-[var(--color-surface-raised)] disabled:text-[var(--color-text-tertiary)] rounded-lg px-4 py-2 min-h-[44px] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Generate timelapse"
           >
             {timelapseGenerating ? 'Building…' : 'Build video'}

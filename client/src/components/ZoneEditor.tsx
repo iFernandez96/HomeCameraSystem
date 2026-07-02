@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { useToast } from '../lib/toast'
 import type { Zone, ZonePoint } from '../lib/types'
+import { useRipple } from '../lib/ripple'
 
 /**
  * iter-191c (Feature #5): in-frame polygon-mask editor.
@@ -63,6 +64,7 @@ export function ZoneEditor({
   onChange: (zones: Zone[]) => void
   snapshotUrl?: string
 }) {
+  const ripple = useRipple()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [inProgress, setInProgress] = useState<ZonePoint[]>([])
   const [inputX, setInputX] = useState('50')
@@ -474,7 +476,8 @@ export function ZoneEditor({
             type="button"
             onClick={finishPolygon}
             disabled={!canFinish}
-            className="bg-[var(--color-success)] hover:brightness-95 text-[var(--color-on-accent)] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg px-3 py-2 min-h-[44px] font-medium transition-[filter] duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            onPointerDown={canFinish ? ripple : undefined}
+            className="relative overflow-hidden bg-[var(--color-success)] hover:brightness-95 text-[var(--color-on-accent)] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg px-3 py-2 min-h-[44px] font-medium transition-[filter] duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
           >
             {finishLabel}
           </button>
@@ -564,7 +567,8 @@ export function ZoneEditor({
           <button
             type="button"
             onClick={handleKeyboardAdd}
-            className="bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-[var(--color-on-ink)] rounded-lg px-3 py-2 min-h-[44px] text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            onPointerDown={ripple}
+            className="relative overflow-hidden bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-[var(--color-on-ink)] rounded-lg px-3 py-2 min-h-[44px] text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
           >
             Add point
           </button>

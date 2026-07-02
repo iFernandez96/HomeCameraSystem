@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getEventCountsByDay } from '../lib/api'
+import { useRipple } from '../lib/ripple'
 
 /**
  * iter-252: month-by-month calendar with prev/next navigation +
@@ -70,6 +71,7 @@ export function EventHeatmap({
   // skipped effect, missing the resume signal. This counter is
   // the cleanest way to inject "fetch again."
   const [refetchKey, setRefetchKey] = useState(0)
+  const ripple = useRipple()
   // Derived loading state — counts is null between mount and the
   // first fetch resolution. Using `counts === null` keeps the lint
   // rule `react-hooks/set-state-in-effect` happy (no synchronous
@@ -236,7 +238,12 @@ export function EventHeatmap({
                     }
                   : undefined
               }
+              onPointerDown={interactive ? ripple : undefined}
               className={[
+                // relative overflow-hidden contains the press ripple;
+                // the today/hover rings are box-shadows so they are
+                // NOT clipped by it.
+                'relative overflow-hidden',
                 // iter-356.8 (mobile-desktop M2): min-h-[44px] hits the
                 // WCAG 2.5.5 touch-target minimum even on a 320px iPhone
                 // SE viewport where 7 cols × 4px gap ÷ 288px ≈ 37.7px per
@@ -252,12 +259,13 @@ export function EventHeatmap({
                 // matches the rest of the watch-log "today" /
                 // "yesterday" eyebrow pattern.
                 isToday ? 'ring-2 ring-[var(--color-brass-default)]' : '',
-                // redesign/warm-boutique: on the light Sunroom palette
-                // hover DARKENS (paper in shade), not brightens — the
-                // old brightness-110 was a dark-theme highlight idiom
-                // that's invisible on cream cells.
+                // Dual-theme (Maya dark pass): brightness hovers point
+                // the wrong way per theme (darken recedes on dark,
+                // brighten glares on light) — a token ring works on
+                // both grounds. Today's brass ring stays dominant
+                // because it's applied unconditionally above.
                 interactive
-                  ? 'hover:brightness-95 active:brightness-90 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
+                  ? 'hover:ring-2 hover:ring-[var(--color-border-strong)] active:ring-[var(--color-accent-default)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
                   : '',
               ]
                 .filter(Boolean)
@@ -363,8 +371,8 @@ function cellTier(count: number, max: number): CellTier {
   // system that broke the comment's "single hue family" promise
   // and conflicted with `--color-warning` (which is amber per
   // index.css). All tiers are existing tokens defined in `index.css`.
-  // redesign/warm-boutique: on the light Sunroom palette the ramp
-  // must DARKEN with heat: subtle (#faeeda) → muted (#f3ddbd) →
+  // redesign/warm-boutique: on the LIGHT Sunroom palette the ramp
+  // DARKENS with heat (on dark it brightens — glow; token-driven): subtle (#faeeda) → muted (#f3ddbd) →
   // default (#b3540b) → deep (#8a4008). Text flips ink→on-accent
   // exactly ONCE, where the cell ground leaves the text-primary range
   // (accent-bright #d97316 was too light for white text but too dark

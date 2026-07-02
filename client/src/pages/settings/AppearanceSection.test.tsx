@@ -102,7 +102,7 @@ describe('AppearanceSection', () => {
       screen.getByRole('heading', { name: 'Appearance' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByText("System follows your phone's day/night setting."),
+      screen.getByText("System follows your device's day/night setting."),
     ).toBeInTheDocument()
   })
 })
