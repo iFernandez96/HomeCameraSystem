@@ -122,29 +122,57 @@ export function VideoPlayer({
     hideTimer.current = setTimeout(() => setControlsVisible(false), 2500)
   }, [])
 
-  // Auto-hide: any pointer activity over the player re-shows the controls and
-  // re-arms the hide timer. Attached imperatively (not as JSX handlers on the
-  // roled container) to keep jsx-a11y clean; the controls themselves (play
-  // button, scrubber slider, speed menu) are each individually keyboard-
-  // operable, so no container-level key handling is needed.
+  // Auto-hide: mouse activity over the player re-shows the controls and
+  // re-arms the hide timer. Touch is handled by the tap handler below
+  // (bug sweep 2026-07-02: a touchstart listener here revealed the bar
+  // a moment before the tap's click hid it again — flicker — and the
+  // click ALSO paused playback, so on phones the Fullscreen button was
+  // effectively unreachable while playing). Attached imperatively (not
+  // as JSX handlers on the roled container) to keep jsx-a11y clean.
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     el.addEventListener('mousemove', armHide)
-    el.addEventListener('touchstart', armHide, { passive: true })
     return () => {
       el.removeEventListener('mousemove', armHide)
-      el.removeEventListener('touchstart', armHide)
       if (hideTimer.current) clearTimeout(hideTimer.current)
     }
   }, [armHide])
 
+  // Mobile-YouTube tap model (bug sweep 2026-07-02): on coarse
+  // pointers a tap on the video toggles the CONTROL CHROME, never
+  // playback — pausing lives on the play button. Desktop keeps
+  // click-to-pause (the hover already keeps controls visible there).
+  const isCoarse = useRef(
+    typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(pointer: coarse)').matches,
+  )
+  const onSurfaceTap = useCallback(() => {
+    if (!isCoarse.current) {
+      togglePlayRef.current?.()
+      return
+    }
+    setControlsVisible((visible) => {
+      if (hideTimer.current) clearTimeout(hideTimer.current)
+      if (visible) return false
+      if (videoRef.current && !videoRef.current.paused) {
+        hideTimer.current = setTimeout(() => setControlsVisible(false), 3000)
+      }
+      return true
+    })
+  }, [])
+
+  const togglePlayRef = useRef<(() => void) | null>(null)
   const togglePlay = useCallback(() => {
     const v = videoRef.current
     if (!v) return
     if (v.paused) safePlay(v)
     else v.pause()
   }, [])
+  // onSurfaceTap is declared before togglePlay (it feeds the video's
+  // onClick) — bridge the desktop path through a ref.
+  togglePlayRef.current = togglePlay
 
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current
@@ -172,7 +200,7 @@ export function VideoPlayer({
         preload={preload}
         className={`block ${videoClassName ?? 'w-full'}`}
         aria-label={ariaLabel}
-        onClick={togglePlay}
+        onClick={onSurfaceTap}
         onPlay={() => {
           setPlaying(true)
           armHide()

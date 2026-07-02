@@ -177,7 +177,9 @@ function AppShell() {
           } as React.CSSProperties
         }
       >
-        <div className="w-full mx-auto">
+        {/* Premium-feel: keyed on the route so every page change plays
+            the 160ms native-style enter transition. */}
+        <div key={location.pathname} className="w-full mx-auto animate-page-in">
           <Suspense fallback={<PageFallback />}>
             <Routes>
             <Route path="/login" element={<Login />} />

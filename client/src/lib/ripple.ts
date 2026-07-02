@@ -44,6 +44,22 @@ export function attachRipple(
 ): void {
   if (prefersReducedMotion()) return
 
+  // Premium-feel (2026-07-02): a 8ms haptic tick alongside the ripple
+  // on touch devices — the Android-native press feel. No-ops silently
+  // on iOS/desktops (vibrate absent) and under reduced motion (early
+  // return above).
+  try {
+    if (
+      typeof navigator !== 'undefined' &&
+      typeof navigator.vibrate === 'function' &&
+      window.matchMedia('(pointer: coarse)').matches
+    ) {
+      navigator.vibrate(8)
+    }
+  } catch {
+    /* haptics are best-effort */
+  }
+
   const rect = el.getBoundingClientRect()
   const x = ev.clientX - rect.left
   const y = ev.clientY - rect.top
