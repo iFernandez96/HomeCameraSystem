@@ -148,21 +148,27 @@ function ToastBubble({
   toast: Toast
   onDismiss: () => void
 }) {
-  // Token-driven kind classes. Was bg-red-600/95, bg-emerald-600/95,
-  // bg-[var(--color-surface-raised)]/95 — Maya: "bypass the iter-356.0 token system
-  // entirely." Now: --color-success / --color-danger / surface-overlay
-  // for info, with a SHAPE signal via leading icon (colorblind safety).
-  // iter-356.26 fix: toast bg uses semantic FILL colors (red, emerald);
-  // text MUST be white to read on those fills, not text-primary which
-  // got swept in from text-white during the bulk dark→light migration.
-  // White on red ~5:1, white on emerald ~4.7:1, both AA. Surface-overlay
-  // (info) keeps text-primary because it's white-bg + warm-dark text.
-  const kindClass =
+  // redesign/warm-boutique (Sunroom): every toast is a cream-paper
+  // card (opaque --color-surface-overlay + ink text) with a SEMANTIC
+  // LEFT ACCENT bar + matching icon color — danger brick / success
+  // green / info slate. The old solid red/green fills shouted on the
+  // warm linen ground; the paper card keeps the toast in the same
+  // material family as the rest of the app while the accent bar +
+  // icon SHAPE signal (colorblind safety, Maya Critical 1) still
+  // reads at a glance. Ink text on paper is ~13:1; the semantic hue
+  // never carries the message text itself.
+  const accentClass =
     toast.kind === 'error'
-      ? 'bg-[var(--color-danger)] text-white'
+      ? 'border-l-[var(--color-danger)]'
       : toast.kind === 'success'
-        ? 'bg-[var(--color-success)] text-white'
-        : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-primary)] border border-[var(--color-border)]'
+        ? 'border-l-[var(--color-success)]'
+        : 'border-l-[var(--color-info)]'
+  const iconClass =
+    toast.kind === 'error'
+      ? 'text-[var(--color-danger)]'
+      : toast.kind === 'success'
+        ? 'text-[var(--color-success)]'
+        : 'text-[var(--color-info)]'
 
   return (
     <button
@@ -171,16 +177,19 @@ function ToastBubble({
       role={toast.kind === 'error' ? 'alert' : 'status'}
       aria-label={`${toast.message}. Tap to dismiss.`}
       className={
-        `pointer-events-auto max-w-md inline-flex items-center gap-2 ` +
-        `px-4 py-2.5 min-h-[40px] rounded-full text-sm font-medium ` +
-        `shadow-[var(--shadow-overlay)] backdrop-blur ` +
+        `pointer-events-auto max-w-md inline-flex items-center gap-2.5 text-left ` +
+        `px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-medium ` +
+        `bg-[var(--color-surface-overlay)] text-[var(--color-text-primary)] ` +
+        `border border-[var(--color-border)] border-l-[3px] ${accentClass} ` +
+        `shadow-[var(--shadow-overlay)] ` +
         `animate-toast-in ` +
         `focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ` +
-        `transition-transform duration-150 active:scale-[0.98] ` +
-        kindClass
+        `transition-transform duration-150 active:scale-[0.98]`
       }
     >
-      <ToastIcon kind={toast.kind} />
+      <span className={`inline-flex ${iconClass}`} aria-hidden="true">
+        <ToastIcon kind={toast.kind} />
+      </span>
       <span>{toast.message}</span>
     </button>
   )

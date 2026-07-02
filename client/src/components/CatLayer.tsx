@@ -972,7 +972,10 @@ function CatRenderImpl({ cat }: { cat: CatState }) {
             whiteSpace: 'nowrap',
             animation: 'cat-mood-rise 2200ms ease-out forwards',
             pointerEvents: 'none',
-            filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.6))',
+            // Sunroom redesign (2026-07-01): warm ink shadow at low
+            // alpha — the old rgba(0,0,0,0.6) was tuned for the dark
+            // theme and read as a hard black smudge on the linen bg.
+            filter: 'drop-shadow(0 1px 2px rgba(43,34,19,0.35))',
           }}
         >
           {cat.mood}

@@ -146,7 +146,7 @@ export function EventHeatmap({
   if (error) {
     return (
       <p
-        className="px-4 py-2 text-xs text-red-400"
+        className="px-4 py-2 text-xs text-[var(--color-danger)]"
         role="alert"
         aria-label="Heatmap load error"
       >
@@ -252,8 +252,12 @@ export function EventHeatmap({
                 // matches the rest of the watch-log "today" /
                 // "yesterday" eyebrow pattern.
                 isToday ? 'ring-2 ring-[var(--color-brass-default)]' : '',
+                // redesign/warm-boutique: on the light Sunroom palette
+                // hover DARKENS (paper in shade), not brightens — the
+                // old brightness-110 was a dark-theme highlight idiom
+                // that's invisible on cream cells.
                 interactive
-                  ? 'hover:brightness-110 active:brightness-125 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
+                  ? 'hover:brightness-95 active:brightness-90 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
                   : '',
               ]
                 .filter(Boolean)
@@ -280,12 +284,12 @@ export function EventHeatmap({
           <span>Fewer detections</span>
           <span className="w-3 h-3 rounded bg-[var(--color-surface-raised)] border border-[var(--color-border)]" />
           <span className="w-3 h-3 rounded bg-[var(--color-accent-subtle)]" />
-          {/* Premium-launch slice: legend mid-tier swatch matches
-              the `cellTier` mid-tier above (was `bg-amber-300` —
-              broke the single-hue contract). */}
+          {/* Legend order mirrors `cellTier` exactly — on the light
+              Sunroom palette the ramp darkens with heat, ending at
+              the deepest marmalade (accent-default). */}
           <span className="w-3 h-3 rounded bg-[var(--color-accent-muted)]" />
-          <span className="w-3 h-3 rounded bg-[var(--color-accent-default)]" />
           <span className="w-3 h-3 rounded bg-[var(--color-accent-bright)]" />
+          <span className="w-3 h-3 rounded bg-[var(--color-accent-default)]" />
           <span>More detections</span>
         </div>
       ) : null}
@@ -358,14 +362,15 @@ function cellTier(count: number, max: number): CellTier {
   // `bg-amber-300` — a raw Tailwind tone OUTSIDE the brand token
   // system that broke the comment's "single hue family" promise
   // and conflicted with `--color-warning` (which is amber per
-  // index.css). The new four-step ramp climbs through the ember
-  // tokens monotonically: subtle → muted → default → bright. All
-  // are existing tokens defined in `index.css`. Text contrast on
-  // the muted tier needs white (the muted shade is dark).
+  // index.css). All tiers are existing tokens defined in `index.css`.
+  // redesign/warm-boutique: on the light Sunroom palette the ramp
+  // must DARKEN with heat, so the order is subtle → muted → bright →
+  // default (default is the deepest marmalade). Text flips ink→white
+  // only where the cell ground goes dark (GitHub's graph does the same).
   if (ratio < 0.25) return { bg: 'bg-[var(--color-accent-subtle)]', text: 'text-[var(--color-text-primary)]' }
-  if (ratio < 0.5) return { bg: 'bg-[var(--color-accent-muted)]', text: 'text-white' }
-  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-white' }
-  return { bg: 'bg-[var(--color-accent-bright)]', text: 'text-white' }
+  if (ratio < 0.5) return { bg: 'bg-[var(--color-accent-muted)]', text: 'text-[var(--color-text-primary)]' }
+  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-bright)]', text: 'text-[var(--color-text-primary)]' }
+  return { bg: 'bg-[var(--color-accent-default)]', text: 'text-white' }
 }
 
 function ChevronLeftIcon() {

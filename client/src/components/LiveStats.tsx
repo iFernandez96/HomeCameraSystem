@@ -144,7 +144,7 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
         aria-busy="true"
         className={
           compact
-            ? 'h-10 px-3 flex items-center justify-center text-xs text-white/70 bg-black/55 backdrop-blur ring-1 ring-white/15 rounded-xl'
+            ? 'h-10 px-3 flex items-center justify-center text-xs text-white/70 bg-black/60 backdrop-blur ring-1 ring-white/20 rounded-xl'
             : 'h-12 px-3 flex items-center justify-center text-sm text-[var(--color-text-secondary)]'
         }
       >
@@ -183,7 +183,7 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
     return (
       <section
         aria-label="Watch panel"
-        className="bg-black/55 backdrop-blur ring-1 ring-white/15 rounded-2xl px-3 py-3 space-y-2.5 text-white"
+        className="bg-black/60 backdrop-blur ring-1 ring-white/20 rounded-2xl px-3 py-3 space-y-2.5 text-white"
       >
         <div role="status" aria-live="polite">
           <div className="flex items-center gap-2.5">
@@ -209,7 +209,7 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
       // walkers across the bottom of every page; this card opts
       // into the higher stacking-context layer so its text stays
       // legible while cats walk freely on the rest of the surface.
-      className="relative z-10 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3 shadow-[var(--shadow-subtle)]"
+      className="relative z-10 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3 shadow-[var(--shadow-card)]"
     >
       {/* Summary row: dot + label + optional sub-line. */}
       <div role="status" aria-live="polite">
@@ -376,21 +376,32 @@ function SystemDetails({
 }) {
   const throttled =
     status.cpu_freq_pct != null && status.cpu_freq_pct < 95
-  const cpuColor = throttled ? 'text-red-400' : tempColor(status.cpu_temp_c)
+  // Sunroom redesign (2026-07-01): semantic tokens replace the dark-era
+  // `text-red-400` / `text-yellow-400` raw-palette hardcodes — those were
+  // light-for-dark hues that wash out on the cream paper card.
+  const cpuColor = throttled
+    ? 'text-[var(--color-danger)]'
+    : tempColor(status.cpu_temp_c)
   const gpuColor = tempColor(status.gpu_temp_c)
   const memPct =
     status.memory_used_mb != null && status.memory_total_mb
       ? Math.round((status.memory_used_mb / status.memory_total_mb) * 100)
       : null
   const memColor =
-    memPct == null ? '' : memPct >= 90 ? 'text-red-400' : memPct >= 75 ? 'text-yellow-400' : ''
+    memPct == null
+      ? ''
+      : memPct >= 90
+        ? 'text-[var(--color-danger)]'
+        : memPct >= 75
+          ? 'text-[var(--color-warning)]'
+          : ''
   const loadColor =
     status.load_avg == null
       ? ''
       : status.load_avg[0] >= 4
-        ? 'text-red-400'
+        ? 'text-[var(--color-danger)]'
         : status.load_avg[0] >= 2
-          ? 'text-yellow-400'
+          ? 'text-[var(--color-warning)]'
           : ''
 
   return (
@@ -492,8 +503,8 @@ function Dot() {
 
 function tempColor(c: number | null): string {
   if (c == null) return ''
-  if (c >= 85) return 'text-red-400'
-  if (c >= 75) return 'text-yellow-400'
+  if (c >= 85) return 'text-[var(--color-danger)]'
+  if (c >= 75) return 'text-[var(--color-warning)]'
   return ''
 }
 

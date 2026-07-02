@@ -388,7 +388,7 @@ function HealthVerdict({ status }: { status: ServerStatus | null }) {
       aria-live={verdict.kind === 'critical' ? undefined : 'polite'}
       data-testid="jetson-health-verdict"
       data-verdict-kind={verdict.kind}
-      className={`rounded-2xl border px-4 py-3 ${palette.surface}`}
+      className={`rounded-2xl border px-4 py-3 shadow-[var(--shadow-subtle)] ${palette.surface}`}
     >
       <div className="flex items-start gap-3">
         <span

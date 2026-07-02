@@ -215,7 +215,7 @@ export function Review() {
         </div>
         <Link
           to="/training"
-          className="text-sm text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+          className="inline-flex items-center min-h-[44px] text-sm font-medium text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded whitespace-nowrap transition-colors"
         >
           ← All training photos
         </Link>
@@ -250,7 +250,7 @@ export function Review() {
             return (
               <li
                 key={k}
-                className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden flex flex-col"
+                className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl overflow-hidden flex flex-col shadow-[var(--shadow-card),var(--shadow-card-inset)]"
               >
                 <img
                   src={item.url}
@@ -258,16 +258,23 @@ export function Review() {
                   loading="lazy"
                   className="w-full aspect-square object-cover bg-[var(--color-surface-raised)]"
                 />
-                <div className="px-3 py-2.5 flex-1 flex flex-col gap-2">
-                  <div>
-                    <div className="text-sm text-[var(--color-text-primary)] truncate">
+                <div className="p-3 flex-1 flex flex-col gap-2">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
                       {item.predicted_name ?? 'No prediction'}
                     </div>
                     {/* iter-356.14 (Frank Round-3 B3 + D3): bumped
                         text-[11px] → text-xs (12px), tertiary →
-                        secondary, and __unknown__ is humanized. */}
-                    <div className="text-xs text-[var(--color-text-secondary)] tabular-nums">
-                      {conf}% confident · filed as {displayDir(item.current_dir)}
+                        secondary, and __unknown__ is humanized.
+                        Sunroom sweep: confidence gets a warning-toned
+                        badge — every item here is by definition in
+                        the uncertain band, and warning is the
+                        semantic color for "not sure." */}
+                    <div className="text-xs text-[var(--color-text-secondary)] flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded font-semibold tabular-nums bg-[var(--color-warning-bg)] text-[var(--color-warning)]">
+                        {conf}% sure
+                      </span>
+                      <span>filed as {displayDir(item.current_dir)}</span>
                     </div>
                   </div>
                   {/* iter-356.14 (Frank Round-3 H2): two-row layout

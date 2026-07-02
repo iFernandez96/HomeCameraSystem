@@ -52,8 +52,9 @@ function contrast(a: string, b: string): number {
 }
 
 describe('design-system contrast pins (iter-356.65 slice A)', () => {
-  it('Given the warm-stone secondary and tobacco surface, When contrast is computed, Then it clears AA at ~5:1', () => {
-    // arrange
+  it('Given the umber secondary and paper surface, When contrast is computed, Then it clears AA at ~5:1', () => {
+    // arrange — redesign/warm-boutique (2026-07-01): pins retuned for
+    // the Sunroom light palette (#6b5c3d on #fffdf7 ≈ 6.4:1).
     const secondary = readToken('--color-text-secondary')
     const surface = readToken('--color-surface')
 
@@ -61,12 +62,12 @@ describe('design-system contrast pins (iter-356.65 slice A)', () => {
     const ratio = contrast(secondary, surface)
 
     // assert
-    expect(secondary.toLowerCase()).toBe('#c4a482')
-    expect(surface.toLowerCase()).toBe('#2c2318')
+    expect(secondary.toLowerCase()).toBe('#6b5c3d')
+    expect(surface.toLowerCase()).toBe('#fffdf7')
     expect(ratio).toBeGreaterThanOrEqual(5)
   })
 
-  it('Given the parchment primary and charred-oak bg, When contrast is computed, Then it clears AAA at 7:1', () => {
+  it('Given the ink primary and linen bg, When contrast is computed, Then it clears AAA at 7:1', () => {
     // arrange — sanity pin so a primary-text drift is also caught
     const primary = readToken('--color-text-primary')
     const bg = readToken('--color-bg')

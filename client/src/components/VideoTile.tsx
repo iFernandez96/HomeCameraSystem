@@ -506,7 +506,11 @@ export function VideoTile({
   return (
     <div
       ref={containerRef}
-      className="relative aspect-video bg-black overflow-hidden rounded-2xl border border-[var(--color-border)]"
+      // Sunroom redesign (2026-07-01): the video field stays black —
+      // the frame's chrome gets the paper-card treatment (warm shadow +
+      // strong border) so the tile reads as a framed window on the
+      // linen page rather than a floating dark slab.
+      className="relative aspect-video bg-black overflow-hidden rounded-2xl border border-[var(--color-border-strong)] shadow-[var(--shadow-card)]"
     >
       <video
         ref={videoRef}
@@ -529,7 +533,13 @@ export function VideoTile({
         // overlay sits behind the home-indicator strip on iPhone
         // notched devices.
         style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-        className={`absolute right-16 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-[var(--color-text-primary)] hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+        // Sunroom redesign (2026-07-01): text-white replaces
+        // text-[var(--color-text-primary)] — primary is now Panther
+        // ink (#292013), near-invisible on the black/60 scrim (the
+        // exact Dana E1 contrast bug class). White on the marmalade
+        // active fill is the allowed colored-fill exception. Focus
+        // ring uses accent-bright over the dark video for contrast.
+        className={`absolute right-16 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors ${
           boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
         }`}
       >
@@ -557,7 +567,9 @@ export function VideoTile({
         // treatment as the bbox toggle so neither button hides
         // behind the iOS home indicator in landscape PWA mode.
         style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-        className="absolute right-3 flex items-center justify-center w-11 h-11 bg-black/60 backdrop-blur rounded-full text-[var(--color-text-primary)] hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        // Sunroom redesign (2026-07-01): same white-on-scrim fix +
+        // shared over-video ring as the bbox toggle above.
+        className="absolute right-3 flex items-center justify-center w-11 h-11 bg-black/60 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
       >
         {isFullscreen ? (
           <svg
@@ -657,7 +669,7 @@ export function VideoTile({
             pre-existing iter-356.C visual contract is preserved. */}
         {streamStale && status === 'live' && (
           <div
-            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
             aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
           >
             <span className="inline-flex items-center gap-2">
@@ -676,12 +688,12 @@ export function VideoTile({
             because the recovery tool runs on the host). */}
         {cameraOffline && status === 'live' && (
           <div
-            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
             aria-label="Camera offline. Restart the camera service."
           >
             <span className="inline-flex items-center gap-2">
               <PillSeverityIcon kind="camera-offline" tone="danger" />
-              <span className="w-2 h-2 rounded-full bg-[var(--color-danger)]" />
+              <span className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)]" />
               Camera offline
             </span>
             <span className="text-[10px] text-white/80 font-normal">
@@ -695,7 +707,7 @@ export function VideoTile({
             the worker auto-recovers within a heartbeat cycle. */}
         {detectionPausedWorker && status === 'live' && (
           <div
-            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused — worker offline"
           >
             <PillSeverityIcon kind="worker-offline" tone="warning" />
@@ -705,17 +717,17 @@ export function VideoTile({
         )}
         {lowMem && status === 'live' && (
           <div
-            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused due to low memory"
           >
             <PillSeverityIcon kind="low-memory" tone="danger" />
-            <span className="w-2 h-2 rounded-full bg-[var(--color-danger)]" />
+            <span className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)]" />
             Low memory — paused
           </div>
         )}
         {therm && status === 'live' && (
           <div
-            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection rate-limited by GPU thermal"
           >
             <PillSeverityIcon kind="thermal" tone="warning" />
@@ -725,7 +737,7 @@ export function VideoTile({
         )}
         {paused && status === 'live' && (
           <div
-            className="flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
+            className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused"
           >
             <PillSeverityIcon kind="paused" tone="warning" />
@@ -780,7 +792,7 @@ function QualityControl({
   onSelect: (q: StreamQuality) => void
 }) {
   return (
-    <label className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2 py-1 rounded-full text-xs font-medium text-white">
+    <label className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2 py-1 rounded-full text-xs font-medium text-white">
       <span className="sr-only">Stream quality</span>
       <svg
         width="14"
@@ -802,7 +814,7 @@ function QualityControl({
         aria-label="Stream quality"
         value={quality}
         onChange={(e) => onSelect(e.target.value as StreamQuality)}
-        className="bg-transparent text-white text-xs font-medium outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-sm cursor-pointer"
+        className="bg-transparent text-white text-xs font-medium outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 rounded-sm cursor-pointer"
       >
         {QUALITY_OPTIONS.map((o) => (
           // option bg follows the native picker; force a readable surface
@@ -823,12 +835,15 @@ function StatusPill({ status }: { status: Status }) {
   // states — those already get attention via the precedence-ladder
   // overlays above this pill. The pulse was also burning a compositor
   // layer on the first thing the user sees, every load.
+  // Sunroom redesign (2026-07-01): idle dot was raw-palette
+  // bg-neutral-500 (dark-era hardcode); white/40 reads correctly on
+  // the black scrim without leaving the token system.
   const dot =
     status === 'live'
-      ? 'bg-[var(--color-danger)]'
+      ? 'bg-[var(--color-danger-strong)]'
       : status === 'connecting'
         ? 'bg-[var(--color-warning)] animate-pulse'
-        : 'bg-neutral-500'
+        : 'bg-white/40'
   const label =
     status === 'live'
       ? 'Live'
@@ -841,7 +856,7 @@ function StatusPill({ status }: { status: Status }) {
     // iter-356.56 (Dana E1+E2): pill text was inheriting near-black
     // --color-text-primary on bg-black/60 — measured 1.05:1 contrast,
     // catastrophic WCAG fail. text-white is ~10:1 on the same backdrop.
-    <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-xs font-medium text-white">
+    <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white">
       <span className={`w-2 h-2 rounded-full ${dot}`} />
       {label}
     </div>
@@ -883,9 +898,12 @@ function PillSeverityIcon({
   kind: PillKind
   tone: 'warning' | 'danger'
 }) {
+  // Sunroom redesign (2026-07-01): over the black scrim, the light-bg
+  // danger token (#b3372e brick) drops below 3.5:1 — danger-strong is
+  // the bright fill red and keeps the glyph legible over video.
   const colorClass =
     tone === 'danger'
-      ? 'text-[var(--color-danger)]'
+      ? 'text-[var(--color-danger-strong)]'
       : 'text-[var(--color-warning)]'
   return (
     <span

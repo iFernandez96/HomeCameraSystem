@@ -131,7 +131,7 @@ export function DetectionSection() {
               maxLength={32}
               placeholder="Front Door"
               aria-label="Camera display name"
-              className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+              className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               disabled={config === null}
             />
           </label>
@@ -165,7 +165,7 @@ export function DetectionSection() {
             />
           }
         />
-        <p className="px-4 -mt-2 pb-3 text-xs text-[var(--color-text-primary)]">
+        <p className="px-4 -mt-2 pb-3 text-xs text-[var(--color-text-secondary)]">
           When on, the Talk button on the Live page lets you speak
           out of a speaker on the camera. Needs a microphone and
           speaker plugged into the camera box. Off by default.
@@ -191,7 +191,7 @@ export function DetectionSection() {
           disabled={config === null}
           ariaLabel="Detection sensitivity"
         />
-        <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-primary)]">
+        <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-secondary)]">
           Lower means more events (and more false alarms). Higher
           means only confident detections.
         </p>
@@ -316,7 +316,7 @@ export function DetectionSection() {
             />
           }
         />
-        <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-primary)]">
+        <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-secondary)]">
           When on, the camera follows a person through their whole visit
           and saves a single continuous clip instead of several
           overlapping ones. Better daily recap videos; uses more disk per
@@ -400,10 +400,14 @@ export function DetectionSection() {
                     commitConfig({ classes: next })
                   }}
                   aria-pressed={selected}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors capitalize focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+                  // Sunroom: selected chip = accent-subtle peach paper +
+                  // ink text (light surface; accent-colored text was a
+                  // dark-era treatment) with a pre-mixed accent border —
+                  // the /opacity-on-var() modifiers were unreliable.
+                  className={`px-3 py-1.5 min-h-[36px] rounded-full text-sm font-medium border transition-colors duration-150 capitalize focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                     selected
-                      ? 'bg-[var(--color-accent-default)]/20 border-[var(--color-accent-default)]/60 text-[var(--color-accent-default)]'
-                      : 'bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]'
+                      ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-border)] text-[var(--color-text-primary)]'
+                      : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]'
                   }`}
                 >
                   {name}

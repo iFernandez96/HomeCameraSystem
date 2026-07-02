@@ -63,7 +63,12 @@ export function SideRail() {
               className={({ isActive }) =>
                 `group relative flex items-center justify-center w-12 h-12 rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                   isActive
-                    ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-1 ring-[var(--color-accent-default)]/40'
+                    ? // redesign/warm-boutique: active = peach accent-subtle
+                      // bg + marmalade icon. Ring uses the pre-mixed
+                      // --color-accent-border token instead of the `/40`
+                      // opacity modifier on a var() ref, which Tailwind v4
+                      // doesn't reliably resolve (iter-356.14 lesson).
+                      'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-1 ring-[var(--color-accent-border)]'
                     : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text-primary)]'
                 }`
               }
@@ -93,7 +98,12 @@ export function SideRail() {
           <div
             aria-label={`Signed in as ${user.username}`}
             title={`Signed in as ${user.username}`}
-            className="w-9 h-9 rounded-full flex items-center justify-center bg-[var(--color-brass-default)]/15 text-[var(--color-brass-default)] text-xs font-bold uppercase border border-[var(--color-brass-default)]/30"
+            // redesign/warm-boutique: brass avatar chip sits on the
+            // pre-mixed --color-brass-subtle paper (the old `/15`
+            // opacity modifier on a var() bg is the unreliable
+            // Tailwind v4 pattern — iter-356.14 lesson). Border uses
+            // the strong warm-tan border token, no opacity modifier.
+            className="w-9 h-9 rounded-full flex items-center justify-center bg-[var(--color-brass-subtle)] text-[var(--color-brass-default)] text-xs font-bold uppercase border border-[var(--color-border-strong)]"
           >
             {user.username.slice(0, 1)}
           </div>
@@ -123,7 +133,7 @@ function LiveIcon({ active }: { active: boolean }) {
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M23 7l-7 5 7 5V7z" />
       <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-      {active && <circle cx="5" cy="9" r="1.5" fill="#ef4444" stroke="none" />}
+      {active && <circle cx="5" cy="9" r="1.5" fill="var(--color-danger)" stroke="none" />}
     </svg>
   )
 }

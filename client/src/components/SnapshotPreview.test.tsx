@@ -103,6 +103,20 @@ describe('SnapshotPreview', () => {
     )
   })
 
+  it('given the light Sunroom theme, when the buttons render over the black viewer, then both carry explicit text-white (over-image dark surface must not inherit ink page text)', () => {
+    // arrange / act
+    render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
+
+    // assert — the viewer is intentionally dark; inherited page text
+    // is now dark ink and would vanish on the white/10 fills.
+    expect(screen.getByRole('link', { name: /save/i }).className).toMatch(
+      /\btext-white\b/,
+    )
+    expect(screen.getByRole('button', { name: /^close$/i }).className).toMatch(
+      /\btext-white\b/,
+    )
+  })
+
   it('uses dialog semantics', () => {
     render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
     const dialog = screen.getByRole('dialog')

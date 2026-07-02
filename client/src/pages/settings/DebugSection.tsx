@@ -111,13 +111,15 @@ export function DebugSection() {
   }
 
   return (
+    // Sunroom: card joins the Section paper tier (shadow-card) and the
+    // heading steps up to the shared header size (Inter semibold 18px).
     <section
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-3"
       aria-labelledby="debug-section-heading"
     >
       <h2
         id="debug-section-heading"
-        className="text-sm font-semibold text-[var(--color-text-primary)]"
+        className="text-lg font-semibold text-[var(--color-text-primary)]"
       >
         Debug
       </h2>
@@ -127,17 +129,20 @@ export function DebugSection() {
       </p>
 
       <div className="flex flex-wrap gap-2">
+        {/* Sunroom: the filled action is ink (Panther) — marmalade fills
+            are reserved for links / focus / active / live signal. 44px
+            touch floor on both. */}
         <button
           type="button"
           onClick={onReload}
-          className="px-3 py-2 rounded-lg bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] text-sm font-medium border border-[var(--color-border)] transition-colors min-h-[40px]"
+          className="px-3 py-2 rounded-lg bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] text-[var(--color-text-primary)] text-sm font-medium border border-[var(--color-border)] transition-colors duration-150 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           Reload app
         </button>
         <button
           type="button"
           onClick={onResetAndReload}
-          className="px-3 py-2 rounded-lg bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-bright)] text-white text-sm font-medium transition-colors min-h-[40px]"
+          className="px-3 py-2 rounded-lg bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-white text-sm font-medium transition-colors duration-150 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           Reset cache &amp; reload
         </button>

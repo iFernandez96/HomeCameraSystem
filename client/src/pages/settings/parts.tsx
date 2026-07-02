@@ -34,17 +34,23 @@ export function Section({
   subtitle?: string
   children: ReactNode
 }) {
+  // redesign/warm-boutique (Sunroom): section header steps up from the
+  // dark-era uppercase-tracking micro-label to the shared header tier
+  // (Inter semibold 18px, ink) so Settings reads as a control room in
+  // daylight, not a terminal. The card itself is paper: cream surface,
+  // hairline border, warm shadow-card (light themes need the shadow —
+  // L-delta alone doesn't separate paper from linen).
   return (
     <section>
-      <h2 className="text-xs uppercase tracking-wider text-[var(--color-text-tertiary)] mb-2 px-1">
+      <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1 px-1">
         {title}
       </h2>
       {subtitle && (
-        <p className="text-xs text-[var(--color-text-tertiary)] mb-2 px-1 -mt-1">
+        <p className="text-sm text-[var(--color-text-tertiary)] mb-2 px-1">
           {subtitle}
         </p>
       )}
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl divide-y divide-[var(--color-border-subtle)] overflow-hidden">
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-[var(--shadow-card)] divide-y divide-[var(--color-border-subtle)] overflow-hidden mt-1">
         {children}
       </div>
     </section>
@@ -95,8 +101,11 @@ export function Toggle({
       type="button"
       onClick={() => !disabled && onChange(!checked)}
       disabled={disabled}
+      // Sunroom: the off-state pill needs a real border tone — the old
+      // surface-raised fill was near-invisible against the paper card,
+      // so on/off read as "orange vs nothing."
       className={`w-11 h-6 rounded-full p-0.5 flex items-center transition-colors duration-150 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-        checked ? 'bg-[var(--color-accent-default)]' : 'bg-[var(--color-surface-raised)]'
+        checked ? 'bg-[var(--color-accent-default)]' : 'bg-[var(--color-border)]'
       }`}
       aria-pressed={checked}
       aria-label={ariaLabel}
@@ -206,9 +215,12 @@ export function RetentionPresetPicker({
               aria-checked={active}
               onClick={() => !disabled && onChange(opt)}
               disabled={disabled}
+              // Sunroom: accent-subtle is a LIGHT peach surface now — the
+              // selected tile keeps ink text (accent-bright text on a light
+              // tint was a dark-era leftover, ~3.5:1).
               className={`px-3 py-3 rounded-xl border transition-colors duration-150 text-left disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                 active
-                  ? 'bg-[var(--color-accent-bg)] border-[var(--color-accent-border)] text-[var(--color-accent-bright)]'
+                  ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-border)] text-[var(--color-text-primary)]'
                   : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:border-[var(--color-border-strong)]'
               }`}
             >

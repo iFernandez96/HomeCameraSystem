@@ -93,7 +93,11 @@ export function ConfirmDialog({
       aria-modal="true"
       aria-labelledby="confirm-title"
       onKeyDown={onKeyDownTrap}
-      className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in"
+      // redesign/warm-boutique (Sunroom): scrim lightened 70% → 40%.
+      // The near-opaque black scrim belonged to the dark theme; on the
+      // light linen ground a 40% dim + blur is enough to focus the
+      // paper dialog without reading as a blackout.
+      className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in"
     >
       <div
         onClick={onCancel}

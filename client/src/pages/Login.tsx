@@ -6,19 +6,21 @@ import {
 } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { CatTrioMark } from '../components/CatIcons'
+import { Button } from '../components/primitives/Button'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { log } from '../lib/log'
 
 /**
- * Full-page sign-in form. iter-356.1 redesign per architect brief:
- *  - Brand identity: lens-glyph + "HomeCam" wordmark + tagline
- *  - Brand-blue accent throughout (was emerald) per design-token
- *    foundation in index.css
+ * Full-page sign-in form — the brand-setting first impression.
+ * redesign/warm-boutique (Sunroom): warm-linen full-bleed page, cream
+ * paper card, CatTrioMark + Fraunces "HomeCam" wordmark, Panther-ink
+ * submit via the Button primitive. Kept from the iter-356 series:
  *  - Surfaced error state (icon + tinted box, not bare red text)
  *  - Loading spinner inside the submit button
  *  - Caps Lock warning on the password field
- *  - 44 px touch targets on inputs + button
+ *  - 44 px touch targets on inputs + button; 16 px input text so iOS
+ *    Safari doesn't zoom-jump the viewport on focus
  *  - Card animates in (login-fade-in keyframe in index.css)
  *
  * Auth contract preserved: AuthProvider's `login` posts /api/auth/
@@ -112,14 +114,11 @@ export function Login() {
 
   return (
     <div className="min-h-full flex items-center justify-center px-6 py-16 bg-[var(--color-bg)]">
-      {/* iter-356.1a (Maya Critical 3): card was invisible on dark
-          background — #111 surface on #2a2a2a border on #0a0a0a page
-          read as a "faint rectangle floating in void." Added
-          `shadow-[var(--shadow-card)]` (token defined iter-356.0 but not
-          consumed) + 1 px inner highlight via box-shadow inset for
-          edge-light. Card now sits on the page instead of floating.
-          (Maya Major: rounded-2xl preserved; matches button at
-          rounded-xl after iter-356.1a button radius bump.) */}
+      {/* redesign/warm-boutique (Sunroom): the card is cream paper on
+          the warm-linen page, lifted by --shadow-card plus the
+          --shadow-card-inset white top edge — paper catching daylight,
+          not a glow. rounded-2xl preserved; nests the rounded-xl
+          controls with the canonical 4-px step. */}
       <form
         onSubmit={handleSubmit}
         aria-label="Sign in"
@@ -130,7 +129,7 @@ export function Login() {
         // space so the submit button stays bottom-anchored relative
         // to the card body.
         className="w-full max-w-sm flex flex-col bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 animate-login-in shadow-[var(--shadow-card)]"
-        style={{ boxShadow: 'var(--shadow-card), inset 0 1px 0 rgb(255 255 255 / 0.04)' }}
+        style={{ boxShadow: 'var(--shadow-card), var(--shadow-card-inset)' }}
       >
         {/* iter-356.4-cats: brand identity now CARRIED BY THE THREE
             CATS (Panther / Mushu / Coco). Pixel-art trio replaces
@@ -335,66 +334,26 @@ export function Login() {
           )}
         </div>
 
-        {/* iter-356.1a (Maya Major Button + Loading State):
-            - rounded-xl (was rounded-lg) — nests under card's
-              rounded-2xl with the canonical 4-px step
-            - hover:bg-[var(--color-accent-bright)] (was raw blue-500) —
-              token-driven, brightens consistently
-            - min-h reserves height so spinner-vs-text doesn't jiggle
-              the button width on slow networks
-            - duration-150 (was duration-100) matches input focus
-              transition (--duration-base)
-            */}
-        <button
+        {/* redesign/warm-boutique (Sunroom): the submit goes through
+            the Button primitive — Panther-INK fill per the calico
+            tri-tone discipline (ink for the one primary action;
+            marmalade stays reserved for links/focus). The primitive
+            carries the marmalade focus ring (visible against the ink
+            fill), the loading spinner + sr-only announcement, and the
+            48 px lg tap target. Replaces the old raw accent-orange
+            <button> whose active state flashed the now-LIGHT
+            --color-accent-muted under white text. Pinned by
+            Login.test.tsx. */}
+        <Button
           type="submit"
-          disabled={submitting}
-          className={
-            // iter-356.26: text-white (was swept to text-primary by
-            // the dark→light bulk migration). White on calico-orange
-            // is the readable pair (~5:1 AA); warm-dark on orange
-            // rendered the button invisible.
-            // iter-356.63 (Slice D a11y): focus ring color was
-            // accent-default on a bg of accent-default — invisible.
-            // Switched to text-primary (a contrasting dark calico)
-            // so the keyboard-focus indicator actually renders.
-            // outline-offset-2 keeps the ring detached from the
-            // button fill. Pinned by Login.test.tsx.
-            `w-full bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-bright)] active:bg-[var(--color-accent-muted)] ` +
-            `disabled:opacity-60 disabled:cursor-not-allowed ` +
-            `rounded-xl px-4 py-3 min-h-[48px] text-base font-semibold text-white ` +
-            `transition-colors duration-150 ` +
-            `focus-visible:outline-2 focus-visible:outline-[var(--color-text-primary)] focus-visible:outline-offset-2`
-          }
+          variant="primary"
+          size="lg"
+          fullWidth
+          loading={submitting}
+          loadingText="Signing in…"
         >
-          {submitting ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg
-                className="animate-spin w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeOpacity="0.25"
-                />
-                <path
-                  d="M22 12a10 10 0 0 1-10 10"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-              </svg>
-              Signing in…
-            </span>
-          ) : (
-            'Sign in'
-          )}
-        </button>
+          Sign in
+        </Button>
       </form>
     </div>
   )

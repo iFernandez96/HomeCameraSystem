@@ -15,10 +15,10 @@ import {
  * scale, focus-ring, motion).
  *
  * Variants:
- *   primary     — single CTA per screen; brand-blue fill, white label
- *   secondary   — neutral outline; confirms a non-primary action
+ *   primary     — single CTA per screen; Panther-ink fill, white label
+ *   secondary   — paper surface + hairline border; non-primary action
  *   ghost       — text-only; cancel / dismiss / cleanup
- *   destructive — red fill / outline; reboot, delete, sign out
+ *   destructive — solid danger-strong fill, white label; reboot, delete, sign out
  *
  * Sizes:
  *   sm — chip-density (compact rows, action-panel buttons)
@@ -56,53 +56,51 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 }
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  // iter-356.26 fix: text-white is correct here. The iter-356.26 bulk
-  // sed swept text-white → text-[var(--color-text-primary)] (warm dark) but
-  // for the primary button the FILL is calico-orange (--color-accent-
-  // default) — dark-brown text on dark-orange is muddy and on the
-  // running app rendered the Sign-in button as INVISIBLE (text and bg
-  // both warm-dark hues). White on orange is the readable contrast
-  // pair (~5:1) and matches Linear/Things/Cron primary buttons.
+  // redesign/warm-boutique (Sunroom): the calico tri-tone discipline —
+  // primary actions are Panther-INK fills, not marmalade. Ink on linen
+  // is the signature move (Things-3-style dark primary on a warm
+  // ground); the marmalade accent stays reserved for links / focus /
+  // live signal so a screen never shouts twice. text-white on the ink
+  // fill is the correct pairing (~14:1); the focus ring stays
+  // marmalade via BASE_CLASSES.
   primary:
-    'bg-[var(--color-accent-default)] text-white ' +
-    'hover:bg-[var(--color-accent-bright)] active:bg-[var(--color-accent-muted)] ' +
+    'bg-[var(--color-ink)] text-white ' +
+    'hover:bg-[var(--color-ink-hover)] active:bg-[var(--color-ink-hover)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
-  // iter-356.5 (desktop B1): pre-iter-356.5 hover was border-only
-  // (border #2a → #3a, 16-pt lightness delta). On a typical office
-  // TN panel with compressed darks the change was invisible; cursor
-  // hover felt unresponsive on Settings + DangerZone buttons. Added
-  // `hover:bg-[var(--color-surface-overlay)]` for unambiguous fill-area
-  // feedback (matches the ghost variant pattern).
+  // redesign/warm-boutique: secondary = paper card. Rest state sits on
+  // --color-surface (cream paper) with the default hairline border;
+  // hover lifts to --color-surface-raised + a stronger border so the
+  // fill-area feedback stays unambiguous (iter-356.5 desktop B1 kept —
+  // on the light theme surface→raised is a clear warm step, unlike the
+  // old dark border-only delta).
   secondary:
-    'bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] ' +
+    'bg-[var(--color-surface)] text-[var(--color-text-primary)] ' +
     'border border-[var(--color-border)] ' +
-    'hover:bg-[var(--color-surface-overlay)] hover:border-[var(--color-border-strong)] ' +
-    'active:bg-[var(--color-surface-overlay)] active:border-[var(--color-border-strong)] ' +
+    'hover:bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] ' +
+    'active:bg-[var(--color-surface-raised)] active:border-[var(--color-border-strong)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
+  // redesign/warm-boutique: ghost active state moves off
+  // --color-surface-overlay (now the same paper as --color-surface, so
+  // a press would flash LIGHTER than the hover) onto the raised tone.
   ghost:
     'bg-transparent text-[var(--color-text-secondary)] ' +
     'hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text-primary)] ' +
-    'active:bg-[var(--color-surface-overlay)] ' +
+    'active:bg-[var(--color-surface-raised)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
-  // iter-356.5 (a11y E1): text-red-300 (#fca5a5) on the blended
-  // danger surface measured ~4.3:1 — fails WCAG AA body-text 4.5:1.
-  // Switched to the --color-danger token (#ef4444) which measures
-  // ~5.1:1 on the same surface. Also restores token-system invariant
-  // (no raw Tailwind color classes inside the primitive).
-  // ANTI-RECO: do not auto-prepend a warning icon "for color-blind
-  // safety." The destructive variant is reserved for unambiguous
-  // labels ("Reboot Jetson", "Delete clip", "Sign out") — adding a
-  // mandatory icon makes button rows wider and breaks the existing
-  // ActionButton geometry. Color + label combination is sufficient
-  // when the label is unambiguous; callers MUST keep it that way.
+  // redesign/warm-boutique: destructive is a SOLID --color-danger-strong
+  // fill with white text (the one sanctioned text-white-on-fill besides
+  // primary). The old dark-theme treatment was a translucent danger
+  // tint + danger text — on the light linen ground that reads as a
+  // pale pink chip, far too quiet for "Reboot Jetson" / "Delete clip".
+  // Hover deepens to the brick --color-danger token.
+  // ANTI-RECO (kept from iter-356.5): do not auto-prepend a warning
+  // icon "for color-blind safety." Destructive is reserved for
+  // unambiguous labels; a mandatory icon widens button rows and breaks
+  // ActionButton geometry. Color + label is sufficient — callers MUST
+  // keep labels unambiguous.
   destructive:
-    // iter-356.14 (Maya MAJOR fix): pre-tokenized tinted bg via
-    // color-mix in index.css. Pre-iter-356.14 the `/15` /opacity
-    // modifier on a CSS-var-bg didn't apply reliably in Tailwind v4
-    // → button rendered solid red instead of tinted danger surface.
-    'bg-[var(--color-danger-bg)] text-[var(--color-danger)] ' +
-    'border border-[var(--color-danger-muted)] ' +
-    'hover:bg-[var(--color-danger-bg-strong)] active:bg-[var(--color-danger-bg-strong)] ' +
+    'bg-[var(--color-danger-strong)] text-white ' +
+    'hover:bg-[var(--color-danger)] active:bg-[var(--color-danger)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
 }
 

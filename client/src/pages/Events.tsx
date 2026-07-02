@@ -1143,8 +1143,12 @@ export function Events() {
                 iter-356.56 (mobile audit B2): Reset is now a real
                 touch target — min-h-[44px] + horizontal padding +
                 inline-flex so the click area meets WCAG 2.5.5. */}
+            {/* redesign/warm-boutique: "From"/"to" are plain field
+                labels, not signal — secondary ink, not marmalade
+                (accent stays reserved for the active-filter status
+                line above). */}
             <div className="flex items-center gap-2 text-xs flex-wrap">
-              <span className="text-[var(--color-accent-default)]">From</span>
+              <span className="text-[var(--color-text-secondary)]">From</span>
               <input
                 type="time"
                 value={dayStartTime ?? ''}
@@ -1154,7 +1158,7 @@ export function Events() {
                 aria-label="Filter from time of day"
                 className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1 text-[16px] text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               />
-              <span className="text-[var(--color-accent-default)]">to</span>
+              <span className="text-[var(--color-text-secondary)]">to</span>
               <input
                 type="time"
                 value={dayEndTime ?? ''}
@@ -1583,7 +1587,7 @@ function CalendarOverlay({
         onClick={onClose}
         className="absolute inset-0 w-full h-full cursor-default"
       />
-      <div className="relative w-full max-w-md mx-4 mt-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 shadow-xl">
+      <div className="relative w-full max-w-md mx-4 mt-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
             Calendar

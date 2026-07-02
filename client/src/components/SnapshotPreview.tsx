@@ -106,16 +106,20 @@ export function SnapshotPreview({
       />
       <div className="relative flex-1 flex items-center justify-center p-4 min-h-0">
         {errored ? (
+          // Sunroom sweep: this fallback sits INSIDE the intentionally
+          // dark full-screen viewer, so it keeps over-image white tones
+          // — the light-theme surface/text tokens would render ink on
+          // near-black here.
           <div
             role="status"
             aria-live="polite"
             className="text-center space-y-3 max-w-sm"
           >
-            <div className="mx-auto w-12 h-12 rounded-full bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] flex items-center justify-center text-[var(--color-text-tertiary)] text-xl">
+            <div className="mx-auto w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white/70 text-xl">
               ?
             </div>
-            <p className="text-[var(--color-text-secondary)]">Snapshot unavailable</p>
-            <p className="text-xs text-[var(--color-text-tertiary)] break-all">
+            <p className="text-white/90">Snapshot unavailable</p>
+            <p className="text-xs text-white/60 break-all">
               The image at <code>{url}</code> couldn&apos;t be loaded.
               It may have been pruned from the server.
             </p>
@@ -125,15 +129,19 @@ export function SnapshotPreview({
             src={url}
             alt="Snapshot of the camera at the moment of capture"
             onError={() => setErroredUrl(url)}
-            className="max-w-full max-h-full rounded-xl shadow-2xl border border-[var(--color-border)]"
+            className="max-w-full max-h-full rounded-xl shadow-2xl border border-white/10"
           />
         )}
       </div>
       <div className="relative px-4 pb-4 flex items-center justify-between gap-3">
+        {/* Sunroom sweep: explicit text-white — the buttons used to
+            inherit the page text color, which is now dark ink and
+            vanished on the black viewer. text-white on dark fills is
+            the sanctioned exception. */}
         <a
           href={url}
           download
-          className="flex-1 min-h-[44px] py-3 text-center bg-white/10 active:bg-white/15 rounded-2xl text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          className="flex-1 min-h-[44px] py-3 text-center text-white bg-white/10 [@media(hover:hover)]:hover:bg-white/15 active:bg-white/15 rounded-2xl text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
         >
           Save
         </a>
@@ -141,7 +149,7 @@ export function SnapshotPreview({
           ref={closeRef}
           type="button"
           onClick={onClose}
-          className="flex-1 min-h-[44px] py-3 bg-white/15 active:bg-white/20 rounded-2xl text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          className="flex-1 min-h-[44px] py-3 text-white bg-white/15 [@media(hover:hover)]:hover:bg-white/20 active:bg-white/20 rounded-2xl text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
         >
           Close
         </button>

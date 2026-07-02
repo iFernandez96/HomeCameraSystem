@@ -23,8 +23,10 @@ export function CaptureSavingPill() {
   if (enabled !== true) return null
 
   return (
+    // Sunroom redesign (2026-07-01): shared over-video pill treatment
+    // (black/60 scrim + white/20 ring) matching the trust cluster.
     <span
-      className="inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur px-3 py-1.5 text-xs font-medium text-white ring-1 ring-white/20"
+      className="inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur px-3 py-1.5 text-xs font-medium text-white ring-1 ring-white/20"
       aria-label="Saving faces for training"
     >
       <CameraDiskIcon />

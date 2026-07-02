@@ -297,7 +297,9 @@ export function ManageUsersPanel() {
             return (
               <li
                 key={u.username}
-                className="rounded-lg bg-[var(--color-surface)]/60 border border-[var(--color-border)] px-3 py-2 space-y-2"
+                // Sunroom sweep: /opacity-on-var surface → solid raised
+                // paper so user rows read as tiles inside the card.
+                className="rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-3 py-2 space-y-2"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -434,7 +436,7 @@ function AddUserForm(props: {
   }
   return (
     <div
-      className="rounded-lg bg-[var(--color-surface)]/60 border border-[var(--color-border)] px-3 py-3 space-y-2"
+      className="rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-3 py-3 space-y-2"
       aria-label="Add user form"
     >
       <input
@@ -444,7 +446,7 @@ function AddUserForm(props: {
         placeholder="Username"
         autoComplete="off"
         aria-label="New username"
-        className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        className="w-full bg-[var(--color-surface)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       />
       <input
         type="password"
@@ -453,7 +455,7 @@ function AddUserForm(props: {
         placeholder="Password (8+ characters)"
         autoComplete="new-password"
         aria-label="New user password"
-        className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        className="w-full bg-[var(--color-surface)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       />
       <label className="block text-xs text-[var(--color-text-secondary)]">
         Role
@@ -461,7 +463,7 @@ function AddUserForm(props: {
           value={role}
           onChange={(e) => setRole(e.target.value as AdminRole)}
           aria-label="Role for new user"
-          className="mt-1 w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-sm border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          className="mt-1 w-full bg-[var(--color-surface)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-sm border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           <option value="owner">Owner — full control</option>
           <option value="family">Family — view + push</option>
@@ -545,7 +547,7 @@ function InlineResetPasswordForm(props: {
         // pixel-sizes the input and reflows the page). Bumped to
         // text-base so the inline reset form stops jumping the page
         // when the operator focuses it on a phone.
-        className="w-full bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        className="w-full bg-[var(--color-surface)] text-[var(--color-text-primary)] px-3 py-2 rounded-lg text-base border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       />
       <div className="flex gap-2">
         <Button

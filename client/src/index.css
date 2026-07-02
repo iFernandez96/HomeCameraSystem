@@ -47,134 +47,104 @@
  * (color / space / radius / text / shadow / motion / z).
  */
 @theme {
-  /* iter-356.57 — RADICAL REDESIGN ("The Watchpost"). User directive:
-   * "I need a radical visual and product-identity redesign so
-   * substantial the app is almost unrecognizable... warm protective
-   * den, handcrafted cat-home OS, serious security with a soul."
+  /* redesign/warm-boutique (2026-07-01) — "SUNROOM". User directive:
+   * "make the UX way better… as professional as possible… completely
+   * overhaul it, feel free to overwrite the work already done."
+   * Direction picked by user: refined warm + cats — boutique-app
+   * polish (Things 3 warmth) around the Panther/Mushu/Coco identity.
    *
-   * The shift: from "calico cream daylight room" (iter-356.25 →
-   * iter-356.56) to "den at dusk." This is a DARK theme — the most
-   * unmistakable possible visual shift from the previous cream UI.
-   * Token NAMES preserved so the rest of the codebase flips
-   * automatically; values + role hierarchy redesigned end-to-end.
+   * The shift: from iter-356.57 "den at dusk" (dark Watchpost) back
+   * to DAYLIGHT — warm linen paper, ink text, one marmalade accent.
+   * Token NAMES preserved (again) so the codebase flips automatically;
+   * every VALUE re-derived for a light ground.
    *
-   * The cats inform the palette directly (Maya brutal critique):
-   *   - Panther's near-black coat → page bg + cards
-   *   - Coco's ginger-cream → primary text (parchment)
-   *   - Mushu's tuxedo white → contrast highlights
-   * Plus the den motifs:
-   *   - Ember (glowing fire-orange) — primary brand accent
-   *   - Brass (gold-candle) — sigil + watch motif accent
-   *   - Leather stitch (warm tan-brown) — borders
+   * The calico tri-tone discipline (the design signature):
+   *   - Panther's ink coat   → text + primary-action fills
+   *   - Coco's marmalade     → the single accent (links, focus, active)
+   *   - Mushu's paper white  → card surfaces on warm linen
+   * Brass stays as the quiet secondary (house hardware: hinges,
+   * name-plate, sigil) — never competes with marmalade.
    *
-   * Color philosophy:
-   *   - Background = CHARRED OAK (#1e1710) — deep, warm, never blue-black
-   *   - Surface = DARK TOBACCO (#2c2318) — cards lift off bg without a
-   *     border (40-pt L delta) so the card-system reads as physical objects
-   *   - Surface-raised = ROASTED PINE (#3a2e1f) — hover/active state
-   *   - Text-primary = WARM PARCHMENT (#f0e6d0) — Coco's coat. ~12:1 on bg.
-   *   - Accent = EMBER (#e8873a) — Ring/glow saturation, +5.8:1 on bg
-   *   - Brass = CANDLE GOLD (#c89c4a) — "On Panther's watch" motif
-   *   - Semantic colors RE-TUNED for dark bg (red-400/amber-400/emerald-400
-   *     "glow" range, NOT the iter-356 light-bg red-700/amber-700 floor).
+   * Contrast floors (checked on their intended ground):
+   *   text-primary on surface ~13:1 · text-secondary ~6:1 ·
+   *   accent-default on surface ~4.9:1 · semantic ≥4.5:1.
    */
 
-  /* === Brand accent (EMBER — glows on dark, warm fire) ===========
-   * iter-356.57: ember on charred oak bg. ~5.8:1 contrast.
-   * Subtle = ember tinted dark for selected chip backgrounds (NOT
-   * a peach surface — peach on dark would clash). */
-  --color-accent-subtle:  #3d2810;  /* selected chip bg — ember tint on dark */
-  --color-accent-muted:   #6b3e15;  /* active ActionButton bg — deeper ember */
-  --color-accent-default: #e8873a;  /* primary fill, links, focus ring — ember */
-  --color-accent-bright:  #f0a05c;  /* hover — warmer glow */
+  /* === Brand accent (MARMALADE — Coco) ===========================
+   * Default is dark enough for TEXT + icons on cream (AA). Bright is
+   * the hover/fill tone (white text on it stays AA-large; prefer
+   * default for small text). Subtle/muted are chip + active-surface
+   * tints — warm peach paper, not neon. */
+  --color-accent-subtle:  #faeeda;  /* selected chip bg — peach paper */
+  --color-accent-muted:   #f3ddbd;  /* active ActionButton bg */
+  --color-accent-default: #b3540b;  /* links, focus ring, accent text */
+  --color-accent-bright:  #d97316;  /* hover fills, large accents */
 
-  /* === Brass (NEW — gold-candle sigil accent) ====================
-   * Used for the family-sigil mark, "On Panther's watch" indicator,
-   * the "name on the door" treatment in SideNav. Doesn't compete
-   * with ember; reads as warm + dignified. ~4.7:1 on the bg. */
-  --color-brass-default:  #c89c4a;
-  --color-brass-bright:   #d4ae5e;
-  --color-brass-subtle:   #3d3217;
+  /* === Ink (Panther — primary-action fills) ======================
+   * The signature move of the Sunroom direction: primary buttons are
+   * ink-filled (white text, ~13:1), NOT accent-filled. Marmalade is
+   * reserved for links / focus / active / live. Separate tokens from
+   * text-primary so a text retune can't silently restyle buttons. */
+  --color-ink:            #2b2213;
+  --color-ink-hover:      #40331d;
 
-  /* === Surface + border tiers (CHARRED OAK + LEATHER) =============
-   * Cards separate from bg by L-delta alone (no border needed in
-   * most places). Where borders ARE used, they're leather-stitch
-   * warm tan, not cool slate. */
-  --color-bg:              #1e1710;  /* page bg — charred oak */
-  --color-surface:         #2c2318;  /* card bg — dark tobacco */
-  --color-surface-raised:  #3a2e1f;  /* hover/selected — roasted pine */
-  --color-surface-overlay: #2c2318;  /* modal bg — same as card */
-  --color-border-subtle:   #4a3b28;  /* section dividers — dark leather */
-  --color-border:          #6b5035;  /* card / input borders — leather stitch */
-  --color-border-strong:   #8c6842;  /* hover borders — brass-tinged */
+  /* === Brass (secondary brand — sigil, name-plate, avatar) ======= */
+  --color-brass-default:  #9a742a;
+  --color-brass-bright:   #b08a38;
+  --color-brass-subtle:   #f3ead3;
 
-  /* === Text tiers (PARCHMENT ON DARK) =============================
-   * Coco's ginger-cream as primary; warmer mids for hierarchy. */
-  --color-text-primary:    #f0e6d0;  /* parchment ink — Coco's coat */
-  /* iter-356.65 (mobile slice A): bumped warm-stone secondary from
-   * #b09070 (~4.7:1 on #2c2318 surface) to #c4a482 (~6.5:1 by the
-   * standard relative-luminance formula). Aiko's mobile-visual brief
-   * called the old value "comfortably AA on body but borderline on
-   * a 14px metadata row." New value clears AA-large + AA-normal with
-   * room. Hue preserved (warm tan) so it reads as the same family as
-   * the parchment primary, just one step closer to the candlelight. */
-  --color-text-secondary:  #c4a482;  /* warm stone — ~6.5:1 on surface */
-  --color-text-tertiary:   #8d7a5d;  /* timestamps, hints — non-critical labels */
-  --color-text-disabled:   #5d4f3d;  /* disabled controls */
+  /* === Surface + border tiers (LINEN + PAPER) ====================
+   * Cards are near-white paper on warm linen; separation comes from
+   * a soft warm shadow + hairline border, not L-delta alone (light
+   * themes need the hairline where dark themes could skip it). */
+  --color-bg:              #f6f1e7;  /* page bg — warm linen */
+  --color-surface:         #fffdf7;  /* card bg — cream paper */
+  --color-surface-raised:  #f1e9d8;  /* hover/selected — warmed paper */
+  --color-surface-overlay: #fffdf7;  /* modal bg — same paper */
+  --color-border-subtle:   #e9dfc9;  /* section dividers */
+  --color-border:          #d8c9a8;  /* card / input borders */
+  --color-border-strong:   #b7a077;  /* hover borders */
 
-  /* === Semantic (DARK-BG TUNED, +5:1 floors preserved) ============
-   * On a charred-oak bg, the iter-356 red-700 (#b91c1c) reads as
-   * mud (3.5:1). Dark-bg semantic colors live in the 400/500 range
-   * to retain glow. Hue-separation from the ember accent maintained. */
-  --color-success:         #4ade80;  /* armed dot, face-match — emerald-400 glow */
-  --color-warning:         #fbbf24;  /* thermal/paused — amber-400, hue-separated from ember */
-  --color-danger:          #f87171;  /* destructive UI text/icon — red-400 glow */
+  /* === Text tiers (PANTHER INK ON PAPER) ========================= */
+  --color-text-primary:    #292013;  /* ink — ~13:1 on surface */
+  --color-text-secondary:  #6b5c3d;  /* warm umber — ~6:1 */
+  --color-text-tertiary:   #857550;  /* timestamps, hints — ~4.5:1 */
+  --color-text-disabled:   #b6ab90;  /* disabled controls */
+
+  /* === Semantic (LIGHT-BG TUNED, ≥4.5:1 floors) ==================
+   * Light grounds need the DEEP end of each hue (700-range), the
+   * inverse of the dark theme's 400-glow range. Hue separation from
+   * the marmalade accent maintained (green/amber/red vs orange). */
+  --color-success:         #1e7d3f;  /* armed dot, face-match */
+  --color-warning:         #94660c;  /* thermal/paused — deep amber */
+  --color-danger:          #b3372e;  /* destructive text/icon — brick */
   --color-danger-strong:   #dc2626;  /* destructive button fill (white text) */
-  --color-danger-muted:    #4a1818;  /* danger-zone container border — deep blood */
-  --color-info:            #94a3b8;  /* info toast — slate-400 */
+  --color-danger-muted:    #f6d9d4;  /* danger-zone container border */
+  --color-info:            #6e6250;  /* info toast — warm stone (slate was
+                                        the one cool hue left in the warm
+                                        palette; ~5.5:1 on surface) */
 
-  /* === Color: tinted surface tokens (iter-356.14, Maya MAJOR) ====
-     Pre-baked tinted bg + border for semantic surfaces. Pre-iter-356.14
-     the codebase used `bg-[--color-danger]/10` arbitrary-opacity-on-
-     CSS-var classes — Tailwind v4 doesn't reliably apply /opacity
-     modifiers to a `var()` reference (the channel-decomposition path
-     for raw hex-vs-oklch tokens is fragile across browsers). Result:
-     error boxes intermittently rendered SOLID red instead of the
-     softly tinted box specced in the design.
+  /* === Tinted surface tokens (pre-mixed; see iter-356.14 note) ====
+   * Light grounds need LESS tint density than dark (the inverse of
+   * the iter-356.57 bump): 10-14% reads as a soft wash on paper. The
+   * color-mix pre-tokenization stays — Tailwind v4 /opacity modifiers
+   * on var() refs remain unreliable. */
+  --color-danger-bg:       color-mix(in srgb, var(--color-danger) 10%, transparent);
+  --color-danger-bg-strong: color-mix(in srgb, var(--color-danger) 18%, transparent);
+  --color-danger-border:   color-mix(in srgb, var(--color-danger) 34%, transparent);
+  --color-warning-bg:      color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-warning-border:  color-mix(in srgb, var(--color-warning) 34%, transparent);
+  --color-success-bg:      color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-success-border:  color-mix(in srgb, var(--color-success) 34%, transparent);
+  --color-info-bg:         color-mix(in srgb, var(--color-info) 14%, transparent);
+  --color-accent-bg:       color-mix(in srgb, var(--color-accent-default) 12%, transparent);
+  --color-accent-border:   color-mix(in srgb, var(--color-accent-default) 40%, transparent);
 
-     Solution: pre-tokenize the common 10% / 25% / 30% mixes via
-     `color-mix(in srgb, ...)` so the tinted token is one CSS variable
-     resolved once at use-site. Browser support: iOS Safari 16.2+,
-     Chrome 111+, Firefox 113+ — all PWA targets covered. */
-  /* iter-356.57 (radical redesign): bumped tint percentages because
-   * light-color-on-dark-bg needs more density to read than the
-   * inverse. Pre-fix tints (10/12%) on the dark charred-oak bg
-   * were near-invisible — `color-mix(red-400 10%, transparent)`
-   * over `#1e1710` paints a barely-perceptible warm haze.
-   * iter-356 sharp edge preserved: ALWAYS extend, never lower. */
-  --color-danger-bg:       color-mix(in srgb, var(--color-danger) 18%, transparent);
-  --color-danger-bg-strong: color-mix(in srgb, var(--color-danger) 28%, transparent);
-  --color-danger-border:   color-mix(in srgb, var(--color-danger) 42%, transparent);
-  --color-warning-bg:      color-mix(in srgb, var(--color-warning) 20%, transparent);
-  --color-warning-border:  color-mix(in srgb, var(--color-warning) 42%, transparent);
-  --color-success-bg:      color-mix(in srgb, var(--color-success) 20%, transparent);
-  --color-success-border:  color-mix(in srgb, var(--color-success) 42%, transparent);
-  --color-info-bg:         color-mix(in srgb, var(--color-info) 22%, transparent);
-  --color-accent-bg:       color-mix(in srgb, var(--color-accent-default) 22%, transparent);
-  --color-accent-border:   color-mix(in srgb, var(--color-accent-default) 55%, transparent);
-
-  /* === Skeleton surface (premium-launch slice, Maya Critical) =====
-   * Pre-fix: skeleton blocks painted `--color-surface-raised` (#3a2e1f,
-   * pine) on top of the `--color-bg` page (#1e1710, charred oak). Cards
-   * use `--color-surface` (#2c2318, tobacco). On every cold load the
-   * skeletons therefore read as a *cooler* set of stripes than the cards
-   * that replace them — Maya: "instant 'broken theme' smell." Define a
-   * dedicated token between bg and card so the skeleton sits a hair
-   * brighter than the page (visible) but darker than the card it stands
-   * in for (no flash on resolve). animate-pulse opacity-cycles this
-   * single value, so the surface doesn't shift hue mid-pulse. */
-  --color-skeleton:        #2c2419;
-  --color-skeleton-strong: #38301f;
+  /* === Skeleton surface (between bg and card — see Maya Critical
+   * note in git history: skeleton must sit a hair darker than the
+   * paper card it stands in for, brighter than the linen page). */
+  --color-skeleton:        #ece3cf;
+  --color-skeleton-strong: #e2d7bd;
 
   /* === Pre-iter-356.0 aliases (DO NOT REMOVE during migration) */
   --color-surface-2: var(--color-surface-raised);
@@ -200,30 +170,15 @@
   --radius-pill: 9999px;  /* status pills, toasts, chips */
 
   /* === Typography scale =======================================
-   * iter-356.55: Inter as the primary sans-family. Premium-SaaS
-   * standard. System-stack fallback chain preserved for the brief
-   * window before the web font loads (or when offline).
-   * iter-356.57: ADDED `--font-display` = Fraunces variable serif.
-   * Maya brutal verdict: "Inter on cream is THE generic-SaaS tell"
-   * + "passion project for cats wants a serif anchor (Fraunces /
-   * Source Serif / Recoleta) on h1/h2." Fraunces variable supports
-   * optical sizing 9..144 + weight 400..800 — at display sizes its
-   * terminals open up so it reads as something a designer CHOSE
-   * rather than the Linear/Vercel/Stripe Inter default. Used on
-   * .page-title (h1) + h2.day-header + the wordmark. Body stays
-   * Inter (security copy must remain sans for scan-speed; serif
-   * = brand voice, sans = system voice — security UX guardrail). */
+   * Inter for UI/body (system voice — scan-speed), Fraunces variable
+   * serif for display (brand voice: page titles, wordmark, day
+   * headers). Both self-hosted (see @font-face above). The 16px
+   * input floor suppresses iOS Safari auto-zoom-on-focus. */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-display: 'Fraunces', 'Lora', Georgia, serif;
   --font-mono: 'SF Mono', 'Fira Code', Consolas, monospace;
 
   --text-xs:   11px;  /* caption, badge, pill label */
-  /* iter-356.65 (mobile slice A): bumped --text-sm 13→14 and
-   * --text-base 15→16. The 16px floor on inputs suppresses iOS
-   * Safari's auto-zoom-on-focus (a recurring trap across Training
-   * retention input, Settings numeric inputs, Login form) without
-   * needing per-input overrides. 14px metadata rows clear the
-   * mobile readability floor Aiko's brief flagged. */
   --text-sm:   14px;  /* body secondary, metadata */
   --text-base: 16px;  /* body primary, form labels */
   --text-lg:   18px;  /* section header, day header */
@@ -240,20 +195,16 @@
   --weight-semibold: 600;
   --weight-bold:     700;
 
-  /* === Shadow scale (DARK THEME, iter-356.57 radical redesign) =====
-   * Pre-iter-356.57 the shadow tokens used `rgb(60 40 20 / X)` (warm-
-   * brown alpha). On a charred-oak bg those mid-warm-brown values
-   * VANISH — they're nearly the same hue as the bg they're meant to
-   * cast on. Re-tuned to use pure black at higher alpha; a thin
-   * inner top-edge highlight (warm parchment 8%) provides the
-   * "leather-bound notebook" inset that the radical-visual brief
-   * called out as Step 3 of the surface system. */
-  --shadow-subtle:  0 1px 2px rgb(0 0 0 / 0.30), 0 1px 1px rgb(0 0 0 / 0.16);
-  --shadow-card:    0 2px 4px rgb(0 0 0 / 0.40), 0 8px 24px rgb(0 0 0 / 0.30);
-  --shadow-overlay: 0 6px 16px rgb(0 0 0 / 0.45), 0 32px 72px rgb(0 0 0 / 0.55);
+  /* === Shadow scale (WARM DAYLIGHT) ============================
+   * Paper in a sunlit room: soft warm-brown shadows, low alpha —
+   * never the pure-black glow of the dark era. The inset highlight
+   * is a white top edge (paper catching light). */
+  --shadow-subtle:  0 1px 2px rgb(90 70 40 / 0.07), 0 1px 1px rgb(90 70 40 / 0.05);
+  --shadow-card:    0 1px 3px rgb(90 70 40 / 0.10), 0 8px 24px rgb(90 70 40 / 0.07);
+  --shadow-overlay: 0 4px 12px rgb(90 70 40 / 0.14), 0 24px 56px rgb(70 50 25 / 0.20);
   /* Inset top-edge highlight — apply via `box-shadow: var(--shadow-card),
-   * var(--shadow-card-inset)` for the leather-bound look. */
-  --shadow-card-inset: inset 0 1px 0 rgb(240 230 208 / 0.06);
+   * var(--shadow-card-inset)` for the paper-catching-light look. */
+  --shadow-card-inset: inset 0 1px 0 rgb(255 255 255 / 0.75);
 
   /* === Motion ================================================= */
   --duration-fast: 80ms;

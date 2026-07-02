@@ -140,6 +140,27 @@ describe('toast', () => {
     expect(screen.getByRole('status')).toBeInTheDocument()
   })
 
+  it('Given an error toast, When rendered, Then it is a paper card with a semantic left accent and ink text — never white text on a light surface (Sunroom redesign)', () => {
+    // arrange
+    render(
+      <ToastProvider>
+        <Trigger msg="bad" kind="error" />
+      </ToastProvider>,
+    )
+
+    // act
+    fireEvent.click(screen.getByText('fire'))
+
+    // assert — opaque paper surface + danger left-accent bar + ink
+    // text. The old solid-fill treatment carried text-white; on the
+    // light theme white text on any light surface is a regression.
+    const toast = screen.getByRole('alert')
+    expect(toast.className).toMatch(/bg-\[var\(--color-surface-overlay\)\]/)
+    expect(toast.className).toMatch(/border-l-\[var\(--color-danger\)\]/)
+    expect(toast.className).toMatch(/text-\[var\(--color-text-primary\)\]/)
+    expect(toast.className).not.toMatch(/text-white/)
+  })
+
   it('stacks multiple toasts', () => {
     function Multi() {
       const { showToast } = useToast()

@@ -29,13 +29,16 @@ export function RecordingIndicator({
     status.worker_alive === true && status.detection_active === true
   if (!recording) return null
   return (
+    // Sunroom redesign (2026-07-01): shared over-video pill treatment
+    // (black/60 scrim + white/20 ring); the REC dot uses danger-strong
+    // so it stays vivid over video (brick danger is tuned for paper).
     <span
-      className="inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur px-3 py-1.5 text-xs font-medium text-white ring-1 ring-white/20"
+      className="inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur px-3 py-1.5 text-xs font-medium text-white ring-1 ring-white/20"
       aria-label="Recording"
     >
       <span
         aria-hidden="true"
-        className="w-2 h-2 rounded-full bg-[var(--color-danger)] animate-[pulse_2s_ease-in-out_infinite]"
+        className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)] animate-[pulse_2s_ease-in-out_infinite]"
       />
       Recording
     </span>

@@ -281,7 +281,9 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert
-      expect(screen.getByText('90°C')).toHaveClass('text-red-400')
+      // Sunroom redesign (2026-07-01): severity colors are semantic
+      // tokens, not the dark-era raw-palette text-red-400.
+      expect(screen.getByText('90°C')).toHaveClass('text-[var(--color-danger)]')
     })
 
     it('given the disclosure is open with throttled clock, when expanded, then a throttle warning sigil appears', () => {
@@ -307,7 +309,9 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert
-      expect(screen.getByText('1.8/1.9 GB')).toHaveClass('text-red-400')
+      expect(screen.getByText('1.8/1.9 GB')).toHaveClass(
+        'text-[var(--color-danger)]',
+      )
     })
 
     it('given load_avg is high, when details are expanded, then the load value paints yellow', () => {
@@ -320,7 +324,9 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       fireEvent.click(screen.getByRole('button', { name: /camera box details/i }))
 
       // assert
-      expect(screen.getByText('2.50')).toHaveClass('text-yellow-400')
+      expect(screen.getByText('2.50')).toHaveClass(
+        'text-[var(--color-warning)]',
+      )
     })
 
     it('given the worker is reporting active gear, when details are expanded, then state row reads "Watching: active" (iter-356.14 microcopy preserved)', () => {

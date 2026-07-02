@@ -340,7 +340,9 @@ export function NotificationsSection({
       {pushAvailable && permissionDenied && (
         <div
           role="alert"
-          className="mx-4 mt-3 mb-2 px-3 py-2.5 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-sm text-[var(--color-text-primary)]"
+          // Sunroom sweep: /opacity-on-var tint → pre-mixed danger
+          // surface tokens (reliable in Tailwind v4).
+          className="mx-4 mt-3 mb-2 px-3 py-2.5 rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] text-sm text-[var(--color-text-primary)]"
         >
           <p className="font-semibold">Browser blocked HomeCam alerts.</p>
           <p className="mt-1 text-[var(--color-text-secondary)]">

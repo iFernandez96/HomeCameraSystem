@@ -448,7 +448,10 @@ export function ClipModal({
             Pre-iter-347 the amber-on-black 12px text was barely
             readable AND ambiguous about user action ("loading?
             broken? wait?"). */}
-        <p className="text-sm text-amber-200">
+        {/* redesign/warm-boutique: raw `text-amber-200` dropped — this
+            note sits on the dark video pane, so plain soft white reads
+            better than an off-palette amber. */}
+        <p className="text-sm text-white/85">
           Video not ready yet — here&apos;s a still photo from the event.
           Check back in a few seconds.
         </p>
@@ -467,14 +470,17 @@ export function ClipModal({
         aria-live="polite"
         className="text-center space-y-3 max-w-sm"
       >
-        <div className="mx-auto w-12 h-12 rounded-full bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] flex items-center justify-center text-[var(--color-text-tertiary)] text-xl">
+        {/* redesign/warm-boutique: this state renders on the dark video
+            pane — after the Sunroom token flip, text-primary/secondary
+            are ink-on-black (invisible). Explicit dark-glass whites. */}
+        <div className="mx-auto w-12 h-12 rounded-full bg-white/10 border border-white/15 flex items-center justify-center text-white/70 text-xl">
           ?
         </div>
-        <p className="text-[var(--color-text-primary)]">Clip unavailable</p>
+        <p className="text-white">Clip unavailable</p>
         {/* iter-356.16 (Frank Round-5 D1): "worker" + "pruned" jargon
             stripped. Frank: "My wife asked me what a worker was and
             she thought I was asking about her shift schedule." */}
-        <p className="text-sm text-[var(--color-text-secondary)] max-w-xs mx-auto">
+        <p className="text-sm text-white/70 max-w-xs mx-auto">
           This video isn&apos;t available yet — it may still be saving,
           or it&apos;s been removed automatically to save space. Try
           again in a moment.
@@ -576,15 +582,21 @@ export function ClipModal({
           role="dialog" makes the dismiss-X read as a "header banner"
           to AT users. Plain <div> + the visible <h2> below carry the
           same heading semantics without the bonus landmark. */}
+      {/* redesign/warm-boutique: this header sits on the dark video
+          pane — after the Sunroom token flip text-primary became ink
+          (#292013) which vanished on black. Explicit dark-glass whites;
+          per shared rule 2, over-video chrome keeps its dark glass. */}
       <div className="relative flex items-start justify-between gap-3 px-4 pt-3 pb-2 border-b border-white/10 bg-black/30">
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-[var(--color-text-primary)] truncate">
+          <h2 className="text-base font-semibold text-white truncate">
             {title}
           </h2>
-          <div className="mt-0.5 flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-            <span title={absoluteTime(event.ts)}>{timeLabel}</span>
+          <div className="mt-0.5 flex items-center gap-2 text-xs text-white/70">
+            <span title={absoluteTime(event.ts)} className="tabular-nums">{timeLabel}</span>
             {personLabel && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-success-bg)] text-[var(--color-success)] font-medium">
+              // Solid success fill + white text — the light-theme 12%
+              // tint (success-bg) is unreadable over the dark pane.
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-success)] text-white font-medium">
                 <span aria-hidden>●</span>
                 <span>
                   Recognized: {personLabel}
@@ -593,7 +605,7 @@ export function ClipModal({
               </span>
             )}
             {!personLabel && event.label && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-white/10 text-[var(--color-text-secondary)] font-medium uppercase tracking-wide">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-white/10 text-white/70 font-medium uppercase tracking-wide">
                 {event.label}
               </span>
             )}
@@ -604,7 +616,7 @@ export function ClipModal({
           type="button"
           onClick={onClose}
           aria-label="Close clip viewer"
-          className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+          className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full text-white/70 hover:text-white hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -635,14 +647,20 @@ export function ClipModal({
           uses Button primitive's loading state (Maya iter-356.2
           Major: "this is exactly what the primitive was built for"). */}
       <div className="relative px-4 pb-4 flex items-center justify-end gap-3">
-        <Button
-          variant="ghost"
-          size="md"
+        {/* redesign/warm-boutique: this row sits on the modal's dark
+            pane — the ghost variant's umber text fails contrast on
+            black, so Share is an explicit over-video dark-glass
+            control (same treatment as the VideoPlayer buttons).
+            Save clip stays on the Button primitive for its loading
+            state; its paper secondary fill reads clearly on black. */}
+        <button
+          type="button"
           onClick={onShare}
           aria-label="Share or copy link to this event"
+          className="inline-flex items-center justify-center h-10 min-w-[44px] px-4 rounded-full text-sm font-medium text-white/90 hover:bg-white/15 hover:text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
         >
           Share
-        </Button>
+        </button>
         <Button
           variant="secondary"
           size="md"
@@ -678,12 +696,16 @@ export function ClipModal({
         // the aside flush against the modal's pb-safe-area with no
         // internal dead space. Mobile bg dropped (was `bg-black/40`)
         // so the modal backdrop reads as one continuous surface.
-        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-white/10 lg:bg-[var(--color-surface)] lg:text-[var(--color-text-primary)] text-white overflow-y-auto overscroll-contain"
+        // redesign/warm-boutique: evidence pane is PAPER on every
+        // viewport (was paper on lg only, white-on-black on mobile).
+        // The video area above keeps its dark glass; the metadata
+        // reads as a cream evidence card in both layouts.
+        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] overflow-y-auto overscroll-contain"
       >
         {personLabel && (
-          <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
+          <div className="px-5 py-4 border-b border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
             <div>
-              <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
                 Who
               </div>
               {/* iter-357 (multi-person face-recog): when the event
@@ -700,25 +722,25 @@ export function ClipModal({
                 {personLabel}
               </div>
               {matchedNames.length > 1 ? (
-                <div className="mt-1 text-sm text-white/65 lg:text-[var(--color-text-secondary)] capitalize">
+                <div className="mt-1 text-sm text-[var(--color-text-secondary)] capitalize">
                   with {matchedNames.slice(1).join(' & ')}
                 </div>
               ) : null}
             </div>
           </div>
         )}
-        <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)] space-y-3">
+        <div className="px-5 py-4 border-b border-[var(--color-border-subtle)] space-y-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
               When
             </div>
             <div className="text-sm font-semibold mt-0.5">{timeLabel}</div>
-            <div className="text-xs text-white/60 lg:text-[var(--color-text-tertiary)] tabular-nums">
+            <div className="text-xs text-[var(--color-text-tertiary)] tabular-nums">
               {absoluteTime(event.ts)}
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
               Where
             </div>
             <div className="text-sm font-semibold mt-0.5">
@@ -727,7 +749,7 @@ export function ClipModal({
           </div>
           {!personLabel && event.label && (
             <div>
-              <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
                 What
               </div>
               <div className="text-sm font-semibold mt-0.5 capitalize">
@@ -736,8 +758,8 @@ export function ClipModal({
             </div>
           )}
         </div>
-        <div className="px-5 py-4 border-b border-white/10 lg:border-[var(--color-border-subtle)]">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-brass-default)] font-semibold">
+        <div className="px-5 py-4 border-b border-[var(--color-border-subtle)]">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
             How sure
           </div>
           {/* Premium-launch slice (Maya Critical): pre-fix the
@@ -754,7 +776,7 @@ export function ClipModal({
           <div className="mt-1 font-display text-3xl font-bold tabular-nums leading-none">
             {Math.round(event.score * 100)}%
           </div>
-          <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/55 lg:text-[var(--color-text-tertiary)] font-semibold">
+          <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-tertiary)] font-semibold">
             {event.score < 0.5
               ? 'Low confidence'
               : event.score < 0.75
@@ -762,7 +784,7 @@ export function ClipModal({
                 : 'High confidence'}
           </div>
           {personLabel && matchConfidence != null && (
-            <div className="text-xs text-white/55 lg:text-[var(--color-text-tertiary)] mt-2">
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-2">
               Face match: {matchConfidence}%
             </div>
           )}

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { CatEmptyState } from './CatEmptyState'
 
 describe('CatEmptyState', () => {
@@ -82,6 +82,36 @@ describe('CatEmptyState', () => {
     // assert — Events page wants a richer mood phrase for SR users
     // than just the visual heading; the aria-label override carries it.
     expect(screen.getByRole('status', { name: 'All quiet — no events yet' })).toBeInTheDocument()
+  })
+
+  it('given an action, when the CTA is clicked, then it renders through the Button primitive and fires onClick (Sunroom redesign)', () => {
+    // arrange — Sunroom copy tiering: heading / body / CTA-via-Button.
+    const onClick = vi.fn()
+    render(
+      <CatEmptyState
+        heading="No people yet"
+        body="Teach the camera a face."
+        action={{ label: 'Add a person', onClick }}
+      />,
+    )
+
+    // act
+    const cta = screen.getByRole('button', { name: 'Add a person' })
+    fireEvent.click(cta)
+
+    // assert — fires, and carries the Button primitive's secondary
+    // paper treatment (not an ad-hoc anchor-styled span).
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(cta.className).toMatch(/bg-\[var\(--color-surface\)\]/)
+    expect(cta.className).toMatch(/min-h-\[44px\]/)
+  })
+
+  it('when no action is passed, then no CTA button renders', () => {
+    // arrange / act
+    render(<CatEmptyState heading="All quiet" body="Nothing's stirring." />)
+
+    // assert
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('when no aria-label override is passed, then the wrapper falls back to the heading', () => {

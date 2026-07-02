@@ -10,30 +10,31 @@ import { Button } from './Button'
 // - forwardRef to native <button> for confirm.tsx focus-restore pattern
 
 describe('Button primitive', () => {
-  it('given default props, when rendered, then a type="button" with primary+md classes appears', () => {
+  it('given default props, when rendered, then a type="button" with the ink primary fill + md classes appears (Sunroom redesign)', () => {
     // arrange / act
     render(<Button>Save</Button>)
 
     // assert
     const btn = screen.getByRole('button', { name: /save/i })
     expect(btn).toHaveAttribute('type', 'button')
-    // Primary fill class present.
-    expect(btn.className).toMatch(/bg-\[var\(--color-accent-default\)\]/)
+    // Sunroom signature: primary = Panther-ink fill + white label.
+    // Marmalade stays reserved for links / focus / live signal.
+    expect(btn.className).toMatch(/bg-\[var\(--color-ink\)\]/)
+    expect(btn.className).toMatch(/text-white/)
     // Medium size: 44px min-height.
     expect(btn.className).toMatch(/min-h-\[44px\]/)
   })
 
-  it('given variant="destructive", when rendered, then tinted danger surface token is applied (iter-356.14 token sweep)', () => {
+  it('given variant="destructive", when rendered, then the solid danger-strong fill with white label is applied (Sunroom redesign)', () => {
     // arrange / act
     render(<Button variant="destructive">Reboot</Button>)
 
-    // assert — pre-iter-356.14 this checked the brittle `/15` opacity-
-    // on-CSS-var class which Tailwind v4 didn't reliably apply to
-    // var() refs. Now uses the pre-tokenized --color-danger-bg via
-    // color-mix.
+    // assert — light-theme destructive is a solid --color-danger-strong
+    // fill (white text is sanctioned on that fill). The old translucent
+    // danger tint read as a pale pink chip on the linen ground.
     const btn = screen.getByRole('button', { name: /reboot/i })
-    expect(btn.className).toMatch(/bg-\[var\(--color-danger-bg\)\]/)
-    expect(btn.className).toMatch(/text-\[var\(--color-danger\)\]/)
+    expect(btn.className).toMatch(/bg-\[var\(--color-danger-strong\)\]/)
+    expect(btn.className).toMatch(/text-white/)
   })
 
   it('given variant="ghost", when rendered, then transparent fill class is applied', () => {
@@ -148,7 +149,7 @@ describe('Button primitive', () => {
 
     // assert — both base + extra present.
     const btn = screen.getByRole('button', { name: /tap/i })
-    expect(btn.className).toMatch(/bg-\[var\(--color-accent-default\)\]/)
+    expect(btn.className).toMatch(/bg-\[var\(--color-ink\)\]/)
     expect(btn.className).toMatch(/custom-extra/)
   })
 

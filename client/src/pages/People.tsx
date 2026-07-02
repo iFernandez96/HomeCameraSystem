@@ -256,7 +256,7 @@ export function People() {
             // with a "Load more" button so the operator isn't stuck
             // at the first window. Soft text (not an alert).
             <div className="flex items-center justify-between gap-3 px-1" role="status">
-              <p className="text-sm text-[var(--color-text-secondary)]">
+              <p className="text-sm text-[var(--color-text-secondary)] tabular-nums">
                 Showing {people.length} of {total} recognized people.
               </p>
               <Button
@@ -345,7 +345,7 @@ function _PersonSection({
           incompatible ways across the app's two main list pages. */}
       <h2 className="text-lg font-semibold text-[var(--color-text-primary)] px-1">
         {heading}
-        <span className="ml-2 text-base font-normal text-[var(--color-text-secondary)]">
+        <span className="ml-2 text-base font-normal text-[var(--color-text-secondary)] tabular-nums">
           · {people.length}
         </span>
       </h2>
@@ -372,7 +372,7 @@ function _PersonGrid({
           <button
             type="button"
             onClick={() => onPersonClick(p.name)}
-            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
             aria-label={`${p.name}: ${p.count} ${p.count === 1 ? 'visit' : 'visits'}, last seen ${_formatRelative(p.last_seen_ts)}, first seen ${_formatAbsolute(p.first_seen_ts)}`}
           >
             {p.last_thumb_url ? (
@@ -384,12 +384,14 @@ function _PersonGrid({
               />
             ) : (
               // iter-356.3c (Maya Major): match Training avatar
-              // fallback. Pre-iter-356.3c emerald-700 fill diluted
-              // the recognition semantic (emerald = "the camera is
-              // sure"). Now neutral on People too — emerald reserved
-              // exclusively for confirmed-recognition signals.
-              <div className="w-16 h-16 rounded-xl bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] flex items-center justify-center flex-shrink-0">
-                <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-text-primary)]">
+              // fallback — success-green stays reserved exclusively
+              // for confirmed-recognition signals.
+              // Sunroom sweep: warm-brass portrait chip (the house's
+              // hardware, decorative-neutral) instead of the flat
+              // raised-surface gray. Keeps the family-album feel
+              // without touching the semantic color budget.
+              <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-default)]/40 flex items-center justify-center flex-shrink-0">
+                <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-brass-default)]">
                   {p.name.charAt(0).toUpperCase()}
                 </span>
               </div>
@@ -398,11 +400,14 @@ function _PersonGrid({
               <div className="text-base font-semibold text-[var(--color-text-primary)] truncate">
                 {p.name}
               </div>
-              <div className="text-sm text-[var(--color-text-primary)]">
+              {/* Sunroom sweep: stats drop to the caption tier
+                  (secondary ink) so the name-plate carries the row;
+                  tabular-nums keeps visit counts column-steady. */}
+              <div className="text-sm text-[var(--color-text-secondary)] tabular-nums">
                 {p.count} {p.count === 1 ? 'visit' : 'visits'} —
                 last seen {_formatRelative(p.last_seen_ts)}
               </div>
-              <div className="text-sm text-[var(--color-text-secondary)] mt-0.5">
+              <div className="text-sm text-[var(--color-text-tertiary)] mt-0.5">
                 First seen {_formatAbsolute(p.first_seen_ts)}
               </div>
             </div>

@@ -75,7 +75,7 @@ export function Training() {
               e.preventDefault()
               navigate('/training/review')
             }}
-            className="text-sm text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded whitespace-nowrap"
+            className="inline-flex items-center min-h-[44px] text-sm font-medium text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded whitespace-nowrap transition-colors"
           >
             Review queue →
           </a>
@@ -150,7 +150,7 @@ function CaptureRetentionSection() {
   return (
     <section
       aria-labelledby="capture-retention-heading"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3 shadow-[var(--shadow-card),var(--shadow-card-inset)]"
     >
       <h2
         id="capture-retention-heading"
@@ -216,7 +216,10 @@ function CaptureRetentionSection() {
           // triggers iOS Safari auto-zoom on focus; inputMode=numeric
           // surfaces the digit pad on Android. Bumped to text-base
           // so retention-input focus doesn't reflow the page.
-          className="w-24 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-1.5 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          // Sunroom sweep: 44px touch floor + form-field radius token
+          // (rounded-lg = --radius-lg) so the retention field matches
+          // the rest of the form rhythm.
+          className="w-24 min-h-[44px] bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg px-2 py-2 text-base text-[var(--color-text-primary)] tabular-nums focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         />
       </div>
       <p className="text-xs text-[var(--color-text-secondary)]">
@@ -278,7 +281,7 @@ function ExportSection() {
   return (
     <section
       aria-labelledby="export-heading"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-[var(--shadow-card),var(--shadow-card-inset)]"
     >
       <details>
         <summary
@@ -421,21 +424,20 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
       <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 list-none">
         {dirs.map((d) => (
         <li key={d.name}>
-          <div className="flex flex-col gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">
+          <div className="flex flex-col gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">
           <button
             type="button"
             onClick={() => onPick(d.name)}
             className="w-full text-left flex items-center gap-3 min-h-[48px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-lg"
             aria-label={`${_displayName(d.name)}: ${d.count} ${d.count === 1 ? 'photo' : 'photos'}, most recent ${_formatRelative(d.latest_ts)}`}
           >
-            {/* iter-355aa (Maya: Iconography Major): emerald is the
-                positive-recognition semantic color (used for confidence
-                badge ≥75 %, recognized pill). Using it on the
-                fallback avatar dilutes the signal. Demoted to neutral
-                so emerald means "the camera is sure about this person"
-                everywhere it appears. */}
-            <div className="w-16 h-16 rounded-xl bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] flex items-center justify-center flex-shrink-0">
-              <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-text-primary)]">
+            {/* iter-355aa (Maya: Iconography Major): success-green is
+                the positive-recognition semantic color — keep it off
+                the fallback avatar. Sunroom sweep: warm-brass portrait
+                chip (decorative-neutral, matches People) so both
+                face-suite pages share the family-album avatar voice. */}
+            <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-default)]/40 flex items-center justify-center flex-shrink-0">
+              <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-brass-default)]">
                 {_displayName(d.name).charAt(0).toUpperCase()}
               </span>
             </div>
@@ -741,7 +743,19 @@ function GalleryView({
           >
             {files.map((f, idx) => (
               <li key={f.filename}>
-                <figure className="space-y-1">
+                {/* Sunroom sweep: the tile whose action panel is open
+                    reads as SELECTED — marmalade ring + light peach
+                    accent-subtle wash (ink text on it, never white).
+                    p-1/-m-1 keeps the tile footprint identical so the
+                    grid doesn't reflow when the panel opens. */}
+                <figure
+                  className={
+                    'space-y-1 rounded-2xl p-1 -m-1 transition-colors duration-[160ms] ease-out ' +
+                    (openMenu === f.filename
+                      ? 'ring-2 ring-[var(--color-accent-default)] bg-[var(--color-accent-subtle)]'
+                      : '')
+                  }
+                >
                   <img
                     src={f.url}
                     alt={`Capture ${idx + 1} of ${files.length}`}
@@ -760,7 +774,7 @@ function GalleryView({
                     {f.confidence != null ? (
                       <span
                         className={
-                          'flex-shrink-0 px-1.5 py-0.5 text-xs font-semibold rounded ' +
+                          'flex-shrink-0 px-1.5 py-0.5 text-xs font-semibold rounded tabular-nums ' +
                           _confidenceClass(f.confidence)
                         }
                         title={`${(f.confidence * 100).toFixed(0)}% confident the classifier was correct about "${f.predicted_name ?? name}"`}
@@ -869,7 +883,9 @@ function ActionPanel({
 }) {
   void filename
   return (
-    <div className="space-y-2 pt-2 px-1">
+    // Sunroom sweep: the action surface floats as a paper card with
+    // the overlay shadow, sitting on the selected tile's peach wash.
+    <div className="space-y-2 mt-1 p-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-overlay)]">
       {otherDirs.length > 0 ? (
         <fieldset className="space-y-1">
           <legend className="text-xs text-[var(--color-text-secondary)] mb-1">Move this photo to</legend>

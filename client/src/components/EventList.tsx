@@ -479,7 +479,9 @@ function EventCardImpl({
               : undefined
         }
         aria-pressed={selectionMode ? isSelected : undefined}
-        className={`w-full text-left flex gap-3 rounded-xl border p-2 transition-colors ${
+        // redesign/warm-boutique: paper card — warm shadow-card token
+        // so entries read as paper resting on the linen page.
+        className={`w-full text-left flex gap-3 rounded-xl border p-2 transition-colors shadow-[var(--shadow-card)] ${
           selectionMode && isSelected
             ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-default)]'
             : 'bg-[var(--color-surface)] border-[var(--color-border)]'

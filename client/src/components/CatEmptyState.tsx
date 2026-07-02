@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { BombaySprite, CalicoSprite, SleepingCatIllustration, TuxedoSprite } from './CatIcons'
+import { Button } from './primitives/Button'
 
 /**
  * iter-356.23 (Maya #1 ranked + Priya pattern propagation):
@@ -74,6 +75,14 @@ export interface CatEmptyStateProps {
   illustration?: ReactNode
   ariaLabel?: string
   mood?: EmptyStateMood
+  /**
+   * redesign/warm-boutique (Sunroom): optional CTA rendered through
+   * the Button primitive (secondary — paper + hairline; an empty
+   * state's action never competes with the page's single primary).
+   * Copy tiering: heading (Inter semibold) → body (secondary) →
+   * action. Callers with no action keep the text-only `hint` tier.
+   */
+  action?: { label: string; onClick: () => void }
 }
 
 function moodIllustration(mood: EmptyStateMood): ReactNode {
@@ -93,6 +102,7 @@ export function CatEmptyState({
   illustration,
   ariaLabel,
   mood = 'calm',
+  action,
 }: CatEmptyStateProps) {
   const finalIllustration = illustration ?? moodIllustration(mood)
   return (
@@ -112,6 +122,13 @@ export function CatEmptyState({
       </div>
       {hint && (
         <p className="text-sm text-[var(--color-text-tertiary)] pt-1">{hint}</p>
+      )}
+      {action && (
+        <div className="flex justify-center pt-1">
+          <Button variant="secondary" size="md" onClick={action.onClick}>
+            {action.label}
+          </Button>
+        </div>
       )}
     </div>
   )

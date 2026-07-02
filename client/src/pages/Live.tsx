@@ -307,7 +307,10 @@ export function Live() {
 
       {/* Mobile-only action strip below the video. The desktop
           version lives as overlays on the video itself. */}
-      <div className="sm:hidden flex flex-col gap-2 px-4 py-3 border-b border-[var(--color-border-subtle)]">
+      {/* Sunroom redesign (2026-07-01): the strip is a paper action
+          panel on the linen page bg so the controls read as a
+          deliberate console surface, not floating buttons. */}
+      <div className="sm:hidden flex flex-col gap-2 px-4 py-3 bg-[var(--color-surface)] border-b border-[var(--color-border-subtle)]">
         <DetectionStatusToggle
           detectionActive={detectionActive}
           onToggle={onToggleDetect}
@@ -352,7 +355,7 @@ export function Live() {
 function ArmedBadge({ status }: { status: import('../lib/types').ServerStatus | null }) {
   if (!status) {
     return (
-      <span className="inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur px-3 py-1.5 text-xs text-white/80 ring-1 ring-white/20">
+      <span className="inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur px-3 py-1.5 text-xs text-white/80 ring-1 ring-white/20">
         <span aria-hidden="true" className="w-2 h-2 rounded-full bg-white/40 animate-pulse" />
         Connecting…
       </span>
@@ -361,19 +364,22 @@ function ArmedBadge({ status }: { status: import('../lib/types').ServerStatus | 
   const armed = status.detection_active === true && status.worker_alive === true
   const offline = status.worker_alive === false
   const label = offline ? 'Offline' : armed ? 'Armed' : 'Off duty'
+  // Sunroom redesign (2026-07-01): over the black gradient, the
+  // light-bg danger token (brick #b3372e) goes muddy — danger-strong
+  // is the bright over-video red.
   const dotClass = offline
-    ? 'bg-[var(--color-danger)]'
+    ? 'bg-[var(--color-danger-strong)]'
     : armed
       ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
       : 'bg-[var(--color-warning)]'
   const ringClass = offline
-    ? 'ring-[var(--color-danger)]/40'
+    ? 'ring-[var(--color-danger-strong)]/40'
     : armed
       ? 'ring-[var(--color-success)]/40'
       : 'ring-[var(--color-warning)]/40'
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur px-3 py-1.5 text-xs font-semibold text-white ring-1 ${ringClass}`}
+      className={`inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur px-3 py-1.5 text-xs font-semibold text-white ring-1 ${ringClass}`}
       aria-label={`Camera state: ${label}`}
     >
       <span aria-hidden="true" className={`w-2 h-2 rounded-full ${dotClass}`} />
@@ -450,7 +456,7 @@ function DetectionStatusToggle({
         disabled={loading}
         aria-pressed={isActive}
         aria-label={`${stateLabel}. Tap to ${isActive ? 'pause detection' : 'resume detection'}.`}
-        className="inline-flex items-center gap-2.5 min-h-[44px] px-3 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+        className="inline-flex items-center gap-2.5 min-h-[44px] px-3 py-1.5 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 hover:ring-white/35 text-white text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
       >
         <span aria-hidden="true" className={`w-2 h-2 rounded-full ${dotClass}`} />
         <span>{stateLabel}</span>
@@ -523,7 +529,7 @@ function ActionButton({
         type="button"
         onClick={onClick}
         disabled={disabled || loading}
-        className="inline-flex items-center gap-2 min-h-[44px] px-4 py-1.5 rounded-full bg-black/55 backdrop-blur ring-1 ring-white/15 hover:ring-white/30 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+        className="inline-flex items-center gap-2 min-h-[44px] px-4 py-1.5 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 hover:ring-white/35 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
         aria-pressed={highlight ? true : undefined}
       >
         {!loading && (
@@ -653,8 +659,12 @@ function CameraSubtitle({
     : status.detection_active
       ? sentryOnWatchLabel(sentryCat)
       : 'Off duty'
+  // Sunroom redesign (2026-07-01): this subtitle only renders on the
+  // dark video gradient (onDark) or the light strip; the offline dot
+  // uses danger-strong so it stays vivid over video (brick danger is
+  // tuned for the light paper ground).
   const armedDot = !status.worker_alive
-    ? 'bg-[var(--color-danger)]'
+    ? 'bg-[var(--color-danger-strong)]'
     : status.detection_active
       ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
       : 'bg-[var(--color-warning)]'
@@ -665,10 +675,12 @@ function CameraSubtitle({
         ? 'Live now'
         : `Last frame ${formatAge(lastFrame)} ago`
       : null
+  // Sunroom redesign (2026-07-01): onDark armed text is white — the
+  // new success token (#1e7d3f, tuned for the cream paper) fails AA
+  // against the black gradient at text-xs. The pulsing green dot
+  // carries the armed color; the label carries the words.
   const armedTextClass = onDark
-    ? armed
-      ? 'text-[var(--color-success)] font-semibold'
-      : 'text-white font-semibold'
+    ? 'text-white font-semibold'
     : armed
       ? 'text-[var(--color-success)] font-medium'
       : 'font-medium'

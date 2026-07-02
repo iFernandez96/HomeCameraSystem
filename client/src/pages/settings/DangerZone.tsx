@@ -208,30 +208,40 @@ export function DangerZone() {
           your camera"). The replacement keeps the operator-honest
           stub-with-note signal but speaks to the household user
           who actually opens this tab. */}
-      <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide mt-2">
-        Camera maintenance
-      </h3>
-      <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-2">
-        These options need a one-time setup on the camera box by
-        the person who first installed it. If that&apos;s not done
-        yet, tapping a button will tell you so — nothing will
-        break.
-      </p>
-      {/* Premium-launch slice (Frank top-3 #2): button labels in
-          camera-product vocabulary. "Back up server state" → "Back
-          up camera settings"; "Update server software (~30 s
-          outage)" → "Install camera updates". The 30 s outage is
-          already in the confirm body — duplicating a truncated
-          warning on the button label trains the user to skip the
-          confirm dialog. */}
-      <Button variant="secondary" size="lg" fullWidth onClick={onBackup}>
-        Back up camera settings
-      </Button>
-      <Button variant="secondary" size="lg" fullWidth onClick={onUpdate}>
-        Install camera updates
-      </Button>
-      <div className="pt-3 mt-3 border-t border-[var(--color-border)]">
-        <h3 className="text-sm font-semibold text-[var(--color-danger)] uppercase tracking-wide">
+      {/* redesign/warm-boutique (Sunroom): the four buttons used to
+          float directly on the linen page with the tabpanel's 24px
+          gaps between them — no grouping surface at all. Now two
+          paper cards matching the Section primitive's tier: a calm
+          maintenance card, and a distinct danger card whose
+          danger-muted border keeps the destructive cluster visibly
+          separate. Whimsy never touches this surface — the danger
+          card must read genuinely serious. */}
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2">
+        <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">
+          Camera maintenance
+        </h3>
+        <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+          These options need a one-time setup on the camera box by
+          the person who first installed it. If that&apos;s not done
+          yet, tapping a button will tell you so — nothing will
+          break.
+        </p>
+        {/* Premium-launch slice (Frank top-3 #2): button labels in
+            camera-product vocabulary. "Back up server state" → "Back
+            up camera settings"; "Update server software (~30 s
+            outage)" → "Install camera updates". The 30 s outage is
+            already in the confirm body — duplicating a truncated
+            warning on the button label trains the user to skip the
+            confirm dialog. */}
+        <Button variant="secondary" size="lg" fullWidth onClick={onBackup}>
+          Back up camera settings
+        </Button>
+        <Button variant="secondary" size="lg" fullWidth onClick={onUpdate}>
+          Install camera updates
+        </Button>
+      </div>
+      <div className="bg-[var(--color-surface)] border border-[var(--color-danger-muted)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2">
+        <h3 className="text-lg font-semibold text-[var(--color-danger)]">
           Danger zone
         </h3>
         {/* Premium-launch slice (Frank top-3): "interrupt service"
@@ -240,12 +250,11 @@ export function DangerZone() {
             without softening the gravity. The "Danger zone"
             heading itself stays — universal, dramatic in the
             right way, deliberately loud. */}
-        <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-3">
+        <p className="text-xs text-[var(--color-text-secondary)] mb-3">
           These actions are harder to undo. Restore replaces your
           current settings with a saved backup. Restart takes the
           camera offline for about 30 seconds.
         </p>
-      </div>
       {/* iter-237 (Feature #12 slice 6): inline restore form.
           Two-tap pattern — first tap opens the form (cheap path
           for the common no-restore case), second-tap-on-Restore
@@ -283,7 +292,9 @@ export function DangerZone() {
           Restore from backup
         </Button>
       ) : (
-        <div className="w-full p-3 rounded-2xl bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 space-y-2">
+        // Sunroom sweep: /opacity-on-var tints → the pre-mixed danger
+        // surface tokens (color-mix'd in index.css).
+        <div className="w-full p-3 rounded-2xl bg-[var(--color-danger-bg)] border border-[var(--color-danger-border)] space-y-2">
           {backupList === null ? (
             <p className="text-sm text-[var(--color-text-secondary)]">Loading backups…</p>
           ) : backupList.length === 0 ? (
@@ -300,7 +311,7 @@ export function DangerZone() {
                 value={restorePath}
                 onChange={(e) => setRestorePath(e.target.value)}
                 aria-label="Backup file"
-                className="w-full mt-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-2 text-base focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                className="w-full mt-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                 disabled={restoreSubmitting}
               >
                 {backupList.map((b) => (
@@ -343,14 +354,15 @@ export function DangerZone() {
           </div>
         </div>
       )}
-      <Button
-        variant="destructive"
-        size="lg"
-        fullWidth
-        onClick={onReboot}
-      >
-        Restart camera box
-      </Button>
+        <Button
+          variant="destructive"
+          size="lg"
+          fullWidth
+          onClick={onReboot}
+        >
+          Restart camera box
+        </Button>
+      </div>
     </>
   )
 }

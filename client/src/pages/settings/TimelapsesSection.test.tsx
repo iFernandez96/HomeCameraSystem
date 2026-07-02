@@ -143,7 +143,10 @@ describe('TimelapsesSection — build-fail logging (docs/logging_plan.md §2)', 
 describe('TimelapsesSection — background build polling (client polling UX)', () => {
   it('Given a build that finishes, When status polls to ready, Then a success toast fires and the list refreshes', async () => {
     // arrange — fake timers to drive the 3 s poll loop deterministically.
+    // System time pinned so the component's "yesterday" default matches
+    // the hardcoded 2026-06-19 fixtures (was flaking on real-clock days).
     vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 5, 20, 12, 0, 0))
     listTimelapses
       .mockResolvedValueOnce({ items: [] }) // initial mount load
       .mockResolvedValueOnce({
@@ -186,8 +189,9 @@ describe('TimelapsesSection — background build polling (client polling UX)', (
   })
 
   it('Given a build that fails server-side, When status settles not-ready, Then the error toast carries the server reason', async () => {
-    // arrange
+    // arrange — system time pinned so "yesterday" = 2026-06-19 (see above).
     vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 5, 20, 12, 0, 0))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     listTimelapses.mockResolvedValue({ items: [] })
     triggerTimelapse.mockResolvedValue({

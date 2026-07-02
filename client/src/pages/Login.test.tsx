@@ -168,7 +168,11 @@ describe('Login page', () => {
     }
   }
 
-  it('given password keydown WITHOUT CapsLock, then the live-region slot stays empty (iter-356.5 a11y Top 2)', () => {
+  // NOTE (Sunroom redesign): the submit button now goes through the
+  // Button primitive, which mounts its own sr-only role="status" live
+  // region — so these tests scan ALL status slots instead of assuming
+  // a single one.
+  it('given password keydown WITHOUT CapsLock, then no live-region slot carries the warning (iter-356.5 a11y Top 2)', () => {
     // arrange
     renderLogin()
     const password = screen.getByLabelText(/^password$/i)
@@ -176,9 +180,12 @@ describe('Login page', () => {
     // act — default getModifierState returns false for CapsLock.
     fireEvent.keyDown(password, { key: 'a' })
 
-    // assert — the role=status slot exists (persistent), no warning text.
-    const slot = screen.getByRole('status')
-    expect(slot.textContent ?? '').not.toMatch(/caps lock/i)
+    // assert — status slots exist (persistent), none carry the warning.
+    const slots = screen.getAllByRole('status')
+    expect(slots.length).toBeGreaterThan(0)
+    for (const slot of slots) {
+      expect(slot.textContent ?? '').not.toMatch(/caps lock/i)
+    }
   })
 
   it('given password keydown WITH CapsLock, then the live-region slot announces the warning (iter-356.5 a11y Top 2)', () => {
@@ -192,28 +199,34 @@ describe('Login page', () => {
       fireEvent.keyDown(password, { key: 'a' })
     })
 
-    // assert — the SAME slot now contains the warning text.
-    const slot = screen.getByRole('status')
-    expect(slot.textContent ?? '').toMatch(/caps lock is on/i)
-    expect(slot.getAttribute('aria-live')).toBe('polite')
+    // assert — a persistent polite live-region slot carries the warning.
+    const slot = screen
+      .getAllByRole('status')
+      .find((el) => /caps lock is on/i.test(el.textContent ?? ''))
+    expect(slot).toBeDefined()
+    expect(slot?.getAttribute('aria-live')).toBe('polite')
   })
 
-  it('given the submit button renders, when AT users tab to it, then the focus-visible outline color differs from the button background (iter-356.63: Slice D a11y — invisible focus ring fix)', () => {
-    // arrange — pre-fix the button had bg-accent-default AND
-    // focus-visible:outline-accent-default, so the keyboard-focus
-    // ring rendered as the same orange as the fill (zero contrast).
+  it('given the submit button renders, when AT users tab to it, then it is the Panther-ink primary fill with a focus ring that differs from the fill (Sunroom redesign)', () => {
+    // arrange — the Sunroom tri-tone discipline: the one primary
+    // action is a Panther-ink fill (via the Button primitive); the
+    // marmalade focus ring contrasts against the dark ink fill (the
+    // pre-redesign bug was accent-ring-on-accent-fill = invisible).
     renderLogin()
     const submit = screen.getByRole('button', { name: /sign in/i })
     const cls = submit.className
 
-    // act / assert — focus-ring color must NOT be the same token as
-    // the button bg. The bg uses accent-default; the ring now uses
-    // text-primary.
-    expect(cls).toMatch(/bg-\[var\(--color-accent-default\)\]/)
-    expect(cls).toMatch(/focus-visible:outline-\[var\(--color-text-primary\)\]/)
-    expect(cls).not.toMatch(
+    // act / assert — ink fill + white label + a focus-ring token that
+    // is NOT the same token as the button bg.
+    expect(cls).toMatch(/bg-\[var\(--color-ink\)\]/)
+    expect(cls).toMatch(/text-white/)
+    expect(cls).toMatch(
       /focus-visible:outline-\[var\(--color-accent-default\)\]/,
     )
+    expect(cls).not.toMatch(/focus-visible:outline-\[var\(--color-ink\)\]/)
+    // The old raw button flashed the now-LIGHT accent-muted under
+    // white text on press — must not come back.
+    expect(cls).not.toMatch(/active:bg-\[var\(--color-accent-muted\)\]/)
   })
 
   // iter-356.1a (Frank #4): error slot reserves height so the submit

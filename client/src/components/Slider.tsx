@@ -64,7 +64,12 @@ export function Slider({
     <div className="px-4 py-3">
       <div className="flex justify-between items-center mb-2">
         <label className="text-[var(--color-text-primary)] text-sm">{label}</label>
-        <span className="text-[var(--color-text-secondary)] tabular-nums text-sm">{format(value)}</span>
+        {/* Sunroom: the live value is the reading the operator came for —
+            ink + medium weight in a quiet raised chip so it reads as a
+            gauge, not a footnote. tabular-nums keeps it steady mid-drag. */}
+        <span className="text-[var(--color-text-primary)] font-medium tabular-nums text-sm bg-[var(--color-surface-raised)] rounded-md px-2 py-0.5">
+          {format(value)}
+        </span>
       </div>
       <input
         type="range"

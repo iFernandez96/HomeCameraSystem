@@ -73,7 +73,8 @@ export function ToggleSearchList({
   return (
     <div className="space-y-2">
       <div>
-        <span className="text-sm text-[var(--color-text-secondary)] font-medium">{label}</span>
+        {/* Sunroom form rhythm: label = ink, helper = secondary. */}
+        <span className="text-sm text-[var(--color-text-primary)] font-medium">{label}</span>
         {helper && (
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{helper}</p>
         )}
@@ -96,7 +97,7 @@ export function ToggleSearchList({
             placeholder="Search…"
             aria-label={`Search ${label.toLowerCase()}`}
             disabled={disabled}
-            className="w-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
+            className="w-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 disabled:opacity-50"
           />
           {/* Scrollable list. Cap height so 50 names don't push the
               save button off-screen. role=group with aria-label so
@@ -110,7 +111,7 @@ export function ToggleSearchList({
           <div
             role="group"
             aria-label={label}
-            className="max-h-48 lg:max-h-80 overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded divide-y divide-[var(--color-border-subtle)]"
+            className="max-h-48 lg:max-h-80 overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg divide-y divide-[var(--color-border-subtle)]"
           >
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-xs text-[var(--color-text-tertiary)] italic">
@@ -120,16 +121,23 @@ export function ToggleSearchList({
               filtered.map((opt) => {
                 const isOn = selectedSet.has(opt)
                 return (
+                  // Sunroom: selected rows sit on the accent-subtle peach
+                  // paper (a LIGHT surface — text stays ink) so the "on"
+                  // set scans at a glance; unselected rows warm on hover.
                   <label
                     key={opt}
-                    className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-raised)] active:bg-[var(--color-surface-raised)]"
+                    className={`flex items-center gap-3 px-3 py-2 min-h-[44px] cursor-pointer transition-colors duration-150 ${
+                      isOn
+                        ? 'bg-[var(--color-accent-subtle)] hover:bg-[var(--color-accent-muted)]'
+                        : 'hover:bg-[var(--color-surface-raised)] active:bg-[var(--color-surface-raised)]'
+                    }`}
                   >
                     <input
                       type="checkbox"
                       checked={isOn}
                       onChange={() => toggle(opt)}
                       disabled={disabled}
-                      className="w-5 h-5 rounded accent-blue-500 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+                      className="w-5 h-5 rounded accent-[var(--color-accent-default)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
                       aria-label={`${isOn ? 'Allow' : "Don't allow"} ${opt}`}
                     />
                     <span className="text-sm text-[var(--color-text-primary)]">{opt}</span>

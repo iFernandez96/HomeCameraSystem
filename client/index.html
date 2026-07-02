@@ -35,17 +35,17 @@
          deeper toasted-wheat sets the warm-den identity from the
          very first paint — including the iOS standalone splash and
          Android Chrome status bar. -->
-    <!-- iter-356.65 (Mira critic blocker #2): theme-color was set to
-         the OLD cream `#e8d4ac` while the manifest + actual --color-bg
-         are `#1e1710` (charred-oak dark). On iOS standalone the status
-         bar painted cream above a dark app — visible "two apps stitched
-         together" tell. Aligned all three to `#1e1710` and flipped
-         apple-mobile-web-app-status-bar-style to black-translucent so
-         the iOS standalone status bar overlays the dark surface
-         seamlessly. -->
-    <meta name="theme-color" content="#1e1710" />
+    <!-- redesign/warm-boutique (2026-07-01): theme-color matches the
+         Sunroom linen page bg `--color-bg` (#f6f1e7) so the Android
+         status bar / iOS standalone chrome paints as the same warm
+         paper surface as the app. MUST stay in lock-step with the
+         manifest theme_color/background_color in vite.config.ts and
+         index.css --color-bg — a mismatch is the "two apps stitched
+         together" tell (see git history, Mira blocker #2). Status-bar
+         style returns to `default` (dark text on light ground). -->
+    <meta name="theme-color" content="#f6f1e7" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="HomeCam" />
     <!-- Premium-launch slice (Mobile-perf F#1 + privacy): self-host
          Inter + Fraunces. Pre-fix the typography pipeline went

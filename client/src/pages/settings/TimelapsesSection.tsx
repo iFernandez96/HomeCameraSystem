@@ -319,7 +319,7 @@ export function TimelapsesSection() {
             type="button"
             onClick={() => setTimelapseDate(_yesterdayStr())}
             disabled={timelapseGenerating}
-            className="text-sm bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] disabled:opacity-50 rounded-full px-4 py-2.5 border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="text-sm bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] text-[var(--color-text-primary)] disabled:opacity-50 rounded-full px-4 py-2.5 min-h-[44px] border border-[var(--color-border)] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Pick yesterday's date"
           >
             Yesterday
@@ -328,7 +328,7 @@ export function TimelapsesSection() {
             type="button"
             onClick={() => setTimelapseDate(_todayStr())}
             disabled={timelapseGenerating}
-            className="text-sm bg-[var(--color-surface-raised)] hover:bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)] disabled:opacity-50 rounded-full px-4 py-2.5 border border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            className="text-sm bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] text-[var(--color-text-primary)] disabled:opacity-50 rounded-full px-4 py-2.5 min-h-[44px] border border-[var(--color-border)] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Pick today's date"
           >
             Today
@@ -350,7 +350,7 @@ export function TimelapsesSection() {
               onChange={(e) => setTimelapseDate(e.target.value)}
               max={_todayStr()}
               aria-label="Timelapse date"
-              className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-2 py-2 text-base text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+              className="w-full mt-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-base tabular-nums text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
               disabled={timelapseGenerating}
             />
           </label>
@@ -358,7 +358,9 @@ export function TimelapsesSection() {
             type="button"
             onClick={onGenerateTimelapse}
             disabled={!_timelapseDateReady || timelapseGenerating}
-            className="text-sm bg-[var(--color-accent-default)] hover:bg-[var(--color-accent-bright)] text-white disabled:bg-[var(--color-surface-raised)] disabled:text-[var(--color-text-tertiary)] rounded px-4 py-2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            // Sunroom: the section's one primary action — ink fill
+            // (marmalade stays reserved for links/active/live).
+            className="text-sm font-medium bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-white disabled:bg-[var(--color-surface-raised)] disabled:text-[var(--color-text-tertiary)] rounded-lg px-4 py-2 min-h-[44px] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             aria-label="Generate timelapse"
           >
             {timelapseGenerating ? 'Building…' : 'Build video'}
@@ -412,9 +414,12 @@ export function TimelapsesSection() {
               key={t.date}
               className="px-4 py-3 space-y-2"
             >
+              {/* Sunroom: dates/sizes are Inter + tabular-nums (the
+                  numeric convention), not mono — mono was a dark-era
+                  terminal tell. */}
               <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="font-mono text-[var(--color-text-primary)]">{t.date}</span>
-                <span className="text-xs text-[var(--color-text-secondary)]">
+                <span className="font-medium tabular-nums text-[var(--color-text-primary)]">{t.date}</span>
+                <span className="text-xs tabular-nums text-[var(--color-text-secondary)]">
                   {formatBytes(t.size_bytes)}
                 </span>
               </div>
