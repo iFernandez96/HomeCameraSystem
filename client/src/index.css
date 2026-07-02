@@ -384,7 +384,14 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 .animate-page-in {
-  animation: page-in var(--duration-base, 160ms) var(--ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+  /* NO fill-mode. `both` retained a computed transform after the
+   * animation finished, and a transformed ancestor becomes the
+   * containing block for position:fixed — every modal opened inside
+   * a page (snapshot preview, clip viewer) anchored to the full page
+   * height instead of the viewport ("super long, have to scroll",
+   * user-reported 2026-07-02). The final keyframe equals the natural
+   * state, so no fill is needed. */
+  animation: page-in var(--duration-base, 160ms) var(--ease-out, cubic-bezier(0, 0, 0.2, 1));
 }
 
 /* iter-356.1 — Login entrance animation. 200 ms ease-out fade-in
