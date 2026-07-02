@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react'
 import { getServerVersion } from '../../lib/api'
 import { log, errFields } from '../../lib/log'
 import { useAuth } from '../../lib/auth'
-import { useCatsEnabled } from '../../lib/catPref'
 import { useConfirm } from '../../lib/confirm'
-import { Mono, Row, Section, Toggle } from './parts'
+import { Mono, Row, Section } from './parts'
 import { ChangePasswordRow, ManageUsersPanel } from './UserMgmt'
 
 // iter-294: extracted from Settings.tsx (~35 lines of inline JSX +
@@ -41,7 +40,6 @@ export function AccountSection() {
   // iter-356.10 (Frank #5): per-device toggle for the ambient cat
   // layer. Default on; flipping persists to localStorage and
   // immediately hides/shows the layer in App.tsx.
-  const [catsEnabled, setCatsEnabled] = useCatsEnabled()
   useEffect(() => {
     let cancelled = false
     getServerVersion()
@@ -86,25 +84,11 @@ export function AccountSection() {
         right={<Mono>{serverVersion ?? '—'}</Mono>}
       />
       <ChangePasswordRow />
-      {/* iter-356.10 (Frank #5): toggle for the ambient cat layer.
-          Per-device localStorage pref. Frank's wife loves the cats;
-          Frank thinks they're a battery drain — each device gets
-          its own preference.
-          iter-356.12 (Maya MAJOR + Frank Round-2 Top 1): use the
-          existing Toggle pill primitive so the row reads consistent
-          with every other setting in the app. The pre-iter-356.12
-          native checkbox + "On"/"Off" text was inconsistent vocab
-          for a 1-row corner of the screen. */}
-      <Row
-        label="Show ambient cats"
-        right={
-          <Toggle
-            checked={catsEnabled}
-            onChange={setCatsEnabled}
-            ariaLabel="Show ambient cats walking along the bottom of the app"
-          />
-        }
-      />
+      {/* Bug sweep (2026-07-02): the "Show ambient cats" toggle was
+          removed — the CatLayer it controlled is unmounted since the
+          Watch structural overhaul (sprites walked over the today-
+          timeline). The catPref plumbing stays for a future surface
+          with real floor space. */}
       {/* iter-265: owner-only Manage Users panel. Family/viewer
           roles never see this. */}
       {isOwner ? <ManageUsersPanel /> : null}

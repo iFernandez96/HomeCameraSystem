@@ -106,10 +106,15 @@ export function WatchRibbon() {
         type="button"
         onClick={() => navigate('/live')}
         aria-label="HomeCam home"
-        className="hidden lg:flex items-center gap-2 group focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+        // Bug sweep (2026-07-02): the brand mark now shows on MOBILE
+        // too — without it the ribbon on non-Watch pages was a bare
+        // "● On watch" strip with a dead left half. The wordmark
+        // stays desktop-only; the trio mark alone carries brand at
+        // 390px.
+        className="flex items-center gap-2 group focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
       >
         <CatTrioMark size={28} ariaLabel="" />
-        <span className="font-display text-lg font-bold leading-none text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-default)] transition-colors">
+        <span className="hidden lg:inline font-display text-lg font-bold leading-none text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-default)] transition-colors">
           HomeCam
         </span>
       </button>
@@ -141,10 +146,10 @@ export function WatchRibbon() {
         >
           {stateLabel}
         </span>
-        <span aria-hidden="true" className="text-[var(--color-text-tertiary)] hidden sm:inline">
+        <span aria-hidden="true" className="text-[var(--color-text-tertiary)]">
           ·
         </span>
-        <span className="text-sm text-[var(--color-text-primary)] font-medium truncate hidden sm:inline">
+        <span className="text-sm text-[var(--color-text-primary)] font-medium truncate">
           {cameraLabel}
         </span>
         {lastFrameLabel && (

@@ -334,7 +334,9 @@
  * separates dark fur from dark ground; a slight dim calms the cream.
  * Class is applied by CatIcons.tsx::RasterSprite. */
 :root[data-theme='dark'] .cat-sprite-img {
-  filter: drop-shadow(0 0 5px rgb(240 230 212 / 0.30)) brightness(0.92);
+  /* Bug sweep: 0.30 halo read as a white sticker outline — a faint
+   * lift is enough to separate dark fur from charcoal. */
+  filter: drop-shadow(0 0 6px rgb(240 230 212 / 0.16)) brightness(0.95);
 }
 
 :root[data-theme='dark'] { color-scheme: dark; }

@@ -359,8 +359,10 @@ function TodayTimeline({ onOpen }: { onOpen: (e: DetectionEvent) => void }) {
           ? 'Loading today…'
           : events.length === 0
             ? 'No events yet today'
-            : `${events.length} ${events.length === 1 ? 'event' : 'events'}${
-                people > 0 ? ` · ${people} ${people === 1 ? 'person' : 'people'}` : ''
+            : `${events.length} ${events.length === 1 ? 'event' : 'events'} today${
+                people > 0 && people < events.length
+                  ? ` · ${people} ${people === 1 ? 'person' : 'people'}`
+                  : ''
               }`}
       </p>
 

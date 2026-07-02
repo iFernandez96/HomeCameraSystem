@@ -529,7 +529,11 @@ function EventCardImpl({
         </div>
         {/* META — right, vertical stack: title / timestamp + face match */}
         <div className="flex-1 min-w-0 flex flex-col py-0.5 gap-0.5">
-          <div className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
+          {/* Bug sweep (2026-07-02): was `truncate` — "Person at the
+              front door" clipped to "Person at the fr…" on every
+              390px row. Two-line clamp keeps the full iter-249 title
+              semantics (location + multi-person fan-out) readable. */}
+          <div className="text-sm font-semibold text-[var(--color-text-primary)] line-clamp-2">
             {title}
           </div>
           <div className="text-xs text-[var(--color-text-secondary)]">
@@ -594,7 +598,14 @@ function EventCardImpl({
           // mobile (touch-first), still hover-revealed on desktop
           // (lg+) so the row card stays uncluttered for the
           // pointer-precise reviewer flow.
-          className="absolute top-1/2 -translate-y-1/2 -right-2 min-w-[44px] min-h-[44px] rounded-full bg-[var(--color-danger-strong)] hover:bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-90 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
+          // Bug sweep (2026-07-02): the old treatment was a solid
+          // danger-strong circle hanging half OUTSIDE the card edge
+          // (-right-2) — every row screamed delete and the bottom one
+          // collided with the calendar FAB. Now: a quiet tinted ✕
+          // INSIDE the card gutter (44px hit area via padding, 32px
+          // visual), still always-visible on touch, hover-revealed on
+          // desktop. Swipe-to-delete unchanged.
+          className="absolute top-1/2 -translate-y-1/2 right-1 p-1.5 min-w-[44px] min-h-[44px] rounded-full text-[var(--color-danger)] flex items-center justify-center text-sm font-bold hover:bg-[var(--color-danger-bg)] opacity-80 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
         >
           ✕
         </button>
