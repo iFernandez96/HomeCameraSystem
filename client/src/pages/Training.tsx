@@ -436,7 +436,7 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
                 the fallback avatar. Sunroom sweep: warm-brass portrait
                 chip (decorative-neutral, matches People) so both
                 face-suite pages share the family-album avatar voice. */}
-            <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-default)]/40 flex items-center justify-center flex-shrink-0">
+            <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-border)] flex items-center justify-center flex-shrink-0">
               <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-brass-default)]">
                 {_displayName(d.name).charAt(0).toUpperCase()}
               </span>
@@ -457,7 +457,7 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
             <ConsentControl name={d.name} />
             <Button
               variant="destructive"
-              size="sm"
+              size="md"
               onClick={() => onDeleteAll(d.name, d.count)}
               aria-label={`Delete all captures of ${_displayName(d.name)}`}
             >
@@ -562,7 +562,7 @@ function ConsentControl({ name }: { name: string }) {
       </span>
       <Button
         variant="ghost"
-        size="sm"
+        size="md"
         onClick={onClick}
         disabled={busy}
         aria-label={
@@ -939,12 +939,12 @@ function ActionPanel({
               className="mt-1 w-full px-2 py-2 min-h-[44px] bg-[var(--color-bg)] border border-[var(--color-border-strong)] rounded text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
             />
           </label>
-          {/* iter-356.3c: Move via Button primitive (size=sm fits the
-              cramped action-panel column). */}
+          {/* iter-356.3c: Move via Button primitive; redesign fix bumps
+              the touch-heavy action panel to size=md (full tap target). */}
           <div className="flex gap-1">
             <Button
               variant="primary"
-              size="sm"
+              size="md"
               onClick={onMoveTyped}
               disabled={actionInflight || !moveTarget.trim()}
               className="flex-1"
@@ -961,7 +961,7 @@ function ActionPanel({
       <div className="flex gap-1 pt-3 mt-2 border-t border-[var(--color-border)]">
         <Button
           variant="destructive"
-          size="sm"
+          size="md"
           onClick={onDelete}
           disabled={actionInflight}
           className="flex-1"
@@ -970,7 +970,7 @@ function ActionPanel({
         </Button>
         <Button
           variant="ghost"
-          size="sm"
+          size="md"
           onClick={onCancel}
           disabled={actionInflight}
         >

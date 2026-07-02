@@ -272,14 +272,16 @@ describe('Live page', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 
-  it('Given the Talk button is disabled, When the user reads the surface, Then a "Coming soon" caption sits below the mobile strip variant so the affordance is honestly labeled', () => {
+  it('Given the Talk button is disabled, When the user reads the surface, Then a "Coming soon" caption sits below BOTH the mobile strip and desktop overlay variants so the affordance is honestly labeled', () => {
     // arrange / act
     render(<Live />)
 
-    // assert — "Coming soon" caption is present (mobile strip
-    // variant). Aria-describedby ties the caption to the button so
-    // SR users get the same explanation sighted users do.
-    expect(screen.getByText(/coming soon/i)).toBeInTheDocument()
+    // assert — "Coming soon" caption is present on both Talk
+    // surfaces (Sunroom fix 2026-07-01: desktop dropped the
+    // "Talk · soon" label in favor of the same label+caption pair
+    // as mobile). Aria-describedby ties each caption to its button
+    // so SR users get the same explanation sighted users do.
+    expect(screen.getAllByText(/coming soon/i)).toHaveLength(2)
   })
 
   it('Given a notched landscape iPhone PWA, When the video gradient strip renders, Then it carries lateral safe-area-inset padding so the trust cluster never sits under the home-indicator (premium-launch slice — mobile-view-auditor G3)', () => {

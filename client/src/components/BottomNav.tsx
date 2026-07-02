@@ -32,7 +32,7 @@ export function BottomNav() {
       // leaving ~20 px clearance for the swipe-up gesture. On Android
       // (zero safe-area-inset-bottom) max(0, …) collapses to zero so
       // the nav touches the screen edge as before. */}
-      className="fixed bottom-0 inset-x-0 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] pb-[max(0px,calc(env(safe-area-inset-bottom)-14px))] z-10 shadow-[var(--shadow-card)]"
+      className="fixed bottom-0 inset-x-0 bg-[var(--color-surface-scrim)] backdrop-blur border-t border-[var(--color-border)] pb-[max(0px,calc(env(safe-area-inset-bottom)-14px))] z-10 shadow-[var(--shadow-card)]"
     >
       {/* Premium-launch slice (mobile-view-auditor A2): lateral
           safe-area inset on the inner tab strip in landscape. Pre-
@@ -72,7 +72,7 @@ export function BottomNav() {
               `relative flex-1 py-3 flex flex-col items-center gap-1 text-xs transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded ${
                 isActive
                   ? 'bottomnav-paw-active text-[var(--color-accent-default)] font-semibold'
-                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`
             }
           >
@@ -105,10 +105,12 @@ function LiveIcon({ active }: { active: boolean }) {
 }
 
 function EventsIcon({ active: _active }: { active: boolean }) {
+  // Activity-pulse glyph (warm-boutique redesign): the old clock face
+  // read as "history/time", not "activity". Matches SideRail's Events
+  // glyph — keep the two in sync.
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
     </svg>
   )
 }

@@ -280,7 +280,7 @@ export function Live() {
             sentryCat={sentryCat}
             compact
           />
-          <div className="flex flex-row gap-2">
+          <div className="flex flex-row gap-2 items-start">
             <ActionButton
               label="Snapshot"
               icon={<CameraIcon />}
@@ -289,10 +289,11 @@ export function Live() {
               dark
             />
             <ActionButton
-              label="Talk · soon"
+              label="Talk"
               icon={<MicIcon />}
               disabled
               dark
+              caption="Coming soon"
             />
           </div>
         </div>
@@ -357,7 +358,7 @@ function ArmedBadge({ status }: { status: import('../lib/types').ServerStatus | 
     return (
       <span className="inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur px-3 py-1.5 text-xs text-white/80 ring-1 ring-white/20">
         <span aria-hidden="true" className="w-2 h-2 rounded-full bg-white/40 animate-pulse" />
-        Connecting…
+        Checking…
       </span>
     )
   }
@@ -373,10 +374,10 @@ function ArmedBadge({ status }: { status: import('../lib/types').ServerStatus | 
       ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
       : 'bg-[var(--color-warning)]'
   const ringClass = offline
-    ? 'ring-[var(--color-danger-strong)]/40'
+    ? 'ring-[var(--color-danger-border)]'
     : armed
-      ? 'ring-[var(--color-success)]/40'
-      : 'ring-[var(--color-warning)]/40'
+      ? 'ring-[var(--color-success-border)]'
+      : 'ring-[var(--color-warning-border)]'
   return (
     <span
       className={`inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur px-3 py-1.5 text-xs font-semibold text-white ring-1 ${ringClass}`}
@@ -523,22 +524,39 @@ function ActionButton({
   // iter-356.58 (layout rebuild): `dark` mode — overlaid on the
   // dark video field. Renders as a glass-pill button instead of
   // the surface-bg primitive. Loading + disabled states preserved.
+  // Sunroom fix (2026-07-01): dark mode now renders the caption too
+  // (white-over-video) so the desktop Talk stub matches the mobile
+  // "Talk" + "Coming soon" wording instead of "Talk · soon".
   if (dark) {
+    // Distinct id namespace from the light variant — both variants can
+    // coexist in the DOM (CSS-hidden per breakpoint) with the same label.
+    const darkCaptionId = caption ? `actionbtn-caption-dark-${label}` : undefined
     return (
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled || loading}
-        className="inline-flex items-center gap-2 min-h-[44px] px-4 py-1.5 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 hover:ring-white/35 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
-        aria-pressed={highlight ? true : undefined}
-      >
-        {!loading && (
-          <span aria-hidden="true" className="flex-shrink-0 inline-flex">
-            {icon}
+      <div className="flex flex-col items-center">
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled || loading}
+          className="inline-flex items-center gap-2 min-h-[44px] px-4 py-1.5 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 hover:ring-white/35 text-white text-sm font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:opacity-60 transition-colors"
+          aria-pressed={highlight ? true : undefined}
+          aria-describedby={darkCaptionId}
+        >
+          {!loading && (
+            <span aria-hidden="true" className="flex-shrink-0 inline-flex">
+              {icon}
+            </span>
+          )}
+          <span>{label}</span>
+        </button>
+        {caption && (
+          <span
+            id={darkCaptionId}
+            className="text-xs text-white/80 mt-1 text-center leading-tight [text-shadow:0_1px_2px_rgba(0,0,0,0.6)]"
+          >
+            {caption}
           </span>
         )}
-        <span>{label}</span>
-      </button>
+      </div>
     )
   }
   // iter-356.3a (Maya iter-355ac defer + Major iter-355c1):
@@ -645,7 +663,7 @@ function CameraSubtitle({
   if (!status) {
     return (
       <p className={baseClass}>
-        <span>Connecting…</span>
+        <span>Checking…</span>
       </p>
     )
   }

@@ -44,14 +44,16 @@ export function WatchRibbon() {
     ? 'bg-[var(--color-danger)]'
     : armed
       ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
-      : 'bg-[var(--color-warning)]'
+      : status?.detection_active === false
+        ? 'bg-[var(--color-warning)]'
+        : 'bg-[var(--color-text-tertiary)]'
   const stateLabel = offline
     ? 'Camera offline'
     : armed
       ? 'On watch'
       : status?.detection_active === false
         ? 'Off duty'
-        : '…'
+        : 'Checking…'
 
   const cameraLabel = status?.camera_label ?? 'Front Door'
   const lastFrameLabel =
@@ -90,7 +92,7 @@ export function WatchRibbon() {
       // `max(1rem, env(...))` preserves the prior 16 px gutter on
       // devices with no inset (Android, all desktops) and expands
       // it only when the OS reports an inset.
-      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface)]/95 backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
+      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface-scrim)] backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
         paddingLeft: 'max(1rem, env(safe-area-inset-left))',
@@ -132,7 +134,9 @@ export function WatchRibbon() {
               ? 'text-[var(--color-danger)]'
               : armed
                 ? 'text-[var(--color-success)]'
-                : 'text-[var(--color-warning)]'
+                : status?.detection_active === false
+                  ? 'text-[var(--color-warning)]'
+                  : 'text-[var(--color-text-tertiary)]'
           }`}
         >
           {stateLabel}
@@ -161,7 +165,7 @@ export function WatchRibbon() {
         type="button"
         onClick={() => navigate('/live')}
         aria-label="Jump to Live view"
-        className="hidden lg:inline-flex items-center justify-center h-9 px-3 rounded-lg text-xs font-semibold text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+        className="hidden lg:inline-flex items-center justify-center h-9 px-3 rounded-xl text-xs font-semibold text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
       >
         Jump to Live
       </button>

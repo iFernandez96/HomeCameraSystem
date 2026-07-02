@@ -79,6 +79,7 @@
   --color-accent-muted:   #f3ddbd;  /* active ActionButton bg */
   --color-accent-default: #b3540b;  /* links, focus ring, accent text */
   --color-accent-bright:  #d97316;  /* hover fills, large accents */
+  --color-accent-deep:    #8a4008;  /* heatmap deepest tier (white text ~7.5:1) */
 
   /* === Ink (Panther — primary-action fills) ======================
    * The signature move of the Sunroom direction: primary buttons are
@@ -88,10 +89,14 @@
   --color-ink:            #2b2213;
   --color-ink-hover:      #40331d;
 
-  /* === Brass (secondary brand — sigil, name-plate, avatar) ======= */
-  --color-brass-default:  #9a742a;
+  /* === Brass (secondary brand — sigil, name-plate, avatar) =======
+   * Default darkened #9a742a → #866a24 (Frank audit: 11px brass time
+   * stamps measured 4.2:1 on paper — under AA-small; the deeper brass
+   * clears ~5:1 while keeping the hue). */
+  --color-brass-default:  #866a24;
   --color-brass-bright:   #b08a38;
   --color-brass-subtle:   #f3ead3;
+  --color-brass-border:   color-mix(in srgb, var(--color-brass-default) 40%, transparent);
 
   /* === Surface + border tiers (LINEN + PAPER) ====================
    * Cards are near-white paper on warm linen; separation comes from
@@ -139,6 +144,9 @@
   --color-info-bg:         color-mix(in srgb, var(--color-info) 14%, transparent);
   --color-accent-bg:       color-mix(in srgb, var(--color-accent-default) 12%, transparent);
   --color-accent-border:   color-mix(in srgb, var(--color-accent-default) 40%, transparent);
+  /* Pre-mixed scrim for translucent chrome (ribbon / bottom nav) —
+   * replaces the banned `bg-[var(--color-surface)]/95` idiom. */
+  --color-surface-scrim:   color-mix(in srgb, var(--color-surface) 95%, transparent);
 
   /* === Skeleton surface (between bg and card — see Maya Critical
    * note in git history: skeleton must sit a hair darker than the
@@ -164,8 +172,8 @@
   /* === Border radius scale ==================================== */
   --radius-sm:   4px;     /* inputs, inline badges */
   --radius-md:   8px;     /* video-overlay pills, confidence badges */
-  --radius-lg:  12px;     /* buttons, form fields */
-  --radius-xl:  16px;     /* cards */
+  --radius-lg:  12px;     /* form fields, inputs */
+  --radius-xl:  16px;     /* buttons (Button primitive), cards */
   --radius-2xl: 20px;     /* modals, full-width panels */
   --radius-pill: 9999px;  /* status pills, toasts, chips */
 

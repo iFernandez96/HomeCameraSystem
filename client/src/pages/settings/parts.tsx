@@ -101,20 +101,28 @@ export function Toggle({
       type="button"
       onClick={() => !disabled && onChange(!checked)}
       disabled={disabled}
-      // Sunroom: the off-state pill needs a real border tone — the old
-      // surface-raised fill was near-invisible against the paper card,
-      // so on/off read as "orange vs nothing."
-      className={`w-11 h-6 rounded-full p-0.5 flex items-center transition-colors duration-150 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-        checked ? 'bg-[var(--color-accent-default)]' : 'bg-[var(--color-border)]'
-      }`}
+      // Sunroom hit-area fix: the visual pill stays 44x24, but the
+      // interactive element gains transparent p-2.5 padding cancelled
+      // by -m-2.5, lifting the tap target to 44px tall (64px wide)
+      // without visibly shifting layout.
+      className="p-2.5 -m-2.5 rounded-full flex items-center disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
       aria-pressed={checked}
       aria-label={ariaLabel}
     >
+      {/* Sunroom: the off-state pill needs a real border tone — the old
+          surface-raised fill was near-invisible against the paper card,
+          so on/off read as "orange vs nothing." */}
       <span
-        className={`w-5 h-5 bg-white rounded-full shadow transition-transform duration-150 ${
-          checked ? 'translate-x-5' : 'translate-x-0'
+        className={`w-11 h-6 rounded-full p-0.5 flex items-center transition-colors duration-150 ${
+          checked ? 'bg-[var(--color-accent-default)]' : 'bg-[var(--color-border)]'
         }`}
-      />
+      >
+        <span
+          className={`w-5 h-5 bg-white rounded-full shadow transition-transform duration-150 ${
+            checked ? 'translate-x-5' : 'translate-x-0'
+          }`}
+        />
+      </span>
     </button>
   )
 }

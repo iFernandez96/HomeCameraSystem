@@ -286,10 +286,10 @@ export function EventHeatmap({
           <span className="w-3 h-3 rounded bg-[var(--color-accent-subtle)]" />
           {/* Legend order mirrors `cellTier` exactly — on the light
               Sunroom palette the ramp darkens with heat, ending at
-              the deepest marmalade (accent-default). */}
+              the deepest marmalade (accent-deep). */}
           <span className="w-3 h-3 rounded bg-[var(--color-accent-muted)]" />
-          <span className="w-3 h-3 rounded bg-[var(--color-accent-bright)]" />
           <span className="w-3 h-3 rounded bg-[var(--color-accent-default)]" />
+          <span className="w-3 h-3 rounded bg-[var(--color-accent-deep)]" />
           <span>More detections</span>
         </div>
       ) : null}
@@ -364,13 +364,15 @@ function cellTier(count: number, max: number): CellTier {
   // and conflicted with `--color-warning` (which is amber per
   // index.css). All tiers are existing tokens defined in `index.css`.
   // redesign/warm-boutique: on the light Sunroom palette the ramp
-  // must DARKEN with heat, so the order is subtle → muted → bright →
-  // default (default is the deepest marmalade). Text flips ink→white
-  // only where the cell ground goes dark (GitHub's graph does the same).
+  // must DARKEN with heat: subtle (#faeeda) → muted (#f3ddbd) →
+  // default (#b3540b) → deep (#8a4008). Text flips ink→white exactly
+  // ONCE, where the cell ground goes dark (accent-bright #d97316 was
+  // too light for white text but too dark for ink — dropped from the
+  // ramp; GitHub's graph uses the same single-flip rule).
   if (ratio < 0.25) return { bg: 'bg-[var(--color-accent-subtle)]', text: 'text-[var(--color-text-primary)]' }
   if (ratio < 0.5) return { bg: 'bg-[var(--color-accent-muted)]', text: 'text-[var(--color-text-primary)]' }
-  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-bright)]', text: 'text-[var(--color-text-primary)]' }
-  return { bg: 'bg-[var(--color-accent-default)]', text: 'text-white' }
+  if (ratio < 0.75) return { bg: 'bg-[var(--color-accent-default)]', text: 'text-white' }
+  return { bg: 'bg-[var(--color-accent-deep)]', text: 'text-white' }
 }
 
 function ChevronLeftIcon() {

@@ -63,9 +63,12 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   // live signal so a screen never shouts twice. text-white on the ink
   // fill is the correct pairing (~14:1); the focus ring stays
   // marmalade via BASE_CLASSES.
+  // Press feedback: hover lifts to ink-hover, active steps back onto
+  // the full ink (one past hover) — paired with the base active:scale
+  // cue so a press never looks identical to a hover.
   primary:
     'bg-[var(--color-ink)] text-white ' +
-    'hover:bg-[var(--color-ink-hover)] active:bg-[var(--color-ink-hover)] ' +
+    'hover:bg-[var(--color-ink-hover)] active:bg-[var(--color-ink)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
   // redesign/warm-boutique: secondary = paper card. Rest state sits on
   // --color-surface (cream paper) with the default hairline border;
@@ -105,14 +108,18 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
 }
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
-  sm: 'px-3 py-1.5 text-xs min-h-[32px] gap-1.5',
+  // sm keeps chip-density padding/type but a 40px min-height (Frank A1:
+  // 32px was under any sane touch-target floor on the phone).
+  sm: 'px-3 py-1.5 text-xs min-h-[40px] gap-1.5',
   md: 'px-4 py-2.5 text-sm min-h-[44px] gap-2',
   lg: 'px-5 py-3 text-base min-h-[48px] gap-2',
 }
 
+// active:scale-[0.98] is the toast press idiom — every variant gets a
+// physical press cue distinct from its hover state.
 const BASE_CLASSES =
   'inline-flex items-center justify-center font-semibold ' +
-  'rounded-xl transition-colors duration-150 ' +
+  'rounded-xl transition-colors duration-150 active:scale-[0.98] ' +
   'focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ' +
   'select-none'
 

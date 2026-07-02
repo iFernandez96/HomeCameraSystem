@@ -540,7 +540,7 @@ export function VideoTile({
         // active fill is the allowed colored-fill exception. Focus
         // ring uses accent-bright over the dark video for contrast.
         className={`absolute right-16 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors ${
-          boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
+          boxesVisible ? 'bg-[var(--color-accent-deep)]' : 'bg-black/60'
         }`}
       >
         <svg
@@ -677,7 +677,7 @@ export function VideoTile({
               <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" />
               Stream stalled
             </span>
-            <span className="text-[10px] text-white/80 font-normal">
+            <span className="text-xs text-white/80 font-normal">
               Reconnect
             </span>
           </div>
@@ -696,7 +696,7 @@ export function VideoTile({
               <span className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)]" />
               Camera offline
             </span>
-            <span className="text-[10px] text-white/80 font-normal">
+            <span className="text-xs text-white/80 font-normal">
               Restart the camera service
             </span>
           </div>

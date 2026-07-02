@@ -336,8 +336,13 @@ export function ManageUsersPanel() {
                           act ("type a new one, save it"). */}
                       {resetOpen ? 'Close' : 'Set new password'}
                     </button>
-                    <button
-                      type="button"
+                    {/* Sunroom fix: destructive action uses the Button
+                        primitive (solid danger-strong fill) instead of a
+                        hand-rolled danger link with a hover:opacity
+                        cheat. */}
+                    <Button
+                      variant="destructive"
+                      size="sm"
                       onClick={() => void onDelete(u)}
                       disabled={isSelf || isLastOwner}
                       aria-describedby={
@@ -345,7 +350,6 @@ export function ManageUsersPanel() {
                           ? `delete-disabled-${u.username}`
                           : undefined
                       }
-                      className="text-xs text-[var(--color-danger)] hover:text-[var(--color-danger)] hover:opacity-80 underline disabled:text-[var(--color-text-tertiary)] disabled:no-underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded px-3 py-2 -my-1 lg:px-1 lg:py-0.5 lg:my-0"
                       title={
                         isSelf
                           ? "You can't delete your own account"
@@ -355,7 +359,7 @@ export function ManageUsersPanel() {
                       }
                     >
                       Delete
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 {/* iter-266 (UX-auditor #3): `title=` tooltips never

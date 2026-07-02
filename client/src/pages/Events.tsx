@@ -942,7 +942,7 @@ export function Events() {
               // riddle — "100 recent what?" Now: "Last 100" /
               // "X of last 100" so it's clear the system is
               // capped at the most-recent N events fetched.
-              <span className="text-xs text-[var(--color-text-tertiary)] tabular-nums">
+              <span className="text-xs text-[var(--color-text-secondary)] tabular-nums">
                 {/* iter-356.x (scalability T2): "Last N" was misleading
                     once WS prepends + the 200-cap dropped older events
                     silently — the array was a non-contiguous window,
@@ -1127,6 +1127,17 @@ export function Events() {
                 </Button>
               </div>
             </div>
+            {/* Sunroom fix (2026-07-01): the disabled Delete day reason
+                lived only in the title tooltip — invisible on touch.
+                Surface it as a one-line visible hint when a filter
+                blocks day-delete. aria semantics stay on the button. */}
+            {isOwner &&
+              events.length > 0 &&
+              (filter !== 'all' || labelFilter !== null) && (
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Clear the filter to delete a whole day
+                </p>
+              )}
             {/* iter-322 (user "make it so I can check the captures
                 for a specific time of the day"): time-of-day pickers.
                 Native <input type="time"> for the browser calendar
@@ -1203,7 +1214,7 @@ export function Events() {
         aria-pressed={calendarOpen}
         className={`lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+12px)] right-3 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
           calendarOpen
-            ? 'bg-[var(--color-accent-default)] text-white ring-2 ring-[var(--color-accent-default)]'
+            ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-2 ring-[var(--color-accent-border)]'
             : 'bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
         }`}
       >
@@ -1277,7 +1288,7 @@ export function Events() {
                 <div
                   role="region"
                   aria-label="Bulk selection actions"
-                  className="sticky top-[var(--day-header-top,4rem)] z-20 mb-2 mx-4 lg:mx-0 px-3 py-2 rounded-xl bg-[var(--color-accent-subtle)] border border-[var(--color-accent-default)]/40 flex items-center justify-between gap-3 shadow-[var(--shadow-subtle)]"
+                  className="sticky top-[var(--day-header-top,4rem)] z-20 mb-2 mx-4 lg:mx-0 px-3 py-2 rounded-xl bg-[var(--color-accent-subtle)] border border-[var(--color-accent-border)] flex items-center justify-between gap-3 shadow-[var(--shadow-subtle)]"
                 >
                   <span className="text-sm font-semibold text-[var(--color-accent-default)] tabular-nums">
                     {selectedIds.size === 0
@@ -1293,18 +1304,18 @@ export function Events() {
                     >
                       Cancel
                     </button>
-                    <button
-                      type="button"
+                    <Button
+                      variant="destructive"
+                      size="md"
                       onClick={onBulkDelete}
                       disabled={selectedIds.size === 0 || bulkDeleting}
-                      className="text-xs font-semibold px-3 min-h-[44px] inline-flex items-center bg-[var(--color-danger)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
                     >
                       {bulkDeleting
                         ? 'Deleting…'
                         : selectedIds.size === 0
                           ? 'Delete'
                           : `Delete ${selectedIds.size}`}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -1489,7 +1500,7 @@ function FilterChip({
   const cls = active
     ? accent
       ? 'bg-[var(--color-success-bg)] text-[var(--color-success)] border-[var(--color-success-border)]'
-      : 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] border-[var(--color-accent-default)]/40'
+      : 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] border-[var(--color-accent-border)]'
     : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
   return (
     <button

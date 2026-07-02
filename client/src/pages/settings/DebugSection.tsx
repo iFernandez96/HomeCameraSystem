@@ -29,6 +29,7 @@
 import { useEffect, useState } from 'react'
 import { useToast } from '../../lib/toast'
 import { useConfirm } from '../../lib/confirm'
+import { Button } from '../../components/primitives/Button'
 
 type SwInfo = {
   scope: string | null
@@ -129,23 +130,19 @@ export function DebugSection() {
       </p>
 
       <div className="flex flex-wrap gap-2">
-        {/* Sunroom: the filled action is ink (Panther) — marmalade fills
-            are reserved for links / focus / active / live signal. 44px
-            touch floor on both. */}
-        <button
-          type="button"
-          onClick={onReload}
-          className="px-3 py-2 rounded-lg bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] text-[var(--color-text-primary)] text-sm font-medium border border-[var(--color-border)] transition-colors duration-150 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
-        >
+        {/* Sunroom: use the Button primitive instead of hand-rolled
+            duplicates — the filled action is ink (primary variant);
+            marmalade fills stay reserved for links / focus / live. */}
+        <Button variant="secondary" size="md" onClick={onReload}>
           Reload app
-        </button>
-        <button
-          type="button"
-          onClick={onResetAndReload}
-          className="px-3 py-2 rounded-lg bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-white text-sm font-medium transition-colors duration-150 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+        </Button>
+        <Button
+          variant="primary"
+          size="md"
+          onClick={() => void onResetAndReload()}
         >
           Reset cache &amp; reload
-        </button>
+        </Button>
       </div>
 
       <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)] font-mono pt-2 border-t border-[var(--color-border-subtle)]">

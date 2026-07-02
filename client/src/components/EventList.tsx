@@ -173,7 +173,7 @@ export function EventList({
               <li key={e.id} className="relative pl-20 pb-3 last:pb-0">
                 {/* TIME column — brass uppercase tabular nums */}
                 <span
-                  className="absolute left-0 top-2 w-14 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--color-brass-default)] tabular-nums"
+                  className="absolute left-0 top-2 w-14 text-right text-xs font-medium uppercase tracking-wider text-[var(--color-brass-default)] tabular-nums"
                   title={absoluteTime(e.ts)}
                 >
                   {clockTime(e.ts)}
@@ -532,7 +532,7 @@ function EventCardImpl({
           <div className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
             {title}
           </div>
-          <div className="text-xs text-[var(--color-text-tertiary)]">
+          <div className="text-xs text-[var(--color-text-secondary)]">
             {relativeTime(e.ts, now)}
           </div>
           {isRecognized ? (
@@ -594,7 +594,7 @@ function EventCardImpl({
           // mobile (touch-first), still hover-revealed on desktop
           // (lg+) so the row card stays uncluttered for the
           // pointer-precise reviewer flow.
-          className="absolute top-1/2 -translate-y-1/2 -right-2 min-w-[44px] min-h-[44px] rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-90 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
+          className="absolute top-1/2 -translate-y-1/2 -right-2 min-w-[44px] min-h-[44px] rounded-full bg-[var(--color-danger-strong)] hover:bg-[var(--color-danger)] text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-[var(--color-bg)] opacity-90 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2 z-10"
         >
           ✕
         </button>

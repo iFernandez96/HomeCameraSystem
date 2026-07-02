@@ -156,10 +156,7 @@ export function Login() {
           <h1 className="font-display text-4xl font-bold text-[var(--color-text-primary)] tracking-tight">
             HomeCam
           </h1>
-          <p
-            className="font-display italic text-base text-[var(--color-text-secondary)] mt-2 max-w-xs"
-            style={{ fontStyle: 'italic' }}
-          >
+          <p className="font-display italic text-base text-[var(--color-text-secondary)] mt-2 max-w-xs">
             Panther, Mushu &amp; Coco are watching the door.
           </p>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold mt-3">
@@ -186,7 +183,7 @@ export function Login() {
             // so NVDA reads field+error together, not separately.
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? 'login-error' : undefined}
-            className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3.5 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-default)]/30 transition-all duration-150"
+            className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3.5 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-border)] transition-all duration-150"
           />
           <p className="text-xs text-[var(--color-text-tertiary)] mt-1.5">
             Created when HomeCam was first set up.
@@ -214,7 +211,7 @@ export function Login() {
               onFocus={handlePasswordFocus}
               aria-invalid={error ? true : undefined}
               aria-describedby={error ? 'login-error' : undefined}
-              className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg pl-3.5 pr-11 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-default)]/30 transition-all duration-150"
+              className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg pl-3.5 pr-11 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-border)] transition-all duration-150"
             />
             <button
               type="button"

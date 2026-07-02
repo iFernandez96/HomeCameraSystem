@@ -418,7 +418,7 @@ export function ClipModal({
                 aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
                 aria-pressed={boxesVisible}
                 className={`absolute top-3 right-3 z-10 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-                  boxesVisible ? 'bg-[var(--color-accent-default)]/70' : 'bg-black/60'
+                  boxesVisible ? 'bg-[var(--color-accent-deep)]' : 'bg-black/60'
                 }`}
               >
                 <svg

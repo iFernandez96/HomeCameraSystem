@@ -68,9 +68,9 @@ describe('OfflineState', () => {
     render(<OfflineState kind="camera" size="compact" retry={retry} />)
 
     // assert — Retry is present and uses the small size variant
-    // (Button primitive's sm class includes min-h-[32px]).
+    // (Button primitive's sm class includes min-h-[40px] — Frank A1 touch floor).
     const btn = screen.getByRole('button', { name: /retry/i })
     expect(btn).toBeInTheDocument()
-    expect(btn.className).toMatch(/min-h-\[32px\]/)
+    expect(btn.className).toMatch(/min-h-\[40px\]/)
   })
 })

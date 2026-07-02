@@ -47,14 +47,26 @@ describe('Button primitive', () => {
     ).toMatch(/bg-transparent/)
   })
 
-  it('given size="sm", when rendered, then 32px min-height applied', () => {
+  it('given size="sm", when rendered, then 40px min-height applied (Frank A1 touch floor)', () => {
     // arrange / act
     render(<Button size="sm">Chip</Button>)
 
     // assert
     expect(screen.getByRole('button', { name: /chip/i }).className).toMatch(
-      /min-h-\[32px\]/,
+      /min-h-\[40px\]/,
     )
+  })
+
+  it('given any variant, when rendered, then the base classes carry the active:scale press cue distinct from hover', () => {
+    // arrange / act — press feedback must not be identical to hover:
+    // base scale cue on all variants, and primary steps active bg back
+    // to full ink (one past the ink-hover hover state).
+    render(<Button>Press</Button>)
+
+    // assert
+    const btn = screen.getByRole('button', { name: /press/i })
+    expect(btn.className).toMatch(/active:scale-\[0\.98\]/)
+    expect(btn.className).toMatch(/active:bg-\[var\(--color-ink\)\]/)
   })
 
   it('given size="lg", when rendered, then 48px min-height applied', () => {

@@ -254,7 +254,7 @@ function computeVerdict(status: ServerStatus | null): Verdict {
     return {
       kind: 'critical',
       headline: 'Frames are being dropped',
-      subline: `Around ${droppedPct.toFixed(1)}% of captured frames lost — the decoder or RTSP path is under pressure.`,
+      subline: `Around ${droppedPct.toFixed(1)}% of captured frames lost — the video connection is under pressure.`,
     }
   }
   if (inferBasis >= 150) {

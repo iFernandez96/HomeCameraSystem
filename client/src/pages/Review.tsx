@@ -287,7 +287,7 @@ export function Review() {
                   <div className="grid grid-cols-2 gap-1.5 mt-auto">
                     <Button
                       variant="primary"
-                      size="sm"
+                      size="md"
                       loading={busy}
                       onClick={() => handleApprove(item)}
                       disabled={!item.predicted_name}
@@ -298,7 +298,7 @@ export function Review() {
                     </Button>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="md"
                       loading={busy}
                       onClick={() => handleReject(item)}
                     >
@@ -307,7 +307,7 @@ export function Review() {
                   </div>
                   <Button
                     variant="ghost"
-                    size="sm"
+                    size="md"
                     loading={busy}
                     onClick={() => handleDelete(item)}
                     aria-label={`Delete this photo (currently filed as ${displayDir(item.current_dir)})`}

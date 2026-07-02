@@ -390,7 +390,7 @@ function _PersonGrid({
               // hardware, decorative-neutral) instead of the flat
               // raised-surface gray. Keeps the family-album feel
               // without touching the semantic color budget.
-              <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-default)]/40 flex items-center justify-center flex-shrink-0">
+              <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-border)] flex items-center justify-center flex-shrink-0">
                 <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-brass-default)]">
                   {p.name.charAt(0).toUpperCase()}
                 </span>
