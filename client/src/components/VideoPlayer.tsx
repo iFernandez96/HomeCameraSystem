@@ -119,7 +119,7 @@ export function VideoPlayer({
     if (hideTimer.current) clearTimeout(hideTimer.current)
     setControlsVisible(true)
     if (!videoRef.current || videoRef.current.paused) return
-    hideTimer.current = setTimeout(() => setControlsVisible(false), 2500)
+    hideTimer.current = setTimeout(() => setControlsVisible(false), 4000)
   }, [])
 
   // Auto-hide: mouse activity over the player re-shows the controls and
@@ -139,6 +139,13 @@ export function VideoPlayer({
     }
   }, [armHide])
 
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) safePlay(v)
+    else v.pause()
+  }, [])
+
   // Mobile-YouTube tap model (bug sweep 2026-07-02): on coarse
   // pointers a tap on the video toggles the CONTROL CHROME, never
   // playback — pausing lives on the play button. Desktop keeps
@@ -150,29 +157,18 @@ export function VideoPlayer({
   )
   const onSurfaceTap = useCallback(() => {
     if (!isCoarse.current) {
-      togglePlayRef.current?.()
+      togglePlay()
       return
     }
     setControlsVisible((visible) => {
       if (hideTimer.current) clearTimeout(hideTimer.current)
       if (visible) return false
       if (videoRef.current && !videoRef.current.paused) {
-        hideTimer.current = setTimeout(() => setControlsVisible(false), 3000)
+        hideTimer.current = setTimeout(() => setControlsVisible(false), 4000)
       }
       return true
     })
-  }, [])
-
-  const togglePlayRef = useRef<(() => void) | null>(null)
-  const togglePlay = useCallback(() => {
-    const v = videoRef.current
-    if (!v) return
-    if (v.paused) safePlay(v)
-    else v.pause()
-  }, [])
-  // onSurfaceTap is declared before togglePlay (it feeds the video's
-  // onClick) — bridge the desktop path through a ref.
-  togglePlayRef.current = togglePlay
+  }, [togglePlay])
 
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current
@@ -256,7 +252,8 @@ export function VideoPlayer({
 
       {/* Control bar. */}
       <div
-        className={`absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-6 transition-opacity duration-200 ${
+        onPointerDown={armHide}
+        className={`absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-6 transition-opacity duration-150 ${
           controlsVisible || !playing ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
@@ -273,7 +270,10 @@ export function VideoPlayer({
           }}
           aria-label="Seek"
           aria-valuetext={`${fmtTime(current)} of ${fmtTime(duration)}`}
-          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/30 accent-[var(--color-accent-bright)]"
+          // Responsiveness fix (user-reported): the visible track stays
+          // a thin bar (content-box paint) but the INPUT is 28px tall —
+          // a scrub you can actually grab with a thumb.
+          className="h-7 py-3 w-full cursor-pointer appearance-none rounded-full bg-white/30 accent-[var(--color-accent-bright)] bg-clip-content"
           style={{
             backgroundImage: `linear-gradient(to right, var(--color-accent-bright) ${pct}%, rgba(255,255,255,0.3) ${pct}%)`,
           }}
@@ -283,7 +283,7 @@ export function VideoPlayer({
             type="button"
             onClick={togglePlay}
             aria-label={playing ? 'Pause' : 'Play'}
-            className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white"
+            className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white"
           >
             {playing ? (
               <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
@@ -305,7 +305,7 @@ export function VideoPlayer({
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               aria-label={`Playback speed (${speedLabel(rate)})`}
-              className={`flex h-9 min-w-9 items-center justify-center gap-1 rounded-full px-2 text-xs font-semibold hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white ${
+              className={`flex h-11 min-w-11 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-semibold hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white ${
                 rate !== 1 ? 'text-[var(--color-accent-bright)]' : ''
               }`}
             >
@@ -319,7 +319,7 @@ export function VideoPlayer({
               onClick={() => setLoop((v) => !v)}
               aria-pressed={loop}
               aria-label="Repeat"
-              className={`flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white ${
+              className={`flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white ${
                 loop ? 'text-[var(--color-accent-bright)]' : ''
               }`}
             >
@@ -331,7 +331,7 @@ export function VideoPlayer({
               type="button"
               onClick={toggleFullscreen}
               aria-label={fsActive ? 'Exit fullscreen' : 'Fullscreen'}
-              className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white"
+              className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white"
             >
               {fsActive ? (
                 <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
