@@ -266,9 +266,9 @@ describe('ClipModal', () => {
     const userEvent = (await import('@testing-library/user-event')).default
     const user = userEvent.setup()
 
-    // act — open the speed menu, choose 2×.
-    await user.click(screen.getByRole('button', { name: /playback speed/i }))
-    await user.click(screen.getByRole('menuitemradio', { name: '2×' }))
+    // act — native-controls era: speed is a <select> in the strip
+    // under the video (the custom menu died with the hand-rolled bar).
+    await user.selectOptions(screen.getByLabelText('Playback speed'), '2')
 
     // assert — the effect applied it to the element.
     expect(video.playbackRate).toBe(2)

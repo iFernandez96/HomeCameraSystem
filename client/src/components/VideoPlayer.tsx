@@ -1,38 +1,42 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-// Speed multipliers in the settings menu (the user's set: .25× → 4×). Browsers
-// cap playbackRate well above 4×, so all are valid.
+// Speed multipliers offered in the strip (the user's set: .25× → 4×).
+// Browsers cap playbackRate well above 4×, so all are valid.
 export const SPEED_RATES: ReadonlyArray<number> = [
   0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4,
 ]
 
-// A custom, YouTube-style video player: the native <video> control bar can't
-// host a settings menu, so we hide it (`controls` off) and render our own bar
-// — play/pause, a seek scrubber + time, a SETTINGS → playback-speed menu, and
-// fullscreen. Controls auto-hide while playing. The underlying <video> keeps
-// the iOS-tuned props (playsInline / preload / loop) and fires onTimeUpdate so
-// consumers (ClipModal's bbox overlay, the timelapse clock) keep working; pass
-// those overlays via `overlay`.
-
-function fmtTime(s: number): string {
-  if (!Number.isFinite(s) || s < 0) s = 0
-  const m = Math.floor(s / 60)
-  const sec = Math.floor(s % 60)
-  return `${m}:${String(sec).padStart(2, '0')}`
-}
-
-function speedLabel(rate: number): string {
+export function speedLabel(rate: number): string {
   return rate === 1 ? 'Normal' : `${rate}×`
 }
 
-// HTMLMediaElement.play() returns a promise in browsers (reject on autoplay
-// block) but `undefined` under jsdom — guard the .catch so neither crashes.
+// NATIVE-CONTROLS player (2026-07-02, user escalation "is this the best
+// viewer there is?" — honest answer: no, the hand-rolled one wasn't).
+//
+// History: the previous implementation was a custom YouTube-style
+// control bar (own scrubber, auto-hiding chrome, custom fullscreen).
+// It produced a stream of interaction bugs on touch — taps landing on
+// a bar that had just gone pointer-events-none, a fullscreen button
+// intercepted by the <video>, sub-44px targets — because it was
+// re-implementing what the browser already does perfectly. Chrome
+// Android's native controls ARE the premium native experience: instant
+// tap response, drag scrubbing, double-tap seek, rock-solid fullscreen,
+// PiP — all maintained by the browser.
+//
+// So: `controls` is ON, and this component is now a thin wrapper that
+// preserves the two things the native bar can't do:
+//   - a consumer overlay (bbox canvas / timelapse clock) painted over
+//     the frame in a pointer-events-none layer, so it can never eat a
+//     tap meant for the native controls;
+//   - playback speed + repeat, as an always-visible strip UNDER the
+//     video (mobile Chrome's native bar has no speed control).
+//
+// Known trade-off: the native fullscreen button fullscreens the VIDEO
+// element itself, so the bbox overlay is not visible in fullscreen.
+// Correct playback beats decorated playback.
+
+// HTMLMediaElement.play() returns a promise in browsers (rejects on
+// autoplay block) but `undefined` under jsdom — guard the .catch.
 function safePlay(v: HTMLVideoElement): void {
   const p = v.play()
   if (p && typeof p.catch === 'function') p.catch(() => {})
@@ -63,289 +67,107 @@ export function VideoPlayer({
   preload?: 'none' | 'metadata' | 'auto'
   initialRate?: number
   autoPlay?: boolean
-  /** Painted absolutely over the video, beneath the controls (bbox canvas,
-   *  timestamp clock, …). */
+  /** Painted absolutely over the video in a pointer-events-none layer
+   *  (bbox canvas, timestamp clock, …). */
   overlay?: ReactNode
   onTimeUpdate?: (video: HTMLVideoElement) => void
   onPlay?: () => void
   onError?: (video: HTMLVideoElement) => void
-  /** Hands the underlying <video> element to the consumer (called once it
-   *  mounts, and with null on unmount), so existing element-bound logic
-   *  (ClipModal's bbox overlay) keeps working. Memoize it to avoid re-fires. */
+  /** Hands the underlying <video> element to the consumer (called once
+   *  it mounts, and with null on unmount). Memoize it. */
   onVideoEl?: (el: HTMLVideoElement | null) => void
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [playing, setPlaying] = useState(false)
-  const [current, setCurrent] = useState(0)
-  const [duration, setDuration] = useState(0)
   const [rate, setRate] = useState(initialRate)
   const [loop, setLoop] = useState(initialLoop)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [fsActive, setFsActive] = useState(false)
-  const [controlsVisible, setControlsVisible] = useState(true)
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Hand the <video> element to the consumer (ClipModal binds its bbox overlay
-  // to it). Calling a callback prop is compiler-safe (unlike mutating a ref
-  // prop); the consumer stores it in its own ref.
   useEffect(() => {
     onVideoEl?.(videoRef.current)
     return () => onVideoEl?.(null)
   }, [onVideoEl])
 
-  // Apply the chosen playback speed to the element (no React prop for it).
+  // playbackRate has no React attribute — apply imperatively.
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = rate
   }, [rate])
 
-  // Best-effort autoplay (iOS ignores the attribute on a React key-remount).
+  // Best-effort autoplay (iOS ignores the attribute on a React
+  // key-remount).
   useEffect(() => {
-    if (autoPlay && videoRef.current) {
-      safePlay(videoRef.current)
-    }
+    if (autoPlay && videoRef.current) safePlay(videoRef.current)
   }, [autoPlay])
-
-  // Track fullscreen so the button + icon reflect actual state.
-  useEffect(() => {
-    const onChange = () =>
-      setFsActive(document.fullscreenElement === containerRef.current)
-    document.addEventListener('fullscreenchange', onChange)
-    return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [])
-
-  // Auto-hide controls while playing; always show when paused / on activity.
-  const armHide = useCallback(() => {
-    if (hideTimer.current) clearTimeout(hideTimer.current)
-    setControlsVisible(true)
-    if (!videoRef.current || videoRef.current.paused) return
-    hideTimer.current = setTimeout(() => setControlsVisible(false), 4000)
-  }, [])
-
-  // Auto-hide: mouse activity over the player re-shows the controls and
-  // re-arms the hide timer. Touch is handled by the tap handler below
-  // (bug sweep 2026-07-02: a touchstart listener here revealed the bar
-  // a moment before the tap's click hid it again — flicker — and the
-  // click ALSO paused playback, so on phones the Fullscreen button was
-  // effectively unreachable while playing). Attached imperatively (not
-  // as JSX handlers on the roled container) to keep jsx-a11y clean.
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    el.addEventListener('mousemove', armHide)
-    return () => {
-      el.removeEventListener('mousemove', armHide)
-      if (hideTimer.current) clearTimeout(hideTimer.current)
-    }
-  }, [armHide])
-
-  const togglePlay = useCallback(() => {
-    const v = videoRef.current
-    if (!v) return
-    if (v.paused) safePlay(v)
-    else v.pause()
-  }, [])
-
-  // Mobile-YouTube tap model (bug sweep 2026-07-02): on coarse
-  // pointers a tap on the video toggles the CONTROL CHROME, never
-  // playback — pausing lives on the play button. Desktop keeps
-  // click-to-pause (the hover already keeps controls visible there).
-  const isCoarse = useRef(
-    typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(pointer: coarse)').matches,
-  )
-  const onSurfaceTap = useCallback(() => {
-    if (!isCoarse.current) {
-      togglePlay()
-      return
-    }
-    setControlsVisible((visible) => {
-      if (hideTimer.current) clearTimeout(hideTimer.current)
-      if (visible) return false
-      if (videoRef.current && !videoRef.current.paused) {
-        hideTimer.current = setTimeout(() => setControlsVisible(false), 4000)
-      }
-      return true
-    })
-  }, [togglePlay])
-
-  const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current
-    if (!el) return
-    if (document.fullscreenElement === el) {
-      document.exitFullscreen?.()
-    } else {
-      el.requestFullscreen?.().catch(() => {})
-    }
-  }, [])
-
-  const pct = duration > 0 ? (current / duration) * 100 : 0
 
   return (
     <div
-      ref={containerRef}
-      className={`group relative bg-black overflow-hidden ${containerClassName ?? className ?? ''}`}
+      className={`flex flex-col bg-black overflow-hidden ${containerClassName ?? className ?? ''}`}
     >
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <video
-        ref={videoRef}
-        src={src}
-        loop={loop}
-        playsInline
-        preload={preload}
-        className={`block ${videoClassName ?? 'w-full'}`}
-        aria-label={ariaLabel}
-        onClick={onSurfaceTap}
-        onPlay={() => {
-          setPlaying(true)
-          armHide()
-          onPlay?.()
-        }}
-        onPause={() => {
-          setPlaying(false)
-          setControlsVisible(true)
-        }}
-        onTimeUpdate={(e) => {
-          const v = e.currentTarget
-          setCurrent(v.currentTime)
-          onTimeUpdate?.(v)
-        }}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
-        onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
-        onError={(e) => onError?.(e.currentTarget)}
-      />
-
-      {/* Consumer overlays (bbox canvas / timestamp clock). */}
-      {overlay}
-
-      {/* Speed menu (YouTube-style settings panel). */}
-      {menuOpen && (
-        <div
-          role="menu"
-          aria-label="Playback speed"
-          className="absolute bottom-14 right-2 z-20 max-h-[60%] overflow-auto rounded-lg bg-black/90 py-1 text-white shadow-xl ring-1 ring-white/15"
-        >
-          <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-white/60">
-            Playback speed
-          </p>
-          {SPEED_RATES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              role="menuitemradio"
-              aria-checked={rate === r}
-              onClick={() => {
-                setRate(r)
-                setMenuOpen(false)
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/15 focus-visible:bg-white/15 focus-visible:outline-none"
-            >
-              <span className="w-4 text-[var(--color-accent-bright)]" aria-hidden="true">
-                {rate === r ? '✓' : ''}
-              </span>
-              <span className="tabular-nums">{r === 1 ? 'Normal' : `${r}×`}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Control bar. */}
-      <div
-        onPointerDown={armHide}
-        className={`absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-6 transition-opacity duration-150 ${
-          controlsVisible || !playing ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
-      >
-        {/* Scrubber. */}
-        <input
-          type="range"
-          min={0}
-          max={duration || 0}
-          step="any"
-          value={current}
-          onChange={(e) => {
-            const v = videoRef.current
-            if (v) v.currentTime = Number(e.target.value)
-          }}
-          aria-label="Seek"
-          aria-valuetext={`${fmtTime(current)} of ${fmtTime(duration)}`}
-          // Responsiveness fix (user-reported): the visible track stays
-          // a thin bar (content-box paint) but the INPUT is 28px tall —
-          // a scrub you can actually grab with a thumb.
-          className="h-7 py-3 w-full cursor-pointer appearance-none rounded-full bg-white/30 accent-[var(--color-accent-bright)] bg-clip-content"
-          style={{
-            backgroundImage: `linear-gradient(to right, var(--color-accent-bright) ${pct}%, rgba(255,255,255,0.3) ${pct}%)`,
-          }}
+      <div className="relative min-h-0">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video
+          ref={videoRef}
+          src={src}
+          controls
+          loop={loop}
+          playsInline
+          preload={preload}
+          className={`block ${videoClassName ?? 'w-full'}`}
+          aria-label={ariaLabel}
+          onPlay={onPlay}
+          onTimeUpdate={(e) => onTimeUpdate?.(e.currentTarget)}
+          onError={(e) => onError?.(e.currentTarget)}
         />
-        <div className="mt-1 flex items-center gap-3 text-white">
-          <button
-            type="button"
-            onClick={togglePlay}
-            aria-label={playing ? 'Pause' : 'Play'}
-            className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white"
-          >
-            {playing ? (
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
-                <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            )}
-          </button>
-          <span className="font-mono text-xs tabular-nums text-white/90">
-            {fmtTime(current)} / {fmtTime(duration)}
-          </span>
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              aria-label={`Playback speed (${speedLabel(rate)})`}
-              className={`flex h-11 min-w-11 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-semibold hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white ${
-                rate !== 1 ? 'text-[var(--color-accent-bright)]' : ''
-              }`}
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-                <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm8.94 4a6.9 6.9 0 00-.14-1.36l2.03-1.58-2-3.46-2.39.96a7 7 0 00-2.35-1.36L13.7 1h-4l-.39 2.84a7 7 0 00-2.35 1.36l-2.39-.96-2 3.46 2.03 1.58a6.9 6.9 0 000 2.72L.18 15.6l2 3.46 2.39-.96a7 7 0 002.35 1.36L9.3 23h4l.39-2.84a7 7 0 002.35-1.36l2.39.96 2-3.46-2.03-1.58c.09-.45.14-.9.14-1.36z" />
-              </svg>
-              <span className="tabular-nums">{speedLabel(rate)}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setLoop((v) => !v)}
-              aria-pressed={loop}
-              aria-label="Repeat"
-              className={`flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white ${
-                loop ? 'text-[var(--color-accent-bright)]' : ''
-              }`}
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
-                <path d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              aria-label={fsActive ? 'Exit fullscreen' : 'Fullscreen'}
-              className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white"
-            >
-              {fsActive ? (
-                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
-                  <path d="M5 16h3v3h2v-5H5zM5 8h3V5h2v5H5zm9 11h2v-3h3v-2h-5zm2-11V5h-2v5h5V8z" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
-                  <path d="M7 14H5v5h5v-2H7zM5 10h2V7h3V5H5zm12 7h-3v2h5v-5h-2zM14 5v2h3v3h2V5z" />
-                </svg>
-              )}
-            </button>
+        {/* pointer-events-none here so overlays can't eat native-control
+            taps; an interactive overlay child (ClipModal's boxes toggle)
+            opts back in with its own pointer-events-auto. NOT aria-
+            hidden — those children must stay in the a11y tree. */}
+        {overlay && (
+          <div className="pointer-events-none absolute inset-0">
+            {overlay}
           </div>
-        </div>
+        )}
+      </div>
+
+      {/* Speed + repeat strip — the two controls the native bar lacks. */}
+      <div className="flex items-center gap-3 bg-black px-3 py-1.5 text-xs text-white/85">
+        <label className="flex items-center gap-1.5">
+          <span className="text-white/60">Speed</span>
+          <select
+            aria-label="Playback speed"
+            value={rate}
+            onChange={(e) => setRate(Number(e.target.value))}
+            className="min-h-[36px] rounded-lg bg-white/10 px-2 py-1 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)]"
+          >
+            {SPEED_RATES.map((r) => (
+              <option key={r} value={r} className="text-black">
+                {speedLabel(r)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          aria-pressed={loop}
+          aria-label="Repeat"
+          onClick={() => setLoop((l) => !l)}
+          className={`ml-auto inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] ${
+            loop ? 'bg-white/20 text-white' : 'text-white/60 hover:text-white'
+          }`}
+        >
+          <RepeatIcon />
+          Repeat
+        </button>
       </div>
     </div>
+  )
+}
+
+function RepeatIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="17 1 21 5 17 9" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <polyline points="7 23 3 19 7 15" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
   )
 }
