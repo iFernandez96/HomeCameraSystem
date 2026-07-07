@@ -474,6 +474,27 @@ export function Events() {
     return pool.filter((e) => e.person_name === filter)
   }, [events, filter, labelFilter])
 
+  // Painfix #4 (audited on-device): when BOTH the type chip row and
+  // the person chip row are active at once, their intersection can
+  // legitimately be empty — the user filtered themselves into a
+  // corner without realizing they'd stacked two independent filters
+  // (AND, not OR). Name the exact combination so the empty state
+  // reads as "you filtered too narrow," not "the app is broken."
+  const filterComboEmptyHint = useMemo(() => {
+    if (loading || error) return undefined
+    if (filtered.length > 0) return undefined
+    if (filter === 'all' || labelFilter === null) return undefined
+    const typeWord =
+      labelFilter === 'person'
+        ? 'people'
+        : labelFilter === 'cat'
+          ? 'cat'
+          : labelFilter
+    const whoWord = filter === '__unknown__' ? 'unrecognized' : filter
+    const whenWord = selectedDay ? '' : ' today'
+    return `No ${typeWord} events for ${whoWord}${whenWord}. Try clearing one filter.`
+  }, [loading, error, filtered, filter, labelFilter, selectedDay])
+
   // Playroom Modern (Task 6): the "Today, hour by hour" band reuses
   // the already-fetched `events` state (no extra fetch) — it just
   // narrows to today's local-midnight window. `todayStartTs` is
@@ -973,9 +994,18 @@ export function Events() {
                     silently — the array was a non-contiguous window,
                     not a contiguous suffix. "Showing N" is true either
                     way. */}
+                {/* Painfix #3 (audited on-device): "Showing 100" sat
+                    right above "Today's log · 74 entries" and read as
+                    two conflicting event counts. This line is the
+                    RECENT-FETCH WINDOW (across all days, capped —
+                    see _LOAD_MORE_CAP), the day-header line below is
+                    a PER-DAY count — different denominators, same
+                    "N events" grammar, so they collided. Spelling out
+                    "the last" makes this line unambiguously about the
+                    loaded window, not a day total. */}
                 {filter === 'all'
-                  ? `Showing ${events.length}`
-                  : `Showing ${filtered.length} of ${events.length}`}
+                  ? `Showing the last ${events.length}`
+                  : `Showing the last ${filtered.length} of ${events.length} loaded`}
               </span>
             )}
             {/* iter-356.x (desktop D1): selection-mode toggle. Only
@@ -1016,34 +1046,53 @@ export function Events() {
                 jargon. */}
             {(labels.length > 1 ||
               (configClasses !== null && configClasses.length >= 1)) && (
-              <ChipRadiogroup
-                ariaLabel="Filter events by detection type"
-                values={[null as string | null, ...labels]}
-                current={labelFilter}
-                onSelect={setLabelFilter}
-                renderLabel={(v) =>
-                  v === null
-                    ? 'All types'
-                    : v === 'person'
-                      ? 'People'
+              <>
+                {/* Painfix #4 (audited on-device): two chip rows with
+                    no labels read as ONE filter row, so a user could
+                    narrow by type AND person without realizing they'd
+                    stacked two filters (AND'd themselves into zero
+                    results). A small section-eyebrow caption above
+                    each row makes the two independent filter axes
+                    legible at a glance. */}
+                <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold">
+                  Type
+                </p>
+                <ChipRadiogroup
+                  ariaLabel="Filter events by detection type"
+                  values={[null as string | null, ...labels]}
+                  current={labelFilter}
+                  onSelect={setLabelFilter}
+                  renderLabel={(v) =>
+                    v === null
+                      ? 'All types'
+                      : v === 'person'
+                        ? 'People'
+                        : v === 'cat'
+                          ? 'Cats'
+                          : v.charAt(0).toUpperCase() + v.slice(1)
+                  }
+                  // Playroom Modern (Task 6): who-chips carry a 12px
+                  // identity-color square — person=cobalt, cat=marmalade
+                  // per the mockup. Other classes (dog, car, ...) have
+                  // no dot; they're not part of the identity system.
+                  dotColor={(v) =>
+                    v === 'person'
+                      ? 'var(--color-id-person)'
                       : v === 'cat'
-                        ? 'Cats'
-                        : v.charAt(0).toUpperCase() + v.slice(1)
-                }
-                // Playroom Modern (Task 6): who-chips carry a 12px
-                // identity-color square — person=cobalt, cat=marmalade
-                // per the mockup. Other classes (dog, car, ...) have
-                // no dot; they're not part of the identity system.
-                dotColor={(v) =>
-                  v === 'person'
-                    ? 'var(--color-id-person)'
-                    : v === 'cat'
-                      ? 'var(--color-id-mushu)'
-                      : null
-                }
-                marginTopClass="mt-3"
-              />
+                        ? 'var(--color-id-mushu)'
+                        : null
+                  }
+                  marginTopClass="mt-1"
+                />
+              </>
             )}
+            {/* Painfix #4: "Who" caption above the person-filter row —
+                pairs with "Type" above. Always renders when
+                showFilters is true (this row is the one that always
+                shows). */}
+            <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold">
+              Who
+            </p>
             <ChipRadiogroup
               ariaLabel="Filter events by person"
               values={[
@@ -1072,7 +1121,7 @@ export function Events() {
                     ? 'var(--color-id-person)'
                     : identityForName(v).colorVar
               }
-              marginTopClass="mt-2"
+              marginTopClass="mt-1"
             />
           </>
         )}
@@ -1146,23 +1195,59 @@ export function Events() {
                   // param on the wire, so we'd have to either grow
                   // the API or grow client-side enumeration; both
                   // are out of slice C scope.)
+                  //
+                  // Painfix #5 (Frank #10 — ux-grandpa audit): the
+                  // disabled-reason paragraph used to sit detached
+                  // below the whole button row, only reachable by a
+                  // sighted user scanning past the Clear button.
+                  // Now: the reason renders immediately under THIS
+                  // button (still inside the same flex-wrap row's
+                  // parent, so it wraps directly beneath on mobile)
+                  // and is wired via aria-describedby so a screen-
+                  // reader user tabbing to the disabled button hears
+                  // the reason, not just "Delete day, dimmed."
+                  // Covers both filter kinds (person chip vs. the
+                  // Unrecognized chip) with the same sentence
+                  // pattern — "Clear the X filter to delete a whole
+                  // day" — instead of a generic "Clear the filter."
                   (() => {
-                    const filterActive =
-                      filter !== 'all' || labelFilter !== null
+                    const personFilterActive = filter !== 'all'
+                    const typeFilterActive = labelFilter !== null
+                    const filterActive = personFilterActive || typeFilterActive
+                    const filterKind =
+                      personFilterActive && typeFilterActive
+                        ? 'person and type'
+                        : filter === '__unknown__'
+                          ? 'unrecognized'
+                          : personFilterActive
+                            ? 'person'
+                            : 'type'
                     const deleteDayHint = filterActive
-                      ? 'Clear the filter to delete a whole day.'
+                      ? `Clear the ${filterKind} filter to delete a whole day.`
                       : `Delete all events for ${selectedDay}`
+                    const hintId = 'delete-day-disabled-reason'
                     return (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={onDeleteDay}
-                        disabled={filterActive}
-                        aria-label={deleteDayHint}
-                        title={deleteDayHint}
-                      >
-                        Delete day
-                      </Button>
+                      <span className="inline-flex flex-col items-start gap-1">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={onDeleteDay}
+                          disabled={filterActive}
+                          aria-label={deleteDayHint}
+                          aria-describedby={filterActive ? hintId : undefined}
+                          title={deleteDayHint}
+                        >
+                          Delete day
+                        </Button>
+                        {filterActive && (
+                          <p
+                            id={hintId}
+                            className="text-xs text-[var(--color-text-secondary)]"
+                          >
+                            {deleteDayHint}
+                          </p>
+                        )}
+                      </span>
                     )
                   })()
                 )}
@@ -1176,17 +1261,6 @@ export function Events() {
                 </Button>
               </div>
             </div>
-            {/* Sunroom fix (2026-07-01): the disabled Delete day reason
-                lived only in the title tooltip — invisible on touch.
-                Surface it as a one-line visible hint when a filter
-                blocks day-delete. aria semantics stay on the button. */}
-            {isOwner &&
-              events.length > 0 &&
-              (filter !== 'all' || labelFilter !== null) && (
-                <p className="text-xs text-[var(--color-text-secondary)]">
-                  Clear the filter to delete a whole day
-                </p>
-              )}
             {/* iter-322 (user "make it so I can check the captures
                 for a specific time of the day"): time-of-day pickers.
                 Native <input type="time"> for the browser calendar
@@ -1246,8 +1320,8 @@ export function Events() {
           floating position overlapped the in-header "Last 100" text
           ("L..." peeking from behind the calendar circle). Moved to
           a bottom-right FAB pattern instead:
-            - sits above the BottomNav (5rem + safe-area-bottom)
-            - right: 12 px from edge
+            - sits above the BottomNav
+            - right: edge margin, clear of row action zones
             - 56-px round button with elevated shadow + accent fill
               when the calendar overlay is open
             - mobile-only (lg:hidden) — desktop heatmap lives in the
@@ -1255,7 +1329,19 @@ export function Events() {
           Bottom-right is the conventional mobile FAB position
           (Gmail / Instagram / Inbox) and lands directly under the
           right thumb's natural arc on a 6.7" phone. No overlap with
-          any header content; visible at all scroll positions. */}
+          any header content; visible at all scroll positions.
+          Painfix #2 (audited on-device): the FAB's own vertical
+          offset (5rem) sat BELOW the App.tsx `<main>` bottom-padding
+          contract for the pebble nav (App.tsx reserves 6rem — see
+          BottomNav.tsx's own comment) — close enough that the FAB
+          visually crowded the nav's top edge. Bumped to 6rem to
+          mirror the nav's own clearance exactly, and the right
+          offset moved 3->4 for a hair more separation from the
+          edge. The per-card delete ✕ collision this FAB caused on
+          tall rows is fixed on the EventList side (reserved right
+          padding — see EventList.tsx's `<ol>` comment), since the
+          FAB is `fixed` and unavoidably sits over SOME scroll
+          position no matter how far up it floats. */}
       <button
         type="button"
         onClick={() => setCalendarOpen((v) => !v)}
@@ -1266,7 +1352,7 @@ export function Events() {
         // as a LEFT rail instead (BottomNav.tsx) — nothing sits at
         // the bottom edge there, so the FAB can sit close to it
         // instead of floating ~92px up with a big dead gap below.
-        className={`lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+12px)] landscape-phone:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] right-3 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+        className={`lg:hidden fixed bottom-[calc(6rem+env(safe-area-inset-bottom)+8px)] landscape-phone:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] right-4 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
           calendarOpen
             ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-2 ring-[var(--color-accent-border)]'
             : 'bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
@@ -1408,11 +1494,27 @@ export function Events() {
                 // briefly during cold-load; treat null as "still
                 // healthy" (don't flash an offline message during the
                 // first poll round-trip).
+                //
+                // Painfix #6 (coherence audit): `worker_alive===false`
+                // (the process is dead) and `detection_active===false`
+                // (the user paused detection on purpose in Settings)
+                // used to collapse into ONE alarming "camera offline"
+                // empty state. WatchRibbon.tsx:41-56 treats these as
+                // a tri-state, worker-dead-wins precedence — mirrored
+                // here (comment names the source, not imported —
+                // WatchRibbon doesn't export its derivation):
+                //   armed  = detection_active && worker_alive
+                //   offline = worker_alive === false        (danger)
+                //   "off duty" = !offline && detection_active===false (calm)
                 cameraOffline={
-                  status !== null &&
-                  (status.worker_alive === false ||
-                    status.detection_active === false)
+                  status !== null && status.worker_alive === false
                 }
+                detectionOff={
+                  status !== null &&
+                  status.worker_alive !== false &&
+                  status.detection_active === false
+                }
+                filterHint={filterComboEmptyHint}
               />
               {/* iter-220 (Feature #6 slice 6): Load more button. Hidden
                   when there's no cursor left (last page reached) OR no

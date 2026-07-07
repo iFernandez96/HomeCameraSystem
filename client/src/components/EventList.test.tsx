@@ -86,9 +86,12 @@ describe('EventList', () => {
     // as a watch-log: "Today's log" / "Yesterday's log" with brass
     // entry-count tags. "events" → "entries" matches the journal
     // register without changing the underlying day grouping logic.
+    // Painfix #3: the Today group's count reads "N today" (not
+    // "N entries") so it can't be misread as contradicting the
+    // page-header's "Showing the last N" fetch-window count.
     expect(screen.getByText("Today's log")).toBeInTheDocument()
     expect(screen.getByText("Yesterday's log")).toBeInTheDocument()
-    expect(screen.getByText(/2 entries/)).toBeInTheDocument()
+    expect(screen.getByText(/2 today/)).toBeInTheDocument()
     expect(screen.getByText(/1 entry/)).toBeInTheDocument()
   })
 
@@ -120,33 +123,33 @@ describe('EventList', () => {
     expect(screen.getByRole('img')).toBeInTheDocument()
   })
 
-  it('when score is below 50%, then the confidence pill uses the red tier and reads "low" via aria-label (iter-249 + premium-launch slice — Maya Major)', () => {
+  it('Given a low-score event, When the confidence pill renders, Then it uses the neutral scrim chip (not a semantic danger color) and spells out the tier word next to the percentage (Painfix #1 — audited on-device)', () => {
     // arrange / act
     render(<EventList events={[evt({ score: 0.42 })]} />)
 
     // assert — aria-label still spells out the tier word for SR
-    // users (Frank E4 + Dana F2). Visible surface is hue +
-    // percentage only after the premium-launch slice dropped the
-    // redundant L/M/H glyph (Maya Major: triple encoding).
+    // users (Frank E4 + Dana F2). Painfix #1: a bare number under a
+    // SOLID danger/warning/success fill used to read as a system
+    // health alarm, not "how sure the model was." The pill is now a
+    // neutral surface-scrim chip (same grammar as VideoTile's camera
+    // pill) for every tier, and the tier word is spelled out visibly
+    // ("42% · Low") instead of being color-only.
     const pill = screen.getByLabelText(/how sure the camera was: 42%, low/i)
     expect(pill).toBeInTheDocument()
-    // iter-356.65: tier fills migrated from raw `bg-red-500/85` to the
-    // `--color-danger-bg-strong` token; assertion follows the move.
-    expect(pill.className).toMatch(/color-danger/)
-    // Visible content is the percentage alone — no L/M/H letter.
-    expect(pill.textContent?.trim()).toBe('42%')
+    expect(pill.className).toMatch(/color-surface-scrim/)
+    expect(pill.className).not.toMatch(/color-danger|color-warning|color-success/)
+    expect(pill.textContent?.trim()).toBe('42% · Low')
   })
 
-  it('Given a high-score event, When the confidence pill renders, Then visible content is the percentage only and no L/M/H letter clutters the thumbnail (premium-launch slice — Maya Major: drop triple encoding)', () => {
+  it('Given a high-score event, When the confidence pill renders, Then the tier word reads "High" next to the percentage using the same neutral chip as every other tier (Painfix #1)', () => {
     // arrange / act
     render(<EventList events={[evt({ score: 0.93 })]} />)
 
-    // assert — pill text is just the percentage; aria-label gives
-    // SR users the tier word for non-color signaling.
+    // assert — pill text names the tier; aria-label gives SR users
+    // the same tier word for non-color signaling.
     const pill = screen.getByLabelText(/how sure the camera was: 93%, high/i)
-    expect(pill.textContent?.trim()).toBe('93%')
-    // No leading capital tier letter (L/M/H) before the percentage.
-    expect(pill.textContent).not.toMatch(/^[LMH]/)
+    expect(pill.textContent?.trim()).toBe('93% · High')
+    expect(pill.className).toMatch(/color-surface-scrim/)
   })
 
   it('when an event has label=person and camera_id=cam1, then the title reads "Person at the front door" (iter-249)', () => {
@@ -189,9 +192,9 @@ describe('EventList', () => {
     expect(screen.getByText(/car at cam2/i)).toBeInTheDocument()
   })
 
-  it('shows score formatted as percentage', () => {
+  it('shows score formatted as percentage with the tier word (Painfix #1)', () => {
     render(<EventList events={[evt({ score: 0.93 })]} />)
-    expect(screen.getByText('93%')).toBeInTheDocument()
+    expect(screen.getByText('93% · High')).toBeInTheDocument()
   })
 
   it('formats today timestamps as time only (no month name)', () => {

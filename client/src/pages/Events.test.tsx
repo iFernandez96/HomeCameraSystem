@@ -224,7 +224,12 @@ describe('Events page', () => {
       },
     ])
     render(<Events />)
-    await waitFor(() => expect(screen.getByText(/showing 1/i)).toBeInTheDocument())
+    // Painfix #3: "Showing 1" -> "Showing the last 1" so this line
+    // reads unambiguously as the recent-fetch window, distinct from
+    // the day-header's per-day count.
+    await waitFor(() =>
+      expect(screen.getByText(/showing the last 1/i)).toBeInTheDocument(),
+    )
   })
 
   it('prepends new detection events received over WebSocket', async () => {
@@ -443,7 +448,8 @@ describe('Events page', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('listitem')).toHaveLength(1)
     })
-    expect(screen.getByText(/showing 1 of 2/i)).toBeInTheDocument()
+    // Painfix #3: "Showing 1 of 2" -> "Showing the last 1 of 2 loaded".
+    expect(screen.getByText(/showing the last 1 of 2 loaded/i)).toBeInTheDocument()
   })
 
   it('clicking a thumb row opens the ClipModal (iter-203)', async () => {
@@ -1153,11 +1159,18 @@ describe('Events page', () => {
     })
     await user.click(dogChip)
 
-    // assert
+    // assert — painfix #5: wording names the specific filter kind
+    // ("type"), not a generic "the filter", and the reason is wired
+    // via aria-describedby to a visible <p> right beside the button
+    // (not a paragraph detached below the whole banner).
     const deleteDayBtn = await screen.findByRole('button', {
-      name: /clear the filter to delete a whole day/i,
+      name: /clear the type filter to delete a whole day/i,
     })
     expect(deleteDayBtn).toBeDisabled()
+    const describedBy = deleteDayBtn.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    const hintEl = document.getElementById(describedBy as string)
+    expect(hintEl?.textContent).toMatch(/clear the type filter to delete a whole day/i)
   })
 
   it('given user cancels the confirm dialog, when delete ✕ clicked, then deleteEvent does NOT fire (iter-307)', async () => {
@@ -1584,7 +1597,153 @@ describe('Events page', () => {
     const triggerAfter = screen.getByRole('button', { name: /show calendar/i })
     expect(document.activeElement).toBe(triggerAfter)
   })
+
+  // Painfix #6 (coherence audit): worker-dead vs. detection-paused-
+  // on-purpose used to collapse into one alarming empty state.
+  // WatchRibbon.tsx:41-56 treats these as distinct tri-state cases;
+  // Events must mirror that precedence.
+
+  it('given worker_alive is false, when the event list is empty, then the alarming "Camera looks offline" empty state renders (Painfix #6)', async () => {
+    // arrange — explicit reset: `getStatusM`/`getDetectionConfigM`
+    // aren't cleared by the shared `afterEach`'s `vi.clearAllMocks()`
+    // (that clears call history, not a `mockResolvedValue`
+    // implementation set by an earlier test), so this test pins its
+    // own state rather than relying on suite ordering. Also restore
+    // `document.visibilityState` to 'visible' — an earlier test
+    // ("does not refetch when visibility changes to hidden")
+    // redefines it permanently and never restores it, which would
+    // otherwise stop useStatus() from polling at all here.
+    _restoreVisible()
+    fetchEvents.mockResolvedValue([])
+    getDetectionConfigM.mockReset().mockReturnValue(new Promise(() => {}))
+    getStatusM.mockReset().mockResolvedValue({
+      ok: true,
+      uptime_s: 100,
+      camera: 'ok',
+      detection_active: true,
+      worker_alive: false,
+      worker_last_seen_s: 999,
+      worker_metrics: null,
+    })
+
+    // act
+    render(<Events />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByText(/camera looks offline/i)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/detection is off duty/i)).not.toBeInTheDocument()
+  })
+
+  it('given worker_alive is true but detection_active is false, when the event list is empty, then the calm "Detection is off duty" empty state renders — not the alarming offline copy (Painfix #6)', async () => {
+    // arrange — the worker process is fine; the user just paused
+    // detection in Settings. Mirrors WatchRibbon's "Off duty" state.
+    // Explicit reset — see the prior test's comment on mock leakage.
+    _restoreVisible()
+    fetchEvents.mockResolvedValue([])
+    getDetectionConfigM.mockReset().mockReturnValue(new Promise(() => {}))
+    getStatusM.mockReset().mockResolvedValue({
+      ok: true,
+      uptime_s: 100,
+      camera: 'ok',
+      detection_active: false,
+      worker_alive: true,
+      worker_last_seen_s: 1,
+      worker_metrics: null,
+    })
+
+    // act
+    render(<Events />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByText(/detection is off duty/i)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/camera looks offline/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/nothing came knocking/i)).not.toBeInTheDocument()
+  })
+
+  // Painfix #4 (audited on-device): stacking a type filter AND a
+  // person filter is an AND, not an OR — a user can filter
+  // themselves into zero results without realizing they combined
+  // two independent axes.
+
+  it('given both a type filter and a person filter are active with no matching events, when the list renders, then the empty state names the exact combination (Painfix #4)', async () => {
+    // arrange — two events so both the type row (2+ classes) and the
+    // person row (a recognized name) render; the dog chip + Israel
+    // chip together match zero events. Explicit resets so an earlier
+    // test's `getDetectionConfigM`/`getStatusM` override (neither is
+    // cleared by `vi.clearAllMocks()`) can't leak in and change
+    // which chips render or which empty state wins.
+    getDetectionConfigM.mockReset().mockReturnValue(new Promise(() => {}))
+    getStatusM.mockReset().mockResolvedValue({
+      ok: true,
+      uptime_s: 100,
+      camera: 'ok',
+      detection_active: true,
+      worker_alive: true,
+      worker_last_seen_s: 1,
+      worker_metrics: null,
+    })
+    const now = Date.now() / 1000
+    fetchEvents.mockResolvedValue([
+      _personEvent({ id: 'a', ts: now, label: 'person', person_name: 'Israel' }),
+      _personEvent({ id: 'b', ts: now, label: 'dog', person_name: undefined }),
+    ])
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    render(<Events />)
+    const israelChip = await screen.findByRole('radio', { name: /israel/i })
+    await user.click(israelChip)
+    const dogChip = await screen.findByRole('radio', { name: /^dog$/i })
+    await user.click(dogChip)
+
+    // assert — combination yields zero events; hint names both axes.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/no dog events for israel today\. try clearing one filter\./i),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  // Painfix #4: the two chip rows need visible captions so they
+  // don't read as one combined filter row.
+
+  it('given 2+ detection types and a recognized person, when the filter chips render, then "Type" and "Who" section captions sit above their respective rows (Painfix #4)', async () => {
+    // arrange — explicit reset, see the prior test's comment.
+    getDetectionConfigM.mockReset().mockReturnValue(new Promise(() => {}))
+    const now = Date.now() / 1000
+    fetchEvents.mockResolvedValue([
+      _personEvent({ id: 'a', ts: now, label: 'person', person_name: 'Israel' }),
+      _personEvent({ id: 'b', ts: now, label: 'dog', person_name: undefined }),
+    ])
+
+    // act
+    render(<Events />)
+
+    // assert
+    await screen.findByRole('radio', { name: /^dog$/i })
+    expect(screen.getByText('Type')).toBeInTheDocument()
+    expect(screen.getByText('Who')).toBeInTheDocument()
+  })
 })
+
+// Painfix #6/#4 helper: an earlier test in this file
+// ("does not refetch when visibility changes to hidden") redefines
+// `document.visibilityState` via Object.defineProperty and never
+// restores it, which permanently stops useStatus() from polling in
+// every test that runs after it in the same file (it refuses to
+// start while the document reads as hidden). New tests that depend
+// on a live status poll call this first.
+function _restoreVisible(): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => 'visible',
+  })
+}
 
 // iter-329 helper: build a minimal DetectionEvent for label-chip
 // tests. Matches the iter-? ServerEvent shape so the EventList

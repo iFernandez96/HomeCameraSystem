@@ -94,6 +94,8 @@ export function EventList({
   onSelect,
   onDelete,
   cameraOffline = false,
+  detectionOff = false,
+  filterHint,
   selectionMode = false,
   selectedIds,
   onToggleSelect,
@@ -116,16 +118,39 @@ export function EventList({
    * message. Pre-iter-356.24 the same sleeping-cat surface rendered
    * for both cases — Frank's wife "would stare at the sleeping cat
    * for two hours wondering why the front door wasn't showing up."
-   * Source: ServerStatus.worker_alive=false OR
-   * ServerStatus.detection_active=false (parent decides which
-   * states count as "offline").
+   * Source: ServerStatus.worker_alive === false (the worker process
+   * itself is dead — genuinely alarming). Takes precedence over
+   * `detectionOff` below, mirroring WatchRibbon.tsx's derivation.
    */
   cameraOffline?: boolean
+  /**
+   * Painfix #6 (coherence audit): `worker_alive===false` (dead
+   * process) and `detection_active===false` (intentionally paused
+   * by the user in Settings) used to collapse into the same
+   * alarming `cameraOffline` empty state. WatchRibbon treats these
+   * as distinct tri-state cases — "Camera offline" (danger) vs.
+   * "Off duty" (calm, informational) — because a user who paused
+   * detection on purpose does not need to be told something is
+   * wrong. Source: ServerStatus.worker_alive !== false AND
+   * detection_active === false. Ignored when `cameraOffline` is
+   * true (the worker-dead case always wins).
+   */
+  detectionOff?: boolean
+  /** Painfix #4: forwarded straight to the empty state. Parent
+   * computes this only when a person filter AND a type filter are
+   * both active and their combination yields zero events. */
+  filterHint?: string
 }) {
   const now = useTicker()
 
   if (events.length === 0) {
-    return <EmptyState cameraOffline={cameraOffline} />
+    return (
+      <EmptyState
+        cameraOffline={cameraOffline}
+        detectionOff={detectionOff}
+        filterHint={filterHint}
+      />
+    )
   }
 
   const groups = groupEventsByDay(events)
@@ -166,7 +191,18 @@ export function EventList({
               an absolutely-positioned 1px brass-tinted line at
               left: 4.25rem (matches the right edge of the time
               column). Each entry gets a 0.5rem-wide axis tick. */}
-          <ol className="relative list-none px-4 pt-2 pb-3">
+          {/* Painfix #2 (audited on-device): the mobile calendar FAB
+              (Events.tsx, fixed bottom-right, ~68-80px footprint
+              inc. its right offset) floats OVER whatever row happens
+              to scroll into its vertical band. On tall rows the
+              per-card delete ✕ sits at the card's own right edge —
+              close enough to the FAB's column that the two hit zones
+              overlapped. Rather than track scroll position, reserve
+              the FAB's whole right-hand column on <lg (where the FAB
+              renders) so every row's action zone sits fully clear of
+              it, at every scroll position. lg+ has no FAB (desktop
+              rail instead) so padding reverts to symmetric px-4. */}
+          <ol className="relative list-none pl-4 pr-[4.75rem] lg:px-4 pt-2 pb-3">
             <span
               aria-hidden="true"
               className="absolute left-[4.25rem] top-2 bottom-2 w-px bg-[var(--color-border-subtle)]"
@@ -216,6 +252,21 @@ function DayHeader({ label, count }: { label: string; count: number }) {
       : label === 'Yesterday'
         ? "Yesterday's log"
         : label
+  // Painfix #3 (audited on-device): the header's "Showing the last
+  // N" line (Events.tsx) and this day-count tag both read as
+  // "N events," and when the header line happened to also read
+  // "100" it collided with "Today's log · 74 entries" like two
+  // contradictory totals. Spelling "today" out on the Today group
+  // specifically (instead of the generic "entries") makes this
+  // number unambiguously a PER-DAY count distinct from the header's
+  // fetch-window count. Other day groups keep "entries" — "today"
+  // would be wrong on them.
+  const countSuffix =
+    label === 'Today'
+      ? 'today'
+      : count === 1
+        ? 'entry'
+        : 'entries'
   // iter-356.66 (real-device user feedback): dropped sticky.
   // Pre-fix this label pinned to the viewport top (with the page
   // header scrolled away), so the calendar icon got unreachable
@@ -231,7 +282,7 @@ function DayHeader({ label, count }: { label: string; count: number }) {
         {logSuffix}
       </h2>
       <span className="text-xs uppercase tracking-[0.16em] text-[var(--color-brass-default)] font-semibold">
-        {count} {count === 1 ? 'entry' : 'entries'}
+        {count} {countSuffix}
       </span>
     </div>
   )
@@ -632,49 +683,56 @@ function EventCardImpl({
 }
 
 function ConfidencePill({ score }: { score: number }) {
-  // Color tier: <50% red, 50-75% amber, 75%+ green. Kept low-
-  // contrast vs the page background so the photo dominates.
   // iter-356.56 (Frank E4 + Dana F2): aria-label spells out "How
   // sure the camera was: 87%, high" — engineer-vocab "Confidence"
   // is not a word non-technical users map to camera certainty, and
   // the tier text gives screen-reader users the tier word.
   //
-  // iter-356.66 (real-device fix): SOLID base tokens (not the *-bg
-  // tinted variants) + ring-1 + shadow-sm so the corner-of-image
-  // pill reads as a label pasted on top of the photo, not a tint
-  // baked into the photo.
-  //
-  // Premium-launch slice (Maya Major) — drop the L/M/H letter.
-  // Pre-fix the pill triple-encoded confidence with hue + L/M/H
-  // glyph + percentage. Maya: "engineer paranoia" — the percentage
-  // alone is a universal numeric signal (no English needed); hue
-  // is the second redundant channel; the aria-label still spells
-  // out "low/medium/high" for screen readers; and the lightness
-  // contrast between red-strong / amber / green is distinguishable
-  // even when hue perception is impaired (deuter/protan/tritan).
-  // The L/M/H glyph at 11 px italic-bold inside a 32 px pill on a
-  // photographic backdrop was visual clutter, not signal.
+  // Painfix #1 (audited on-device): the pill used to fill SOLID
+  // danger/warning/success tokens — a bare number under a semantic
+  // color reads as a system-health signal ("red = something's
+  // wrong"), but this is just how sure the model was, not an alarm.
+  // Now: the same neutral surface-scrim chip grammar used elsewhere
+  // for "label pasted on top of a photo" (VideoTile's camera-name
+  // pill, WatchRibbon's blurred bar) — bg-surface-scrim + text-
+  // primary, no hue tiering. The tier word is spelled out next to
+  // the percentage ("76% · High") instead of being color-only, so
+  // sighted users get the same signal a screen reader already had
+  // via aria-label — reuses the exact thresholds ClipModal's "How
+  // sure" panel uses (<50 Low, <75 Medium, else High).
   const pct = (score * 100).toFixed(0)
-  const tier =
-    score < 0.5
-      ? 'bg-[var(--color-danger-strong)] text-white'
-      : score < 0.75
-        ? 'bg-[var(--color-warning)] text-[var(--color-on-accent)]'
-        : 'bg-[var(--color-success)] text-[var(--color-on-accent)]'
   const tierLabel =
     score < 0.5 ? 'low' : score < 0.75 ? 'medium' : 'high'
+  const tierWord =
+    score < 0.5 ? 'Low' : score < 0.75 ? 'Medium' : 'High'
   return (
     <span
-      className={`absolute top-1 right-1 px-1.5 py-0.5 rounded-md text-[11px] font-bold tabular-nums ring-1 ring-black/30 shadow-sm ${tier}`}
+      className="absolute top-1 right-1 px-1.5 py-0.5 rounded-md text-[11px] font-bold tabular-nums ring-1 ring-[var(--color-border)] shadow-sm bg-[var(--color-surface-scrim)] backdrop-blur text-[var(--color-text-primary)]"
       aria-label={`How sure the camera was: ${pct}%, ${tierLabel}`}
     >
-      {pct}%
+      {pct}% · {tierWord}
     </span>
   )
 }
 
-function EmptyState({ cameraOffline }: { cameraOffline: boolean }) {
-  // iter-356.22 → iter-356.23 → iter-356.24: branches on cameraOffline.
+function EmptyState({
+  cameraOffline,
+  detectionOff = false,
+  filterHint,
+}: {
+  cameraOffline: boolean
+  /** Painfix #6: worker is alive but detection is intentionally
+   * paused — calm, not alarming. See EventList's `detectionOff`
+   * prop doc for the precedence rule (cameraOffline wins). */
+  detectionOff?: boolean
+  /** Painfix #4: when a person filter AND a type filter are both
+   * active and their intersection is empty, name the combination
+   * so the user doesn't wonder whether the app is broken or they
+   * just filtered themselves into a corner. */
+  filterHint?: string
+}) {
+  // iter-356.22 → iter-356.23 → iter-356.24 → painfix #6: branches on
+  // cameraOffline / detectionOff / filterHint, in that priority order.
   //
   // Sleeping-cat path (default, camera healthy + waiting):
   //   Maya Major #3: "front porch" presumes camera location;
@@ -701,6 +759,33 @@ function EmptyState({ cameraOffline }: { cameraOffline: boolean }) {
         body="Detection isn&rsquo;t running right now, so new events can&rsquo;t land here. Check the Live tab to see what the camera&rsquo;s doing."
         hint="If this stays this way, restart the camera box or check that detection is turned on in Settings."
         ariaLabel="Camera offline — no events being recorded"
+      />
+    )
+  }
+  // Painfix #6 (coherence audit): detection turned off ON PURPOSE
+  // (Settings) is calm, not an alarm — mirrors WatchRibbon's "Off
+  // duty" tri-state precedence exactly (worker fine, just not
+  // watching right now). No danger styling, no "check the camera"
+  // urgency — just tell the user how to turn it back on.
+  if (detectionOff) {
+    return (
+      <CatEmptyState
+        heading="Detection is off duty"
+        body="Turn it on in Settings to log events."
+        hint="The camera itself is fine — detection is just paused."
+        ariaLabel="Detection is off duty — no events being recorded"
+      />
+    )
+  }
+  if (filterHint) {
+    // Painfix #4: reuses the same calm sleeping-cat surface — the
+    // camera IS calm, the user just filtered too narrowly. Copy
+    // names the exact combination instead of a generic "no events."
+    return (
+      <CatEmptyState
+        heading="No matching events"
+        body={filterHint}
+        ariaLabel={`No matching events — ${filterHint}`}
       />
     )
   }
