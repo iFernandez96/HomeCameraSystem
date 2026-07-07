@@ -147,6 +147,18 @@ export function Watch() {
   const [busy, setBusy] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [openEvent, setOpenEvent] = useState<DetectionEvent | null>(null)
+  // Status-truth fix (server-restart contradiction, 2026-07-07): a
+  // user saw "camera is down" while the live WebRTC feed was visibly
+  // streaming — /api/status was briefly unreachable during a server
+  // restart, and this page treated status-null the same as
+  // status-confirmed-dead. `videoPlaying` is a THIRD, independent
+  // truth channel (MediaMTX/WebRTC is a separate process from the
+  // status API) so we can tell "the API doesn't know" apart from "the
+  // camera is actually down". Tri-state on purpose: `null` = the
+  // video tile hasn't confirmed either way yet (still connecting) —
+  // NOT treated as a negative, so cold mount doesn't flash danger
+  // before the first WHEP handshake resolves.
+  const [videoPlaying, setVideoPlaying] = useState<boolean | null>(null)
 
   const detectionActive = status?.detection_active ?? null
   const workerAlive = status?.worker_alive ?? null
@@ -155,23 +167,45 @@ export function Watch() {
   const thermal = status?.worker_metrics?.gear === 'thermal-throttled'
   const cameraLabel = status?.camera_label ?? _DEFAULT_CAMERA_LABEL
 
-  const offline = status != null && status.worker_alive === false
+  // Three-state truth model:
+  //  1. STATUS-CONFIRMED DOWN — /api/status is reachable and says the
+  //     worker is dead. Full danger treatment, regardless of video —
+  //     unchanged from before this fix.
+  //  2. STATUS UNKNOWN — /api/status is unreachable/erroring/hasn't
+  //     loaded yet (useStatus collapses all of these to `status ===
+  //     null` after its own failure-streak debounce). We DON'T claim
+  //     the camera is down here on the API's say-so alone:
+  //       - video confirmed playing -> low-alarm "reconnecting" state
+  //       - video confirmed NOT playing (WHEP itself errored) -> both
+  //         channels are dark, so treat it as really down
+  //       - video not yet resolved either -> fall through to the
+  //         existing neutral "Paused"/"Checking…" copy, same as
+  //         pre-fix behavior.
+  //  3. HEALTHY — as today.
+  const statusConfirmedDown = status != null && status.worker_alive === false
+  const statusUnknown = status == null
+  const reconnecting = statusUnknown && videoPlaying === true
+  const dangerDown = statusConfirmedDown || (statusUnknown && videoPlaying === false)
   const armed = detectionActive === true && workerAlive === true
-  const unhealthy = offline || lowMemory || thermal
-  const stateLabel = offline
+  const unhealthy = dangerDown || lowMemory || thermal
+  const stateLabel = dangerDown
     ? 'Camera offline'
     : armed
       ? 'On watch'
-      : detectionActive === false
-        ? 'Off duty'
-        : 'Checking…'
-  const dotClass = offline
+      : reconnecting
+        ? 'Reconnecting…'
+        : detectionActive === false
+          ? 'Off duty'
+          : 'Checking…'
+  const dotClass = dangerDown
     ? 'bg-[var(--color-danger)]'
     : armed
       ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
-      : detectionActive === false
-        ? 'bg-[var(--color-warning)]'
-        : 'bg-[var(--color-text-tertiary)]'
+      : reconnecting
+        ? 'bg-[var(--color-warning)] animate-pulse'
+        : detectionActive === false
+          ? 'bg-[var(--color-warning)]'
+          : 'bg-[var(--color-text-tertiary)]'
   // Fuzz F3/F13: the old `ageLabel` ("Live now" / "Ns ago") text chip
   // was dropped from the on-video chrome — it duplicated both this
   // tile's own connection-status pill and, in fullscreen, the
@@ -182,17 +216,21 @@ export function Watch() {
   // offline or the worker has degraded to a low-memory/thermal gear
   // (whimsy never masks danger — CLAUDE.md).
   const watching = armed
-  const watchingDetail = offline
-    ? 'Check its power, then see Settings.'
-    : lowMemory
-      ? 'Paused: the system is low on memory.'
-      : thermal
-        ? 'Slowed down: the camera is running warm.'
-        : watching
-          ? `${sentryCatName(sentryCat)} is on watch · alerts on`
-          : detectionActive === false
-            ? 'Turn alerts on in Settings.'
-            : 'Checking the camera…'
+  const watchingDetail = dangerDown
+    ? statusConfirmedDown
+      ? 'Check its power, then see Settings.'
+      : "Can't reach the camera. Check its connection."
+    : reconnecting
+      ? 'Status reconnecting…'
+      : lowMemory
+        ? 'Paused: the system is low on memory.'
+        : thermal
+          ? 'Slowed down: the camera is running warm.'
+          : watching
+            ? `${sentryCatName(sentryCat)} is on watch · alerts on`
+            : detectionActive === false
+              ? 'Turn alerts on in Settings.'
+              : 'Checking the camera…'
   const todayCount = events?.length ?? 0
   const todayBreakdown = useMemo(() => {
     if (events == null) return 'Loading…'
@@ -314,6 +352,10 @@ export function Watch() {
             // this tile's pill would be a third, redundant "Live"
             // label crowding the back chevron.
             showStatusPill={!full}
+            // Status-truth fix: independent read on whether frames are
+            // actually flowing, so the glance card can tell "the API
+            // doesn't know" apart from "the camera is really down".
+            onPlayingChange={setVideoPlaying}
           />
 
           {/* Floating pill overlays — the armed state lives ON the
@@ -442,7 +484,7 @@ export function Watch() {
             }`}
           >
             <p className="text-[17px] font-extrabold tracking-tight">
-              {offline ? 'Offline' : watching ? 'Watching' : 'Paused'}
+              {dangerDown ? 'Offline' : watching || reconnecting ? 'Watching' : 'Paused'}
             </p>
             {/* Final whole-branch review fix batch #6: text-xs resolves to
                 11px in this theme — a hair too small for the accepted

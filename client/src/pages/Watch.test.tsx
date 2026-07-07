@@ -36,15 +36,28 @@ vi.mock('../components/VideoTile', () => ({
   VideoTile: ({
     fit,
     showStatusPill,
+    onPlayingChange,
   }: {
     fit?: string
     showStatusPill?: boolean
+    onPlayingChange?: (playing: boolean) => void
   }) => (
     <div
       data-testid="video-tile-stub"
       data-fit={fit}
       data-show-status-pill={String(showStatusPill)}
-    />
+    >
+      {/* Status-truth fix test hooks: the real VideoTile fires
+          onPlayingChange on confirmed 'live'/'error' transitions —
+          these buttons let tests drive that signal without dragging
+          WHEP mocking into this file. */}
+      <button type="button" onClick={() => onPlayingChange?.(true)}>
+        simulate-video-playing
+      </button>
+      <button type="button" onClick={() => onPlayingChange?.(false)}>
+        simulate-video-error
+      </button>
+    </div>
   ),
 }))
 // ClipModal drags in <video> + tracks fetching; Watch only needs to
@@ -218,6 +231,89 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(
       screen.getByText('Check its power, then see Settings.'),
     ).toBeInTheDocument()
+  })
+
+  // Status-truth fix (server-restart contradiction, 2026-07-07): a
+  // user saw "camera is down" while the live feed visibly streamed —
+  // /api/status was briefly unreachable during a server restart. The
+  // three cases below pin the new truth model: status-unreachable +
+  // video-playing must NOT claim the camera is down; status-confirmed
+  // -dead always wins regardless of video; status-unreachable +
+  // video-confirmed-not-playing is a real "both channels dark" outage.
+
+  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the glance card shows the reconnecting copy, not Offline', async () => {
+    // arrange — /api/status errors on every poll (simulates the
+    // server-restart window); the stubbed VideoTile drives its own
+    // onPlayingChange signal via the test-hook button.
+    getStatusM.mockRejectedValue(new Error('network down'))
+    const user = userEvent.setup()
+
+    // act
+    renderWatch()
+    await user.click(screen.getByRole('button', { name: 'simulate-video-playing' }))
+
+    // assert — headline stays "Watching" (low-alarm), sublabel is
+    // honest about the API, no "Offline" danger copy anywhere.
+    await waitFor(() => {
+      expect(screen.getByText('Status reconnecting…')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Watching')).toBeInTheDocument()
+    expect(screen.queryByText('Offline')).not.toBeInTheDocument()
+  })
+
+  it('Given /api/status confirms the worker is dead, When the video tile ALSO confirms frames are playing, Then the Offline danger state still shows (status-confirmed-down wins regardless of video)', async () => {
+    // arrange
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      worker_alive: false,
+      detection_active: true,
+    })
+    const user = userEvent.setup()
+
+    // act
+    renderWatch()
+    await user.click(screen.getByRole('button', { name: 'simulate-video-playing' }))
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('Offline')).toBeInTheDocument()
+    })
+    expect(
+      screen.getByText('Check its power, then see Settings.'),
+    ).toBeInTheDocument()
+  })
+
+  it('Given the status fetch fails AND the video tile confirms frames are NOT playing, When the page renders, Then the danger state shows (both channels dark)', async () => {
+    // arrange
+    getStatusM.mockRejectedValue(new Error('network down'))
+    const user = userEvent.setup()
+
+    // act
+    renderWatch()
+    await user.click(screen.getByRole('button', { name: 'simulate-video-error' }))
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('Offline')).toBeInTheDocument()
+    })
+    expect(
+      screen.getByText("Can't reach the camera. Check its connection."),
+    ).toBeInTheDocument()
+  })
+
+  it('Given the status fetch fails and the video tile has not resolved yet, When the page renders, Then it stays neutral instead of flashing Offline (cold-mount guard)', async () => {
+    // arrange — neither channel has confirmed anything yet (the
+    // pre-fix cold-mount state). Must not read as a danger.
+    getStatusM.mockRejectedValue(new Error('network down'))
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('Paused')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Offline')).not.toBeInTheDocument()
   })
 
   it('Given the worker is offline, When the page renders, Then the Watching glance headline reads "Offline" (not "Paused") — final review fix batch #8', async () => {

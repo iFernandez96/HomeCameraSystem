@@ -29,6 +29,7 @@ export function VideoTile({
   streamStaleSeconds = null,
   fit = 'cover',
   showStatusPill = true,
+  onPlayingChange,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -46,8 +47,11 @@ export function VideoTile({
   detectionActive?: boolean | null
   /**
    * Whether the host-side detection worker has heartbeat'd recently. `null`
-   * is "unknown" (treated like `true`). When `false`, the OFFLINE pill takes
-   * precedence over the PAUSED pill.
+   * is "unknown" (treated like `true`). When `false`, the amber "Detection
+   * paused" pill takes precedence over the PAUSED pill — NOT an "offline"
+   * claim (status-truth fix, 2026-07-07): the worker dying doesn't mean the
+   * camera/video path is down, so this never renders red "Camera offline"
+   * copy while `status === 'live'`.
    */
   workerAlive?: boolean | null
   /**
@@ -97,6 +101,18 @@ export function VideoTile({
    * the pill unless it opts out.
    */
   showStatusPill?: boolean
+  /**
+   * Status-truth fix (server-restart contradiction, 2026-07-07): fires
+   * `true` the moment this tile confirms real frames flowing (status ->
+   * 'live') and `false` the moment it confirms the WHEP path itself
+   * failed (status -> 'error'). Deliberately NOT called for
+   * 'idle'/'connecting' — a caller (Watch's glance card) needs to tell
+   * "confirmed not playing" apart from "hasn't resolved yet", so it
+   * default-inits its own local state to unknown (null) rather than
+   * treating "no callback yet" as a negative. This is a thin read of
+   * state this component already computes — no new connection logic.
+   */
+  onPlayingChange?: (playing: boolean) => void
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -144,36 +160,33 @@ export function VideoTile({
     setStreamQuality(q)
     setQuality(q)
   }
-  // iter-356.C (mobile-redesign Slice C — security clarity): the
-  // single "Detection offline" pill split into three honest cases.
-  // `cameraOffline`: worker has never heartbeated AND we've never
-  //   seen a frame — the camera box itself is unreachable. RED. The
-  //   user should restart the camera service (operator action).
+  // Status-truth fix (server-restart contradiction, 2026-07-07):
+  // `cameraOffline` and `detectionPausedWorker` used to be TWO pills
+  // keyed on whether the server had ever cached a frame counter — but
+  // both only render once `status === 'live'` (see the pill JSX
+  // below), meaning real frames ARE flowing through the separate
+  // MediaMTX/WebRTC pipeline at the exact moment the old
+  // `cameraOffline` branch said "Camera offline. Restart the camera
+  // service." — a live-caught user-reported contradiction. The
+  // detection worker dying does not mean the CAMERA is down (they're
+  // different processes); collapsed into one honest `workerDead`
+  // state with amber, no-action-implied copy. "Camera offline" red
+  // copy is reserved for when the VIDEO path itself is confirmed dead
+  // (status === 'error', the OfflineState overlay further below).
   // `streamStale`: worker is heartbeating, but the stream has gone
   //   silent for >60s — iter-300 outage signature. YELLOW. The
   //   existing Retry button is the natural recovery (it tears down
   //   WHEP and reconnects).
-  // `detectionPausedWorker`: worker is dead but we have a recent
-  //   frame counter (server caches the last value across worker
-  //   restarts). YELLOW. The video may still play from MediaMTX
-  //   while detection is offline. Plain text only — no operator
-  //   action recommended; the worker auto-recovers.
-  const cameraOffline =
-    workerAlive === false &&
-    (streamStaleSeconds === null || streamStaleSeconds === undefined)
+  const workerDead = workerAlive === false
   const streamStale =
     workerAlive === true &&
     streamStaleSeconds !== null &&
     streamStaleSeconds !== undefined &&
     streamStaleSeconds > 60
-  const detectionPausedWorker =
-    workerAlive === false &&
-    streamStaleSeconds !== null &&
-    streamStaleSeconds !== undefined
-  // Carry the legacy `offline` derivation for the bbox-clear logic
-  // below — both cameraOffline AND detectionPausedWorker are
-  // worker-dead scenarios where the boxes array is stale.
-  const offline = cameraOffline || detectionPausedWorker
+  // Carry the legacy `offline` name for the bbox-clear logic below —
+  // a dead worker means the boxes array is stale regardless of the
+  // video's own state.
+  const offline = workerDead
   const lowMem = !offline && !streamStale && lowMemory === true
   const therm = !offline && !streamStale && !lowMem && thermal === true
   const paused =
@@ -381,6 +394,16 @@ export function VideoTile({
       }
     })
   }, [])
+
+  // Status-truth fix: tell the caller when we've CONFIRMED frames are
+  // (or aren't) flowing. Only 'live'/'error' are confirmations —
+  // 'idle'/'connecting' say nothing yet, so we stay silent rather than
+  // report a false negative while a fresh connect attempt is still in
+  // flight.
+  useEffect(() => {
+    if (status === 'live') onPlayingChange?.(true)
+    else if (status === 'error') onPlayingChange?.(false)
+  }, [status, onPlayingChange])
 
   // iter-277 (functionality-auditor #3): when the user comes back to
   // a tab that's been backgrounded long enough for the iter-244d
@@ -753,37 +776,27 @@ export function VideoTile({
             </span>
           </button>
         )}
-        {/* iter-356.C: camera-offline = red. The Jetson + camera box
-            isn't reachable; restart the camera service (an operator
-            action; the suggestion is plain text — no in-app button
-            because the recovery tool runs on the host). */}
-        {cameraOffline && status === 'live' && (
-          <div
-            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
-            aria-label="Camera offline. Restart the camera service."
-          >
-            <span className="inline-flex items-center gap-2">
-              <PillSeverityIcon kind="camera-offline" tone="danger" />
-              <span className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)]" />
-              Camera offline
-            </span>
-            <span className="text-xs text-white/80 font-normal">
-              Restart the camera service
-            </span>
-          </div>
-        )}
-        {/* iter-356.C: detection-paused (worker offline) = yellow,
-            plain text. Worker died but the video stream is fine — the
-            user is not blind. We don't recommend an action because
-            the worker auto-recovers within a heartbeat cycle. */}
-        {detectionPausedWorker && status === 'live' && (
+        {/* Status-truth fix (server-restart contradiction, 2026-07-07):
+            single honest pill for "the detection worker isn't
+            heartbeating" — amber, plain text, no operator action
+            implied (the worker auto-recovers within a heartbeat
+            cycle). This ONLY renders while status === 'live', i.e.
+            real frames ARE flowing through the separate MediaMTX/
+            WebRTC pipeline, so it must never claim the camera itself
+            is offline — that copy is reserved for the status==='error'
+            overlay further below, the one case where the video path
+            is actually confirmed dead. Replaces the old two-pill split
+            (cameraOffline red vs detectionPausedWorker yellow) that
+            let the red "Camera offline. Restart the camera service."
+            copy render at the same time the video was visibly live. */}
+        {workerDead && status === 'live' && (
           <div
             className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label="Detection paused — worker offline"
+            aria-label="Detection paused. The watcher is restarting."
           >
             <PillSeverityIcon kind="worker-offline" tone="warning" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
-            Detection paused — worker offline
+            Detection paused: the watcher is restarting
           </div>
         )}
         {lowMem && status === 'live' && (

@@ -123,13 +123,18 @@ describe('VideoTile', () => {
     expect(screen.queryByLabelText(/detection paused/i)).not.toBeInTheDocument()
   })
 
-  // iter-356.C (mobile-redesign Slice C): the single "Detection
-  // offline" pill split into three honest cases — Camera offline
-  // (worker dead, no recent frame), Stream stalled (worker alive,
-  // video silent), Detection paused — worker offline (worker dead
-  // but video still playing). Old tests migrated to the new copy.
+  // Status-truth fix (server-restart contradiction, 2026-07-07): the
+  // old split — a red "Camera offline. Restart the camera service."
+  // pill vs a yellow "Detection paused — worker offline" pill, picked
+  // by whether the server had ever cached a frame counter — let the
+  // red pill render WHILE `status === 'live'` (frames visibly
+  // flowing), a live-caught contradiction. Both `workerAlive=false`
+  // cases now collapse into ONE amber "Detection paused" pill
+  // regardless of `streamStaleSeconds`; "Camera offline" copy is
+  // reserved for the status==='error' overlay (video path itself
+  // confirmed dead), tested separately below.
 
-  it('given workerAlive=false and no recent frame, when rendered, then shows CAMERA OFFLINE pill with restart hint (iter-356.C)', async () => {
+  it('Given worker_alive=false and no recent frame, When the tile is live, Then it shows the amber Detection-paused pill, NOT Camera-offline copy (status-truth fix)', async () => {
     // arrange
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
 
@@ -142,13 +147,15 @@ describe('VideoTile', () => {
       />,
     )
 
-    // assert
+    // assert — frames are confirmed flowing (status === 'live'), so
+    // the pill must never claim the camera itself is offline.
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.getByLabelText(/camera offline/i)).toBeInTheDocument()
-    expect(screen.getByText(/restart the camera service/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
+    expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/restart the camera service/i)).not.toBeInTheDocument()
   })
 
-  it('given workerAlive=false and a recent frame counter, when rendered, then shows DETECTION PAUSED — WORKER OFFLINE pill (iter-356.C)', async () => {
+  it('Given worker_alive=false and a recent frame counter, When the tile is live, Then it shows the same Detection-paused pill (status-truth fix)', async () => {
     // arrange — server cached `seconds_since_last_frame` across the
     // worker restart, so the video is still playing while detection
     // is offline. Plain text only, no recovery prompt.
@@ -166,14 +173,12 @@ describe('VideoTile', () => {
 
     // assert
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(
-      screen.getByLabelText(/detection paused — worker offline/i),
-    ).toBeInTheDocument()
-    expect(screen.queryByLabelText(/^camera offline/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
+    expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/restart the camera service/i)).not.toBeInTheDocument()
   })
 
-  it('CAMERA OFFLINE takes precedence over PAUSED when worker is dead', async () => {
+  it('Given worker_alive=false, When the tile is live, Then the Detection-paused pill takes precedence over the deliberate PAUSED pill', async () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(
       <VideoTile
@@ -183,17 +188,15 @@ describe('VideoTile', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.getByLabelText(/camera offline/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/^detection paused$/i)).not.toBeInTheDocument()
   })
 
   it('treats workerAlive=null as "unknown" and does not flash OFFLINE', () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" workerAlive={null} />)
-    expect(screen.queryByLabelText(/camera offline/i)).not.toBeInTheDocument()
-    expect(
-      screen.queryByLabelText(/detection paused — worker offline/i),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/detection paused/i)).not.toBeInTheDocument()
   })
 
   // iter-302a/b (test-coverage-auditor D2): the stream-stale pill is
@@ -330,7 +333,7 @@ describe('VideoTile', () => {
     expect(screen.queryByText(/camera too hot/i)).not.toBeInTheDocument()
   })
 
-  it('OFFLINE takes precedence over LOW MEMORY when the worker is dead', async () => {
+  it('worker-dead Detection-paused pill takes precedence over LOW MEMORY', async () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(
       <VideoTile
@@ -340,7 +343,7 @@ describe('VideoTile', () => {
       />,
     )
     await waitFor(() =>
-      expect(screen.getByLabelText(/camera offline/i)).toBeInTheDocument(),
+      expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument(),
     )
     expect(screen.queryByText(/Low memory/i)).not.toBeInTheDocument()
   })
@@ -819,21 +822,23 @@ describe('VideoTile', () => {
     )
   })
 
-  it('Given the camera is offline + no recent frames, When the camera-offline pill renders, Then a camera-offline severity glyph is present (Dana #2)', async () => {
+  it('Given the worker died with no recent frames, When the tile is live, Then the worker-offline severity glyph is present, NOT the camera-offline glyph (status-truth fix, Dana #2)', async () => {
     // arrange / act
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" workerAlive={false} />)
 
-    // assert
+    // assert — frames are confirmed flowing; must never render the
+    // camera-offline glyph while status === 'live'.
     await waitFor(() =>
-      expect(screen.getByTestId('pill-icon-camera-offline')).toBeInTheDocument(),
+      expect(screen.getByTestId('pill-icon-worker-offline')).toBeInTheDocument(),
     )
+    expect(screen.queryByTestId('pill-icon-camera-offline')).not.toBeInTheDocument()
   })
 
   it('Given the worker has died but the stream is fine, When the worker-offline pill renders, Then a worker-offline severity glyph is present (Dana #2)', async () => {
     // arrange — workerAlive=false + streamStaleSeconds present (recent
-    // frame counter cached server-side) → DETECTION PAUSED — WORKER
-    // OFFLINE pill takes precedence over CAMERA OFFLINE.
+    // frame counter cached server-side) — same merged Detection-paused
+    // pill as the no-frame-counter case above (status-truth fix).
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
 
     // act
