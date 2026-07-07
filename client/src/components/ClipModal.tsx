@@ -9,6 +9,7 @@ import {
   eventTitle,
   humanCameraName,
   recognizedNames,
+  relativeTime,
 } from '../lib/eventLabel'
 import { identityOf } from '../lib/identity'
 import { log, errFields } from '../lib/log'
@@ -23,6 +24,24 @@ import { Button } from './primitives/Button'
 // the "More from tonight" rail. Wide enough to surface a household's usual
 // evening traffic without pulling in yesterday/tomorrow noise.
 const MORE_TONIGHT_WINDOW_S = 2 * 60 * 60
+
+/** Content dedupe pass (Frank phone-round finding): the "More from
+ * tonight" rows used to show the current camera's location on EVERY
+ * row — useless repetition since every event in this rail is already
+ * from a single household's cameras and the active event's own
+ * location is stated right above in the header. Mirrors Watch.tsx's
+ * `eventSubline` (recognition state + relative time); location is
+ * appended ONLY when a sibling event came from a different camera
+ * than the one currently open, since that's the one case the location
+ * is actually new information. Computed at the ClipModal call site
+ * rather than inside EventRow so the shared row component stays a
+ * dumb renderer. */
+function moreTonightSubline(e: DetectionEvent, currentCameraId: string, nowMs: number): string {
+  const rel = relativeTime(e.ts, nowMs)
+  const base =
+    e.label === 'person' && recognizedNames(e).length === 0 ? `Not recognized · ${rel}` : rel
+  return e.camera_id !== currentCameraId ? `${base} · ${humanCameraName(e.camera_id)}` : base
+}
 
 /**
  * Per-event clip modal (iter-203, Feature #1 slice 3).
@@ -92,6 +111,42 @@ export function ClipModal({
   const clipErrored = erroredClipUrl === clipUrl
   const imgErrored = !!event.thumb_url && erroredImgUrl === event.thumb_url
 
+  // Bug fix (real-device Firefox Android, phone-verified): the clip
+  // pane went completely blank on both fresh AND minutes-old events —
+  // no player, no error, no thumb, no action row. Root cause was two
+  // layered issues:
+  //   1. An unstarted <video> has zero intrinsic size. With mobile
+  //      autoplay blocked, the media pane collapsed toward nothing
+  //      before metadata loaded, and `onError` never fires for a
+  //      merely-slow/pending clip so neither fallback branch below
+  //      ever kicked in.
+  //   2. The video-pane flex column used `min-h-0` unconditionally,
+  //      so once (1) shrank its content, the WHOLE column (header +
+  //      video + action row) could be squeezed toward zero height by
+  //      its sibling (the evidence <aside>, which has no cap on its
+  //      own natural height once "More from tonight" grew it).
+  // `videoReady` (wired up below, once `videoRef` exists) tracks
+  // whether THIS clip's element has actually produced a frame
+  // (loadeddata/canplay), independent of error state, so the render
+  // below can show an explicit pending/loading affordance instead of
+  // an empty pane while playback catches up.
+  const [readyClipUrl, setReadyClipUrl] = useState<string | null>(null)
+  const videoReady = readyClipUrl === clipUrl
+
+  // Ticks every 5s so both the "is this clip still being written"
+  // pending-state gate below AND the WHEN/"More from tonight" relative
+  // timestamps stay fresh for as long as the modal stays open.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 5000)
+    return () => clearInterval(id)
+  }, [])
+  // Post-roll recording typically finishes within ~90s of the
+  // detection firing (docs/logging_plan.md recorder notes) — under
+  // that, an unplayable clip almost certainly just isn't written yet
+  // rather than actually broken.
+  const clipLikelyWriting = nowMs / 1000 - event.ts < 100
+
   // iter-270 (accessibility-auditor A): stash the element that had
   // focus when the modal opened so we can restore it on close.
   // Without this, ESC / Close / backdrop click leaves focus on
@@ -111,6 +166,21 @@ export function ClipModal({
   const handleVideoEl = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el
   }, [])
+  // Wires up `videoReady` (declared above) now that `videoRef` exists.
+  // Runs after VideoPlayer's own `onVideoEl` effect populates the ref —
+  // React commits child effects before parent effects, the same
+  // ordering the bbox-overlay effect below already relies on.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const markReady = () => setReadyClipUrl(clipUrl)
+    video.addEventListener('loadeddata', markReady)
+    video.addEventListener('canplay', markReady)
+    return () => {
+      video.removeEventListener('loadeddata', markReady)
+      video.removeEventListener('canplay', markReady)
+    }
+  }, [clipUrl])
   // iter-336 (a11y blocker #2): focus-trap host. Tab cycles within
   // focusable descendants of this div instead of escaping to the
   // browser chrome / page behind the modal.
@@ -251,8 +321,12 @@ export function ClipModal({
   // Reuses the EXISTING uncertain-face review flow rather than inventing
   // a new naming affordance — `/training/review` (Review.tsx) is where an
   // operator confirms/corrects a predicted name from a face capture.
+  // Content pain-fix batch: append the event id as a query param so a
+  // future queue implementation CAN pre-filter to this event's face
+  // capture. Deep queue integration is out of scope here — the review
+  // flow itself doesn't consume the param yet.
   const onNameThem = () => {
-    navigate('/training/review')
+    navigate(`/training/review?event=${encodeURIComponent(event.id)}`)
   }
 
   const [deleting, setDeleting] = useState(false)
@@ -513,6 +587,15 @@ export function ClipModal({
 
   // Tri-state body content: video (default), snapshot fallback
   // (clip errored), empty state (both errored / no thumb).
+  //
+  // Bug fix (real-device Firefox Android): body is now ALWAYS rendered
+  // inside a fixed aspect-video frame (see the wrapper below) instead
+  // of sizing itself via max-w/max-h on the video's own intrinsic
+  // dimensions — an unstarted <video> has no intrinsic size, so the
+  // old approach let the whole pane collapse to nothing before
+  // metadata loaded. `poster` gives the frame a real image the instant
+  // it mounts; `fillHeight` makes VideoPlayer stretch into the frame
+  // instead of sizing to content.
   let body: React.ReactNode
   if (!clipErrored) {
     // jsx-a11y/media-has-caption requires a `<track>` child. Detection
@@ -524,21 +607,22 @@ export function ClipModal({
     // <VideoPlayer> (play/scrub/time + in-player speed menu + repeat +
     // fullscreen). VideoPlayer forwards its <video> element to `videoRef`, so
     // the bbox-overlay effect (which binds to the element's timeupdate/seek/
-    // rVFC events) keeps working unchanged. The container shrink-wraps the
-    // video (inline-block) so the absolutely-positioned bbox canvas stays
-    // pixel-aligned to the frame; preload="metadata" + autoplay preserve the
-    // iOS behaviour that used to live on the bare <video>.
+    // rVFC events) keeps working unchanged.
+    const showPendingMessage = !videoReady && clipLikelyWriting
+    const showLoadingAffordance = !videoReady && !clipLikelyWriting
     body = (
       <VideoPlayer
         key={clipUrl}
         src={clipUrl}
+        poster={event.thumb_url ?? undefined}
+        fillHeight
         ariaLabel={`Clip of ${event.person_name ?? event.label} event from ${humanCameraName(event.camera_id)}`}
         onVideoEl={handleVideoEl}
         preload="metadata"
         autoPlay
         onError={() => setErroredClipUrl(clipUrl)}
-        containerClassName="inline-block max-w-full max-h-[80vh] rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
-        videoClassName="max-w-full max-h-[80vh]"
+        containerClassName="w-full h-full rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
+        videoClassName="w-full h-full object-contain"
         overlay={
           <>
             {/* iter-356.44: bbox overlay. pointer-events-none so the control
@@ -577,13 +661,43 @@ export function ClipModal({
                 </svg>
               </button>
             )}
+            {/* Bug fix: explicit pending/loading state so the frame
+                never reads as broken while a fresh clip's post-roll is
+                still being written (~90s typical) or a slow network is
+                still fetching metadata. Mutually exclusive with the
+                error branches below (those replace `body` entirely). */}
+            {showPendingMessage && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 px-6 text-center"
+              >
+                <p className="text-sm text-white/90 max-w-xs">
+                  Video not ready yet — it&apos;s still being saved.
+                  This usually takes under two minutes.
+                </p>
+              </div>
+            )}
+            {showLoadingAffordance && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15"
+              >
+                <span
+                  aria-hidden="true"
+                  className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white/85 animate-spin"
+                />
+                <span className="sr-only">Loading video…</span>
+              </div>
+            )}
           </>
         }
       />
     )
   } else if (event.thumb_url && !imgErrored) {
     body = (
-      <div className="text-center space-y-3 max-w-md">
+      <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4 text-center">
         {/* iter-347 (Frank B1): bumped to text-sm + clearer copy.
             Pre-iter-347 the amber-on-black 12px text was barely
             readable AND ambiguous about user action ("loading?
@@ -591,7 +705,7 @@ export function ClipModal({
         {/* redesign/warm-boutique: raw `text-amber-200` dropped — this
             note sits on the dark video pane, so plain soft white reads
             better than an off-palette amber. */}
-        <p className="text-sm text-white/85">
+        <p className="text-sm text-white/85 max-w-xs">
           Video not ready yet — here&apos;s a still photo from the event.
           Check back in a few seconds.
         </p>
@@ -599,7 +713,7 @@ export function ClipModal({
           src={event.thumb_url}
           alt={`Snapshot of ${event.person_name ?? event.label} event`}
           onError={() => setErroredImgUrl(event.thumb_url ?? null)}
-          className="max-w-full max-h-[60vh] mx-auto rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
+          className="max-w-full max-h-[70%] rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
         />
       </div>
     )
@@ -608,7 +722,7 @@ export function ClipModal({
       <div
         role="status"
         aria-live="polite"
-        className="text-center space-y-3 max-w-sm"
+        className="w-full h-full flex flex-col items-center justify-center text-center space-y-3 max-w-sm mx-auto px-4"
       >
         {/* redesign/warm-boutique: this state renders on the dark video
             pane — after the Sunroom token flip, text-primary/secondary
@@ -643,6 +757,16 @@ export function ClipModal({
   // twice from `event`.
   const matchConfidence =
     typeof event.score === 'number' && event.score > 0 ? Math.round(event.score * 100) : null
+  // Content dedupe pass (Frank phone-round finding): the evidence pane
+  // used to spell out this exact tier a second time inside a giant
+  // "How sure" panel. Now it's a small chip near the title (below) and
+  // the tier text lives in one place.
+  const confidenceTier =
+    event.score < 0.5
+      ? 'Low confidence'
+      : event.score < 0.75
+        ? 'Medium confidence'
+        : 'High confidence'
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -686,7 +810,16 @@ export function ClipModal({
       // toasts slide, modals shouldn't. prefers-reduced-motion
       // global at index.css clamps to 0.01 ms × 1 iteration so
       // vestibular-sensitive users see the final state instantly.
-      className="fixed inset-0 z-40 flex flex-col lg:flex-row bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
+      // Bug fix: stacked mobile layout can scroll instead of clipping.
+      // Pre-fix this container had NO overflow rule, so once the
+      // evidence <aside> below grew tall (e.g. "More from tonight"
+      // rows), flexbox squeezed the sibling video-pane column — which
+      // had `min-h-0` — all the way toward zero height, hiding the
+      // header/video/action-row entirely. Scrolling the whole dialog
+      // on mobile means excess content pushes into a scroll instead of
+      // being crushed to nothing. lg+ keeps the fixed split-pane
+      // layout (both columns are height-capped to the viewport there).
+      className="fixed inset-0 z-40 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
     >
       {/* iter-270 (accessibility-auditor A top-3): backdrop is a
           DIV with onClick + aria-hidden, NOT a button. Pre-iter-270
@@ -707,7 +840,15 @@ export function ClipModal({
       {/* iter-356.58 (LAYOUT REBUILD): VIDEO PANE wrapper. On lg+
           this becomes the left flex-1 column; the evidence pane is
           its sibling on the right. On mobile both stack vertically. */}
-      <div className="relative flex-1 flex flex-col min-h-0 min-w-0">
+      {/* Bug fix: was unconditionally `flex-1 min-h-0`, which let this
+          WHOLE column (header + video + action row) shrink to zero
+          height whenever the evidence pane below grew past the
+          available space. On mobile it's now `shrink-0` — sized to
+          its own content, never crushed — and the dialog scrolls if
+          the total is taller than the viewport. lg+ keeps `flex-1
+          min-h-0` since the split-pane layout there needs this column
+          to fill the remaining WIDTH within a height-capped row. */}
+      <div className="relative flex flex-col shrink-0 lg:flex-1 lg:min-h-0 min-w-0">
       {/* iter-356.17 (Maya 11th CRITICAL #1): event-header bar.
           Title + camera + face-match badge + close-X. Lives ABOVE the
           video region so the user has context before the player even
@@ -727,7 +868,7 @@ export function ClipModal({
           <h2 className="text-base font-semibold text-white truncate">
             {title}
           </h2>
-          <div className="mt-0.5 flex items-center gap-2 text-xs text-white/70">
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-white/70">
             <span title={absoluteTime(event.ts)} className="tabular-nums">{timeLabel}</span>
             {personLabel && (
               // Solid success fill — the light-theme 12% tint
@@ -736,15 +877,23 @@ export function ClipModal({
               // glow-green — white on #5ec27f is ~1.9:1).
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-success)] text-[var(--color-on-accent)] font-medium">
                 <span aria-hidden>●</span>
-                <span>
-                  Recognized: {personLabel}
-                  {matchConfidence != null ? ` · ${matchConfidence}%` : ''}
-                </span>
+                <span>Recognized: {personLabel}</span>
               </span>
             )}
             {!personLabel && event.label && (
               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-white/10 text-white/70 font-medium uppercase tracking-wide">
                 {event.label}
+              </span>
+            )}
+            {/* Content dedupe pass: this replaces the old giant "How
+                sure" panel further down the evidence pane, which
+                re-stated the exact same percentage + tier a second
+                (sometimes third) time. One small pill, one place. */}
+            {matchConfidence != null && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/10 text-white/70 font-medium">
+                <span>{matchConfidence}%</span>
+                <span aria-hidden>·</span>
+                <span>{confidenceTier}</span>
               </span>
             )}
           </div>
@@ -765,10 +914,17 @@ export function ClipModal({
       {/* iter-342 (mobile G1 from iter-333 broad audit):
           overflow-hidden hard-caps the video region in landscape
           iOS Safari so the iter-331 control row is never pushed
-          off-screen on a 667pt iPhone SE3 in landscape. min-h-0
-          + flex-1 chain is what makes max-h-full inside <video>
-          resolve correctly. */}
-      <div className="relative flex-1 flex items-center justify-center p-4 min-h-0 overflow-hidden">
+          off-screen on a 667pt iPhone SE3 in landscape.
+          Bug fix: `aspect-video` gives this frame a REAL height as
+          soon as it mounts, driven by its own width — independent of
+          whether the <video> inside has loaded metadata yet. Pre-fix
+          this div was `flex-1 min-h-0` with no ratio, so an unstarted
+          (zero-intrinsic-size) video left it with nothing to size
+          against, and it collapsed toward zero along with everything
+          else in this column. lg+ drops the ratio in favor of filling
+          the height-capped row (`lg:flex-1 lg:aspect-auto
+          lg:min-h-0`), matching the split-pane desktop layout. */}
+      <div className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 flex items-center justify-center overflow-hidden bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4">
         {body}
       </div>
       {/* Playback speed, repeat, scrub/play and fullscreen now live IN the
@@ -901,70 +1057,30 @@ export function ClipModal({
             </div>
           </div>
         )}
-        <div className="px-5 py-4 border-b border-[var(--color-border-subtle)] space-y-3">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
-              When
-            </div>
-            <div className="text-sm font-semibold mt-0.5">{timeLabel}</div>
-            <div className="text-xs text-[var(--color-text-tertiary)] tabular-nums">
-              {absoluteTime(event.ts)}
-            </div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
-              Where
-            </div>
-            <div className="text-sm font-semibold mt-0.5">
-              {humanCameraName(event.camera_id)}
-            </div>
-          </div>
-          {!personLabel && event.label && (
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
-                What
-              </div>
-              <div className="text-sm font-semibold mt-0.5 capitalize">
-                {event.label}
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Content dedupe pass (Frank phone-round finding): the header
+            already states WHO/WHERE (title + timeLabel) and WHAT (label
+            badge), and confidence now lives in the header chip above —
+            this used to repeat all three facts a SECOND time via
+            separate When/Where/What blocks, then repeat the confidence
+            number a THIRD (sometimes fourth, via "Face match") time in
+            a giant "How sure" panel. One compact line covers the one
+            fact the header doesn't already spell out in full: the
+            absolute date-time plus how long ago that was. */}
         <div className="px-5 py-4 border-b border-[var(--color-border-subtle)]">
           <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
-            How sure
+            When
           </div>
-          {/* Premium-launch slice (Maya Critical): pre-fix the
-              percentage + tier label sat on the same baseline via
-              `flex items-baseline gap-2` — read as a sentence
-              fragment ("87% Medium") with two competing visual
-              tiers encoding the same fact. Now the percentage
-              owns the prominent display row and the tier word
-              drops into a small uppercase caption below — same
-              vocabulary as the WHO / WHEN / WHERE eyebrow labels
-              in this same evidence pane, so the tier reads as a
-              QUALIFIER for the percentage rather than a sibling
-              competing with it. */}
-          <div className="mt-1 font-display text-3xl font-bold tabular-nums leading-none">
-            {Math.round(event.score * 100)}%
+          <div className="text-sm font-semibold mt-0.5 tabular-nums">
+            {absoluteTime(event.ts)}
           </div>
-          <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-tertiary)] font-semibold">
-            {event.score < 0.5
-              ? 'Low confidence'
-              : event.score < 0.75
-                ? 'Medium confidence'
-                : 'High confidence'}
+          <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
+            {relativeTime(event.ts, nowMs)}
           </div>
-          {personLabel && matchConfidence != null && (
-            <div className="text-xs text-[var(--color-text-tertiary)] mt-2">
-              Face match: {matchConfidence}%
-            </div>
-          )}
         </div>
         {/* Playroom Modern (Task 7): "More from tonight" — siblings within
             ±2h of the active event. Tapping a row swaps the WHOLE modal
-            (video, WHO/WHEN/WHERE/HOW-SURE, and this rail itself) to that
-            event via local `setEvent` — no parent involvement needed. */}
+            (video, evidence pane, and this rail itself) to that event
+            via local `setEvent` — no parent involvement needed. */}
         {moreTonight && moreTonight.length > 0 && (
           <div className="px-5 py-4 space-y-2">
             <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
@@ -975,7 +1091,7 @@ export function ClipModal({
                 <li key={e.id}>
                   <EventRow
                     event={e}
-                    subline={humanCameraName(e.camera_id)}
+                    subline={moreTonightSubline(e, event.camera_id, nowMs)}
                     onOpen={() => setEvent(e)}
                   />
                 </li>

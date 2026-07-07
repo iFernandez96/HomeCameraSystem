@@ -627,7 +627,14 @@ describe('ClipModal', () => {
   // object-detection score as "Face match: N%". Evidence pane should
   // only show identity fields when there is an actual recognized
   // person on the event.
-  it('given a cat event, when the modal renders, then no WHO header, no Face match, and no orphan divider show', () => {
+  //
+  // Content dedupe pass (Frank phone-round finding): the evidence pane
+  // used to spell out WHEN/WHERE/WHAT/HOW-SURE four times over (title,
+  // header badge, When/Where/What blocks, giant How-sure panel). Now
+  // WHERE/WHAT live only in the header (title + uppercase label badge)
+  // and confidence is a single small chip near the title — there is no
+  // more separate "What" eyebrow or duplicated percentage in the aside.
+  it('given a cat event, when the modal renders, then no WHO header, no Face match, and no duplicate What/How-sure blocks', () => {
     // arrange
     const ev = makeEvent({ label: 'cat', score: 0.59, person_name: null })
 
@@ -638,13 +645,16 @@ describe('ClipModal', () => {
     expect(screen.queryByText(/^who$/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/unknown person/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/face match/i)).not.toBeInTheDocument()
-    // assert — object surfaces are present
-    expect(screen.getByText(/^what$/i)).toBeInTheDocument()
+    // assert — the old separate "What" and "How sure" eyebrow panels
+    // are gone; the label + confidence now live in the header only.
+    expect(screen.queryByText(/^what$/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^how sure$/i)).not.toBeInTheDocument()
     expect(screen.getAllByText(/^cat$/i).length).toBeGreaterThan(0)
     expect(screen.getByText('59%')).toBeInTheDocument()
+    expect(screen.getByText(/medium confidence/i)).toBeInTheDocument()
   })
 
-  it('given a recognized-person event, when the modal renders, then WHO and Face match still surface', () => {
+  it('given a recognized-person event, when the modal renders, then WHO surfaces and confidence shows once near the title (no duplicate Face match)', () => {
     // arrange
     const ev = makeEvent({ label: 'person', person_name: 'alice', score: 0.87 })
 
@@ -654,7 +664,26 @@ describe('ClipModal', () => {
     // assert
     expect(screen.getByText(/^who$/i)).toBeInTheDocument()
     expect(screen.getAllByText(/alice/i).length).toBeGreaterThan(0)
-    expect(screen.getByText(/face match: 87%/i)).toBeInTheDocument()
+    // The old "Face match: 87%" line duplicated the header's overall
+    // confidence — dropped in favor of the single header chip.
+    expect(screen.queryByText(/face match/i)).not.toBeInTheDocument()
+    expect(screen.getByText('87%')).toBeInTheDocument()
+    expect(screen.getByText(/high confidence/i)).toBeInTheDocument()
+  })
+
+  it('given an event, when the modal renders, then the evidence pane shows exactly ONE compact When line (absolute time + relative age), not repeated When/Where/What blocks', () => {
+    // arrange
+    const ev = makeEvent({ label: 'cat', ts: 1700000000 })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — the single remaining eyebrow in the aside is "When";
+    // "Where" and "What" no longer exist as separate blocks there
+    // (camera name + label already live in the header).
+    expect(screen.getByText(/^when$/i)).toBeInTheDocument()
+    expect(screen.queryByText(/^where$/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^what$/i)).not.toBeInTheDocument()
   })
 
   it('Given the modal opens, When the dialog mounts, Then the wrapper carries the animate-modal-in entrance class so the heaviest modal in the app scales+fades on open instead of popping (premium-launch slice — Maya Major)', () => {
@@ -675,35 +704,29 @@ describe('ClipModal', () => {
     expect(dialog.className).toMatch(/animate-modal-in/)
   })
 
-  it('Given a medium-confidence event, When the How-sure pane renders, Then the percentage and the tier word stack vertically as primary value + caption (NOT baseline-aligned siblings) — premium-launch slice (Maya Critical: drop "87% Medium" sentence-fragment competition)', () => {
-    // arrange — Maya Critical: pre-fix the percentage was
-    // `text-3xl font-bold` and the tier word ("Medium") was
-    // `text-sm` on the SAME baseline via `flex items-baseline
-    // gap-2`. Read as a sentence fragment with two competing
-    // visual tiers encoding the same fact. Now the percentage
-    // owns its own row (primary numeric display) and the tier
-    // drops to a small uppercase caption — same vocabulary as
-    // the WHO/WHEN/WHERE eyebrow labels in the same evidence
-    // pane.
+  // Content dedupe pass: the old giant "How sure" panel (its own
+  // eyebrow, a 3xl percentage, and a separate tier caption) repeated
+  // the SAME number already shown in the header's "Recognized" pill.
+  // It's now a single small chip — "N% · Tier confidence" — living
+  // next to the title, and the "How sure" panel is gone entirely.
+  it('Given a medium-confidence event, When the modal renders, Then the confidence chip shows the percentage and tier once near the title, and the old How-sure panel is gone', () => {
+    // arrange
     const ev = makeEvent({ label: 'person', score: 0.6 })
 
     // act
     render(<ClipModal event={ev} onClose={() => {}} />)
 
-    // assert — copy upgrade: tier word is suffixed " confidence"
-    // so the caption is a self-contained label rather than a
-    // bare adjective.
+    // assert
     expect(screen.getByText(/medium confidence/i)).toBeInTheDocument()
-    // The percentage is still present in its prior format.
     expect(screen.getByText('60%')).toBeInTheDocument()
+    expect(screen.queryByText(/^how sure$/i)).not.toBeInTheDocument()
     // No baseline competition: the percentage's parent does NOT
-    // carry `flex items-baseline` (the prior layout) — it is its
-    // own block-level row.
+    // carry `flex items-baseline`.
     const pct = screen.getByText('60%')
     expect(pct.parentElement?.className).not.toMatch(/flex.*items-baseline/)
   })
 
-  it('Given a high-confidence event, When the How-sure pane renders, Then the caption reads "High confidence" (preserves SR-friendly tier signal — non-color non-numeric channel)', () => {
+  it('Given a high-confidence event, When the modal renders, Then the chip reads "High confidence" (preserves SR-friendly tier signal — non-color non-numeric channel)', () => {
     // arrange / act
     const ev = makeEvent({ label: 'person', score: 0.92 })
     render(<ClipModal event={ev} onClose={() => {}} />)
@@ -713,7 +736,7 @@ describe('ClipModal', () => {
     expect(screen.getByText('92%')).toBeInTheDocument()
   })
 
-  it('Given a low-confidence event, When the How-sure pane renders, Then the caption reads "Low confidence"', () => {
+  it('Given a low-confidence event, When the modal renders, Then the chip reads "Low confidence"', () => {
     // arrange / act
     const ev = makeEvent({ label: 'person', score: 0.42 })
     render(<ClipModal event={ev} onClose={() => {}} />)
@@ -806,10 +829,10 @@ describe('ClipModal', () => {
     expect(screen.queryByRole('button', { name: /name them/i })).not.toBeInTheDocument()
   })
 
-  it('Given "Name them" is clicked, When an unrecognized person is showing, Then it navigates to the existing uncertain-face review flow', async () => {
+  it('Given "Name them" is clicked, When an unrecognized person is showing, Then it navigates to the existing uncertain-face review flow with the event id as a query param', async () => {
     // arrange
     navigateSpy.mockClear()
-    const ev = makeEvent({ label: 'person', person_name: null })
+    const ev = makeEvent({ id: 'evt-1', label: 'person', person_name: null })
     render(<ClipModal event={ev} onClose={() => {}} />)
     const userEvent = (await import('@testing-library/user-event')).default
     const user = userEvent.setup()
@@ -817,8 +840,10 @@ describe('ClipModal', () => {
     // act
     await user.click(screen.getByRole('button', { name: /name them/i }))
 
-    // assert — reuses /training/review (Review.tsx), NOT a new route.
-    expect(navigateSpy).toHaveBeenCalledWith('/training/review')
+    // assert — still reuses /training/review (Review.tsx), NOT a new
+    // route; the event id is appended so a future queue implementation
+    // CAN pre-filter to this event's face capture.
+    expect(navigateSpy).toHaveBeenCalledWith('/training/review?event=evt-1')
   })
 
   it('Given the Delete pill is clicked and the confirm dialog is accepted, When the delete resolves, Then the event is deleted and the modal closes', async () => {
@@ -1016,6 +1041,148 @@ describe('ClipModal', () => {
       'src',
       '/api/events/evt-sibling/clip',
     )
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  // ─── Real-device bug fix (Firefox Android): the clip pane rendered
+  // completely blank — no player, no error, no thumb, no action row —
+  // on both fresh AND minutes-old events. Root cause: an unstarted
+  // <video> has no intrinsic size, so the media pane (and the flex
+  // column it lived in) collapsed toward zero height before metadata
+  // loaded, and `onError` never fires for a merely-pending clip. These
+  // tests pin the fix: a fixed-aspect frame that's never zero-height,
+  // a poster for an instant first frame, explicit pending/loading
+  // states, and an action row that renders regardless of media state.
+
+  it('Given the clip has not finished loading, When the modal renders, Then the media frame carries a fixed aspect ratio so it can never render at zero height', () => {
+    // arrange / act
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i)
+
+    // assert — the video sits inside the aspect-video frame, which
+    // sizes itself off its own width rather than the video's
+    // (possibly-zero) intrinsic dimensions.
+    expect(video.closest('.aspect-video')).not.toBeNull()
+  })
+
+  it('Given a thumb_url, When the video has not loaded, Then the <video> carries a poster so a frame is visible immediately (not a blank black box)', () => {
+    // arrange / act
+    render(
+      <ClipModal
+        event={makeEvent({ thumb_url: '/snapshots/thumb_9.jpg' })}
+        onClose={() => {}}
+      />,
+    )
+
+    // assert
+    expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+      'poster',
+      '/snapshots/thumb_9.jpg',
+    )
+  })
+
+  it('Given a FRESH event (clip likely still writing), When the video has not loaded, Then a "not ready yet, still saving" message shows inside the frame', () => {
+    // arrange — post-roll typically finishes within ~90s.
+    const ev = makeEvent({ ts: Math.floor(Date.now() / 1000) - 10 })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByText(/still being saved/i)).toBeInTheDocument()
+  })
+
+  it('Given an OLDER event, When the video has not loaded, Then a subtle loading affordance shows instead of the fresh-clip message', () => {
+    // arrange — makeEvent()'s default ts is far in the past.
+    const ev = makeEvent()
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByText(/loading video/i)).toBeInTheDocument()
+    expect(screen.queryByText(/still being saved/i)).not.toBeInTheDocument()
+  })
+
+  it('Given the video fires loadeddata, When it becomes ready, Then the pending/loading overlay disappears', () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i)
+    expect(screen.getByText(/loading video/i)).toBeInTheDocument()
+
+    // act
+    fireEvent(video, new Event('loadeddata'))
+
+    // assert
+    expect(screen.queryByText(/loading video/i)).not.toBeInTheDocument()
+  })
+
+  it('Given the clip has not finished loading, When the modal renders, Then Share/Save clip/Delete still render (the action row is independent of media load state)', () => {
+    // arrange / act
+    render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
+
+    // assert — none of these depend on the video having loaded.
+    expect(screen.getByRole('button', { name: /share or copy link/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /save clip/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /delete this cat event/i })).toBeInTheDocument()
+  })
+
+  // ─── "More from tonight" subline dedupe (Frank phone-round finding) ──
+
+  it('Given a sibling event on the SAME camera as the active event, When "More from tonight" renders, Then its subline shows recognition + relative time WITHOUT repeating the location', async () => {
+    // arrange
+    const active = makeEvent({ id: 'evt-active', ts: 1700000000, camera_id: 'cam1' })
+    const sibling = makeEvent({
+      id: 'evt-sibling',
+      ts: 1700000500,
+      camera_id: 'cam1',
+      label: 'person',
+      person_name: null,
+    })
+    vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+      items: [sibling],
+      next_cursor: null,
+    })
+
+    // act
+    render(<ClipModal event={active} onClose={() => {}} />)
+    const row = await screen.findByRole('button', { name: /not recognized/i })
+
+    // assert — the title already says "the front door" once; the
+    // subline must not repeat it since the sibling is on the same
+    // camera as the event currently open.
+    expect(row.textContent).toMatch(/not recognized/i)
+    const matches = row.textContent?.match(/the front door/gi) ?? []
+    expect(matches.length).toBe(1)
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('Given a sibling event on a DIFFERENT camera, When "More from tonight" renders, Then its subline includes that camera\'s location', async () => {
+    // arrange
+    const active = makeEvent({ id: 'evt-active', ts: 1700000000, camera_id: 'cam1' })
+    const sibling = makeEvent({
+      id: 'evt-sibling',
+      ts: 1700000500,
+      camera_id: 'cam2',
+      label: 'person',
+      person_name: null,
+    })
+    vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+      items: [sibling],
+      next_cursor: null,
+    })
+
+    // act
+    render(<ClipModal event={active} onClose={() => {}} />)
+    const row = await screen.findByRole('button', { name: /cam2/i })
+
+    // assert
+    expect(row.textContent).toMatch(/not recognized/i)
+    expect(row.textContent).toMatch(/cam2/i)
 
     // cleanup
     vi.restoreAllMocks()

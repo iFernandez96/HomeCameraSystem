@@ -52,6 +52,8 @@ export function VideoPlayer({
   preload = 'metadata',
   initialRate = 1,
   autoPlay = false,
+  poster,
+  fillHeight = false,
   overlay,
   onTimeUpdate,
   onPlay,
@@ -67,6 +69,17 @@ export function VideoPlayer({
   preload?: 'none' | 'metadata' | 'auto'
   initialRate?: number
   autoPlay?: boolean
+  /** Still frame shown before playback starts / while the clip is
+   *  loading (2026-07-07 fix: an unstarted <video> has no intrinsic
+   *  size, so without a poster the frame is blank until metadata
+   *  loads). */
+  poster?: string
+  /** When true, the video area stretches to fill the parent's height
+   *  (flex-1) instead of sizing to the video's own intrinsic aspect
+   *  ratio. Opt-in so existing consumers (TimelapsesSection) that rely
+   *  on content-based sizing are unaffected. ClipModal sets this so the
+   *  player fills its aspect-video frame. */
+  fillHeight?: boolean
   /** Painted absolutely over the video in a pointer-events-none layer
    *  (bbox canvas, timestamp clock, …). */
   overlay?: ReactNode
@@ -101,7 +114,7 @@ export function VideoPlayer({
     <div
       className={`flex flex-col bg-black overflow-hidden ${containerClassName ?? className ?? ''}`}
     >
-      <div className="relative min-h-0">
+      <div className={`relative min-h-0 ${fillHeight ? 'flex-1' : ''}`}>
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video
           ref={videoRef}
@@ -110,6 +123,7 @@ export function VideoPlayer({
           loop={loop}
           playsInline
           preload={preload}
+          poster={poster}
           className={`block ${videoClassName ?? 'w-full'}`}
           aria-label={ariaLabel}
           onPlay={onPlay}

@@ -91,4 +91,46 @@ describe('VideoPlayer (native-controls wrapper)', () => {
     unmount()
     expect(onVideoEl).toHaveBeenLastCalledWith(null)
   })
+
+  // ─── Real-device bug fix (Firefox Android, ClipModal black-pane bug):
+  // an unstarted <video> has zero intrinsic size. `poster` gives it a
+  // real first frame before metadata loads; `fillHeight` lets a
+  // consumer (ClipModal) stretch the player into a fixed-aspect frame
+  // instead of relying on the video's own (possibly-zero) size.
+
+  it('Given a poster prop, When the player renders, Then the <video> carries it so a frame is visible before playback starts', () => {
+    // arrange / act
+    renderPlayer({ poster: '/snapshots/thumb_1.jpg' })
+
+    // assert
+    const video = screen.getByLabelText('Test clip')
+    expect(video).toHaveAttribute('poster', '/snapshots/thumb_1.jpg')
+  })
+
+  it('Given no poster prop, When the player renders, Then the <video> has no poster attribute (default unchanged)', () => {
+    // arrange / act
+    renderPlayer()
+
+    // assert
+    const video = screen.getByLabelText('Test clip')
+    expect(video).not.toHaveAttribute('poster')
+  })
+
+  it('Given fillHeight, When the player renders, Then the video wrapper carries flex-1 so it stretches to fill a parent-provided height', () => {
+    // arrange / act
+    renderPlayer({ fillHeight: true })
+
+    // assert
+    const video = screen.getByLabelText('Test clip')
+    expect(video.parentElement?.className).toContain('flex-1')
+  })
+
+  it('Given fillHeight is omitted, When the player renders, Then the video wrapper does NOT carry flex-1 (other consumers keep content-based sizing)', () => {
+    // arrange / act
+    renderPlayer()
+
+    // assert
+    const video = screen.getByLabelText('Test clip')
+    expect(video.parentElement?.className).not.toContain('flex-1')
+  })
 })
