@@ -97,7 +97,11 @@ function AppShell() {
   const isLoginRoute = location.pathname === '/login'
   const showShell = state === 'authed' && !isLoginRoute
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className={`flex flex-col h-full [--ribbon-h:0px] ${
+        showShell ? (isWatchRoute ? 'lg:[--ribbon-h:56px]' : '[--ribbon-h:56px]') : ''
+      }`}
+    >
       <ConnectionBanner />
       {/* Nav-coherence fix (painfix, item 4): push permission denial
           is a silent, standing dead-end for alerts — the Settings
@@ -116,7 +120,10 @@ function AppShell() {
           sidebar pattern dies here. */}
       {/* Structural overhaul: on the Watch home the armed state lives
           ON the video scrim, so the ribbon would say the same thing
-          twice on a phone. Desktop keeps it (brand + jump action). */}
+          twice on a phone. Desktop keeps it (brand + jump action).
+          Audit seam fix: expose the rendered ribbon height on the
+          shell as --ribbon-h so short-wide Watch layouts subtract it
+          when lg:block makes this ribbon visible. */}
       {showShell &&
         (isWatchRoute ? (
           <div className="hidden lg:block">

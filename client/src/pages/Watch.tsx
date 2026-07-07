@@ -64,9 +64,10 @@ function useIsLandscape(): boolean {
  * floating pill overlays) — the container identity and toggle logic
  * are untouched.
  *
- * The WatchRibbon is hidden on this route on mobile (App.tsx): the
- * on-video scrim carries the armed state here, and a second status
- * bar would say the same thing twice.
+ * The WatchRibbon is hidden on this route below lg (App.tsx): the
+ * on-video scrim carries the armed state there, and a second status
+ * bar would say the same thing twice. At lg and wider the shell may
+ * render the ribbon even in a short landscape viewport.
  */
 
 const _DEFAULT_CAMERA_LABEL = 'Front Door'
@@ -298,11 +299,11 @@ export function Watch() {
     // overlay that ignores this grid entirely, and the docked-vs-full
     // CSS-only toggle on the SAME container (so VideoTile never
     // remounts) is preserved.
-    <div className="flex flex-col landscape-phone:grid landscape-phone:grid-cols-[58%_1fr] landscape-phone:grid-rows-[auto_1fr] landscape-phone:h-[100dvh] landscape-phone:overflow-hidden">
-      {/* landscape-phone height note: the WatchRibbon is hidden on
-          this route on mobile (App.tsx `isWatchRoute` branch), so
-          nothing else claims vertical space above this grid on a
-          landscape phone — `100dvh` is the right target. If a
+    <div className="flex flex-col landscape-phone:grid landscape-phone:grid-cols-[58%_1fr] landscape-phone:grid-rows-[auto_1fr] landscape-phone:h-[calc(100dvh-var(--ribbon-h,0px))] landscape-phone:overflow-hidden">
+      {/* Audit seam fix: `landscape-phone` is height-only, so a
+          short-but-wide lg window can render App.tsx's WatchRibbon
+          while this grid is active. Subtract the shell-provided
+          `--ribbon-h` instead of claiming the full 100dvh. If a
           ConnectionBanner is showing, `<main>`'s own
           `overflow-y-auto` is the fallback scroll (this grid's
           internal right-pane scroll degrades to page-level scroll in
