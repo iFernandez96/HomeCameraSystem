@@ -215,8 +215,13 @@ export function DangerZone() {
           maintenance card, and a distinct danger card whose
           danger-muted border keeps the destructive cluster visibly
           separate. Whimsy never touches this surface — the danger
-          card must read genuinely serious. */}
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2">
+          card must read genuinely serious.
+          Playroom Modern (Task 8 sweep): migrated the hand-rolled
+          `rounded-2xl` + `shadow-card` recreation onto the shared
+          `.card-paper` class (Task 3's flat-paper grammar — 1.5px
+          hairline, `--radius-xl`) so this card matches every Section
+          row-group in the app. */}
+      <div className="card-paper p-4 space-y-2">
         <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">
           Camera maintenance
         </h3>
@@ -240,7 +245,14 @@ export function DangerZone() {
           Install camera updates
         </Button>
       </div>
-      <div className="bg-[var(--color-surface)] border border-[var(--color-danger-muted)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2">
+      {/* Playroom Modern (Task 8 sweep): same card-grammar migration as
+          the maintenance card above (1.5px border, `--radius-xl`, no
+          shadow) but can't use the `.card-paper` class verbatim — its
+          border color is fixed to `--color-border`, and this card's
+          whole point is the danger-muted border that visually separates
+          the destructive cluster. Border width/radius now match; color
+          stays danger. */}
+      <div className="bg-[var(--color-surface)] border-[1.5px] border-[var(--color-danger-muted)] rounded-[var(--radius-xl)] p-4 space-y-2">
         <h3 className="text-lg font-semibold text-[var(--color-danger)]">
           Danger zone
         </h3>
@@ -294,7 +306,7 @@ export function DangerZone() {
       ) : (
         // Sunroom sweep: /opacity-on-var tints → the pre-mixed danger
         // surface tokens (color-mix'd in index.css).
-        <div className="w-full p-3 rounded-2xl bg-[var(--color-danger-bg)] border border-[var(--color-danger-border)] space-y-2">
+        <div className="w-full p-3 rounded-[var(--radius-xl)] bg-[var(--color-danger-bg)] border-[1.5px] border-[var(--color-danger-border)] space-y-2">
           {backupList === null ? (
             <p className="text-sm text-[var(--color-text-secondary)]">Loading backups…</p>
           ) : backupList.length === 0 ? (

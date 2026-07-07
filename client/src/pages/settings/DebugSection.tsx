@@ -112,10 +112,13 @@ export function DebugSection() {
   }
 
   return (
-    // Sunroom: card joins the Section paper tier (shadow-card) and the
-    // heading steps up to the shared header size (Inter semibold 18px).
+    // Sunroom: card joins the Section paper tier and the heading steps
+    // up to the shared header size (Inter semibold 18px).
+    // Playroom Modern (Task 8 sweep): `.card-paper` (Task 3's flat
+    // 1.5px-hairline, `--radius-xl` grammar) replaces the bespoke
+    // rounded-2xl + shadow-card recreation.
     <section
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-3"
+      className="card-paper p-4 space-y-3"
       aria-labelledby="debug-section-heading"
     >
       <h2

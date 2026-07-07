@@ -17,6 +17,14 @@ import { useRipple } from '../../lib/ripple'
 // shipped --color-surface, --radius-lg, --space-*, --text-* and they
 // haven't reached this file." Token migration applied here unblocks
 // every downstream Settings sub-section in one diff.
+//
+// Playroom Modern (redesign/playroom-modern, Task 8): Section now
+// wears the shared `.card-paper` grammar Task 3 landed (flat paper,
+// 1.5px hairline border, `--radius-xl` 18px) instead of a bespoke
+// `rounded-2xl` + `shadow-card` recreation — this is the "rounded
+// rows" surface every Settings row lives inside. Toggle's knob is
+// resized to the corrected 26px track + ink-fill-when-on spec (see
+// Toggle below).
 
 export function Section({
   title,
@@ -51,7 +59,7 @@ export function Section({
           {subtitle}
         </p>
       )}
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-[var(--shadow-card)] divide-y divide-[var(--color-border-subtle)] overflow-hidden mt-1">
+      <div className="card-paper divide-y divide-[var(--color-border-subtle)] overflow-hidden mt-1">
         {children}
       </div>
     </section>
@@ -86,6 +94,12 @@ export function Mono({ children }: { children: ReactNode }) {
 // the iter-244d user report ("the knob escapes the pill's right
 // edge during transition"). Documented in CLAUDE.md sharp edges.
 // iter-356.3d: tokens applied (was bg-[var(--color-accent-default)] + bg-[var(--color-border-strong)]).
+// Playroom Modern (Task 8 corrections): track grows 24px -> 26px tall
+// (w-11 h-[26px]), and the "on" fill moves off the accent color onto
+// --color-ink (matching the Button primary pill fill) so a toggled-on
+// row reads with the same ink-fill language as a primary CTA. Off
+// stays --color-border. Thumb stays a plain white circle with a soft
+// shadow (unchanged visually, just re-affirmed by the brief).
 export function Toggle({
   checked,
   onChange,
@@ -116,12 +130,12 @@ export function Toggle({
           surface-raised fill was near-invisible against the paper card,
           so on/off read as "orange vs nothing." */}
       <span
-        className={`w-11 h-6 rounded-full p-0.5 flex items-center transition-colors duration-150 ${
-          checked ? 'bg-[var(--color-accent-default)]' : 'bg-[var(--color-border)]'
+        className={`w-11 h-[26px] rounded-full p-0.5 flex items-center transition-colors duration-150 ${
+          checked ? 'bg-[var(--color-ink)]' : 'bg-[var(--color-border)]'
         }`}
       >
         <span
-          className={`w-5 h-5 bg-white rounded-full shadow transition-transform duration-150 ${
+          className={`w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-150 ${
             checked ? 'translate-x-5' : 'translate-x-0'
           }`}
         />

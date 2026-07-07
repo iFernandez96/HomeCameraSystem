@@ -172,7 +172,12 @@ export function DetectionSection() {
         </p>
       </Section>
 
-      <Section title="Detection">
+      {/* Playroom Modern (Task 8 copy pass): this panel's own section
+          head was literally "Detection" — same word as the tab label
+          and JetsonSection's worker-health group, which read as three
+          different things all called the same name. "Watching"
+          names what the camera is actually doing when it's armed. */}
+      <Section title="Watching">
         {/* iter-259: plain-English labels per ux-grandpa.
             "Confidence threshold" → "Sensitivity" (Frank: "I'm 72;
             my confidence is fine"). "Cooldown" → "Quiet time

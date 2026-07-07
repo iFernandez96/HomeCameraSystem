@@ -307,7 +307,10 @@ export function NotificationsSection({
   })()
 
   return (
-    <Section title="Notifications">
+    // Playroom Modern (Task 8 copy pass): "Notifications" -> "Alerts" —
+    // shorter, matches the plain-English "Alert this device" row label
+    // right below it instead of the more formal/technical noun.
+    <Section title="Alerts">
       {/* iter-296: plain-English intro so the rest of the panel
           reads without prior context. */}
       <div className="px-4 py-3 text-sm text-[var(--color-text-primary)] border-b border-[var(--color-border)]">

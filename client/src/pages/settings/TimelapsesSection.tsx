@@ -302,7 +302,15 @@ export function TimelapsesSection() {
     !!timelapseDate.trim() && _DATE_RE.test(timelapseDate.trim())
 
   return (
-    <Section title="Timelapses">
+    // Playroom Modern (Task 8 copy pass): plain-language sublabel via
+    // Section's existing `subtitle` prop (same mechanism JetsonSection
+    // uses for its group captions) — "Stitch a day's clips into one
+    // video" restates the intro paragraph below in the calm sub-head
+    // tier so the section reads its purpose before any body copy.
+    <Section
+      title="Timelapses"
+      subtitle="Stitch a day's clips into one video"
+    >
       <div className="px-4 py-3 space-y-3">
         {/* iter-304: friendly intro replaces the developer-voice
             "Daily timelapse summaries of detection snapshots." */}

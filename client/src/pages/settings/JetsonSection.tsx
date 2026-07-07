@@ -36,6 +36,31 @@ import { Mono, Row, Section } from './parts'
 //   │   Disk free                                           │
 //   └───────────────────────────────────────────────────────┘
 
+// Playroom Modern (Task 8 copy pass): plain-language nickname for the
+// Jetson box, used as the lead section head for this whole panel. A
+// compact "Jetson health" row sits inside it as a one-line digest of
+// the same fields the full HealthVerdict card below already reasons
+// over (temp / worker liveness / free storage) — HealthVerdict keeps
+// its existing verdict logic, thresholds, and test-pinned
+// data-testid/data-verdict-kind attributes completely unchanged;
+// this row is purely additive.
+//
+// NOTE: the plan spec called for "{pct}% storage" but `ServerStatus`
+// only exposes `disk_free_gb` (no `disk_total_gb` to derive a
+// percentage from — see lib/types.ts). Fabricating a percentage from
+// data that doesn't exist would be worse than showing the real free-
+// space figure, so this shows "{n} GB free" instead. Flagged in the
+// Task 8 report as a spec/data mismatch to resolve with the plan
+// author rather than guessed silently.
+function _jetsonHealthSummary(status: ServerStatus | null): string {
+  if (status === null) return 'Checking…'
+  const temp = status.cpu_temp_c != null ? `${status.cpu_temp_c.toFixed(0)}°C` : '—°C'
+  const worker = status.worker_alive ? 'alive' : 'down'
+  const disk =
+    status.disk_free_gb != null ? `${status.disk_free_gb.toFixed(0)} GB free` : '— GB free'
+  return `${temp} · worker ${worker} · ${disk}`
+}
+
 export function JetsonSection({
   status,
 }: {
@@ -43,6 +68,10 @@ export function JetsonSection({
 }) {
   return (
     <div className="space-y-6">
+      <Section title="The box in the closet">
+        <Row label="Jetson health" right={<Mono>{_jetsonHealthSummary(status)}</Mono>} />
+      </Section>
+
       <HealthVerdict status={status} />
 
       <Section
