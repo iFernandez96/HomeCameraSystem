@@ -848,15 +848,23 @@ function StatusPill({ status }: { status: Status }) {
   // states — those already get attention via the precedence-ladder
   // overlays above this pill. The pulse was also burning a compositor
   // layer on the first thing the user sees, every load.
-  // Sunroom redesign (2026-07-01): idle dot was raw-palette
-  // bg-neutral-500 (dark-era hardcode); white/40 reads correctly on
-  // the black scrim without leaving the token system.
+  // Task 5 (Playroom Modern, 2026-07-07): pill grammar swapped from
+  // an over-video black/60 glass chip (white text, iter-356.56's
+  // contrast fix) to the surface-scrim pill used by the rest of the
+  // Playroom system — a light-in-light-theme / dark-in-dark-theme
+  // glass card rather than a permanently-dark chip. "Live" gets the
+  // alarm-adjacent --color-danger dot (a broadcast-style red dot is
+  // an intentional, allowed exception to the no-danger-color-outside-
+  // danger-states rule — it signals "recording", not "something's
+  // wrong"). text-primary now carries correct contrast on the new
+  // (theme-aware) surface-scrim background, replacing the old
+  // hardcoded text-white.
   const dot =
     status === 'live'
-      ? 'bg-[var(--color-danger-strong)]'
+      ? 'bg-[var(--color-danger)]'
       : status === 'connecting'
         ? 'bg-[var(--color-warning)] animate-pulse'
-        : 'bg-white/40'
+        : 'bg-[var(--color-text-tertiary)]'
   const label =
     status === 'live'
       ? 'Live'
@@ -866,13 +874,10 @@ function StatusPill({ status }: { status: Status }) {
           ? 'Offline'
           : 'Idle'
   return (
-    // iter-356.56 (Dana E1+E2): pill text was inheriting near-black
-    // --color-text-primary on bg-black/60 — measured 1.05:1 contrast,
-    // catastrophic WCAG fail. text-white is ~10:1 on the same backdrop.
     // Structural overhaul (Watch): dropped from top-3 to top-12 — the
     // Watch scrim owns the top strip (armed state + camera + age) and
     // the connection pill was rendering directly behind its text.
-    <div className="absolute top-12 left-3 flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white">
+    <div className="absolute top-12 left-3 flex items-center gap-2 bg-[var(--color-surface-scrim)] backdrop-blur ring-1 ring-[var(--color-border)] px-2.5 py-1 rounded-full text-xs font-medium text-[var(--color-text-primary)]">
       <span className={`w-2 h-2 rounded-full ${dot}`} />
       {label}
     </div>

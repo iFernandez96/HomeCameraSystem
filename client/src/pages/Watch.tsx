@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
+import { EventRow } from '../components/EventRow'
 import { SnapshotPreview } from '../components/SnapshotPreview'
 import { VideoTile } from '../components/VideoTile'
+import { BrandMarkRow } from '../components/WhoMark'
 import { captureSnapshot, searchEvents, HttpError } from '../lib/api'
-import { clockTime, eventTitle } from '../lib/eventLabel'
+import { clockTime } from '../lib/eventLabel'
 import { formatAge } from '../lib/format'
 import { useRipple } from '../lib/ripple'
 import { sentryCatName, useSentryCat } from '../lib/sentryCat'
@@ -14,20 +16,24 @@ import type { DetectionEvent } from '../lib/types'
 import { useStatus } from '../lib/useStatus'
 
 /**
- * Watch — the app's home screen (structural overhaul, 2026-07-02).
+ * Watch — the app's home screen ("Home" in the Playroom Modern
+ * redesign, structural overhaul 2026-07-02, restyled 2026-07-07).
  *
- * Replaces the old Live page. Modeled on the two patterns the market
- * converged on (user-approved mockups):
+ * Modeled on the two patterns the market converged on (user-approved
+ * mockups):
  *   - Google Home / Nest camera detail: live video pinned in the top
  *     ~40% of the screen, TODAY'S STORY as a scrollable timeline
- *     below (events + quiet gaps), one-line plain-language verdict.
+ *     below (events + quiet gaps), plain-language glance cards.
  *   - Ring Live View: tapping the video expands to a FULL-BLEED
  *     immersive mode — floating status, thumb-rail actions, an
  *     hour scrubber with event markers, swipe/back to close.
  *
  * The expand is a CSS state on the SAME container (docked ↔ fixed
  * inset-0) so the WebRTC <video> never remounts — no reconnect
- * hiccup when entering/leaving full screen.
+ * hiccup when entering/leaving full screen. Task 5 (Playroom Modern)
+ * restyled the chrome AROUND that container (rounded card treatment,
+ * floating pill overlays) — the container identity and toggle logic
+ * are untouched.
  *
  * The WatchRibbon is hidden on this route on mobile (App.tsx): the
  * on-video scrim carries the armed state here, and a second status
@@ -41,12 +47,63 @@ function localMidnightTs(): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000
 }
 
+/** Today's events, shared by the glance row (counts) and the story
+ * list below it — lifted out of the timeline component so both can
+ * read the same fetch. Visibility-aware refetch mirrors the Events
+ * page pattern (CLAUDE.md load-bearing listener). */
+function useTodayEvents() {
+  const [events, setEvents] = useState<DetectionEvent[] | null>(null)
+  const [quietSince, setQuietSince] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  const [refetchKey, setRefetchKey] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    searchEvents({ since_ts: localMidnightTs(), limit: 50 })
+      .then((r) => {
+        if (cancelled) return
+        setEvents(r.items)
+        // "Quiet since" is stamped at fetch time (not render time —
+        // react-hooks/purity bans Date.now() in memos): if the latest
+        // event is over an hour old, the timeline leads with a calm
+        // dashed row instead of implying something just happened.
+        const latest = r.items[0]?.ts
+        setQuietSince(
+          latest != null && Date.now() / 1000 - latest > 3600
+            ? clockTime(latest)
+            : null,
+        )
+        setError(false)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        console.error(e)
+        setError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refetchKey])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      setRefetchKey((k) => k + 1)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
+  return { events, quietSince, error }
+}
+
 export function Watch() {
   const status = useStatus()
   const sentryCat = useSentryCat()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const ripple = useRipple()
+  const { events, quietSince, error } = useTodayEvents()
 
   const [full, setFull] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -62,6 +119,7 @@ export function Watch() {
 
   const offline = status != null && status.worker_alive === false
   const armed = detectionActive === true && workerAlive === true
+  const unhealthy = offline || lowMemory || thermal
   const stateLabel = offline
     ? 'Camera offline'
     : armed
@@ -82,6 +140,30 @@ export function Watch() {
       : status.seconds_since_last_frame < 5
         ? 'Live now'
         : `${formatAge(status.seconds_since_last_frame)} ago`
+
+  // Glance row copy — Step 3 of the Home redesign. "Watching" card
+  // swaps to the full-contrast danger treatment when the camera is
+  // offline or the worker has degraded to a low-memory/thermal gear
+  // (whimsy never masks danger — CLAUDE.md).
+  const watching = armed
+  const watchingDetail = offline
+    ? 'Check its power, then see Settings.'
+    : lowMemory
+      ? 'Paused — the system is low on memory.'
+      : thermal
+        ? 'Slowed down — the camera is running warm.'
+        : watching
+          ? `${sentryCatName(sentryCat)} is on watch · alerts on`
+          : detectionActive === false
+            ? 'Turn alerts on in Settings.'
+            : 'Checking the camera…'
+  const todayCount = events?.length ?? 0
+  const todayBreakdown = useMemo(() => {
+    if (events == null) return 'Loading…'
+    const persons = events.filter((e) => e.label === 'person').length
+    const cats = events.filter((e) => e.label === 'cat').length
+    return `${persons} person · ${cats} cat sightings`
+  }, [events])
 
   // ESC exits full screen; body scroll locks while full so the page
   // behind can't scroll on overscroll.
@@ -123,7 +205,13 @@ export function Watch() {
 
   return (
     <div className="flex flex-col">
-      <h1 className="sr-only">Watch — live camera and today&rsquo;s activity</h1>
+      {/* ============ PAGE HEADER ============ */}
+      <header className="px-4 pt-4 pb-1 flex items-center justify-between gap-3">
+        <h1 className="page-title text-2xl text-[var(--color-text-primary)]">
+          Home
+        </h1>
+        <BrandMarkRow size={28} />
+      </header>
 
       {/* ============ LIVE VIEWPORT (docked ↔ full-bleed) ============ */}
       <div
@@ -133,8 +221,10 @@ export function Watch() {
             ? 'fixed inset-0 z-[45] bg-black flex flex-col'
             : // Docked: a TRUE 16:9 box (the stream's aspect) so the
               // video fills it exactly — no letterbox band, no crop.
-              // max-h guards short-viewport landscape.
-              'relative w-full aspect-video max-h-[48dvh] bg-black overflow-hidden'
+              // max-h guards short-viewport landscape. Playroom tile
+              // grammar: rounded card + shadow, matching Task 3's
+              // other card surfaces.
+              'relative w-full aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-card)] bg-black overflow-hidden'
         }
       >
         <div className="relative flex-1 min-h-0">
@@ -147,11 +237,13 @@ export function Watch() {
             fit={full ? 'contain' : 'cover'}
           />
 
-          {/* Floating status scrim — the armed state lives ON the
+          {/* Floating pill overlays — the armed state lives ON the
               video here (the ribbon is hidden on this route on
-              mobile). Safe-area padded for the notch. */}
+              mobile). Safe-area padded for the notch. Two distinct
+              pills (state + camera name) replace the old continuous
+              scrim bar per the Playroom pill grammar. */}
           <div
-            className="absolute top-0 left-0 right-0 flex items-center gap-2 px-4 pb-8 pointer-events-none bg-gradient-to-b from-black/70 to-transparent"
+            className="absolute top-0 left-0 right-0 flex items-center gap-2 px-4 pointer-events-none"
             style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
           >
             {full && (
@@ -165,17 +257,21 @@ export function Watch() {
                 ‹
               </button>
             )}
-            <span aria-hidden="true" className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
             <span
               role="status"
               aria-live="polite"
-              className="text-sm font-semibold text-white"
+              className="pointer-events-auto inline-flex items-center gap-2 bg-[var(--color-surface-scrim)] backdrop-blur rounded-full px-3 py-1.5 ring-1 ring-[var(--color-border)]"
             >
-              {stateLabel}
+              <span aria-hidden="true" className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
+              <span className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {stateLabel}
+              </span>
             </span>
-            <span className="text-sm text-white/60 truncate">· {cameraLabel}</span>
+            <span className="pointer-events-auto bg-black/70 text-white text-xs font-semibold rounded-full px-3 py-1 truncate">
+              {cameraLabel}
+            </span>
             {ageLabel && (
-              <span className="ml-auto text-xs text-white/55 tabular-nums">
+              <span className="ml-auto pointer-events-auto text-xs text-white/80 tabular-nums bg-black/50 rounded-full px-2.5 py-1">
                 {ageLabel}
               </span>
             )}
@@ -233,48 +329,37 @@ export function Watch() {
         )}
       </div>
 
-      {/* ============ VERDICT STRIP ============ */}
-      <button
-        type="button"
-        onClick={() => navigate('/settings')}
-        onPointerDown={ripple}
-        className="relative overflow-hidden w-full flex items-center gap-2.5 px-4 py-3 bg-[var(--color-surface)] border-b border-[var(--color-border-subtle)] text-left focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-[-2px]"
-        aria-label="System status — open settings"
-      >
-        <span aria-hidden="true" className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
-        <span className="text-[13px] text-[var(--color-text-secondary)] truncate">
-          {offline ? (
-            <>
-              <b className="font-semibold text-[var(--color-text-primary)]">
-                Camera offline.
-              </b>{' '}
-              Check its power, then see Settings.
-            </>
-          ) : armed ? (
-            <>
-              <b className="font-semibold text-[var(--color-text-primary)]">
-                All clear.
-              </b>{' '}
-              {sentryCatName(sentryCat)} is on watch · alerts on
-            </>
-          ) : detectionActive === false ? (
-            <>
-              <b className="font-semibold text-[var(--color-text-primary)]">
-                Alerts paused.
-              </b>{' '}
-              Detection is off — turn it on in Settings.
-            </>
-          ) : (
-            <>Checking the camera…</>
-          )}
-        </span>
-        <span aria-hidden="true" className="ml-auto text-[var(--color-text-tertiary)]">
-          ›
-        </span>
-      </button>
+      {/* ============ GLANCE ROW ============ */}
+      <div className="mx-4 mt-3.5 flex gap-2.5">
+        <div
+          className={`flex-1 rounded-[var(--radius-xl)] px-3 py-2.5 ${
+            unhealthy
+              ? 'bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
+              : 'bg-[var(--color-ink)] text-[var(--color-on-ink)]'
+          }`}
+        >
+          <p className="text-[17px] font-extrabold tracking-tight">
+            {watching ? 'Watching' : 'Paused'}
+          </p>
+          <p className="text-[10.5px] font-semibold opacity-70">{watchingDetail}</p>
+        </div>
+        <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
+          <p className="text-[17px] font-extrabold tracking-tight text-[var(--color-text-primary)]">
+            {todayCount} today
+          </p>
+          <p className="text-[10.5px] font-semibold text-[var(--color-text-secondary)]">
+            {todayBreakdown}
+          </p>
+        </div>
+      </div>
 
       {/* ============ TODAY'S STORY ============ */}
-      <TodayTimeline onOpen={setOpenEvent} />
+      <TodayTimeline
+        events={events}
+        quietSince={quietSince}
+        error={error}
+        onOpen={setOpenEvent}
+      />
 
       {previewUrl && (
         <SnapshotPreview url={previewUrl} onClose={() => setPreviewUrl(null)} />
@@ -288,63 +373,24 @@ export function Watch() {
 
 /* ================= Today timeline ================= */
 
-function TodayTimeline({ onOpen }: { onOpen: (e: DetectionEvent) => void }) {
-  const [events, setEvents] = useState<DetectionEvent[] | null>(null)
-  const [quietSince, setQuietSince] = useState<string | null>(null)
-  const [error, setError] = useState(false)
-  const [refetchKey, setRefetchKey] = useState(0)
+function TodayTimeline({
+  events,
+  quietSince,
+  error,
+  onOpen,
+}: {
+  events: DetectionEvent[] | null
+  quietSince: string | null
+  error: boolean
+  onOpen: (e: DetectionEvent) => void
+}) {
   const navigate = useNavigate()
-  const ripple = useRipple()
-
-  useEffect(() => {
-    let cancelled = false
-    searchEvents({ since_ts: localMidnightTs(), limit: 50 })
-      .then((r) => {
-        if (cancelled) return
-        setEvents(r.items)
-        // "Quiet since" is stamped at fetch time (not render time —
-        // react-hooks/purity bans Date.now() in memos): if the latest
-        // event is over an hour old, the timeline leads with a calm
-        // dashed row instead of implying something just happened.
-        const latest = r.items[0]?.ts
-        setQuietSince(
-          latest != null && Date.now() / 1000 - latest > 3600
-            ? clockTime(latest)
-            : null,
-        )
-        setError(false)
-      })
-      .catch((e) => {
-        if (cancelled) return
-        console.error(e)
-        setError(true)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [refetchKey])
-
-  // Refetch on tab resume — same visibility-aware pattern as the
-  // Events page and heatmap (CLAUDE.md load-bearing listeners).
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      setRefetchKey((k) => k + 1)
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [])
-
-  const people = useMemo(
-    () => (events ?? []).filter((e) => e.label === 'person').length,
-    [events],
-  )
 
   return (
     <section className="px-4 pt-4 pb-6" aria-label="Today's activity">
       <div className="flex items-baseline justify-between">
         <h2 className="font-display text-lg font-bold text-[var(--color-text-primary)]">
-          Today at the door
+          Today at home
         </h2>
         <button
           type="button"
@@ -359,11 +405,7 @@ function TodayTimeline({ onOpen }: { onOpen: (e: DetectionEvent) => void }) {
           ? 'Loading today…'
           : events.length === 0
             ? 'No events yet today'
-            : `${events.length} ${events.length === 1 ? 'event' : 'events'} today${
-                people > 0 && people < events.length
-                  ? ` · ${people} ${people === 1 ? 'person' : 'people'}`
-                  : ''
-              }`}
+            : 'Newest first'}
       </p>
 
       {error && (
@@ -379,81 +421,18 @@ function TodayTimeline({ onOpen }: { onOpen: (e: DetectionEvent) => void }) {
         />
       )}
 
-      <ol className="space-y-3">
+      <ol className="space-y-2">
         {quietSince && (
-          <li className="flex gap-3">
-            <span className="w-14 flex-none" aria-hidden="true" />
-            <div className="w-0.5 flex-none bg-transparent relative">
-              <span className="absolute top-2 -left-[3px] w-2 h-2 rounded-full bg-[var(--color-border)]" />
-            </div>
-            <p className="flex-1 text-xs text-[var(--color-text-secondary)] border border-dashed border-[var(--color-border)] rounded-xl px-3 py-2.5">
-              Quiet since {quietSince}
-            </p>
+          <li className="rounded-[var(--radius-xl)] border border-dashed border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-secondary)]">
+            Quiet since {quietSince}
           </li>
         )}
         {(events ?? []).map((e) => {
-          const known = !!e.person_name
-          const isPerson = e.label === 'person'
-          // Compact title: the section heading already says "at the
-          // door", so rows lead with WHO. Full phrasing lives in the
-          // clip modal.
-          const title = isPerson
-            ? (e.person_name ?? 'Someone new')
-            : eventTitle(e)
+          const subline =
+            e.label === 'person' && !e.person_name ? 'Tap to review' : 'Tap for the clip'
           return (
-            <li key={e.id} className="flex gap-3">
-              <span className="w-14 flex-none text-right text-[10.5px] whitespace-nowrap text-[var(--color-text-tertiary)] tabular-nums pt-2.5">
-                {clockTime(e.ts)}
-              </span>
-              <span className="w-0.5 flex-none bg-[var(--color-border-subtle)] relative rounded-full">
-                <span
-                  aria-hidden="true"
-                  className={`absolute top-2.5 -left-[3.5px] w-2.5 h-2.5 rounded-full border-2 border-[var(--color-bg)] ${
-                    known
-                      ? 'bg-[var(--color-success)]'
-                      : isPerson
-                        ? 'bg-[var(--color-warning)]'
-                        : 'bg-[var(--color-accent-default)]'
-                  }`}
-                />
-              </span>
-              <button
-                type="button"
-                onClick={() => onOpen(e)}
-                onPointerDown={ripple}
-                className="relative overflow-hidden flex-1 flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-2xl px-3 py-2.5 text-left shadow-[var(--shadow-subtle)] hover:border-[var(--color-border-strong)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
-                aria-label={`${title} at ${clockTime(e.ts)} — open clip`}
-              >
-                {e.thumb_url ? (
-                  <img
-                    src={e.thumb_url}
-                    alt=""
-                    className="w-[68px] h-[46px] flex-none rounded-lg object-cover border border-[var(--color-border-subtle)] bg-black"
-                    loading="lazy"
-                  />
-                ) : (
-                  <span className="w-[68px] h-[46px] flex-none rounded-lg bg-[var(--color-surface-raised)]" />
-                )}
-                <span className="min-w-0">
-                  <b className="block text-[13.5px] font-semibold text-[var(--color-text-primary)] truncate">
-                    {title}
-                  </b>
-                  <span className="block text-[11.5px] text-[var(--color-text-secondary)]">
-                    {isPerson && !known ? 'Tap to review' : 'Tap for the clip'}
-                  </span>
-                </span>
-                {isPerson && (
-                  <span
-                    className={`ml-auto flex-none text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      known
-                        ? 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
-                        : 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
-                    }`}
-                  >
-                    {known ? 'KNOWN' : 'NEW'}
-                  </span>
-                )}
-              </button>
+            <li key={e.id}>
+              <EventRow event={e} subline={subline} onOpen={() => onOpen(e)} />
             </li>
           )
         })}

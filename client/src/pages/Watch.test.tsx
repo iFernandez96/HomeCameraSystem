@@ -91,20 +91,21 @@ beforeEach(() => {
   searchEvents.mockResolvedValue({ items: [], next_cursor: null })
 })
 
-describe('Watch — home screen (structural overhaul)', () => {
-  it('Given a healthy armed camera, When the page renders, Then the on-video scrim shows the armed state and the verdict reads all-clear', async () => {
+describe('Watch — Home screen (Playroom Modern)', () => {
+  it('Given a healthy armed camera, When the page renders, Then the heading reads Home and both the on-video scrim and the glance card show the armed state', async () => {
     // arrange / act
     renderWatch()
 
-    // assert — scrim status + plain-language verdict strip
+    // assert — page heading, on-video scrim, glance card copy
+    expect(screen.getByRole('heading', { name: 'Home', level: 1 })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('On watch')).toBeInTheDocument()
     })
-    expect(screen.getByText(/All clear\./)).toBeInTheDocument()
+    expect(screen.getByText('Watching')).toBeInTheDocument()
     expect(screen.getByText(/is on watch · alerts on/)).toBeInTheDocument()
   })
 
-  it("Given events today, When the timeline loads, Then rows show titles with KNOWN/NEW badges and tapping one opens the clip", async () => {
+  it("Given events today, When the timeline loads, Then rows show who appeared and tapping one opens the clip", async () => {
     // arrange
     const known = ev({ id: 'k1', person_name: 'Israel' })
     const stranger = ev({ id: 's1', ts: Date.now() / 1000 - 120 })
@@ -114,14 +115,12 @@ describe('Watch — home screen (structural overhaul)', () => {
     // act
     renderWatch()
     await waitFor(() => {
-      expect(screen.getByText('KNOWN')).toBeInTheDocument()
+      expect(screen.getByText('Israel at cam')).toBeInTheDocument()
     })
 
-    // assert — badge split + clip opens for the tapped row
-    expect(screen.getByText('NEW')).toBeInTheDocument()
-    await user.click(
-      screen.getAllByRole('button', { name: /open clip/i })[0],
-    )
+    // assert — unrecognized row renders too + clip opens for the tapped row
+    expect(screen.getByText('Person at cam')).toBeInTheDocument()
+    await user.click(screen.getByText('Israel at cam'))
     expect(screen.getByRole('dialog', { name: 'clip:k1' })).toBeInTheDocument()
   })
 
