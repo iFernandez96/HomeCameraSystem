@@ -603,59 +603,15 @@ html {
   scrollbar-width: none;
 }
 
-/* iter-356.25 → Maya Phase-2 critical: ONE paw glyph, used on BOTH
- * SideNav (LEFT of icon) and BottomNav (ABOVE label). Pre-Phase-2
- * SideNav rendered a vertical orange BAR (despite the class being
- * named `paw-active` — Maya: "the class lies"). Now both navs use
- * the same 14px paw SVG mask, just different axes. This is a SYSTEM
- * — same glyph, same size, opposite position relative to the icon.
- *
- * Shared SVG: 4-toe + heel-pad paw print, simplified to read at 14px
- * without muddiness. Filled via background-color so currentColor /
- * accent-token inheritance works.
+/* iter-356.25 → Maya Phase-2 critical: `.paw-active` / `.bottomnav-
+ * paw-active` (the old shared paw-print active-nav glyph) removed
+ * Task 10 (brand layer pass) — `grep -rn "paw-active\|bottomnav-paw-
+ * active" src --include="*.tsx"` turned up zero live usages (only a
+ * stale comment in BottomNav.tsx noting the class was "retired in
+ * favor of" the current paw-mask active-nav treatment). The `--paw-
+ * svg` custom property backing both classes had no other consumer
+ * and is removed with them.
  */
-:root {
-  --paw-svg: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='5' cy='10' r='2.5'/><circle cx='10' cy='6' r='2.5'/><circle cx='14' cy='6' r='2.5'/><circle cx='19' cy='10' r='2.5'/><path d='M6 18 c0-3 3-6 6-6 s6 3 6 6 c0 2-2 3-4 3 h-4 c-2 0-4-1-4-3z'/></svg>");
-}
-
-/* SideNav active: paw 14px to the LEFT of the row content. The row
- * already has px-3 (12px) left padding, so the paw fits in that
- * gutter at left:-2px and the icon stays where it was. */
-.paw-active::before {
-  content: '';
-  position: absolute;
-  left: -4px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 12px;
-  background-color: var(--color-accent-default);
-  -webkit-mask-image: var(--paw-svg);
-  mask-image: var(--paw-svg);
-  -webkit-mask-size: contain;
-  mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-}
-
-/* BottomNav active: same paw, ABOVE the label (label below icon, paw
- * tucked at top:4px). */
-.bottomnav-paw-active::after {
-  content: '';
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 14px;
-  height: 12px;
-  background-color: var(--color-accent-default);
-  -webkit-mask-image: var(--paw-svg);
-  mask-image: var(--paw-svg);
-  -webkit-mask-size: contain;
-  mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-}
 
 /* iter-269 (accessibility-auditor D top-3): screen-reader-only
    utility used by the skip-to-main link in App.tsx. Tailwind v4
@@ -698,17 +654,20 @@ html {
    at full opacity (the global @media block above clamps the animation
    to 0.01ms × 1 iteration which leaves the LAST keyframe state, and
    all three keyframes end at opacity 1). */
-@keyframes pawSpinnerStep {
-  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
-  40% { opacity: 1; transform: scale(1); }
+/* Task 10 (brand layer): PawSpinner now renders three WhoMark marks
+ * (not literal paw glyphs) so `pawSpinnerStep` is renamed
+ * `brand-spinner-bounce` — a gentle bounce + fade reads as "walking
+ * past" without needing the old paw-print shape baked into the CSS
+ * name. Same reduced-motion behavior: the global clamp above pins
+ * the animation to its final keyframe (full opacity, no offset). */
+@keyframes brand-spinner-bounce {
+  0%, 80%, 100% { opacity: 0.5; transform: translateY(0) scale(0.85); }
+  40% { opacity: 1; transform: translateY(-3px) scale(1); }
 }
-.paw-spinner-dot {
-  animation: pawSpinnerStep 1.2s ease-in-out infinite;
+.brand-spinner-dot {
+  animation: brand-spinner-bounce 1.2s ease-in-out infinite;
   transform-origin: center;
 }
-.paw-spinner-dot-1 { animation-delay: 0s; }
-.paw-spinner-dot-2 { animation-delay: 0.2s; }
-.paw-spinner-dot-3 { animation-delay: 0.4s; }
 
 /* iter-356.25 Phase 2 (Maya CRITICAL): tokenized range-slider styling.
  * Pre-iter-356.25-Phase-2 the slider track + thumb + focus ring were
@@ -757,25 +716,6 @@ html {
 }
 .slider:disabled::-webkit-slider-thumb {
   cursor: not-allowed;
-}
-
-/* iter-356.64 / mobile-redesign Slice B: sentry-cat handover sparkle.
-   When the rotating sentry flips slot (every 30 min) the headline
-   span remounts with a fresh `key={cat}` — this 600ms intro plays
-   once on each handover so the user catches the change as a quick
-   shimmer rather than a silent text swap. The global
-   prefers-reduced-motion @media block above clamps the duration to
-   0.01ms × 1 iteration, leaving the final keyframe state (opacity 1,
-   no transform) — i.e. reduced-motion users see the new cat name
-   appear instantly with no animation. */
-@keyframes sentry-sparkle {
-  0% { opacity: 0.35; transform: translateY(2px) scale(0.97); }
-  60% { opacity: 1; transform: translateY(0) scale(1.03); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-.sentry-sparkle {
-  animation: sentry-sparkle 600ms ease-out 1;
-  display: inline-block;
 }
 
 /* Material-style press ripple (lib/ripple.ts — Android-native slice).

@@ -140,7 +140,7 @@ describe('toast', () => {
     expect(screen.getByRole('status')).toBeInTheDocument()
   })
 
-  it('Given an error toast, When rendered, Then it is a paper card with a semantic left accent and ink text — never white text on a light surface (Sunroom redesign)', () => {
+  it('Given an error toast, When rendered, Then it is a paper pill with a semantic accent border and ink text — never white text on a light surface (Sunroom redesign + Task 10 pill grammar)', () => {
     // arrange
     render(
       <ToastProvider>
@@ -151,12 +151,15 @@ describe('toast', () => {
     // act
     fireEvent.click(screen.getByText('fire'))
 
-    // assert — opaque paper surface + danger left-accent bar + ink
-    // text. The old solid-fill treatment carried text-white; on the
-    // light theme white text on any light surface is a regression.
+    // assert — opaque paper surface + danger accent border (a full
+    // border, not a left-only bar, so it traces the rounded-full pill
+    // cleanly) + ink text. The old solid-fill treatment carried
+    // text-white; on the light theme white text on any light surface
+    // is a regression.
     const toast = screen.getByRole('alert')
+    expect(toast.className).toMatch(/rounded-full/)
     expect(toast.className).toMatch(/bg-\[var\(--color-surface-overlay\)\]/)
-    expect(toast.className).toMatch(/border-l-\[var\(--color-danger\)\]/)
+    expect(toast.className).toMatch(/border-\[var\(--color-danger\)\]/)
     expect(toast.className).toMatch(/text-\[var\(--color-text-primary\)\]/)
     expect(toast.className).not.toMatch(/text-white/)
   })

@@ -150,19 +150,26 @@ function ToastBubble({
 }) {
   // redesign/warm-boutique (Sunroom): every toast is a cream-paper
   // card (opaque --color-surface-overlay + ink text) with a SEMANTIC
-  // LEFT ACCENT bar + matching icon color — danger brick / success
+  // accent border + matching icon color — danger brick / success
   // green / info slate. The old solid red/green fills shouted on the
   // warm linen ground; the paper card keeps the toast in the same
-  // material family as the rest of the app while the accent bar +
+  // material family as the rest of the app while the accent border +
   // icon SHAPE signal (colorblind safety, Maya Critical 1) still
   // reads at a glance. Ink text on paper is ~13:1; the semantic hue
   // never carries the message text itself.
+  //
+  // Task 10 (brand layer, pill grammar pass): the accent moved from a
+  // LEFT-only 3px bar to a full-perimeter 1.5px border. A left bar
+  // clashes visually with a `rounded-full` pill — its straight edge
+  // cuts across the curved corners instead of following them. A full
+  // border traces the pill outline cleanly and keeps the same
+  // colorblind-safe signal.
   const accentClass =
     toast.kind === 'error'
-      ? 'border-l-[var(--color-danger)]'
+      ? 'border-[var(--color-danger)]'
       : toast.kind === 'success'
-        ? 'border-l-[var(--color-success)]'
-        : 'border-l-[var(--color-info)]'
+        ? 'border-[var(--color-success)]'
+        : 'border-[var(--color-info)]'
   const iconClass =
     toast.kind === 'error'
       ? 'text-[var(--color-danger)]'
@@ -178,9 +185,9 @@ function ToastBubble({
       aria-label={`${toast.message}. Tap to dismiss.`}
       className={
         `pointer-events-auto max-w-md inline-flex items-center gap-2.5 text-left ` +
-        `px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-medium ` +
+        `px-4 py-2.5 min-h-[44px] rounded-full text-sm font-medium ` +
         `bg-[var(--color-surface-overlay)] text-[var(--color-text-primary)] ` +
-        `border border-[var(--color-border)] border-l-[3px] ${accentClass} ` +
+        `border-[1.5px] ${accentClass} ` +
         `shadow-[var(--shadow-overlay)] ` +
         `animate-toast-in ` +
         `focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ` +
