@@ -20,8 +20,8 @@ export type ResolvedTheme = 'light' | 'dark'
 const STORAGE_KEY = 'homecam:theme'
 /** Must match --color-bg in index.css for each theme. */
 const THEME_BG: Record<ResolvedTheme, string> = {
-  light: '#f6f1e7',
-  dark: '#171310',
+  light: '#f3f1ea',
+  dark: '#232019',
 }
 /** Window event fired after every apply — Settings' control re-renders off it. */
 export const THEME_CHANGED_EVENT = 'homecam:theme-changed'

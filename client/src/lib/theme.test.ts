@@ -85,7 +85,7 @@ describe('applying the theme', () => {
       document.querySelectorAll('meta[name="theme-color"]'),
     )
     expect(metas).toHaveLength(2)
-    for (const m of metas) expect(m.getAttribute('content')).toBe('#171310')
+    for (const m of metas) expect(m.getAttribute('content')).toBe('#232019')
   })
 
   it('Given a listener on the change event, When the preference is set, Then the event fires with the resolved theme', () => {

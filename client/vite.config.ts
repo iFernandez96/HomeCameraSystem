@@ -117,8 +117,8 @@ export default defineConfig({
         // Android-native face); the live status bar follows the
         // resolved theme via the index.html meta pair + lib/theme.ts.
         // Keep in lock-step with index.css dark --color-bg.
-        theme_color: '#171310',
-        background_color: '#171310',
+        theme_color: '#232019',
+        background_color: '#232019',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',

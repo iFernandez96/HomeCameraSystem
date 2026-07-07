@@ -47,7 +47,7 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     await expect(banner).toBeVisible({ timeout: 10_000 })
   })
 
-  test('given any authed page is loaded, then page titles use the Fraunces display family (radical-typography flip)', async ({
+  test('given any authed page is loaded, then page titles use the Bricolage Grotesque display family (playroom-modern typography flip)', async ({
     page,
   }) => {
     // arrange — log in. The page-title h1 is on every authed page.
@@ -59,17 +59,17 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     await page.waitForTimeout(1000)
 
     // assert — the .page-title H1 must resolve `font-family` to
-    // include Fraunces. The radical-redesign Step 1 was the
-    // typography flip from Inter-everywhere to Fraunces-on-headings.
+    // include Bricolage Grotesque. redesign/playroom-modern (Task 0)
+    // swapped the display face from Fraunces to Bricolage Grotesque.
     // A regression that drops `font-family: var(--font-display)`
-    // from `.page-title` (or removes the Fraunces token) would
+    // from `.page-title` (or removes the Bricolage token) would
     // fail this test.
     const h1 = page.locator('h1.page-title').first()
     await expect(h1).toBeVisible()
     const fontFamily = await h1.evaluate(
       (el) => window.getComputedStyle(el).fontFamily,
     )
-    expect(fontFamily.toLowerCase()).toMatch(/fraunces/i)
+    expect(fontFamily.toLowerCase()).toMatch(/bricolage/i)
   })
 
   test('given the People page renders empty, then Mushu greets the user', async ({

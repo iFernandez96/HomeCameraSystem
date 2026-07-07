@@ -16,8 +16,8 @@
  * mirrors Google's latin subset declaration so any non-latin glyph
  * (e.g. pasted CJK) falls back to the system stack rather than
  * rendering as a missing-glyph box. The wght range covers every
- * weight the app uses (Inter 400/500/600/700; Fraunces 400/500/600/
- * 700/800 for display sizes). */
+ * weight the app uses (Inter 400/500/600/700; Bricolage Grotesque
+ * 400/500/600/700/800 for display sizes). */
 @font-face {
   font-family: 'Inter';
   font-style: normal;
@@ -29,12 +29,12 @@
 }
 
 @font-face {
-  font-family: 'Fraunces';
+  font-family: 'Bricolage Grotesque';
   font-style: normal;
   font-weight: 400 800;
   font-display: swap;
-  src: url('/fonts/fraunces-variable-latin.woff2') format('woff2-variations'),
-       url('/fonts/fraunces-variable-latin.woff2') format('woff2');
+  src: url('/fonts/bricolage-variable-latin.woff2') format('woff2-variations'),
+       url('/fonts/bricolage-variable-latin.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
@@ -47,94 +47,79 @@
  * (color / space / radius / text / shadow / motion / z).
  */
 @theme {
-  /* redesign/warm-boutique (2026-07-01) — "SUNROOM". User directive:
-   * "make the UX way better… as professional as possible… completely
-   * overhaul it, feel free to overwrite the work already done."
-   * Direction picked by user: refined warm + cats — boutique-app
-   * polish (Things 3 warmth) around the Panther/Mushu/Coco identity.
-   *
-   * The shift: from iter-356.57 "den at dusk" (dark Watchpost) back
-   * to DAYLIGHT — warm linen paper, ink text, one marmalade accent.
-   * Token NAMES preserved (again) so the codebase flips automatically;
-   * every VALUE re-derived for a light ground.
-   *
-   * The calico tri-tone discipline (the design signature):
-   *   - Panther's ink coat   → text + primary-action fills
-   *   - Coco's marmalade     → the single accent (links, focus, active)
-   *   - Mushu's paper white  → card surfaces on warm linen
-   * Brass stays as the quiet secondary (house hardware: hinges,
-   * name-plate, sigil) — never competes with marmalade.
-   *
-   * Contrast floors (checked on their intended ground):
-   *   text-primary on surface ~13:1 · text-secondary ~6:1 ·
-   *   accent-default on surface ~4.9:1 · semantic ≥4.5:1.
-   */
+  /* Playroom Modern (redesign/playroom-modern, 2026-07-07).
+   * Bright modernist playroom. Structure over decoration: the identity
+   * palette (--color-id-*) encodes WHO appeared and drives event cards,
+   * filters, hour bands, and detection boxes. Alert red is excluded
+   * from the identity palette by design. */
 
-  /* === Brand accent (MARMALADE — Coco) ===========================
-   * Default is dark enough for TEXT + icons on cream (AA). Bright is
-   * the hover/fill tone (white text on it stays AA-large; prefer
-   * default for small text). Subtle/muted are chip + active-surface
-   * tints — warm peach paper, not neon. */
-  --color-accent-subtle:  #faeeda;  /* selected chip bg — peach paper */
-  --color-accent-muted:   #f3ddbd;  /* active ActionButton bg */
-  --color-accent-default: #b3540b;  /* links, focus ring, accent text */
-  --color-accent-bright:  #d97316;  /* hover fills, large accents */
-  --color-accent-deep:    #8a4008;  /* heatmap deepest tier (white text ~7.5:1) */
+  /* Brand accent (MARMALADE — the cats' collective hue, Mushu's coat) */
+  --color-accent-subtle:  #fceadd;
+  --color-accent-muted:   #f6d5bc;
+  --color-accent-default: #c25a12;  /* links, focus ring — 4.6:1 on surface */
+  --color-accent-bright:  #e5701f;
+  --color-accent-deep:    #8f3f0a;
 
-  /* === Ink (Panther — primary-action fills) ======================
-   * The signature move of the Sunroom direction: primary buttons are
-   * ink-filled (white text, ~13:1), NOT accent-filled. Marmalade is
-   * reserved for links / focus / active / live. Separate tokens from
-   * text-primary so a text retune can't silently restyle buttons. */
-  --color-ink:            #2b2213;
-  --color-ink-hover:      #40331d;
-  /* "On-color" tokens (Material-style): the text color that sits ON
-   * an ink fill / an accent fill. Light theme: white on both. The
-   * dark theme INVERTS ink (parchment fill → ink text), so any
-   * component painting text on ink/accent fills MUST use these
-   * instead of text-white. */
-  --color-on-ink:         #ffffff;
+  /* Ink (primary-action fills; near-black warm) */
+  --color-ink:            #211f1b;
+  --color-ink-hover:      #38352e;
+  --color-on-ink:         #fffdf7;
   --color-on-accent:      #ffffff;
 
-  /* === Brass (secondary brand — sigil, name-plate, avatar) =======
-   * Default darkened #9a742a → #866a24 (Frank audit: 11px brass time
-   * stamps measured 4.2:1 on paper — under AA-small; the deeper brass
-   * clears ~5:1 while keeping the hue). */
-  --color-brass-default:  #866a24;
-  --color-brass-bright:   #b08a38;
-  --color-brass-subtle:   #f3ead3;
+  /* Brass → warm stone secondary (nameplate, sigil) */
+  --color-brass-default:  #7d7258;
+  --color-brass-bright:   #9a8d6d;
+  --color-brass-subtle:   #efece2;
   --color-brass-border:   color-mix(in srgb, var(--color-brass-default) 40%, transparent);
 
-  /* === Surface + border tiers (LINEN + PAPER) ====================
-   * Cards are near-white paper on warm linen; separation comes from
-   * a soft warm shadow + hairline border, not L-delta alone (light
-   * themes need the hairline where dark themes could skip it). */
-  --color-bg:              #f6f1e7;  /* page bg — warm linen */
-  --color-surface:         #fffdf7;  /* card bg — cream paper */
-  --color-surface-raised:  #f1e9d8;  /* hover/selected — warmed paper */
-  --color-surface-overlay: #fffdf7;  /* modal bg — same paper */
-  --color-border-subtle:   #e9dfc9;  /* section dividers */
-  --color-border:          #d8c9a8;  /* card / input borders */
-  --color-border-strong:   #b7a077;  /* hover borders */
+  /* Surfaces (WALL + CARD) — cooler and brighter than Sunroom linen */
+  --color-bg:              #f3f1ea;
+  --color-surface:         #fffdf7;
+  --color-surface-raised:  #efece2;
+  --color-surface-overlay: #fffdf7;
+  --color-border-subtle:   #eae7dc;
+  --color-border:          #e2ded2;
+  --color-border-strong:   #b9b3a3;
 
-  /* === Text tiers (PANTHER INK ON PAPER) ========================= */
-  --color-text-primary:    #292013;  /* ink — ~13:1 on surface */
-  --color-text-secondary:  #6b5c3d;  /* warm umber — ~6:1 */
-  --color-text-tertiary:   #857550;  /* timestamps, hints — ~4.5:1 */
-  --color-text-disabled:   #b6ab90;  /* disabled controls */
+  /* Text */
+  --color-text-primary:    #211f1b;
+  --color-text-secondary:  #64604f;
+  --color-text-tertiary:   #7a756a;
+  --color-text-disabled:   #b5afa1;
 
-  /* === Semantic (LIGHT-BG TUNED, ≥4.5:1 floors) ==================
-   * Light grounds need the DEEP end of each hue (700-range), the
-   * inverse of the dark theme's 400-glow range. Hue separation from
-   * the marmalade accent maintained (green/amber/red vs orange). */
-  --color-success:         #1e7d3f;  /* armed dot, face-match */
-  --color-warning:         #94660c;  /* thermal/paused — deep amber */
-  --color-danger:          #b3372e;  /* destructive text/icon — brick */
-  --color-danger-strong:   #dc2626;  /* destructive button fill (white text) */
-  --color-danger-muted:    #f6d9d4;  /* danger-zone container border */
-  --color-info:            #6e6250;  /* info toast — warm stone (slate was
-                                        the one cool hue left in the warm
-                                        palette; ~5.5:1 on surface) */
+  /* Semantic — red/green/amber stay OUT of the identity palette */
+  --color-success:         #1e7d3f;
+  --color-warning:         #94660c;
+  --color-danger:          #c93222;
+  --color-danger-strong:   #dc2626;
+  --color-danger-muted:    #f6d9d4;
+  --color-info:            #64604f;
+
+  /* === NEW: identity palette (Playroom signature) ==================
+   * Brand trio + person cobalt + a 6-hue wheel for NAMED people.
+   * Every hue ≥4.5:1 as text on --color-surface; -soft is the 14%
+   * card-tint; --color-id-on is the text color on a full id fill. */
+  --color-id-panther:      #34323a;
+  --color-id-mushu:        #c25a12;   /* shares the accent hue by design */
+  --color-id-coco:         #c04f70;
+  --color-id-person:       #2f5fe0;
+  --color-id-wheel-1:      #2f5fe0;   /* cobalt   */
+  --color-id-wheel-2:      #0f766e;   /* teal     */
+  --color-id-wheel-3:      #7c3aed;   /* violet   */
+  --color-id-wheel-4:      #be185d;   /* magenta  */
+  --color-id-wheel-5:      #15803d;   /* forest   */
+  --color-id-wheel-6:      #a16207;   /* ochre    */
+  --color-id-panther-soft: color-mix(in srgb, var(--color-id-panther) 14%, transparent);
+  --color-id-mushu-soft:   color-mix(in srgb, var(--color-id-mushu) 14%, transparent);
+  --color-id-coco-soft:    color-mix(in srgb, var(--color-id-coco) 14%, transparent);
+  --color-id-person-soft:  color-mix(in srgb, var(--color-id-person) 14%, transparent);
+  --color-id-wheel-1-soft: color-mix(in srgb, var(--color-id-wheel-1) 14%, transparent);
+  --color-id-wheel-2-soft: color-mix(in srgb, var(--color-id-wheel-2) 14%, transparent);
+  --color-id-wheel-3-soft: color-mix(in srgb, var(--color-id-wheel-3) 14%, transparent);
+  --color-id-wheel-4-soft: color-mix(in srgb, var(--color-id-wheel-4) 14%, transparent);
+  --color-id-wheel-5-soft: color-mix(in srgb, var(--color-id-wheel-5) 14%, transparent);
+  --color-id-wheel-6-soft: color-mix(in srgb, var(--color-id-wheel-6) 14%, transparent);
+  --color-id-on:           #ffffff;
 
   /* === Tinted surface tokens (pre-mixed; see iter-356.14 note) ====
    * Light grounds need LESS tint density than dark (the inverse of
@@ -157,9 +142,10 @@
 
   /* === Skeleton surface (between bg and card — see Maya Critical
    * note in git history: skeleton must sit a hair darker than the
-   * paper card it stands in for, brighter than the linen page). */
-  --color-skeleton:        #ece3cf;
-  --color-skeleton-strong: #e2d7bd;
+   * paper card it stands in for, brighter than the linen page).
+   * Re-derived for the Playroom Modern cooler stone palette. */
+  --color-skeleton:        #e9e3d2;
+  --color-skeleton-strong: #dfd7c0;
 
   /* === Pre-iter-356.0 aliases (DO NOT REMOVE during migration) */
   --color-surface-2: var(--color-surface-raised);
@@ -176,21 +162,23 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* === Border radius scale ==================================== */
+  /* === Border radius scale (Playroom Modern: card 18, tile/video 26) */
   --radius-sm:   4px;     /* inputs, inline badges */
   --radius-md:   8px;     /* video-overlay pills, confidence badges */
   --radius-lg:  12px;     /* form fields, inputs */
-  --radius-xl:  16px;     /* buttons (Button primitive), cards */
-  --radius-2xl: 20px;     /* modals, full-width panels */
-  --radius-pill: 9999px;  /* status pills, toasts, chips */
+  --radius-xl:  18px;     /* buttons (Button primitive), cards */
+  --radius-2xl: 26px;     /* modals, full-width panels, video tile */
+  --radius-pill: 9999px;  /* status pills, toasts, chips (control/pill) */
 
   /* === Typography scale =======================================
-   * Inter for UI/body (system voice — scan-speed), Fraunces variable
-   * serif for display (brand voice: page titles, wordmark, day
-   * headers). Both self-hosted (see @font-face above). The 16px
-   * input floor suppresses iOS Safari auto-zoom-on-focus. */
+   * Inter for UI/body (system voice — scan-speed), Bricolage
+   * Grotesque variable display face for page titles / wordmark / day
+   * headers (Playroom Modern, redesign/playroom-modern 2026-07-07 —
+   * structural grotesque replaces the Sunroom serif). Both
+   * self-hosted (see @font-face above). The 16px input floor
+   * suppresses iOS Safari auto-zoom-on-focus. */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-display: 'Fraunces', 'Lora', Georgia, serif;
+  --font-display: 'Bricolage Grotesque', 'Inter', -apple-system, sans-serif;
   --font-mono: 'SF Mono', 'Fira Code', Consolas, monospace;
 
   --text-xs:   11px;  /* caption, badge, pill label */
@@ -210,16 +198,16 @@
   --weight-semibold: 600;
   --weight-bold:     700;
 
-  /* === Shadow scale (WARM DAYLIGHT) ============================
-   * Paper in a sunlit room: soft warm-brown shadows, low alpha —
-   * never the pure-black glow of the dark era. The inset highlight
-   * is a white top edge (paper catching light). */
-  --shadow-subtle:  0 1px 2px rgb(90 70 40 / 0.07), 0 1px 1px rgb(90 70 40 / 0.05);
-  --shadow-card:    0 1px 3px rgb(90 70 40 / 0.10), 0 8px 24px rgb(90 70 40 / 0.07);
-  --shadow-overlay: 0 4px 12px rgb(90 70 40 / 0.14), 0 24px 56px rgb(70 50 25 / 0.20);
+  /* === Shadow scale (PLAYROOM MODERN) ==========================
+   * Structure over decoration: hairline defaults everywhere, one
+   * deliberate soft drop reserved for the video-card elevation
+   * (--shadow-overlay — clip playback, floating toasts/dialogs). */
+  --shadow-subtle:  0 1px 2px rgb(33 31 27 / 0.06), 0 1px 1px rgb(33 31 27 / 0.04);
+  --shadow-card:    0 1px 2px rgb(33 31 27 / 0.06), 0 4px 10px rgb(33 31 27 / 0.05);
+  --shadow-overlay: 0 14px 34px -16px rgb(33 31 27 / 0.35);
   /* Inset top-edge highlight — apply via `box-shadow: var(--shadow-card),
    * var(--shadow-card-inset)` for the paper-catching-light look. */
-  --shadow-card-inset: inset 0 1px 0 rgb(255 255 255 / 0.75);
+  --shadow-card-inset: inset 0 1px 0 rgb(255 255 255 / 0.6);
 
   /* === Motion ================================================= */
   --duration-fast: 80ms;
@@ -238,11 +226,12 @@
 }
 
 /* ============================================================
- * DARK THEME — "Sunroom at night" (redesign/warm-boutique, 2026-07-02)
+ * DARK THEME — "Playroom after dark" (redesign/playroom-modern, 2026-07-07)
  *
- * Same identity, lights off: deep warm charcoal (never blue-black),
- * parchment ink, marmalade retuned to its glow range, brass candle-
- * light. Applied via `data-theme="dark"` on <html>, which a tiny
+ * Same identity, lights off: warm charcoal (never blue-black), ink
+ * INVERTED (parchment fill, ink text — mechanism unchanged from
+ * Sunroom), identity hues brightened one step so they still read on
+ * charcoal. Applied via `data-theme="dark"` on <html>, which a tiny
  * pre-paint script in index.html resolves from localStorage pref
  * ('system' | 'light' | 'dark') + prefers-color-scheme BEFORE first
  * paint (no FOUC), and lib/theme.ts keeps live. CSS never reads the
@@ -257,52 +246,53 @@
  *  - THE INVERSION: --color-ink (primary-button fill) becomes
  *    parchment, --color-on-ink becomes ink. Components must paint
  *    button text with on-ink/on-accent, never text-white.
- * Contrast floors verified: text-primary ~13.6:1 on surface;
- * secondary ~8.6:1; tertiary ~5:1; accent text ~7:1 on bg;
- * on-accent ink ~6.3:1 on the accent fill.
  */
 :root[data-theme='dark'] {
-  --color-accent-subtle:  #3a2712;  /* selected chip bg — ember tint */
-  --color-accent-muted:   #7a4e1f;  /* active control bg + heatmap tier-2 — lighter than the light theme's inverse so the ramp climbs evenly to the #e08b3d tier-3 (was #58391a: a 4x luminance cliff) */
-  --color-accent-default: #e08b3d;  /* links, focus, accent text — glow range */
-  --color-accent-bright:  #f0a55f;  /* hover */
-  --color-accent-deep:    #f0a55f;  /* heatmap hottest tier — on dark the ramp
-                                       BRIGHTENS with heat (glow), so deep is
-                                       the lightest step; on-accent ink ~8:1 */
-
-  --color-ink:            #f0e6d4;  /* PRIMARY BUTTON FILL — parchment (inverted) */
-  --color-ink-hover:      #ddd0b8;
-  --color-on-ink:         #241c11;  /* text on the parchment fill */
-  --color-on-accent:      #241c11;
-
-  --color-brass-default:  #c9a24a;
-  --color-brass-bright:   #dbb75f;
-  --color-brass-subtle:   #33290f;
-  --color-brass-border:   color-mix(in srgb, var(--color-brass-default) 45%, transparent);
-
-  --color-bg:              #171310;  /* deep warm charcoal */
-  --color-surface:         #211b15;
-  --color-surface-raised:  #2b2319;
-  --color-surface-overlay: #211b15;
-  --color-border-subtle:   #382e20;
-  --color-border:          #4a3d29;
-  --color-border-strong:   #6b593c;
-
-  --color-text-primary:    #f0e6d4;
-  --color-text-secondary:  #c9b795;
-  --color-text-tertiary:   #9c8a68;
-  --color-text-disabled:   #5f5340;
-
-  --color-success:         #5ec27f;
-  --color-warning:         #e0b04f;
-  --color-danger:          #ef7a6d;
+  --color-bg:              #232019;
+  --color-surface:         #2c2820;
+  --color-surface-raised:  #37322a;
+  --color-surface-overlay: #2c2820;
+  --color-border-subtle:   #3a352b;
+  --color-border:          #453f33;
+  --color-border-strong:   #6a624f;
+  --color-text-primary:    #f1ede2;
+  --color-text-secondary:  #b5ad9c;
+  --color-text-tertiary:   #948c7a;
+  --color-text-disabled:   #6a624f;
+  --color-ink:             #f1ede2;  /* PRIMARY BUTTON FILL — parchment (inverted) */
+  --color-ink-hover:       #ffffff;
+  --color-on-ink:          #232019;  /* text on the parchment fill */
+  --color-accent-subtle:   #3a2c1e;
+  --color-accent-muted:    #4d3826;
+  --color-accent-default:  #f08536;
+  --color-accent-bright:   #ff9a4d;
+  --color-accent-deep:     #c25a12;
+  --color-on-accent:       #231a10;
+  --color-brass-default:   #a89a78;
+  --color-brass-bright:    #c4b48c;
+  --color-brass-subtle:    #37322a;
+  --color-brass-border:    color-mix(in srgb, var(--color-brass-default) 45%, transparent);
+  --color-success:         #4ade80;
+  --color-warning:         #fbbf24;
+  --color-danger:          #f87171;
   --color-danger-strong:   #dc2626;  /* fill w/ white text — works both themes */
-  --color-danger-muted:    color-mix(in srgb, var(--color-danger) 42%, transparent);
-                                     /* dark: the light theme's solid pale-pink
-                                        fence is ~1.4:1 on charcoal — use the
-                                        42% danger mix so the danger zone keeps
-                                        its border at night */
-  --color-info:            #a89478;
+  --color-danger-muted:    #4d2320;
+  --color-info:            #b5ad9c;
+
+  /* === Identity palette (Playroom after dark) — brightened one
+   * step so each hue still reads on charcoal; -soft mix % unchanged
+   * from light (recomputed automatically off the redefined bases). */
+  --color-id-panther:      #8f8ba0;
+  --color-id-mushu:        #f08536;
+  --color-id-coco:         #e8859e;
+  --color-id-person:       #6c8ff0;
+  --color-id-wheel-1:      #6c8ff0;
+  --color-id-wheel-2:      #2dd4bf;
+  --color-id-wheel-3:      #a78bfa;
+  --color-id-wheel-4:      #f472b6;
+  --color-id-wheel-5:      #4ade80;
+  --color-id-wheel-6:      #eab308;
+  --color-id-on:           #1c1913;
 
   --color-danger-bg:       color-mix(in srgb, var(--color-danger) 16%, transparent);
   --color-danger-bg-strong: color-mix(in srgb, var(--color-danger) 26%, transparent);
@@ -316,13 +306,13 @@
   --color-accent-border:   color-mix(in srgb, var(--color-accent-default) 50%, transparent);
   --color-surface-scrim:   color-mix(in srgb, var(--color-surface) 92%, transparent);
 
-  --color-skeleton:        #241d15;
-  --color-skeleton-strong: #2e251a;
+  --color-skeleton:        #302a1e;
+  --color-skeleton-strong: #3a3223;
 
   --shadow-subtle:  0 1px 2px rgb(0 0 0 / 0.30), 0 1px 1px rgb(0 0 0 / 0.18);
   --shadow-card:    0 2px 4px rgb(0 0 0 / 0.38), 0 8px 24px rgb(0 0 0 / 0.28);
-  --shadow-overlay: 0 6px 16px rgb(0 0 0 / 0.45), 0 32px 72px rgb(0 0 0 / 0.55);
-  --shadow-card-inset: inset 0 1px 0 rgb(240 230 212 / 0.05);
+  --shadow-overlay: 0 14px 34px -16px rgb(0 0 0 / 0.55);
+  --shadow-card-inset: inset 0 1px 0 rgb(241 237 226 / 0.05);
 }
 
 /* Native form controls + browser UI (scrollbars, inputs) follow the
