@@ -56,7 +56,7 @@
   /* Brand accent (MARMALADE — the cats' collective hue, Mushu's coat) */
   --color-accent-subtle:  #fceadd;
   --color-accent-muted:   #f6d5bc;
-  --color-accent-default: #c25a12;  /* links, focus ring — 4.6:1 on surface */
+  --color-accent-default: #b3540b;  /* links, focus ring — ~4.9:1 on surface */
   --color-accent-bright:  #e5701f;
   --color-accent-deep:    #8f3f0a;
 
@@ -100,7 +100,7 @@
    * Every hue ≥4.5:1 as text on --color-surface; -soft is the 14%
    * card-tint; --color-id-on is the text color on a full id fill. */
   --color-id-panther:      #34323a;
-  --color-id-mushu:        #c25a12;   /* shares the accent hue by design */
+  --color-id-mushu:        #b3540b;   /* shares the accent hue by design */
   --color-id-coco:         #c04f70;
   --color-id-person:       #2f5fe0;
   --color-id-wheel-1:      #2f5fe0;   /* cobalt   */

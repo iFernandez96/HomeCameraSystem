@@ -79,6 +79,22 @@ describe('design-system contrast pins (iter-356.65 slice A)', () => {
     expect(ratio).toBeGreaterThanOrEqual(7)
   })
 
+  it('Given the marmalade accent and paper surface, When contrast is computed, Then it meets AA floor at ≥4.5:1', () => {
+    // arrange — redesign/playroom-modern (2026-07-07): accent color
+    // retuned to clear WCAG AA link-text contrast on the light surface
+    // (#b3540b on #fffdf7 ≈ 4.9:1).
+    const accent = readToken('--color-accent-default')
+    const surface = readToken('--color-surface')
+
+    // act
+    const ratio = contrast(accent, surface)
+
+    // assert
+    expect(accent.toLowerCase()).toBe('#b3540b')
+    expect(surface.toLowerCase()).toBe('#fffdf7')
+    expect(ratio).toBeGreaterThanOrEqual(4.5)
+  })
+
   it('Given the typography scale, When mobile floors are read, Then --text-base is 16px and --text-sm is 14px', () => {
     // arrange — the iOS-zoom-suppression floor lives in the token,
     // not per-input. Pin it so a future drift can't sneak inputs
