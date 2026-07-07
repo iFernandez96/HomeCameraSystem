@@ -184,7 +184,7 @@ export function Login() {
           <h1 className="font-display text-4xl font-bold text-[var(--color-text-primary)] tracking-tight">
             HomeCam
           </h1>
-          <p className="font-display italic text-base text-[var(--color-text-secondary)] mt-2 max-w-xs">
+          <p className="font-display text-base text-[var(--color-text-secondary)] mt-2 max-w-xs">
             Panther, Mushu &amp; Coco are watching the door.
           </p>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold mt-3">
@@ -218,7 +218,9 @@ export function Login() {
               // iter-271 a11y: tie inputs to the role="alert" error region
               // so NVDA reads field+error together, not separately.
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'login-error' : undefined}
+              aria-describedby={
+                error ? 'username-hint login-error' : 'username-hint'
+              }
               className="bg-transparent text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
             />
           </label>
@@ -250,7 +252,15 @@ export function Login() {
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-r-lg transition-colors duration-150"
+                // Sunroom hit-area fix: the input's own line-box is well
+                // under 44px, so anchoring the button with inset-y-0
+                // (stretched to that line height) shrank the real tap
+                // target to ~24px. Centering an explicit 44x44 box on
+                // the input row instead (parts.tsx Toggle's h/w-fixed
+                // pattern) — the surrounding label is tall enough that
+                // this never clips against the shared bar's
+                // overflow-hidden edge.
+                className="absolute right-0 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-r-lg transition-colors duration-150"
               >
                 {showPassword ? (
                   <svg
@@ -287,7 +297,7 @@ export function Login() {
             </div>
           </label>
         </div>
-        <p className="text-xs text-[var(--color-text-tertiary)] -mt-1 mb-4 px-1">
+        <p id="username-hint" className="text-xs text-[var(--color-text-tertiary)] -mt-1 mb-4 px-1">
           Created when HomeCam was first set up.
         </p>
 

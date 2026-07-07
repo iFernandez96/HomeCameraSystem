@@ -162,10 +162,18 @@ function AppShell() {
         // fill it, the "horrible bottom space" report. Desktop (lg+)
         // keeps the original pb-6 because lg has no BottomNav and
         // the SideRail handles nav.
+        // Fix 9 (BottomNav clearance, Playroom Modern pebble nav):
+        // base term bumped 5rem(80px)->6rem(96px). The pebble's real
+        // footprint (BottomNav.tsx) is margin-bottom 0.875rem(14px)
+        // + pill box ~76px (py-2 16 + border 3 + NavLink py-1.5 12 +
+        // icon h-7 28 + gap-0.5 2 + text-xs label line ~15) ≈ 90px —
+        // the old 80px reserve let the pill overlap the last ~10px
+        // of scrollable content. Keep this comment + BottomNav.tsx's
+        // in sync if either changes.
         className={`flex-1 overflow-y-auto overscroll-y-contain ${
           isWatchRoute
-            ? 'pb-[calc(5rem+env(safe-area-inset-bottom)+7.5rem)]'
-            : 'pb-[calc(5rem+env(safe-area-inset-bottom))]'
+            ? 'pb-[calc(6rem+env(safe-area-inset-bottom)+7.5rem)]'
+            : 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
         } lg:pb-6 w-full ${
           showShell ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)]' : ''
         }`}

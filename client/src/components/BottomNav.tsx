@@ -46,6 +46,14 @@ export function BottomNav() {
       // reports. On Android (inset 0) this collapses to exactly the
       // 14px spec clearance; on a notched iPhone it lifts the whole
       // pill further above the home-indicator strip.
+      // Fix 9 (clearance verification): this pill's real footprint —
+      // mb-3.5 (14px) + border (3px) + py-2 (16px) + NavLink's
+      // py-1.5 (12px) + icon h-7 (28px) + gap-0.5 (2px) + the
+      // text-xs label line (~15px) — is ~90px, not the 76px a naive
+      // "5rem + strip" estimate suggests. App.tsx's <main> pb was
+      // bumped 5rem->6rem (96px) to keep ~6px of breathing room
+      // above this pill instead of a ~10px overlap. Keep both
+      // comments in sync if this bar's classes change.
       className="fixed bottom-0 inset-x-0 z-10 mx-3.5 mb-[calc(0.875rem+env(safe-area-inset-bottom,0px))] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-scrim)] backdrop-blur px-2.5 py-2 shadow-[0_10px_24px_-14px_rgb(33_31_27/0.35)]"
     >
       {/* Premium-launch slice (mobile-view-auditor A2): lateral

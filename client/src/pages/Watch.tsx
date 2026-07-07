@@ -162,7 +162,9 @@ export function Watch() {
     if (events == null) return 'Loading…'
     const persons = events.filter((e) => e.label === 'person').length
     const cats = events.filter((e) => e.label === 'cat').length
-    return `${persons} person · ${cats} cat sightings`
+    const personWord = persons === 1 ? 'person' : 'people'
+    const catWord = cats === 1 ? 'cat sighting' : 'cat sightings'
+    return `${persons} ${personWord} · ${cats} ${catWord}`
   }, [events])
 
   // ESC exits full screen; body scroll locks while full so the page
@@ -224,7 +226,7 @@ export function Watch() {
               // max-h guards short-viewport landscape. Playroom tile
               // grammar: rounded card + shadow, matching Task 3's
               // other card surfaces.
-              'relative w-full aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-card)] bg-black overflow-hidden'
+              'relative w-full aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden'
         }
       >
         <div className="relative flex-1 min-h-0">
@@ -341,13 +343,13 @@ export function Watch() {
           <p className="text-[17px] font-extrabold tracking-tight">
             {watching ? 'Watching' : 'Paused'}
           </p>
-          <p className="text-[10.5px] font-semibold opacity-70">{watchingDetail}</p>
+          <p className="text-xs font-semibold">{watchingDetail}</p>
         </div>
         <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
           <p className="text-[17px] font-extrabold tracking-tight text-[var(--color-text-primary)]">
             {todayCount} today
           </p>
-          <p className="text-[10.5px] font-semibold text-[var(--color-text-secondary)]">
+          <p className="text-xs font-semibold text-[var(--color-text-secondary)]">
             {todayBreakdown}
           </p>
         </div>
@@ -395,7 +397,7 @@ function TodayTimeline({
         <button
           type="button"
           onClick={() => navigate('/events')}
-          className="text-xs font-semibold text-[var(--color-accent-default)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+          className="text-xs font-semibold text-[var(--color-accent-deep)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
         >
           Full history →
         </button>
@@ -495,7 +497,7 @@ function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
             />
           ))}
         </button>
-        <span className="flex-none text-[11px] font-extrabold tracking-wider text-[#ff8d84] bg-[rgba(255,90,78,0.18)] ring-1 ring-[rgba(255,90,78,0.5)] px-2.5 py-1 rounded-full">
+        <span className="flex-none text-[11px] font-extrabold tracking-wider text-[var(--color-danger)] bg-[var(--color-danger-bg)] ring-1 ring-[var(--color-danger-border)] px-2.5 py-1 rounded-full">
           ● LIVE
         </span>
       </div>

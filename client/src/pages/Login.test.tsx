@@ -62,6 +62,22 @@ describe('Login page', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
+  // Fix 7 (accessibility-auditor): the "Created when HomeCam was
+  // first set up." helper text sat next to the username field with
+  // no aria wiring — a screen-reader user tabbing to the field never
+  // heard it.
+  it('given no error, when the username field renders, then its helper text is tied via aria-describedby (fix 7)', () => {
+    // arrange / act
+    renderLogin()
+    const usernameInput = screen.getByLabelText(/username/i)
+
+    // assert
+    expect(usernameInput).toHaveAttribute('aria-describedby', 'username-hint')
+    expect(document.getElementById('username-hint')).toHaveTextContent(
+      /created when homecam was first set up/i,
+    )
+  })
+
   it('redirects to /live if user is already authed', () => {
     _authState = 'authed'
     renderLogin()
@@ -142,6 +158,19 @@ describe('Login page', () => {
     expect(
       screen.getByRole('button', { name: /hide password/i }),
     ).toBeInTheDocument()
+  })
+
+  // Fix 8 (mobile-view-auditor): the toggle's tap target had collapsed
+  // to the input's line-box (~24px) via `inset-y-0` on a short parent.
+  // Pins the parts.tsx Toggle pattern of an explicit ≥44px box.
+  it('given the show-password button renders, then its box is at least 44px tall (fix 8)', () => {
+    // arrange / act
+    renderLogin()
+    const toggle = screen.getByRole('button', { name: /show password/i })
+
+    // assert
+    expect(toggle.className).toMatch(/\bh-11\b/)
+    expect(toggle.className).toMatch(/\bw-11\b/)
   })
 
   // iter-356.5 a11y Top 2: Caps Lock persistent live-region slot.
