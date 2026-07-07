@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Landscape-pass (2026-07-07): a phone rotated sideways is well
+ * BELOW the `lg:` breakpoint (a Galaxy S24 Ultra in landscape is
+ * ~980px CSS width, `lg:` starts at 1024px) — real-device screenshots
+ * confirmed every page still renders its tall-narrow portrait layout
+ * sideways: the floating pebble BottomNav sits mid-viewport ON TOP of
+ * content, and single-column stacks waste the short-wide aspect.
+ * `landscape-phone:` targets exactly that shape — landscape AND short
+ * (a rotated phone/small tablet), not a landscape laptop/desktop
+ * (those are `orientation: landscape` too, but tall enough — >520px —
+ * to fall through untouched, same as `lg:` already handles them). Not
+ * a Tailwind default breakpoint (those are width-only); this is an
+ * explicit orientation+height compound condition, hence the custom
+ * variant per the Tailwind v4 arbitrary-media escape hatch. */
+@custom-variant landscape-phone (@media (orientation: landscape) and (max-height: 520px));
+
 /* Premium-launch slice — self-hosted variable fonts.
  *
  * Originally these declarations were routed through a static

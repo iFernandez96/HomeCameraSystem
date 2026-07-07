@@ -144,18 +144,21 @@ export function Login() {
             opacity, 0 offset) state instantly. Reuses the
             `login-fade-in` keyframe already defined in index.css
             (also respected by the global reduced-motion clamp
-            there) rather than introducing a parallel one. */}
+            there) rather than introducing a parallel one.
+            Landscape pass (Task 3): BrandMarkRow now renders raster
+            `<img>` marks (real cat-face photos) instead of inline
+            `<svg>` glyphs — selector updated to match. */}
         <style>{`
           @media (prefers-reduced-motion: no-preference) {
-            .login-brand-stagger svg:nth-of-type(1) {
+            .login-brand-stagger img:nth-of-type(1) {
               animation: login-fade-in 300ms var(--ease-out, cubic-bezier(0,0,0.2,1)) both;
               animation-delay: 0ms;
             }
-            .login-brand-stagger svg:nth-of-type(2) {
+            .login-brand-stagger img:nth-of-type(2) {
               animation: login-fade-in 300ms var(--ease-out, cubic-bezier(0,0,0.2,1)) both;
               animation-delay: 90ms;
             }
-            .login-brand-stagger svg:nth-of-type(3) {
+            .login-brand-stagger img:nth-of-type(3) {
               animation: login-fade-in 300ms var(--ease-out, cubic-bezier(0,0,0.2,1)) both;
               animation-delay: 180ms;
             }

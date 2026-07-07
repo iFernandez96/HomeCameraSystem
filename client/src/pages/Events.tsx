@@ -925,8 +925,17 @@ export function Events() {
         ref={headerRef}
         className="bg-[var(--color-bg)] border-b border-[var(--color-border)]"
       >
-        <div className="px-4 pt-2 pb-2">
-        <div className="lg:max-w-6xl lg:mx-auto flex items-center justify-between gap-3">
+        {/* Landscape pass (Task 1): on a landscape phone (below `lg:`,
+            so the desktop `lg:max-w-6xl` centering doesn't kick in
+            yet) the filters/HourBand band used to run full-bleed
+            edge-to-edge on a ~980px-wide short viewport — combined
+            with the (now-fixed) nav overlay, real-device feedback
+            called this "huge wasted horizontal space." Centering at a
+            reader-friendly max-width mirrors the `lg:` treatment one
+            breakpoint early instead of forcing a bespoke two-column
+            filter layout. */}
+        <div className="px-4 pt-2 pb-2 landscape-phone:pt-1.5 landscape-phone:pb-1.5">
+        <div className="lg:max-w-6xl lg:mx-auto landscape-phone:max-w-2xl landscape-phone:mx-auto flex items-center justify-between gap-3">
           {/* iter-356.58 (LAYOUT REBUILD): killed the page-title
               H1 with PawMark. The WatchRibbon already says where
               you are; the day-headers further down ("Today's log")
@@ -1252,7 +1261,12 @@ export function Events() {
         onClick={() => setCalendarOpen((v) => !v)}
         aria-label={calendarOpen ? 'Hide calendar' : 'Show calendar'}
         aria-pressed={calendarOpen}
-        className={`lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+12px)] right-3 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+        // Landscape pass: this offset reserves room for the OLD
+        // bottom-docked pebble nav. `landscape-phone:` docks the nav
+        // as a LEFT rail instead (BottomNav.tsx) — nothing sits at
+        // the bottom edge there, so the FAB can sit close to it
+        // instead of floating ~92px up with a big dead gap below.
+        className={`lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+12px)] landscape-phone:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] right-3 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
           calendarOpen
             ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-2 ring-[var(--color-accent-border)]'
             : 'bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
@@ -1277,7 +1291,7 @@ export function Events() {
           scrolling that day's cards). Calendar-toggle button on the
           header stays visible only on mobile (lg:hidden) — desktop
           users see the heatmap permanently in the rail. */}
-      <div className="lg:max-w-6xl lg:mx-auto lg:flex lg:items-start lg:gap-4 lg:px-4">
+      <div className="lg:max-w-6xl lg:mx-auto lg:flex lg:items-start lg:gap-4 lg:px-4 landscape-phone:max-w-2xl landscape-phone:mx-auto landscape-phone:px-4">
         <div className="flex-1 min-w-0">
           {/* iter-356.62 (bug #3 — user "calendar should anchor itself
               to the top no matter where they are when they are scrolled
@@ -1327,7 +1341,7 @@ export function Events() {
                   (nothing to show yet, and the sleeping-cat empty
                   state below already communicates that). */}
               {!selectedDay && events.length > 0 && (
-                <div className="card-paper px-2.5 py-3 mx-4 lg:mx-0 mb-3">
+                <div className="card-paper px-2.5 py-3 mx-4 lg:mx-0 landscape-phone:mx-0 mb-3">
                   <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
                     Today, hour by hour
                   </h2>
@@ -1343,7 +1357,7 @@ export function Events() {
                 <div
                   role="region"
                   aria-label="Bulk selection actions"
-                  className="sticky top-[var(--day-header-top,4rem)] z-20 mb-2 mx-4 lg:mx-0 px-3 py-2 rounded-xl bg-[var(--color-accent-subtle)] border border-[var(--color-accent-border)] flex items-center justify-between gap-3 shadow-[var(--shadow-subtle)]"
+                  className="sticky top-[var(--day-header-top,4rem)] z-20 mb-2 mx-4 lg:mx-0 landscape-phone:mx-0 px-3 py-2 rounded-xl bg-[var(--color-accent-subtle)] border border-[var(--color-accent-border)] flex items-center justify-between gap-3 shadow-[var(--shadow-subtle)]"
                 >
                   <span className="text-sm font-semibold text-[var(--color-accent-default)] tabular-nums">
                     {selectedIds.size === 0

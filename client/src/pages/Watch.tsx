@@ -242,10 +242,30 @@ export function Watch() {
   }
 
   return (
-    <div className="flex flex-col">
+    // Landscape pass (Task 1): a phone rotated sideways is short-wide
+    // — real-device screenshots showed this whole page still stacking
+    // portrait-style (video on top, glance cards + timeline below),
+    // which left the video letterboxed to a thin strip and pushed the
+    // timeline mostly off-screen. `landscape-phone:` reflows into a
+    // TWO-PANE layout: video docks in the left ~58% column at full
+    // available height, the header/glance/timeline share a right
+    // column that scrolls independently. The `full` (fullscreen)
+    // branch below is untouched — it's already a `fixed inset-0`
+    // overlay that ignores this grid entirely, and the docked-vs-full
+    // CSS-only toggle on the SAME container (so VideoTile never
+    // remounts) is preserved.
+    <div className="flex flex-col landscape-phone:grid landscape-phone:grid-cols-[58%_1fr] landscape-phone:grid-rows-[auto_1fr] landscape-phone:h-[100dvh] landscape-phone:overflow-hidden">
+      {/* landscape-phone height note: the WatchRibbon is hidden on
+          this route on mobile (App.tsx `isWatchRoute` branch), so
+          nothing else claims vertical space above this grid on a
+          landscape phone — `100dvh` is the right target. If a
+          ConnectionBanner is showing, `<main>`'s own
+          `overflow-y-auto` is the fallback scroll (this grid's
+          internal right-pane scroll degrades to page-level scroll in
+          that edge case, which is acceptable). */}
       {/* ============ PAGE HEADER ============ */}
-      <header className="px-4 pt-4 pb-1 flex items-center justify-between gap-3">
-        <h1 className="page-title text-2xl text-[var(--color-text-primary)]">
+      <header className="px-4 pt-4 pb-1 flex items-center justify-between gap-3 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:px-3 landscape-phone:pt-2 landscape-phone:pb-1">
+        <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
           Home
         </h1>
         <BrandMarkRow size={28} />
@@ -262,7 +282,14 @@ export function Watch() {
               // max-h guards short-viewport landscape. Playroom tile
               // grammar: rounded card + shadow, matching Task 3's
               // other card surfaces.
-              'relative w-full aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden'
+              // landscape-phone: the docked tile becomes the LEFT
+              // PANE at full pane height instead of a capped 16:9
+              // strip — `aspect-auto`/`max-h-none`/`h-full` win over
+              // the base `aspect-video`/`max-h-[48dvh]` (same
+              // technique as the `lg:` overrides elsewhere in this
+              // codebase — later media-scoped rule wins at equal
+              // specificity).
+              'relative w-full aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3'
         }
       >
         <div className="relative flex-1 min-h-0">
@@ -397,41 +424,50 @@ export function Watch() {
         )}
       </div>
 
-      {/* ============ GLANCE ROW ============ */}
-      <div className="mx-4 mt-3.5 flex gap-2.5">
-        <div
-          className={`flex-1 rounded-[var(--radius-xl)] px-3 py-2.5 ${
-            unhealthy
-              ? 'bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
-              : 'bg-[var(--color-ink)] text-[var(--color-on-ink)]'
-          }`}
-        >
-          <p className="text-[17px] font-extrabold tracking-tight">
-            {offline ? 'Offline' : watching ? 'Watching' : 'Paused'}
-          </p>
-          {/* Final whole-branch review fix batch #6: text-xs resolves to
-              11px in this theme — a hair too small for the accepted
-              12.5px detail size. Arbitrary value pins the exact px. */}
-          <p className="text-[12.5px] font-semibold">{watchingDetail}</p>
+      {/* landscape-phone: glance cards + today's story share the
+          RIGHT pane and scroll independently of the (now full-height)
+          video pane on the left — this wrapper only takes effect at
+          that breakpoint (`contents` elsewhere, so it doesn't add an
+          extra scroll container / DOM landmark on portrait or
+          desktop, where these two sections already flow normally in
+          the page's own scroll). */}
+      <div className="contents landscape-phone:flex landscape-phone:flex-col landscape-phone:col-start-2 landscape-phone:row-start-2 landscape-phone:min-h-0 landscape-phone:overflow-y-auto">
+        {/* ============ GLANCE ROW ============ */}
+        <div className="mx-4 mt-3.5 flex gap-2.5 landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:flex-col landscape-phone:gap-2">
+          <div
+            className={`flex-1 rounded-[var(--radius-xl)] px-3 py-2.5 ${
+              unhealthy
+                ? 'bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
+                : 'bg-[var(--color-ink)] text-[var(--color-on-ink)]'
+            }`}
+          >
+            <p className="text-[17px] font-extrabold tracking-tight">
+              {offline ? 'Offline' : watching ? 'Watching' : 'Paused'}
+            </p>
+            {/* Final whole-branch review fix batch #6: text-xs resolves to
+                11px in this theme — a hair too small for the accepted
+                12.5px detail size. Arbitrary value pins the exact px. */}
+            <p className="text-[12.5px] font-semibold">{watchingDetail}</p>
+          </div>
+          <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
+            <p className="text-[17px] font-extrabold tracking-tight text-[var(--color-text-primary)]">
+              {todayCount} today
+            </p>
+            <p className="text-[12.5px] font-semibold text-[var(--color-text-secondary)]">
+              {todayBreakdown}
+            </p>
+          </div>
         </div>
-        <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
-          <p className="text-[17px] font-extrabold tracking-tight text-[var(--color-text-primary)]">
-            {todayCount} today
-          </p>
-          <p className="text-[12.5px] font-semibold text-[var(--color-text-secondary)]">
-            {todayBreakdown}
-          </p>
-        </div>
-      </div>
 
-      {/* ============ TODAY'S STORY ============ */}
-      <TodayTimeline
-        events={events}
-        quietSince={quietSince}
-        error={error}
-        onOpen={setOpenEvent}
-        nowMs={nowMs}
-      />
+        {/* ============ TODAY'S STORY ============ */}
+        <TodayTimeline
+          events={events}
+          quietSince={quietSince}
+          error={error}
+          onOpen={setOpenEvent}
+          nowMs={nowMs}
+        />
+      </div>
 
       {previewUrl && (
         <SnapshotPreview url={previewUrl} onClose={() => setPreviewUrl(null)} />

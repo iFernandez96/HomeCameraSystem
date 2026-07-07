@@ -130,4 +130,19 @@ describe('BottomNav', () => {
       /padding-right:\s*max\(0px,\s*env\(safe-area-inset-right\)\)/,
     )
   })
+
+  it('GIVEN the nav renders WHEN in landscape-phone THEN it carries the left-rail dock classes instead of only bottom-pebble ones (landscape pass Task 1)', () => {
+    // arrange / act — real-device screenshots (Galaxy S24 Ultra
+    // landscape, below `lg:`) showed the floating pebble bar
+    // rendering mid-viewport on top of content. The fix docks it as
+    // a left rail via the `landscape-phone:` custom variant; pin the
+    // class shape so a future edit can't silently drop it.
+    renderAt('/')
+    const nav = screen.getByRole('navigation', { name: /bottom navigation/i })
+
+    // assert
+    expect(nav.className).toMatch(/landscape-phone:left-0/)
+    expect(nav.className).toMatch(/landscape-phone:w-16/)
+    expect(nav.className).toMatch(/landscape-phone:top-0/)
+  })
 })

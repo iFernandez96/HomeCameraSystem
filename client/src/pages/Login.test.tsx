@@ -281,18 +281,25 @@ describe('Login page', () => {
 
   // Playroom Modern (Task 9): the Login hero brand mark switched from
   // a raster CatTrioMark PNG stitch to <BrandMarkRow>, drawn from the
-  // shared WhoMark identity system (inline SVG, no image network
-  // request to prioritize). Pin the new shape instead of the old
-  // eager/fetchpriority image contract, which no longer applies.
-  it('given the Login hero renders, then the BrandMarkRow shows all three cat marks (Task 9)', () => {
+  // shared WhoMark identity system.
+  // Landscape pass (Task 3): BrandMarkRow itself swapped from the
+  // geometric eared-square glyph back to real cat-face photography
+  // (`public/cats/{cat}-face.png`) — pin the raster <img> shape.
+  it('given the Login hero renders, then the BrandMarkRow shows all three real cat face photos (Task 9)', () => {
     // arrange / act
     renderLogin()
     const trio = screen.getByRole('img', {
       name: /panther, mushu and coco/i,
     })
 
-    // assert — three inline SVG marks, one per brand cat.
-    expect(trio.querySelectorAll('svg').length).toBe(3)
+    // assert — three raster face photos, one per brand cat.
+    const imgs = trio.querySelectorAll('img')
+    expect(imgs.length).toBe(3)
+    expect(Array.from(imgs).map((i) => i.getAttribute('src'))).toEqual([
+      '/cats/panther-face.png',
+      '/cats/mushu-face.png',
+      '/cats/coco-face.png',
+    ])
   })
 
   // Playroom Modern (Task 9): the three marks stagger in (0/90/180ms)

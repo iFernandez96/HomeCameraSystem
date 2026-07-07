@@ -54,7 +54,17 @@ export function BottomNav() {
       // bumped 5rem->6rem (96px) to keep ~6px of breathing room
       // above this pill instead of a ~10px overlap. Keep both
       // comments in sync if this bar's classes change.
-      className="fixed bottom-0 inset-x-0 z-10 mx-3.5 mb-[calc(0.875rem+env(safe-area-inset-bottom,0px))] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-scrim)] backdrop-blur px-2.5 py-2 shadow-[0_10px_24px_-14px_rgb(33_31_27/0.35)]"
+      // Landscape pass: real-device screenshots (Galaxy S24 Ultra,
+      // ~980px CSS width in landscape — below `lg:`) showed this
+      // floating pebble rendering mid-viewport ON TOP of the video
+      // card / filter chips, since the portrait bottom-bar layout
+      // doesn't reflow for short-wide screens. `landscape-phone:`
+      // docks it as a compact LEFT RAIL instead — same grammar as the
+      // desktop SideRail (vertical icon stack, edge-anchored, content
+      // never sits under it). Overridden dimensions: bottom-anchored
+      // classes (inset-x-0/mx-3.5/mb-[...]/rounded-full) give way to
+      // left-anchored ones (top-0/bottom-0/left-0/w-16/rounded-[...]).
+      className="fixed bottom-0 inset-x-0 z-10 mx-3.5 mb-[calc(0.875rem+env(safe-area-inset-bottom,0px))] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-scrim)] backdrop-blur px-2.5 py-2 shadow-[0_10px_24px_-14px_rgb(33_31_27/0.35)] landscape-phone:top-0 landscape-phone:bottom-0 landscape-phone:left-0 landscape-phone:right-auto landscape-phone:inset-x-auto landscape-phone:mx-0 landscape-phone:mb-0 landscape-phone:my-3 landscape-phone:ml-[max(0.75rem,env(safe-area-inset-left,0px))] landscape-phone:w-16 landscape-phone:rounded-[1.75rem] landscape-phone:px-1.5 landscape-phone:py-3"
     >
       {/* Premium-launch slice (mobile-view-auditor A2): lateral
           safe-area inset on the inner tab strip in landscape. Pre-
@@ -70,7 +80,7 @@ export function BottomNav() {
           targets to the safe inner band. Android (zero insets) is
           unchanged. */}
       <div
-        className="flex"
+        className="flex landscape-phone:flex-col landscape-phone:h-full landscape-phone:justify-center landscape-phone:gap-1"
         style={{
           // `max(0px, env(...))` instead of bare `env(...)` so jsdom's
           // CSSStyleDeclaration accepts the value (it parses `max(...)`
@@ -98,7 +108,7 @@ export function BottomNav() {
             // bar's rounded-full language. overflow-hidden still
             // contains the press ripple.
             className={({ isActive }) =>
-              `relative overflow-hidden flex-1 py-1.5 flex flex-col items-center gap-0.5 text-xs rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
+              `relative overflow-hidden flex-1 landscape-phone:flex-none landscape-phone:w-full py-1.5 flex flex-col items-center gap-0.5 text-xs landscape-phone:text-[9px] rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
                 isActive
                   ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] font-semibold'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
@@ -108,10 +118,10 @@ export function BottomNav() {
           >
             {({ isActive }) => (
               <>
-                <span className="flex items-center justify-center w-14 h-7">
+                <span className="flex items-center justify-center w-14 landscape-phone:w-8 h-7">
                   <t.icon active={isActive} />
                 </span>
-                <span>{t.label}</span>
+                <span className="landscape-phone:leading-tight landscape-phone:text-center">{t.label}</span>
               </>
             )}
           </NavLink>

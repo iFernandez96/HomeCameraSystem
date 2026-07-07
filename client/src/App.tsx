@@ -170,12 +170,22 @@ function AppShell() {
         // the old 80px reserve let the pill overlap the last ~10px
         // of scrollable content. Keep this comment + BottomNav.tsx's
         // in sync if either changes.
+        // Landscape pass: `landscape-phone:` docks BottomNav as a
+        // left rail (see BottomNav.tsx), so the bottom-clearance
+        // padding this main column reserves on portrait mobile is
+        // wrong there — it would leave a huge dead band at the
+        // bottom AND let content run under the rail on the left.
+        // Swap to a left-clearance reservation instead (mirrors the
+        // `lg:ml-16` desktop-rail offset below, gated the same way
+        // on `showShell` since the rail only renders when it does).
         className={`flex-1 overflow-y-auto overscroll-y-contain ${
           isWatchRoute
             ? 'pb-[calc(6rem+env(safe-area-inset-bottom)+7.5rem)]'
             : 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
-        } lg:pb-6 w-full ${
-          showShell ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)]' : ''
+        } lg:pb-6 landscape-phone:pb-0 w-full ${
+          showShell
+            ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100vw-5rem-env(safe-area-inset-left))]'
+            : ''
         }`}
         style={
           {
@@ -253,7 +263,15 @@ function AppShell() {
                 </RequireAuth>
               }
             />
-            <Route path="*" element={<Navigate to="/live" replace />} />
+            {/* Landscape pass (Task 2): confirmed on a real device
+                that a stale/unknown deep link (e.g. an old /live
+                bookmark from before iter-356's structural overhaul,
+                or any typo'd path) rendered a BLANK page — no route
+                matched, <Routes> renders nothing. Catch-all sends
+                unknown paths straight to Home; RequireAuth on `/`
+                still gates to /login for an anon session, so this
+                never leaks protected content. */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           </Suspense>
         </div>
@@ -262,9 +280,14 @@ function AppShell() {
           covers desktop. Login also hides it. */}
       {showShell && (
         <>
+          {/* Landscape pass: this bottom-fade cue exists to soften
+              content scrolling under the floating pebble BottomNav —
+              on `landscape-phone:` the nav docks as a left rail
+              instead (nothing sits at the bottom edge), so the fade
+              would just be a stray band. */}
           <div
             aria-hidden="true"
-            className="pointer-events-none fixed inset-x-0 bottom-[calc(5.625rem+env(safe-area-inset-bottom,0px))] z-[9] h-7 lg:hidden"
+            className="pointer-events-none fixed inset-x-0 bottom-[calc(5.625rem+env(safe-area-inset-bottom,0px))] z-[9] h-7 lg:hidden landscape-phone:hidden"
             style={{
               background:
                 'linear-gradient(to top, var(--color-bg), transparent)',
