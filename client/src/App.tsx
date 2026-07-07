@@ -302,19 +302,13 @@ function AppShell() {
           covers desktop. Login also hides it. */}
       {showShell && (
         <>
-          {/* Landscape pass: this bottom-fade cue exists to soften
-              content scrolling under the floating pebble BottomNav —
-              on `landscape-phone:` the nav docks as a left rail
-              instead (nothing sits at the bottom edge), so the fade
-              would just be a stray band. */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none fixed inset-x-0 bottom-[calc(5.625rem+env(safe-area-inset-bottom,0px))] z-[9] h-7 lg:hidden landscape-phone:hidden"
-            style={{
-              background:
-                'linear-gradient(to top, var(--color-bg), transparent)',
-            }}
-          />
+          {/* The bottom-fade band that used to sit here (scroll-under
+              softener above the pebble bar) is GONE — user-reported
+              2026-07-07: in dark theme the gradient strip read as a
+              black band with a hard clipped edge over the nav ("janky
+              ... looks like it is clipping"). The floating pill reads
+              fine over scrolling content without it; don't re-add a
+              full-width fade behind a non-full-width rounded nav. */}
           <div className="lg:hidden">
             <BottomNav />
           </div>

@@ -605,6 +605,43 @@ describe('VideoTile', () => {
     else delete proto.requestFullscreen
   })
 
+  it('Given a standalone VideoTile, When rendered with defaults, Then the bbox toggle and the native fullscreen button are siblings inside one corner row (control-overlap fix)', () => {
+    // arrange / act
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(<VideoTile src="http://test/cam/whep" />)
+
+    // assert — both live inside the same flex row container, so
+    // there's exactly one owner of the docked corner (not two
+    // independently-positioned absolute pieces that could overlap).
+    const bboxToggle = screen.getByRole('button', { name: /detection boxes/i })
+    const fullscreenBtn = screen.getByRole('button', { name: /enter fullscreen/i })
+    expect(bboxToggle.parentElement).toBe(fullscreenBtn.parentElement)
+  })
+
+  it('Given a caller passes actions + showFullscreenButton=false, When rendered, Then the actions render inside the row and the native fullscreen button is omitted (control-overlap fix)', () => {
+    // arrange / act
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(
+      <VideoTile
+        src="http://test/cam/whep"
+        showFullscreenButton={false}
+        actions={
+          <button type="button" aria-label="caller action">
+            caller action
+          </button>
+        }
+      />,
+    )
+
+    // assert
+    const callerBtn = screen.getByRole('button', { name: 'caller action' })
+    const bboxToggle = screen.getByRole('button', { name: /detection boxes/i })
+    expect(callerBtn.parentElement).toBe(bboxToggle.parentElement)
+    expect(
+      screen.queryByRole('button', { name: /enter fullscreen|exit fullscreen/i }),
+    ).not.toBeInTheDocument()
+  })
+
   // iter-277 (functionality-auditor #3): visibility-resume retry +
   // network-online retry. BDD-lite naming, AAA structure.
 

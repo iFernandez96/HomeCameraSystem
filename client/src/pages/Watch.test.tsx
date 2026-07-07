@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import type { DetectionEvent } from '../lib/types'
 
 // ── Mock surface ─────────────────────────────────────────────────
@@ -37,10 +38,14 @@ vi.mock('../components/VideoTile', () => ({
     fit,
     showStatusPill,
     onPlayingChange,
+    actions,
+    showFullscreenButton,
   }: {
     fit?: string
     showStatusPill?: boolean
     onPlayingChange?: (playing: boolean) => void
+    actions?: ReactNode
+    showFullscreenButton?: boolean
   }) => (
     <div
       data-testid="video-tile-stub"
@@ -57,6 +62,20 @@ vi.mock('../components/VideoTile', () => ({
       <button type="button" onClick={() => onPlayingChange?.(false)}>
         simulate-video-error
       </button>
+      {/* Control-overlap fix: the real VideoTile owns a single flex
+          row for its docked corner and renders `actions` inside it —
+          mirror that here (one shared row container) so tests can
+          assert Watch's Snapshot/expand buttons are siblings inside
+          ONE owner, and that a native fullscreen button isn't ALSO
+          rendered when Watch opts out via showFullscreenButton=false. */}
+      <div data-testid="video-tile-actions-row">
+        {actions}
+        {showFullscreenButton !== false && (
+          <button type="button" aria-label="Enter fullscreen">
+            stub-native-fullscreen
+          </button>
+        )}
+      </div>
     </div>
   ),
 }))
@@ -201,6 +220,28 @@ describe('Watch — Home screen (Playroom Modern)', () => {
         screen.getByRole('dialog', { name: 'snapshot:/snapshots/x.jpg' }),
       ).toBeInTheDocument()
     })
+  })
+
+  it('Given the docked live tile, When rendered, Then Snapshot + expand are the ONLY corner buttons and sit inside VideoTile-owned single row, not a second Watch-owned overlay (control-overlap fix)', () => {
+    // arrange / act
+    renderWatch()
+
+    // assert — Snapshot and expand are children of the row VideoTile
+    // renders `actions` into (single owner of the docked corner), not
+    // a second absolutely-positioned Watch overlay stacked on top of
+    // it.
+    const row = screen.getByTestId('video-tile-actions-row')
+    const snapshotBtn = screen.getByRole('button', { name: 'Snapshot' })
+    const expandBtn = screen.getByRole('button', { name: 'Full screen live view' })
+    expect(row).toContainElement(snapshotBtn)
+    expect(row).toContainElement(expandBtn)
+    // VideoTile's own native-fullscreen button must be suppressed —
+    // Watch's CSS docked/full toggle is the one canonical "make it
+    // bigger" affordance; two competing fullscreen buttons was part
+    // of the original overlap bug.
+    expect(
+      screen.queryByRole('button', { name: 'stub-native-fullscreen' }),
+    ).not.toBeInTheDocument()
   })
 
   it('Given the docked viewport, When Full screen is tapped, Then the viewport goes full-bleed with a combined armed+camera pill and Exit restores it', async () => {

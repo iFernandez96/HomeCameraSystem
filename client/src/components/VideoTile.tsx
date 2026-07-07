@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { drawBoxes } from '../lib/drawBoxes'
 import { log, errFields } from '../lib/log'
 import {
@@ -30,6 +30,8 @@ export function VideoTile({
   fit = 'cover',
   showStatusPill = true,
   onPlayingChange,
+  actions,
+  showFullscreenButton = true,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -113,6 +115,27 @@ export function VideoTile({
    * state this component already computes — no new connection logic.
    */
   onPlayingChange?: (playing: boolean) => void
+  /**
+   * Control-overlap fix (docked live tile, 2026-07-07): the docked
+   * corner used to have TWO owners independently absolute-positioning
+   * over the same bottom-right corner — this tile's own bbox-toggle +
+   * fullscreen buttons, and Watch.tsx's own Snapshot + CSS-expand
+   * overlay on top of them. VideoTile is now the single owner of that
+   * corner: it renders one flex row and callers slot their own
+   * buttons in via `actions`, rendered between the bbox toggle and
+   * the fullscreen button. `undefined` (the default) renders nothing
+   * extra — every other VideoTile consumer is unaffected.
+   */
+  actions?: ReactNode
+  /**
+   * Control-overlap fix: Watch.tsx owns a single canonical fullscreen
+   * affordance (its CSS docked↔full state toggle, which preserves the
+   * WebRTC element and carries the scrubber) and doesn't want this
+   * tile's separate native-Fullscreen-API button competing with it.
+   * Default true so standalone consumers (tests, future multi-cam)
+   * keep the button unless they opt out.
+   */
+  showFullscreenButton?: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -632,103 +655,112 @@ export function VideoTile({
       <div className="absolute bottom-3 left-3">
         <QualityMenu quality={quality} onSelect={onSelectQuality} />
       </div>
-      {showBoxHint && (
-        // Painfix wave B #2: purely visual reinforcement — the button's
-        // aria-label already carries the meaning for assistive tech, so
-        // this transient label is hidden from the accessibility tree.
-        <span
-          aria-hidden="true"
-          data-testid="bbox-hint"
-          style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-          className="absolute right-28 flex items-center h-11 px-3 rounded-full bg-black/70 backdrop-blur ring-1 ring-white/15 text-white text-xs font-medium whitespace-nowrap pointer-events-none opacity-100 transition-opacity duration-500 motion-reduce:transition-none"
-        >
-          Detection boxes
-        </span>
-      )}
-      <button
-        type="button"
-        onClick={() => setBoxesVisible((v) => !v)}
-        aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
-        aria-pressed={boxesVisible}
-        // Premium-launch slice (Dana #13): bottom inset honors iOS
-        // PWA standalone safe-area in landscape; without it the
-        // overlay sits behind the home-indicator strip on iPhone
-        // notched devices.
+      {/* Control-overlap fix (2026-07-07): single-owner flex row for
+          the docked corner. Was three independently absolute-
+          positioned pieces (bbox hint at right-28, bbox toggle at
+          right-16, fullscreen button at right-3, all duplicating the
+          same bottom safe-area calc) — the layering rule was implicit
+          in three separate `right-N` magic numbers, easy to collide
+          with a caller's own overlay (Watch.tsx did exactly that).
+          Now ONE positioned row; every child is a plain flex item, so
+          new slots (like `actions`) just take their place in the row
+          instead of guessing an unclaimed `right-N`. */}
+      <div
+        className="absolute right-3 flex items-center gap-2"
         style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-        // Sunroom redesign (2026-07-01): text-white replaces
-        // text-[var(--color-text-primary)] — primary is now Panther
-        // ink (#292013), near-invisible on the black/60 scrim (the
-        // exact Dana E1 contrast bug class). White on the marmalade
-        // active fill is the allowed colored-fill exception. Focus
-        // ring uses accent-bright over the dark video for contrast.
-        className={`absolute right-16 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors ${
-          boxesVisible ? 'bg-[var(--color-accent-deep)]' : 'bg-black/60'
-        }`}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          {/* Square outline = "show box overlay" affordance. */}
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          {boxesVisible ? null : <path d="M4 4l16 16" />}
-        </svg>
-      </button>
-      <button
-        type="button"
-        onClick={onFullscreen}
-        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        // Premium-launch slice (Dana #13): same safe-area-inset
-        // treatment as the bbox toggle so neither button hides
-        // behind the iOS home indicator in landscape PWA mode.
-        style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-        // Sunroom redesign (2026-07-01): same white-on-scrim fix +
-        // shared over-video ring as the bbox toggle above.
-        className="absolute right-3 flex items-center justify-center w-11 h-11 bg-black/60 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
-      >
-        {isFullscreen ? (
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {showBoxHint && (
+          // Painfix wave B #2: purely visual reinforcement — the
+          // button's aria-label already carries the meaning for
+          // assistive tech, so this transient label is hidden from
+          // the accessibility tree.
+          <span
             aria-hidden="true"
+            data-testid="bbox-hint"
+            className="flex items-center h-11 px-3 rounded-full bg-black/70 backdrop-blur ring-1 ring-white/15 text-white text-xs font-medium whitespace-nowrap pointer-events-none opacity-100 transition-opacity duration-500 motion-reduce:transition-none"
           >
-            <path d="M9 4H5a1 1 0 0 0-1 1v4" />
-            <path d="M15 4h4a1 1 0 0 1 1 1v4" />
-            <path d="M9 20H5a1 1 0 0 1-1-1v-4" />
-            <path d="M15 20h4a1 1 0 0 0 1-1v-4" />
-          </svg>
-        ) : (
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M4 9V5a1 1 0 0 1 1-1h4" />
-            <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
-            <path d="M4 15v4a1 1 0 0 0 1 1h4" />
-            <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
-          </svg>
+            Detection boxes
+          </span>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={() => setBoxesVisible((v) => !v)}
+          aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
+          aria-pressed={boxesVisible}
+          // Sunroom redesign (2026-07-01): text-white replaces
+          // text-[var(--color-text-primary)] — primary is now Panther
+          // ink (#292013), near-invisible on the black/60 scrim (the
+          // exact Dana E1 contrast bug class). White on the marmalade
+          // active fill is the allowed colored-fill exception. Focus
+          // ring uses accent-bright over the dark video for contrast.
+          className={`flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors ${
+            boxesVisible ? 'bg-[var(--color-accent-deep)]' : 'bg-black/60'
+          }`}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            {/* Square outline = "show box overlay" affordance. */}
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            {boxesVisible ? null : <path d="M4 4l16 16" />}
+          </svg>
+        </button>
+        {actions}
+        {showFullscreenButton && (
+          <button
+            type="button"
+            onClick={onFullscreen}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            // Sunroom redesign (2026-07-01): same white-on-scrim fix +
+            // shared over-video ring as the bbox toggle above.
+            className="flex items-center justify-center w-11 h-11 bg-black/60 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
+          >
+            {isFullscreen ? (
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 4H5a1 1 0 0 0-1 1v4" />
+                <path d="M15 4h4a1 1 0 0 1 1 1v4" />
+                <path d="M9 20H5a1 1 0 0 1-1-1v-4" />
+                <path d="M15 20h4a1 1 0 0 0 1-1v-4" />
+              </svg>
+            ) : (
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+                <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+                <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+                <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+              </svg>
+            )}
+          </button>
+        )}
+      </div>
       {/* iter-259: pill labels in plain English per ux-grandpa.
           Internal state names ("THERMAL", "OFFLINE") replaced with
           phrases that say what's happening to the user.

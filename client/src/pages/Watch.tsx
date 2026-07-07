@@ -363,6 +363,44 @@ export function Watch() {
             // actually flowing, so the glance card can tell "the API
             // doesn't know" apart from "the camera is really down".
             onPlayingChange={setVideoPlaying}
+            // Control-overlap fix (2026-07-07): Watch used to render its
+            // own absolutely-positioned Snapshot + expand pair ON TOP of
+            // VideoTile's own bbox-toggle + fullscreen buttons in the
+            // same bottom-right corner — the two owners' circles/pills
+            // half-buried each other. VideoTile is now the single owner
+            // of that corner; Watch slots its docked-mode buttons in via
+            // `actions` (only in docked mode — fullscreen mode has its
+            // own separate thumb rail + scrubber chrome) and disables
+            // VideoTile's own native-fullscreen button since Watch's
+            // CSS docked↔full toggle is the one canonical "make it
+            // bigger" affordance on this page (it preserves the WebRTC
+            // element and carries the hour scrubber; the native
+            // Fullscreen API button would be a second, competing one).
+            showFullscreenButton={false}
+            actions={
+              full ? undefined : (
+                <>
+                  <button
+                    type="button"
+                    onClick={onSnapshot}
+                    disabled={busy}
+                    onPointerDown={busy ? undefined : ripple}
+                    className="relative overflow-hidden inline-flex items-center gap-1.5 min-h-[44px] px-3.5 rounded-2xl bg-black/55 backdrop-blur ring-1 ring-white/20 text-white text-xs font-semibold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/70"
+                  >
+                    {busy ? 'Saving…' : 'Snapshot'}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Full screen live view"
+                    onClick={() => setFull(true)}
+                    onPointerDown={ripple}
+                    className="relative overflow-hidden inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-2xl bg-black/55 backdrop-blur ring-1 ring-white/20 text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/70"
+                  >
+                    <ExpandIcon />
+                  </button>
+                </>
+              )
+            }
           />
 
           {/* Floating pill overlays — the armed state lives ON the
@@ -410,30 +448,6 @@ export function Watch() {
               </span>
             )}
           </div>
-
-          {/* Docked-mode corner actions */}
-          {!full && (
-            <div className="absolute bottom-3 right-3 flex gap-2">
-              <button
-                type="button"
-                onClick={onSnapshot}
-                disabled={busy}
-                onPointerDown={busy ? undefined : ripple}
-                className="relative overflow-hidden inline-flex items-center gap-1.5 min-h-[44px] px-3.5 rounded-2xl bg-black/55 backdrop-blur ring-1 ring-white/20 text-white text-xs font-semibold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/70"
-              >
-                {busy ? 'Saving…' : 'Snapshot'}
-              </button>
-              <button
-                type="button"
-                aria-label="Full screen live view"
-                onClick={() => setFull(true)}
-                onPointerDown={ripple}
-                className="relative overflow-hidden inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-2xl bg-black/55 backdrop-blur ring-1 ring-white/20 text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/70"
-              >
-                <ExpandIcon />
-              </button>
-            </div>
-          )}
 
           {/* Full-mode thumb rail. Fuzz F11: the "Talk · soon"
               placeholder button was dropped — two-way audio is
