@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { PersonSummary } from '../lib/api'
 
@@ -30,6 +30,14 @@ vi.mock('react-router-dom', async () => {
 })
 
 import { People } from './People'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
 
 function renderPeople() {
   return render(
@@ -283,6 +291,71 @@ describe('People page', () => {
     await waitFor(() =>
       expect(screen.getByText(/showing 2 of 147/i)).toBeInTheDocument(),
     )
+  })
+
+  it('Given Load more is clicked, When the next request has not updated the rendered list, Then the button stays disabled until the list grows', async () => {
+    // arrange
+    const now = Date.now() / 1000
+    const firstItems: PersonSummary[] = [
+      {
+        name: 'Alice',
+        count: 5,
+        last_seen_ts: now,
+        first_seen_ts: now - 86400 * 30,
+        last_clip_url: null,
+        last_thumb_url: null,
+      },
+      {
+        name: 'Bob',
+        count: 1,
+        last_seen_ts: now - 3600,
+        first_seen_ts: now - 86400,
+        last_clip_url: null,
+        last_thumb_url: null,
+      },
+    ]
+    const secondItems: PersonSummary[] = [
+      ...firstItems,
+      {
+        name: 'Carol',
+        count: 2,
+        last_seen_ts: now - 7200,
+        first_seen_ts: now - 86400 * 2,
+        last_clip_url: null,
+        last_thumb_url: null,
+      },
+    ]
+    const nextPeople = deferred<{ items: PersonSummary[]; total: number }>()
+    listPeople
+      .mockResolvedValueOnce({ items: firstItems, total: 147 })
+      .mockReturnValueOnce(nextPeople.promise)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    renderPeople()
+    const loadMore = await screen.findByRole('button', { name: /load more/i })
+
+    // act
+    await user.click(loadMore)
+
+    // assert
+    expect(
+      screen.getByRole('button', { name: /loading/i }),
+    ).toBeDisabled()
+    expect(listPeople).toHaveBeenLastCalledWith({ limit: 200 })
+
+    // act
+    await act(async () => {
+      nextPeople.resolve({ items: secondItems, total: 147 })
+      await nextPeople.promise
+    })
+
+    // assert
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /load more/i }),
+      ).toBeEnabled(),
+    )
+    expect(screen.getByText(/showing 3 of 147/i)).toBeInTheDocument()
   })
 
   it('given fewer than 5 people, when the page renders, then NO search input is shown (iter-341: no UI noise on small-household deploys)', async () => {

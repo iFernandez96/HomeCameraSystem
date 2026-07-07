@@ -41,6 +41,141 @@ function formatClipDuration(seconds: number): string {
   return `${m} min ${s.toFixed(0)} s`
 }
 
+function sensitivityQualifier(value: number): string {
+  if (value < 0.45) return 'Loose: more events'
+  if (value > 0.65) return 'Strict: fewer events'
+  return 'Balanced'
+}
+
+function SensitivitySlider({
+  value,
+  disabled,
+  onChange,
+  onCommit,
+}: {
+  value: number
+  disabled: boolean
+  onChange: (v: number) => void
+  onCommit: (v: number) => void
+}) {
+  const commit = (target: HTMLInputElement) => {
+    onCommit(parseFloat(target.value))
+  }
+  return (
+    <div className="px-4 py-3">
+      <div className="flex justify-between items-center gap-3 mb-2">
+        <span className="text-[var(--color-text-primary)] text-sm">
+          Sensitivity
+        </span>
+        <span className="inline-flex items-baseline gap-2 text-sm bg-[var(--color-surface-raised)] rounded-md px-2 py-0.5">
+          <span className="text-[var(--color-text-primary)] font-medium tabular-nums">
+            {value.toFixed(2)}
+          </span>
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            {sensitivityQualifier(value)}
+          </span>
+        </span>
+      </div>
+      <input
+        type="range"
+        value={value}
+        min={DETECTION_LIMITS.thresholdMin}
+        max={DETECTION_LIMITS.thresholdMax}
+        step={0.05}
+        disabled={disabled}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        onPointerUp={(e) => commit(e.currentTarget)}
+        onKeyUp={(e) => {
+          if (
+            [
+              'ArrowLeft',
+              'ArrowRight',
+              'ArrowUp',
+              'ArrowDown',
+              'Home',
+              'End',
+              'PageUp',
+              'PageDown',
+            ].includes(e.key)
+          ) {
+            commit(e.currentTarget)
+          }
+        }}
+        aria-label="Detection sensitivity"
+        aria-valuemin={DETECTION_LIMITS.thresholdMin}
+        aria-valuemax={DETECTION_LIMITS.thresholdMax}
+        aria-valuenow={value}
+        className="slider w-full"
+      />
+    </div>
+  )
+}
+
+function DisabledToggleDisplay({
+  checked,
+  ariaLabel,
+}: {
+  checked: boolean
+  ariaLabel: string
+}) {
+  return (
+    <button
+      type="button"
+      disabled
+      aria-disabled="true"
+      aria-pressed={checked}
+      aria-label={ariaLabel}
+      className="relative p-2.5 -m-2.5 rounded-full flex items-center opacity-50 cursor-not-allowed"
+    >
+      <span
+        className={`w-11 h-[26px] rounded-full p-0.5 flex items-center ${
+          checked ? 'bg-[var(--color-ink)]' : 'bg-[var(--color-border)]'
+        }`}
+      >
+        <span
+          className={`w-5 h-5 bg-white rounded-full shadow-md ${
+            checked ? 'translate-x-5' : 'translate-x-0'
+          }`}
+        />
+      </span>
+    </button>
+  )
+}
+
+function DisabledPreRollSlider({ value, max }: { value: number; max: number }) {
+  return (
+    <div className="px-4 py-3 opacity-60" aria-disabled="true">
+      <div className="flex justify-between items-center gap-3 mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--color-text-primary)] text-sm">
+            Pre-roll
+          </span>
+          <span className="rounded-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Coming soon
+          </span>
+        </div>
+        <span className="text-[var(--color-text-primary)] font-medium tabular-nums text-sm bg-[var(--color-surface-raised)] rounded-md px-2 py-0.5">
+          {formatClipDuration(value)}
+        </span>
+      </div>
+      <input
+        type="range"
+        value={value}
+        min={DETECTION_LIMITS.clipPreRollMin}
+        max={max}
+        step={1}
+        disabled
+        aria-disabled="true"
+        aria-label="Seconds before detection to include in the clip"
+        aria-valuemin={DETECTION_LIMITS.clipPreRollMin}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        className="slider w-full cursor-not-allowed"
+      />
+    </div>
+  )
+}
+
 export function DetectionSection() {
   const { showToast } = useToast()
   const reportError = useReportError()
@@ -157,18 +292,15 @@ export function DetectionSection() {
         <Row
           label="Let me speak to whoever's outside"
           right={
-            <Toggle
+            <DisabledToggleDisplay
               checked={config?.audio_enabled ?? false}
-              onChange={(v) => commitConfig({ audio_enabled: v })}
-              disabled={config === null}
               ariaLabel="Enable two-way audio"
             />
           }
         />
         <p className="px-4 -mt-2 pb-3 text-xs text-[var(--color-text-secondary)]">
-          When on, the Talk button on the Live page lets you speak
-          out of a speaker on the camera. Needs a microphone and
-          speaker plugged into the camera box. Off by default.
+          Coming soon. Needs a microphone and speaker on the camera
+          before this can turn on.
         </p>
       </Section>
 
@@ -182,19 +314,13 @@ export function DetectionSection() {
             "Confidence threshold" → "Sensitivity" (Frank: "I'm 72;
             my confidence is fine"). "Cooldown" → "Quiet time
             after a detection." */}
-        <Slider
-          label="Sensitivity"
+        <SensitivitySlider
           value={config?.threshold ?? 0.55}
-          min={DETECTION_LIMITS.thresholdMin}
-          max={DETECTION_LIMITS.thresholdMax}
-          step={0.05}
-          format={(v) => v.toFixed(2)}
           onChange={(v) =>
             setConfig((c) => (c ? { ...c, threshold: v } : c))
           }
           onCommit={(v) => commitConfig({ threshold: v })}
           disabled={config === null}
-          ariaLabel="Detection sensitivity"
         />
         <p className="px-4 -mt-2 pb-2 text-xs text-[var(--color-text-secondary)]">
           Lower means more events (and more false alarms). Higher
@@ -269,22 +395,12 @@ export function DetectionSection() {
         />
         {RETENTION_PRESETS[config?.clip_retention_preset ?? 'month']
           .clipPreRollMaxS > 0 ? (
-          <Slider
-            label="Pre-roll"
+          <DisabledPreRollSlider
             value={config?.clip_pre_roll_s ?? 0}
-            min={DETECTION_LIMITS.clipPreRollMin}
             max={
               RETENTION_PRESETS[config?.clip_retention_preset ?? 'month']
                 .clipPreRollMaxS
             }
-            step={1}
-            format={formatClipDuration}
-            onChange={(v) =>
-              setConfig((c) => (c ? { ...c, clip_pre_roll_s: v } : c))
-            }
-            onCommit={(v) => commitConfig({ clip_pre_roll_s: v })}
-            disabled={config === null}
-            ariaLabel="Seconds before detection to include in the clip"
           />
         ) : (
           <Row

@@ -381,6 +381,10 @@ function computeVerdict(status: ServerStatus | null): Verdict {
 
 function HealthVerdict({ status }: { status: ServerStatus | null }) {
   const verdict = computeVerdict(status)
+  const criticalVocabulary =
+    verdict.kind === 'critical'
+      ? 'Elsewhere in the app this shows as Camera offline.'
+      : null
 
   // Calm tinted-surface tokens so the verdict reads as a status
   // anchor, not an alert. The dot color carries severity; the
@@ -436,6 +440,11 @@ function HealthVerdict({ status }: { status: ServerStatus | null }) {
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5 leading-relaxed">
             {verdict.subline}
           </p>
+          {criticalVocabulary ? (
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+              {criticalVocabulary}
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listPeople, type PersonSummary } from '../lib/api'
 import { Button } from '../components/primitives/Button'
@@ -80,7 +80,15 @@ export function People() {
   // of 100. Server caps at higher limits gracefully via its own
   // _LIST_PEOPLE_MAX, so this client-side ceiling is the friendly UI.
   const [pageLimit, setPageLimit] = useState<number>(100)
-  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadingMoreFromLength, setLoadingMoreFromLength] = useState<
+    number | null
+  >(null)
+  const loadingMoreSafetyTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
+  const loadingMore =
+    loadingMoreFromLength !== null &&
+    (people?.length ?? 0) === loadingMoreFromLength
   useEffect(() => {
     let cancelled = false
     listPeople({ limit: pageLimit })
@@ -99,12 +107,25 @@ export function People() {
     }
   }, [retryNonce, pageLimit])
 
+  useEffect(() => {
+    return () => {
+      if (loadingMoreSafetyTimer.current) {
+        clearTimeout(loadingMoreSafetyTimer.current)
+      }
+    }
+  }, [])
+
   const onLoadMore = () => {
     if (loadingMore) return
-    setLoadingMore(true)
+    setLoadingMoreFromLength(people?.length ?? 0)
     setPageLimit((n) => n + 100)
-    // Reset on the next effect tick.
-    setTimeout(() => setLoadingMore(false), 250)
+    if (loadingMoreSafetyTimer.current) {
+      clearTimeout(loadingMoreSafetyTimer.current)
+    }
+    loadingMoreSafetyTimer.current = setTimeout(() => {
+      loadingMoreSafetyTimer.current = null
+      setLoadingMoreFromLength(null)
+    }, 5000)
   }
 
   // iter-326b: Retry click resets state synchronously (event-
@@ -159,8 +180,8 @@ export function People() {
             Everyone the camera knows gets their own color.
           </p>
         </div>
-        {/* iter-352/353a/355aa: mobile entry-point to /training
-            (SideNav covers desktop). iter-355aa (Maya Minor):
+        {/* iter-352/353a/355aa: compact header entry point to /training,
+            paired with the app rail's Review destination. iter-355aa (Maya Minor):
             demoted from neutral pill (which competed with the H1)
             to a text-link with mortar-board glyph that sits in the
             subheader rail — the H1 keeps the page-title weight, the
@@ -176,7 +197,7 @@ export function People() {
             <path d="M22 10L12 5 2 10l10 5 10-5z" />
             <path d="M6 12v5a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3v-5" />
           </svg>
-          Training
+          Training and review
         </button>
       </header>
 

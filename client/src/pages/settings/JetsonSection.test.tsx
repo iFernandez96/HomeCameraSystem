@@ -88,6 +88,26 @@ describe('JetsonSection — health verdict (premium-launch slice)', () => {
     expect(verdict.textContent).toMatch(/check power and network/i)
   })
 
+  it('Given a critical verdict, When the card renders, Then it maps the health wording to the app-wide Camera offline wording', () => {
+    // arrange / act
+    render(<JetsonSection status={baseStatus({ ok: false })} />)
+
+    // assert
+    expect(
+      screen.getByText(/elsewhere in the app this shows as camera offline\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('Given a healthy verdict, When the card renders, Then it does not show the Camera offline vocabulary bridge', () => {
+    // arrange / act
+    render(<JetsonSection status={baseStatus()} />)
+
+    // assert
+    expect(
+      screen.queryByText(/elsewhere in the app this shows as camera offline/i),
+    ).not.toBeInTheDocument()
+  })
+
   it('Given the detection process is dead past the heartbeat window, When the verdict computes, Then it reports the offline duration in plain English (no jargon)', () => {
     // arrange — worker_alive false + last_seen > 60 s = critical-tier.
     render(

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 // iter-356.x — DetectionSection coverage gap closure (test-coverage
@@ -224,5 +224,86 @@ describe('DetectionSection', () => {
     expect(
       screen.getByLabelText(/maximum length of a single visit clip/i),
     ).toBeInTheDocument()
+  })
+
+  it('Given two-way audio is coming soon, When the user tries to click the toggle, Then it stays disabled and does not persist a changed setting', async () => {
+    // arrange
+    const user = userEvent.setup()
+    getDetectionConfig.mockResolvedValue(
+      structuredClone({ ...defaultConfig, audio_enabled: true }),
+    )
+    render(<DetectionSection />)
+    const toggle = await screen.findByRole('button', {
+      name: /enable two-way audio/i,
+    })
+
+    // act
+    await user.click(toggle)
+
+    // assert
+    expect(toggle).toBeDisabled()
+    expect(toggle).toHaveAttribute('aria-disabled', 'true')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      screen.getByText(
+        /coming soon\. needs a microphone and speaker on the camera before this can turn on\./i,
+      ),
+    ).toBeInTheDocument()
+    expect(patchDetectionConfig).not.toHaveBeenCalledWith(
+      expect.objectContaining({ audio_enabled: expect.any(Boolean) }),
+    )
+  })
+
+  it('Given pre-roll is coming soon, When the user tries to change the slider, Then the current value stays visible and no pre-roll patch is sent', async () => {
+    // arrange
+    render(<DetectionSection />)
+    const slider = await screen.findByRole('slider', {
+      name: /seconds before detection to include in the clip/i,
+    })
+
+    // act
+    fireEvent.change(slider, { target: { value: '10' } })
+    fireEvent.pointerUp(slider)
+
+    // assert
+    expect(slider).toBeDisabled()
+    expect(slider).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getAllByText(/coming soon/i).length).toBeGreaterThan(0)
+    expect(screen.getByText('0 s')).toBeInTheDocument()
+    expect(patchDetectionConfig).not.toHaveBeenCalledWith(
+      expect.objectContaining({ clip_pre_roll_s: expect.any(Number) }),
+    )
+  })
+
+  it('Given the sensitivity value moves across boundary values, When the slider changes, Then the plain-word qualifier updates with the numeric readout', async () => {
+    // arrange
+    getDetectionConfig.mockResolvedValue(
+      structuredClone({ ...defaultConfig, threshold: 0.45 }),
+    )
+    render(<DetectionSection />)
+    const slider = await screen.findByRole('slider', {
+      name: /detection sensitivity/i,
+    })
+
+    // act
+    fireEvent.change(slider, { target: { value: '0.4' } })
+
+    // assert
+    expect(screen.getByText('0.40')).toBeInTheDocument()
+    expect(screen.getByText(/loose: more events/i)).toBeInTheDocument()
+
+    // act
+    fireEvent.change(slider, { target: { value: '0.45' } })
+
+    // assert
+    expect(screen.getByText('0.45')).toBeInTheDocument()
+    expect(screen.getByText(/^balanced$/i)).toBeInTheDocument()
+
+    // act
+    fireEvent.change(slider, { target: { value: '0.7' } })
+
+    // assert
+    expect(screen.getByText('0.70')).toBeInTheDocument()
+    expect(screen.getByText(/strict: fewer events/i)).toBeInTheDocument()
   })
 })

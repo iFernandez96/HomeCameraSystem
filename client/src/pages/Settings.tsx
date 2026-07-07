@@ -277,6 +277,12 @@ function SettingsTabs({
   // Authoring Practices Tabs pattern. ChipRadiogroup already uses
   // this (Events.tsx); we share the same `nextRovingIndex` util.
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const activeDescription =
+    active === 'camera'
+      ? 'What the camera looks for and records'
+      : active === 'notifications'
+        ? 'How HomeCam notifies you'
+        : 'People, appearance and the box in the closet'
   // iter-356.x (coherence C2): track viewport for aria-orientation. The
   // tablist visually flips to vertical at lg+ (1024px) per the flex-col
   // class on the wrapper. SSR-safe default 'false' so first paint is
@@ -308,56 +314,60 @@ function SettingsTabs({
     // Pre-fix it was a full-width underline-tab strip that read as
     // generic browser tabs. The pill+rail treatment makes it
     // unmistakably navigation, not a tab control on a form.
-    <div
-      role="tablist"
-      tabIndex={-1}
-      aria-label="Settings sections"
-      // iter-356.x (coherence C2): tablist visually flips to vertical
-      // rail on lg+ via flex-col, but pre-fix aria-orientation stayed
-      // "horizontal" — AT users heard "horizontal tablist" and expected
-      // left/right keys while sighted users saw a column. Bind to the
-      // viewport.
-      aria-orientation={isDesktopTabs ? 'vertical' : 'horizontal'}
-      onKeyDown={onKey}
-      className="flex gap-1 lg:flex-col lg:gap-1.5 lg:w-48 lg:flex-none lg:sticky lg:top-20 lg:self-start lg:p-3 lg:rounded-2xl lg:bg-[var(--color-surface)] lg:border lg:border-[var(--color-border-subtle)] lg:shadow-[var(--shadow-subtle)] mx-4 mt-4 px-2 py-1 overflow-x-auto lg:mx-0 lg:mt-0 lg:overflow-visible scrollbar-hide"
-    >
-      {tabs.map((t, idx) => {
-        const isActive = active === t.id
-        return (
-          <button
-            key={t.id}
-            ref={(el) => {
-              tabRefs.current[idx] = el
-            }}
-            type="button"
-            role="tab"
-            // Premium-launch slice — Settings tabs ARIA wiring.
-            // Pre-fix tabs declared role="tab" + aria-selected
-            // but had no `id` or `aria-controls`. SR rotor heard
-            // "tab, 1 of 3, selected" but jumping to panel
-            // content landed on raw <section>s with no announced
-            // relationship to the tab. The matching panels
-            // (settings-panel-{id}) are wrapped in role="tabpanel"
-            // + aria-labelledby below.
-            id={`settings-tab-${t.id}`}
-            aria-controls={`settings-panel-${t.id}`}
-            aria-selected={isActive}
-            tabIndex={isActive ? 0 : -1}
-            onClick={() => onChange(t.id)}
-            className={`whitespace-nowrap px-2.5 py-3 min-h-[44px] text-[13px] lg:text-sm font-medium rounded-lg lg:rounded-xl lg:text-left lg:py-2.5 lg:px-3 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${itemClassExtra} ${
-              isActive
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] lg:ring-1 lg:ring-[var(--color-accent-border)]'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)]'
-            }`}
-          >
-            {t.label}
-          </button>
-        )
-      })}
+    <div className="lg:w-48 lg:flex-none lg:sticky lg:top-20 lg:self-start mx-4 mt-4 lg:mx-0 lg:mt-0">
+      <div
+        role="tablist"
+        tabIndex={-1}
+        aria-label="Settings sections"
+        // iter-356.x (coherence C2): tablist visually flips to vertical
+        // rail on lg+ via flex-col, but pre-fix aria-orientation stayed
+        // "horizontal" — AT users heard "horizontal tablist" and expected
+        // left/right keys while sighted users saw a column. Bind to the
+        // viewport.
+        aria-orientation={isDesktopTabs ? 'vertical' : 'horizontal'}
+        onKeyDown={onKey}
+        className="flex gap-1 lg:flex-col lg:gap-1.5 lg:p-3 lg:rounded-2xl lg:bg-[var(--color-surface)] lg:border lg:border-[var(--color-border-subtle)] lg:shadow-[var(--shadow-subtle)] px-2 py-1 overflow-x-auto lg:overflow-visible scrollbar-hide"
+      >
+        {tabs.map((t, idx) => {
+          const isActive = active === t.id
+          return (
+            <button
+              key={t.id}
+              ref={(el) => {
+                tabRefs.current[idx] = el
+              }}
+              type="button"
+              role="tab"
+              // Premium-launch slice — Settings tabs ARIA wiring.
+              // Pre-fix tabs declared role="tab" + aria-selected
+              // but had no `id` or `aria-controls`. SR rotor heard
+              // "tab, 1 of 3, selected" but jumping to panel
+              // content landed on raw <section>s with no announced
+              // relationship to the tab. The matching panels
+              // (settings-panel-{id}) are wrapped in role="tabpanel"
+              // + aria-labelledby below.
+              id={`settings-tab-${t.id}`}
+              aria-controls={`settings-panel-${t.id}`}
+              aria-selected={isActive}
+              tabIndex={isActive ? 0 : -1}
+              onClick={() => onChange(t.id)}
+              className={`whitespace-nowrap px-2.5 py-3 min-h-[44px] text-[13px] lg:text-sm font-medium rounded-lg lg:rounded-xl lg:text-left lg:py-2.5 lg:px-3 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${itemClassExtra} ${
+                isActive
+                  ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] lg:ring-1 lg:ring-[var(--color-accent-border)]'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)]'
+              }`}
+            >
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+      <p className="px-2 pt-2 text-xs text-[var(--color-text-secondary)] lg:px-3">
+        {activeDescription}
+      </p>
     </div>
   )
 }
 
 
 // iter-291: formatClipDuration moved to DetectionSection.
-
