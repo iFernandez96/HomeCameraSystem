@@ -501,6 +501,15 @@ body {
   font-optical-sizing: auto;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: contain;
+  /* User-hit on Firefox Android (2026-07-07): the Home page could be
+   * dragged sideways and stuck left-shifted, though no element
+   * overflows at rest (verified in Chromium at 412/450px). Firefox
+   * extends the horizontal scroll area for transient offscreen
+   * elements. clip (not hidden) forbids even programmatic sideways
+   * scroll of the page itself; wide content keeps scrolling inside
+   * its own overflow-x-auto containers (chips, heatmap). */
+  overflow-x: clip;
+  overscroll-behavior-x: none;
   /* iter-356.66 (iOS edge-cases audit J): cream parchment text on a
    * charred-oak page renders heavier than necessary on iOS Retina
    * without subpixel-AA hint. antialiased thins body text to match

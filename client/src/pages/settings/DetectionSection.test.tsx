@@ -254,7 +254,7 @@ describe('DetectionSection', () => {
     )
   })
 
-  it('Given pre-roll is coming soon, When the user tries to change the slider, Then the current value stays visible and no pre-roll patch is sent', async () => {
+  it('Given pre-roll is enabled for the current retention preset, When the user drags the slider, Then it PATCHes clip_pre_roll_s', async () => {
     // arrange
     render(<DetectionSection />)
     const slider = await screen.findByRole('slider', {
@@ -266,13 +266,43 @@ describe('DetectionSection', () => {
     fireEvent.pointerUp(slider)
 
     // assert
-    expect(slider).toBeDisabled()
-    expect(slider).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getAllByText(/coming soon/i).length).toBeGreaterThan(0)
-    expect(screen.getByText('0 s')).toBeInTheDocument()
-    expect(patchDetectionConfig).not.toHaveBeenCalledWith(
-      expect.objectContaining({ clip_pre_roll_s: expect.any(Number) }),
+    expect(slider).not.toBeDisabled()
+    expect(screen.getByText('10 s')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(patchDetectionConfig).toHaveBeenCalledWith({ clip_pre_roll_s: 10 })
+    })
+  })
+
+  it('Given pre-roll exceeds a shorter preset ceiling, When the preset changes, Then the displayed pre-roll value is clamped', async () => {
+    // arrange
+    const user = userEvent.setup()
+    getDetectionConfig.mockResolvedValue(
+      structuredClone({
+        ...defaultConfig,
+        clip_retention_preset: 'week',
+        clip_pre_roll_s: 200,
+      }),
     )
+    patchDetectionConfig.mockResolvedValue(
+      structuredClone({
+        ...defaultConfig,
+        clip_retention_preset: 'month',
+        clip_pre_roll_s: 150,
+      }),
+    )
+    render(<DetectionSection />)
+    expect(await screen.findByText('3 min 20 s')).toBeInTheDocument()
+
+    // act
+    await user.click(screen.getByRole('radio', { name: /1 month/i }))
+
+    // assert
+    expect(screen.getByText('2 min 30 s')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(patchDetectionConfig).toHaveBeenCalledWith({
+        clip_retention_preset: 'month',
+      })
+    })
   })
 
   it('Given the sensitivity value moves across boundary values, When the slider changes, Then the plain-word qualifier updates with the numeric readout', async () => {

@@ -142,40 +142,6 @@ function DisabledToggleDisplay({
   )
 }
 
-function DisabledPreRollSlider({ value, max }: { value: number; max: number }) {
-  return (
-    <div className="px-4 py-3 opacity-60" aria-disabled="true">
-      <div className="flex justify-between items-center gap-3 mb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[var(--color-text-primary)] text-sm">
-            Pre-roll
-          </span>
-          <span className="rounded-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
-            Coming soon
-          </span>
-        </div>
-        <span className="text-[var(--color-text-primary)] font-medium tabular-nums text-sm bg-[var(--color-surface-raised)] rounded-md px-2 py-0.5">
-          {formatClipDuration(value)}
-        </span>
-      </div>
-      <input
-        type="range"
-        value={value}
-        min={DETECTION_LIMITS.clipPreRollMin}
-        max={max}
-        step={1}
-        disabled
-        aria-disabled="true"
-        aria-label="Seconds before detection to include in the clip"
-        aria-valuemin={DETECTION_LIMITS.clipPreRollMin}
-        aria-valuemax={max}
-        aria-valuenow={value}
-        className="slider w-full cursor-not-allowed"
-      />
-    </div>
-  )
-}
-
 export function DetectionSection() {
   const { showToast } = useToast()
   const reportError = useReportError()
@@ -345,9 +311,8 @@ export function DetectionSection() {
       {/* iter-254 / iter-257: per-event clip duration + retention
           preset. The preset picks both the retention window AND the
           per-clip max length (longer clips = shorter retention so
-          the disk math stays bounded). Post-roll is live-tunable on
-          the worker; pre-roll is persisted but won't take effect
-          until the iter-255 rolling-segment recorder ships. */}
+          the disk math stays bounded). Pre-roll and post-roll are
+          both live-tunable on the worker (iter-324/356.61). */}
       <Section title="Clip recording">
         <RetentionPresetPicker
           value={config?.clip_retention_preset ?? 'month'}
@@ -395,12 +360,22 @@ export function DetectionSection() {
         />
         {RETENTION_PRESETS[config?.clip_retention_preset ?? 'month']
           .clipPreRollMaxS > 0 ? (
-          <DisabledPreRollSlider
+          <Slider
+            label="Pre-roll"
             value={config?.clip_pre_roll_s ?? 0}
+            min={DETECTION_LIMITS.clipPreRollMin}
             max={
               RETENTION_PRESETS[config?.clip_retention_preset ?? 'month']
                 .clipPreRollMaxS
             }
+            step={1}
+            format={formatClipDuration}
+            onChange={(v) =>
+              setConfig((c) => (c ? { ...c, clip_pre_roll_s: v } : c))
+            }
+            onCommit={(v) => commitConfig({ clip_pre_roll_s: v })}
+            disabled={config === null}
+            ariaLabel="Seconds before detection to include in the clip"
           />
         ) : (
           <Row
@@ -413,9 +388,8 @@ export function DetectionSection() {
           />
         )}
         <p className="px-4 pb-3 text-xs text-[var(--color-text-secondary)]">
-          Pre-roll is saved with your settings. The recorder will
-          start using it once an upcoming update lands the rolling
-          buffer; until then, clips begin at the moment of detection.
+          Seconds of video from before the moment of detection included in
+          each clip. Higher values use more of the recording buffer.
         </p>
       </Section>
 

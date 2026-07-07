@@ -197,7 +197,11 @@ function AppShell() {
             : 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
         } lg:pb-6 landscape-phone:pb-0 w-full ${
           showShell
-            ? 'lg:ml-16 lg:max-w-[calc(100vw-4rem)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100vw-5rem-env(safe-area-inset-left))]'
+            // 100% not 100vw: vw includes the vertical scrollbar's width
+            // (resolution sweep 2026-07-07 caught main overflowing 10px
+            // sideways at 673x455 on /settings), % tracks the real layout
+            // width at every resolution.
+            ? 'lg:ml-16 lg:max-w-[calc(100%-4rem)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100%-5rem-env(safe-area-inset-left))]'
             : ''
         }`}
         style={

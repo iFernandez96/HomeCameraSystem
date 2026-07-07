@@ -370,12 +370,11 @@ class RuntimeConfig:
         # When non-empty, emit events only when at least one
         # detection box's center falls inside any polygon.
         self.zones = []
-        # iter-254 (Feature #1 polish): live-tunable per-event clip
-        # duration. `clip_post_roll_s` is honoured by the iter-202
-        # ClipRecorder.start_clip call below (passed per-event so
-        # the slider takes effect on the NEXT detection without a
-        # worker restart). `clip_pre_roll_s` is persisted but
-        # ignored until iter-255 lands the rolling-segment recorder.
+        # iter-254/324/356.61 (Feature #1 polish): live-tunable
+        # per-event clip durations. `clip_post_roll_s` and
+        # `clip_pre_roll_s` are passed into ClipRecorder.start_clip
+        # per event; the config poll also resizes the pre-roll segment
+        # ring live when `clip_pre_roll_s` grows.
         self.clip_post_roll_s = 8.0
         self.clip_pre_roll_s = 0.0
         # Continuous-capture (person-following) feature, plan S4. Default OFF
