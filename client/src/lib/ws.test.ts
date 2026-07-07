@@ -210,6 +210,50 @@ describe('lib/ws', () => {
     }
   })
 
+  it('Given a replacement socket, When a stale close fires, Then it does not null out or reconnect over the new socket', async () => {
+    vi.useFakeTimers()
+    try {
+      // arrange
+      const { subscribeEvents, reconnectIfClosed } = await import('./ws')
+      subscribeEvents(() => {})
+      const staleSock = MockWebSocket.instances[0]
+      staleSock.readyState = MockWebSocket.CLOSED
+      reconnectIfClosed()
+      const activeSock = MockWebSocket.instances[1]
+      expect(MockWebSocket.instances).toHaveLength(2)
+
+      // act
+      staleSock.fire('close', { code: 1006, reason: 'late close' })
+      vi.advanceTimersByTime(1000)
+      reconnectIfClosed()
+
+      // assert
+      expect(MockWebSocket.instances).toHaveLength(2)
+      expect(MockWebSocket.instances[1]).toBe(activeSock)
+      expect(activeSock.readyState).toBe(MockWebSocket.CONNECTING)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Given a replacement socket, When a stale error fires, Then it does not close the new socket', async () => {
+    // arrange
+    const { subscribeEvents, reconnectIfClosed } = await import('./ws')
+    subscribeEvents(() => {})
+    const staleSock = MockWebSocket.instances[0]
+    staleSock.readyState = MockWebSocket.CLOSED
+    reconnectIfClosed()
+    const activeSock = MockWebSocket.instances[1]
+    const closeSpy = vi.spyOn(activeSock, 'close')
+
+    // act
+    staleSock.fire('error', {})
+
+    // assert
+    expect(closeSpy).not.toHaveBeenCalled()
+    expect(activeSock.readyState).toBe(MockWebSocket.CONNECTING)
+  })
+
   it('dispatches homecam:auth-failed on a 1008 close (iter-185)', async () => {
     const { subscribeEvents } = await import('./ws')
     subscribeEvents(() => {})

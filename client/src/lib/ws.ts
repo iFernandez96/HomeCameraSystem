@@ -42,11 +42,14 @@ function connect() {
     return
   }
   setSocketState('connecting')
-  socket.addEventListener('open', () => {
+  const currentSocket = socket
+  currentSocket.addEventListener('open', () => {
+    if (socket !== currentSocket) return
     reconnectAttempts = 0
     setSocketState('open')
   })
-  socket.addEventListener('message', (m) => {
+  currentSocket.addEventListener('message', (m) => {
+    if (socket !== currentSocket) return
     try {
       const evt = JSON.parse(m.data) as ServerEvent
       handlers.forEach((h) => h(evt))
@@ -58,7 +61,8 @@ function connect() {
       log.warn('ws:parse-fail', { sample: raw, ...errFields(e) })
     }
   })
-  socket.addEventListener('close', (ev) => {
+  currentSocket.addEventListener('close', (ev) => {
+    if (socket !== currentSocket) return
     socket = null
     setSocketState('closed')
     // iter-182 (Auth Plan Phase 4): WS close code 1008 (Policy
@@ -103,15 +107,16 @@ function connect() {
     }
     reconnectTimer = setTimeout(connect, delay)
   })
-  socket.addEventListener('error', () => {
+  currentSocket.addEventListener('error', () => {
+    if (socket !== currentSocket) return
     // The `error` Event carries no detail by spec, but its arrival before a
     // close was previously fully swallowed — log it so a connect-time failure
     // (DNS / TLS / refused) is distinguishable from a clean close.
     log.warn('ws:error-event', {
-      readyState: socket?.readyState ?? null,
+      readyState: currentSocket.readyState,
       online: typeof navigator !== 'undefined' ? navigator.onLine : null,
     })
-    socket?.close()
+    currentSocket.close()
   })
 }
 
