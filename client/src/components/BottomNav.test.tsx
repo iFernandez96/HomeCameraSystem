@@ -25,7 +25,7 @@ describe('BottomNav', () => {
     ).toBeInTheDocument()
   })
 
-  it('when rendered, then exposes one link per configured tab (structural overhaul: four tabs — Watch/History/People/Settings; Training lives inside People)', () => {
+  it('when rendered, then exposes one link per configured tab (Playroom Modern Task 4: relabeled tabs — Home/Events/Faces/Settings; Review (Training) lives inside Faces)', () => {
     // arrange
     renderAt('/')
 
@@ -37,30 +37,30 @@ describe('BottomNav', () => {
     // Pin both the count and the labels so a rename also fires.
     expect(links).toHaveLength(4)
     expect(links.map((el) => el.textContent?.toLowerCase())).toEqual([
-      expect.stringContaining('watch'),
-      expect.stringContaining('history'),
-      expect.stringContaining('people'),
+      expect.stringContaining('home'),
+      expect.stringContaining('events'),
+      expect.stringContaining('faces'),
       expect.stringContaining('settings'),
     ])
   })
 
-  it('when rendered, then each link points to its own /tab path (iter-356.x)', () => {
+  it('when rendered, then each link points to its own /tab path (iter-356.x; Playroom Modern Task 4 relabeled Watch->Home, History->Events, People->Faces)', () => {
     // arrange
     renderAt('/live')
 
     // act
     const hrefs = {
-      watch: screen.getByRole('link', { name: /watch/i }).getAttribute('href'),
-      history: screen.getByRole('link', { name: /history/i }).getAttribute('href'),
-      people: screen.getByRole('link', { name: /people/i }).getAttribute('href'),
+      home: screen.getByRole('link', { name: /home/i }).getAttribute('href'),
+      events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
+      faces: screen.getByRole('link', { name: /faces/i }).getAttribute('href'),
       settings: screen.getByRole('link', { name: /settings/i }).getAttribute('href'),
     }
 
     // assert
     expect(hrefs).toEqual({
-      watch: '/',
-      history: '/events',
-      people: '/people',
+      home: '/',
+      events: '/events',
+      faces: '/people',
       settings: '/settings',
     })
   })
@@ -76,11 +76,11 @@ describe('BottomNav', () => {
     // aria-current="page" on the matching route; assistive tech
     // consumes that.
     expect(
-      screen.getByRole('link', { name: /history/i }),
+      screen.getByRole('link', { name: /events/i }),
     ).toHaveAttribute('aria-current', 'page')
   })
 
-  it('given the route is the Watch home, when BottomNav renders, then non-matching links do NOT carry aria-current="page" (iter-338; `end` matching keeps / from claiming every route)', () => {
+  it('given the route is the Home tab, when BottomNav renders, then non-matching links do NOT carry aria-current="page" (iter-338; `end` matching keeps / from claiming every route)', () => {
     // arrange
     renderAt('/')
 
@@ -89,10 +89,10 @@ describe('BottomNav', () => {
       screen.getByRole('link', { name: /settings/i }),
     ).not.toHaveAttribute('aria-current', 'page')
     expect(
-      screen.getByRole('link', { name: /history/i }),
+      screen.getByRole('link', { name: /events/i }),
     ).not.toHaveAttribute('aria-current', 'page')
     expect(
-      screen.getByRole('link', { name: /watch/i }),
+      screen.getByRole('link', { name: /home/i }),
     ).toHaveAttribute('aria-current', 'page')
   })
 

@@ -10,10 +10,14 @@ import { useRipple } from '../lib/ripple'
 // live + today) replaces Live; Events reads as History; Training
 // moved off the bar — it lives one tap inside People (its header
 // link), which matches how often a family member actually visits it.
+//
+// Playroom Modern (Task 4): relabeled for the pebble bar — Home
+// (was Watch), Events (was History), Faces (was People). Routes are
+// unchanged; only the accessible names/visible copy moved.
 const tabs = [
-  { to: '/', label: 'Watch', icon: LiveIcon },
-  { to: '/events', label: 'History', icon: EventsIcon },
-  { to: '/people', label: 'People', icon: PeopleIcon },
+  { to: '/', label: 'Home', icon: LiveIcon },
+  { to: '/events', label: 'Events', icon: EventsIcon },
+  { to: '/people', label: 'Faces', icon: PeopleIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
@@ -27,17 +31,22 @@ export function BottomNav() {
       // the page bg as the user scrolls content under it.
       //
       // iter-356.66 (real-device user feedback "on iOS the bottom is
-      // too lifted"): the iOS home-indicator inset (env(safe-area-
-      // inset-bottom) ≈ 34 px on a notched iPhone) was being padded
-      // FULLY beneath the nav icons, leaving a 34-px empty bg band
-      // between labels and the home indicator. Apple's HIG only asks
-      // for tap-targets to stay clear of the gesture zone, not for
-      // the full inset to be reserved as empty padding. Subtract
-      // ~14 px so the icons sit closer to the screen edge while still
-      // leaving ~20 px clearance for the swipe-up gesture. On Android
-      // (zero safe-area-inset-bottom) max(0, …) collapses to zero so
-      // the nav touches the screen edge as before. */}
-      className="fixed bottom-0 inset-x-0 bg-[var(--color-surface-scrim)] backdrop-blur border-t border-[var(--color-border)] pb-[max(0px,calc(env(safe-area-inset-bottom)-14px))] z-10 shadow-[var(--shadow-card)]"
+      // too lifted") established the safe-area contract: the nav must
+      // clear the iOS home-indicator gesture zone (env(safe-area-
+      // inset-bottom) ≈ 34 px on a notched iPhone) without wasting
+      // the whole inset as empty band.
+      //
+      // Playroom Modern (Task 4): the bar becomes a floating "pebble"
+      // — off the screen edges on all sides (mx-3.5/mb-3.5) instead
+      // of a full-bleed edge-anchored strip. The old `pb-[...]`
+      // (padding pushing content up from an edge-anchored bg) is
+      // replaced by folding the safe-area inset directly into the
+      // bottom margin: `calc(0.875rem + env(...))` — 0.875rem (14px,
+      // the mb-3.5 base clearance) PLUS whatever inset the device
+      // reports. On Android (inset 0) this collapses to exactly the
+      // 14px spec clearance; on a notched iPhone it lifts the whole
+      // pill further above the home-indicator strip.
+      className="fixed bottom-0 inset-x-0 z-10 mx-3.5 mb-[calc(0.875rem+env(safe-area-inset-bottom,0px))] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-scrim)] backdrop-blur px-2.5 py-2 shadow-[0_10px_24px_-14px_rgb(33_31_27/0.35)]"
     >
       {/* Premium-launch slice (mobile-view-auditor A2): lateral
           safe-area inset on the inner tab strip in landscape. Pre-
@@ -74,17 +83,16 @@ export function BottomNav() {
             // as a prefix of every route and Watch would always
             // render active.
             end={t.to === '/'}
-            // Material 3 navigation-bar treatment (Android-native slice,
-            // 2026-07-02): the active icon sits in a rounded pill
-            // (accent-subtle — flips with the theme) with the brand paw
-            // mark still above via .bottomnav-paw-active; labels stay
-            // visible on every item (M3 style). overflow-hidden contains
-            // the press ripple; the paw sits inside the item bounds so
-            // it isn't clipped.
+            // Playroom Modern (Task 4): the paw-mask active treatment
+            // (.bottomnav-paw-active) is retired in favor of an
+            // ink-filled pill — the whole tab tile fills solid ink
+            // with on-ink text/icon when active, matching the pebble
+            // bar's rounded-full language. overflow-hidden still
+            // contains the press ripple.
             className={({ isActive }) =>
-              `relative overflow-hidden flex-1 py-2 flex flex-col items-center gap-0.5 text-xs transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded ${
+              `relative overflow-hidden flex-1 py-1.5 flex flex-col items-center gap-0.5 text-xs rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
                 isActive
-                  ? 'bottomnav-paw-active text-[var(--color-accent-default)] font-semibold'
+                  ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] font-semibold'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`
             }
@@ -92,11 +100,7 @@ export function BottomNav() {
           >
             {({ isActive }) => (
               <>
-                <span
-                  className={`flex items-center justify-center w-14 h-7 rounded-full transition-colors duration-150 ${
-                    isActive ? 'bg-[var(--color-accent-subtle)]' : ''
-                  }`}
-                >
+                <span className="flex items-center justify-center w-14 h-7">
                   <t.icon active={isActive} />
                 </span>
                 <span>{t.label}</span>

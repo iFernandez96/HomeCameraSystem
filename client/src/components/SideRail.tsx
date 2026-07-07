@@ -41,11 +41,15 @@ type NavItem = {
 // loop on both desktop rail and mobile BottomNav (matching change in
 // BottomNav.tsx). The iter-356.65 IA collapse traded discoverability
 // for visual quietness — that trade is reversed.
+//
+// Playroom Modern (Task 4): relabeled to match the pebble BottomNav's
+// vocabulary — Home (was Watch), Events (was History), Faces (was
+// People), Review (was Training). Routes are unchanged.
 const NAV_ITEMS: NavItem[] = [
-  { to: '/',         label: 'Watch',    icon: (a) => <LiveIcon active={a} /> },
-  { to: '/events',   label: 'History',  icon: () => <EventsIcon /> },
-  { to: '/people',   label: 'People',   icon: () => <PeopleIcon /> },
-  { to: '/training', label: 'Training', icon: () => <TrainingIcon /> },
+  { to: '/',         label: 'Home',     icon: (a) => <LiveIcon active={a} /> },
+  { to: '/events',   label: 'Events',   icon: () => <EventsIcon /> },
+  { to: '/people',   label: 'Faces',    icon: () => <PeopleIcon /> },
+  { to: '/training', label: 'Review',   icon: () => <TrainingIcon /> },
   { to: '/settings', label: 'Settings', icon: () => <SettingsIcon /> },
 ]
 
@@ -64,14 +68,13 @@ export function SideRail() {
               to={t.to}
               end={t.to === '/'}
               className={({ isActive }) =>
-                `group relative flex items-center justify-center w-12 h-12 rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+                // Playroom Modern (Task 4): same active grammar as the
+                // BottomNav pebble bar, vertically — an ink-filled pill
+                // (bg-[--color-ink] + on-ink text/icon) instead of the
+                // old accent-subtle bg + ring treatment.
+                `group relative flex items-center justify-center w-12 h-12 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                   isActive
-                    ? // redesign/warm-boutique: active = peach accent-subtle
-                      // bg + marmalade icon. Ring uses the pre-mixed
-                      // --color-accent-border token instead of the `/40`
-                      // opacity modifier on a var() ref, which Tailwind v4
-                      // doesn't reliably resolve (iter-356.14 lesson).
-                      'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-1 ring-[var(--color-accent-border)]'
+                    ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)]'
                     : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text-primary)]'
                 }`
               }
@@ -88,7 +91,7 @@ export function SideRail() {
                   <span
                     aria-hidden="true"
                     data-ripple-host
-                    className="pointer-events-none absolute inset-0 rounded-xl overflow-hidden"
+                    className="pointer-events-none absolute inset-0 rounded-full overflow-hidden"
                   />
                   {t.icon(isActive)}
                   {/* iter-356.58 — tooltip flyout. Renders only on
