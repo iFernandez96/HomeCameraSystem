@@ -191,18 +191,9 @@ export function EventList({
               an absolutely-positioned 1px brass-tinted line at
               left: 4.25rem (matches the right edge of the time
               column). Each entry gets a 0.5rem-wide axis tick. */}
-          {/* Painfix #2 (audited on-device): the mobile calendar FAB
-              (Events.tsx, fixed bottom-right, ~68-80px footprint
-              inc. its right offset) floats OVER whatever row happens
-              to scroll into its vertical band. On tall rows the
-              per-card delete ✕ sits at the card's own right edge —
-              close enough to the FAB's column that the two hit zones
-              overlapped. Rather than track scroll position, reserve
-              the FAB's whole right-hand column on <lg (where the FAB
-              renders) so every row's action zone sits fully clear of
-              it, at every scroll position. lg+ has no FAB (desktop
-              rail instead) so padding reverts to symmetric px-4. */}
-          <ol className="relative list-none pl-4 pr-[4.75rem] lg:px-4 pt-2 pb-3">
+          {/* The calendar trigger lives in the page header now, so
+              rows keep their full width on phones. */}
+          <ol className="relative list-none px-4 pt-2 pb-3">
             <span
               aria-hidden="true"
               className="absolute left-[4.25rem] top-2 bottom-2 w-px bg-[var(--color-border-subtle)]"
@@ -593,12 +584,11 @@ function EventCardImpl({
           <ConfidencePill score={e.score} />
         </div>
         {/* META — right, vertical stack: title / timestamp + face match */}
-        <div className="flex-1 min-w-0 flex flex-col py-0.5 gap-0.5">
-          {/* Bug sweep (2026-07-02): was `truncate` — "Person at the
-              front door" clipped to "Person at the fr…" on every
-              390px row. Two-line clamp keeps the full iter-249 title
-              semantics (location + multi-person fan-out) readable. */}
-          <div className="text-[13.5px] font-bold text-[var(--color-text-primary)] line-clamp-2">
+        <div className="flex-1 min-w-0 pr-8 flex flex-col py-0.5 gap-0.5">
+          {/* Title owns the remaining row width after thumb + WhoMark.
+              Keep it shrinkable and reserve the row's right gutter so
+              the absolute delete X never sits over text. */}
+          <div className="min-w-0 truncate text-[13.5px] font-bold text-[var(--color-text-primary)]">
             {title}
           </div>
           <div className="text-xs text-[var(--color-text-secondary)]">
@@ -666,7 +656,7 @@ function EventCardImpl({
           // Bug sweep (2026-07-02): the old treatment was a solid
           // danger-strong circle hanging half OUTSIDE the card edge
           // (-right-2) — every row screamed delete and the bottom one
-          // collided with the calendar FAB. Now: a quiet tinted ✕
+          // collided with the row edge. Now: a quiet tinted ✕
           // INSIDE the card gutter (44px hit area via padding, 32px
           // visual), still always-visible on touch, hover-revealed on
           // desktop. Swipe-to-delete unchanged.

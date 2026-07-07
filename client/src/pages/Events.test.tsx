@@ -147,7 +147,7 @@ describe('Events page', () => {
     vi.clearAllMocks()
   })
 
-  it('given the calendar localStorage flag is unset, when the page mounts, then the heatmap is hidden until the user taps the calendar icon (iter-251)', async () => {
+  it('given the calendar localStorage flag is unset, when the page mounts, then the heatmap is hidden until the user taps Filter by day (iter-251)', async () => {
     // arrange — clear the seeded flag from the shared beforeEach.
     window.localStorage.removeItem('homecam:calendarOpen')
     fetchEvents.mockResolvedValue([])
@@ -161,19 +161,20 @@ describe('Events page', () => {
     )
     expect(screen.queryByLabelText(/detection events per day/i)).not.toBeInTheDocument()
 
-    // act — tap the calendar icon.
+    // act — tap the calendar icon in the header action line.
     await user.click(
-      screen.getByRole('button', { name: /show calendar/i }),
+      screen.getByRole('button', { name: /filter by day/i }),
     )
 
-    // assert — heatmap mounts; aria-label flips to "hide calendar".
+    // assert — heatmap mounts; trigger stays in the header and
+    // exposes toggle state with aria-pressed.
     // iter-356-E: EventHeatmap is React.lazy; await Suspense settle.
     expect(
       await screen.findByLabelText(/detection events per day/i),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /hide calendar/i }),
-    ).toBeInTheDocument()
+      screen.getByRole('button', { name: /filter by day/i }),
+    ).toHaveAttribute('aria-pressed', 'true')
     // localStorage persisted the choice.
     expect(window.localStorage.getItem('homecam:calendarOpen')).toBe('1')
   })
@@ -1570,7 +1571,7 @@ describe('Events page', () => {
     await waitFor(() =>
       expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
     )
-    const trigger = screen.getByRole('button', { name: /show calendar/i })
+    const trigger = screen.getByRole('button', { name: /filter by day/i })
 
     // act — open then close.
     trigger.focus()
@@ -1594,7 +1595,7 @@ describe('Events page', () => {
         screen.queryByRole('dialog', { name: /detection calendar/i }),
       ).not.toBeInTheDocument(),
     )
-    const triggerAfter = screen.getByRole('button', { name: /show calendar/i })
+    const triggerAfter = screen.getByRole('button', { name: /filter by day/i })
     expect(document.activeElement).toBe(triggerAfter)
   })
 

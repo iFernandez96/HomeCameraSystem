@@ -175,6 +175,43 @@ describe('EventList', () => {
     expect(screen.getByText(/israel at the front door/i)).toBeInTheDocument()
   })
 
+  it('given a narrow phone row, then the list does not reserve calendar space and the title clears the delete button', () => {
+    // arrange / act — the calendar affordance lives in the Events
+    // header now, so EventList must not keep the old right-side
+    // reservation that starved titles on 390-430px phones.
+    render(
+      <EventList
+        events={[
+          evt({
+            label: 'person',
+            person_name: 'Person',
+            camera_id: 'cam1',
+            thumb_url: '/snapshots/person.jpg',
+          }),
+        ]}
+        onDelete={() => {}}
+      />,
+    )
+
+    // assert — list rows get symmetrical horizontal padding again.
+    const list = document.querySelector('ol')
+    expect(list?.className).toMatch(/\bpx-4\b/)
+    expect(list?.className).not.toMatch(/pr-\[4\.75rem\]/)
+
+    // assert — the text column is shrinkable but reserves a right
+    // gutter for the absolute delete X, and the title truncates
+    // inside that column instead of rendering under the X.
+    const title = screen.getByText(/person at the front door/i)
+    expect(title.className).toMatch(/\bmin-w-0\b/)
+    expect(title.className).toMatch(/\btruncate\b/)
+    const textColumn = title.parentElement
+    expect(textColumn?.className).toMatch(/\bmin-w-0\b/)
+    expect(textColumn?.className).toMatch(/\bpr-8\b/)
+    expect(
+      screen.getByRole('button', { name: /delete event from/i }),
+    ).toBeInTheDocument()
+  })
+
   it('when there are events from multiple cameras, then each card shows its own location title (iter-249)', () => {
     // arrange / act — non-cam1 ids fall through to the raw id
     // pending the multi-cam friendly-name plan (iter-177 MC track).

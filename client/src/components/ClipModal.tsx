@@ -673,7 +673,7 @@ export function ClipModal({
                 className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 px-6 text-center"
               >
                 <p className="text-sm text-white/90 max-w-xs">
-                  Video not ready yet — it&apos;s still being saved.
+                  Video not ready yet: it&apos;s still being saved.
                   This usually takes under two minutes.
                 </p>
               </div>
@@ -706,7 +706,7 @@ export function ClipModal({
             note sits on the dark video pane, so plain soft white reads
             better than an off-palette amber. */}
         <p className="text-sm text-white/85 max-w-xs">
-          Video not ready yet — here&apos;s a still photo from the event.
+          Video not ready yet: here&apos;s a still photo from the event.
           Check back in a few seconds.
         </p>
         <img

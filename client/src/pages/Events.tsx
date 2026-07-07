@@ -923,16 +923,12 @@ export function Events() {
           but we adjust `--day-header-top` to safe-area-inset-top so
           day labels pin to the actual viewport top instead of
           beneath the now-gone sticky page header. */}
-      {/* iter-356.66 (real-device user feedback round 2): user said
-          "the only thing that should follow the scroll is the
-          calendar icon. you don't need so much space for the
-          header." Round-1 sticky'd the entire <header> — title +
-          Last-N + filter chips, ~150 px tall. Too much real-estate.
-          Reverting <header> to normal block flow; lifting JUST the
-          calendar button into a `position: fixed` floating control
-          at top-right of the viewport (rendered separately below).
-          The header (Watch log title + filter chips) scrolls away
-          naturally; the calendar icon alone follows the user. */}
+      {/* iter-356.66 (real-device user feedback round 5): the
+          floating calendar button was removed. Its right-side
+          clearance starved event-row titles on 390-430px phones and
+          put the delete X in the same visual lane as title text.
+          The calendar affordance now lives in this compact header
+          action line next to Select. */}
       {/* iter-356.66 (round 4 — user feedback "too much padding on
           bottom and top"): dropped the pt-[env(safe-area-inset-top)]
           from this <header>. The WatchRibbon at the top of the App
@@ -1022,14 +1018,15 @@ export function Events() {
                 Select
               </button>
             )}
-            {/* iter-356.66 (round 2): calendar toggle moved OUT of
-                the in-header position into a fixed-positioned
-                floating button rendered after </header> below.
-                User feedback: "the only thing that should follow the
-                scroll is the calendar icon. you don't need so much
-                space for the header." Original position kept on
-                lg+ via the desktop heatmap rail; the in-header
-                slot is gone everywhere now. */}
+            <button
+              type="button"
+              onClick={() => setCalendarOpen((v) => !v)}
+              aria-label="Filter by day"
+              aria-pressed={calendarOpen}
+              className="lg:hidden inline-flex items-center justify-center p-2.5 -m-2.5 rounded-full text-[var(--color-text-primary)] hover:text-[var(--color-accent-default)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            >
+              <CalendarIcon />
+            </button>
           </div>
         </div>
         {showFilters && (
@@ -1316,50 +1313,6 @@ export function Events() {
           </div>
         ) : null}
       </header>
-      {/* iter-356.66 (real-device user feedback round 3): top-right
-          floating position overlapped the in-header "Last 100" text
-          ("L..." peeking from behind the calendar circle). Moved to
-          a bottom-right FAB pattern instead:
-            - sits above the BottomNav
-            - right: edge margin, clear of row action zones
-            - 56-px round button with elevated shadow + accent fill
-              when the calendar overlay is open
-            - mobile-only (lg:hidden) — desktop heatmap lives in the
-              right rail, no toggle needed
-          Bottom-right is the conventional mobile FAB position
-          (Gmail / Instagram / Inbox) and lands directly under the
-          right thumb's natural arc on a 6.7" phone. No overlap with
-          any header content; visible at all scroll positions.
-          Painfix #2 (audited on-device): the FAB's own vertical
-          offset (5rem) sat BELOW the App.tsx `<main>` bottom-padding
-          contract for the pebble nav (App.tsx reserves 6rem — see
-          BottomNav.tsx's own comment) — close enough that the FAB
-          visually crowded the nav's top edge. Bumped to 6rem to
-          mirror the nav's own clearance exactly, and the right
-          offset moved 3->4 for a hair more separation from the
-          edge. The per-card delete ✕ collision this FAB caused on
-          tall rows is fixed on the EventList side (reserved right
-          padding — see EventList.tsx's `<ol>` comment), since the
-          FAB is `fixed` and unavoidably sits over SOME scroll
-          position no matter how far up it floats. */}
-      <button
-        type="button"
-        onClick={() => setCalendarOpen((v) => !v)}
-        aria-label={calendarOpen ? 'Hide calendar' : 'Show calendar'}
-        aria-pressed={calendarOpen}
-        // Landscape pass: this offset reserves room for the OLD
-        // bottom-docked pebble nav. `landscape-phone:` docks the nav
-        // as a LEFT rail instead (BottomNav.tsx) — nothing sits at
-        // the bottom edge there, so the FAB can sit close to it
-        // instead of floating ~92px up with a big dead gap below.
-        className={`lg:hidden fixed bottom-[calc(6rem+env(safe-area-inset-bottom)+8px)] landscape-phone:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] right-4 z-30 inline-flex items-center justify-center w-14 h-14 rounded-full shadow-[var(--shadow-card)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-          calendarOpen
-            ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] ring-2 ring-[var(--color-accent-border)]'
-            : 'bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] ring-1 ring-[var(--color-border-strong)]'
-        }`}
-      >
-        <CalendarIcon />
-      </button>
       {/* iter-356.16 (Maya 10th + Priya 3rd CRITICAL): pulled
           EventHeatmap out of the sticky <header>. Pre-iter-356.16
           the heatmap lived inside the pin (iter-298) which made the
