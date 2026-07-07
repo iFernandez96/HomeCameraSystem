@@ -520,11 +520,54 @@ describe('People page', () => {
     // act
     renderPeople()
 
-    // assert — the visible "Familiar faces" title is a <p> for
-    // visual reasons (the WatchRibbon owns identity), but AT users
-    // still need a level-1 heading per route.
+    // assert — the visible "Faces" title is a <p> for visual reasons
+    // (the WatchRibbon owns identity), but AT users still need a
+    // level-1 heading per route. Playroom Modern (Task 9): "Familiar
+    // faces" -> "Faces", matching the SideNav route label.
     expect(
-      screen.getByRole('heading', { level: 1, name: /familiar faces/i }),
+      screen.getByRole('heading', { level: 1, name: /^faces$/i }),
     ).toBeInTheDocument()
+  })
+
+  // Playroom Modern (Task 9): identity system rollout — the header
+  // spells out the color legend, and each known person's card wears
+  // its own WhoMark badge (SVG role="img", named after the person)
+  // in their stable wheel hue.
+  it('given the People page renders, then the header explains the per-person color system (Task 9)', async () => {
+    // arrange
+    listPeople.mockResolvedValue({ items: [], total: 0 })
+
+    // act
+    renderPeople()
+
+    // assert
+    expect(
+      screen.getByText(/everyone the camera knows gets their own color/i),
+    ).toBeInTheDocument()
+  })
+
+  it('given the server returns a recognized person, when the row renders, then a WhoMark badge names that person (Task 9)', async () => {
+    // arrange
+    listPeople.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          name: 'Alice',
+          count: 1,
+          last_seen_ts: Date.now() / 1000,
+          first_seen_ts: Date.now() / 1000,
+          last_clip_url: null,
+          last_thumb_url: null,
+        },
+      ],
+    })
+
+    // act
+    renderPeople()
+
+    // assert — WhoMark renders as an accessible img named after the
+    // person (distinct from the button's own aria-label).
+    await screen.findByRole('button', { name: /alice: 1 visit/i })
+    expect(screen.getByRole('img', { name: 'Alice' })).toBeInTheDocument()
   })
 })

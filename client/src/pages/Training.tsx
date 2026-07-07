@@ -150,7 +150,7 @@ function CaptureRetentionSection() {
   return (
     <section
       aria-labelledby="capture-retention-heading"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 space-y-3 shadow-[var(--shadow-card),var(--shadow-card-inset)]"
+      className="bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-4 space-y-3 shadow-[var(--shadow-card),var(--shadow-card-inset)]"
     >
       <h2
         id="capture-retention-heading"
@@ -281,7 +281,7 @@ function ExportSection() {
   return (
     <section
       aria-labelledby="export-heading"
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-[var(--shadow-card),var(--shadow-card-inset)]"
+      className="bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-4 shadow-[var(--shadow-card),var(--shadow-card-inset)]"
     >
       <details>
         <summary
@@ -424,7 +424,7 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
       <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 list-none">
         {dirs.map((d) => (
         <li key={d.name}>
-          <div className="flex flex-col gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">
+          <div className="flex flex-col gap-2 bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-3 shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">
           <button
             type="button"
             onClick={() => onPick(d.name)}
@@ -695,7 +695,7 @@ function GalleryView({
       <button
         type="button"
         onClick={onBack}
-        className="inline-flex items-center gap-1 text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] rounded-lg px-3 py-2 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+        className="inline-flex items-center gap-1 text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] rounded-full px-3 py-2 min-h-[44px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
         aria-label="Back to all people"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -841,7 +841,7 @@ function GalleryView({
                         setShowNewPersonInput(false)
                       }}
                       aria-label={`Move or delete photo ${idx + 1} of ${files.length}, from ${_formatRelative(f.ts_ms / 1000)}`}
-                      className="w-full px-2 py-2 min-h-[44px] text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-raised)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] rounded-lg focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+                      className="w-full px-2 py-2 min-h-[44px] text-sm font-medium text-[var(--color-text-primary)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-raised)] border-[1.5px] border-[var(--color-border)] hover:border-[var(--color-border-strong)] rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
                     >
                       Move or delete
                     </button>
@@ -885,7 +885,7 @@ function ActionPanel({
   return (
     // Sunroom sweep: the action surface floats as a paper card with
     // the overlay shadow, sitting on the selected tile's peach wash.
-    <div className="space-y-2 mt-1 p-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-overlay)]">
+    <div className="space-y-2 mt-1 p-2 rounded-[var(--radius-xl)] bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] shadow-[var(--shadow-overlay)]">
       {otherDirs.length > 0 ? (
         <fieldset className="space-y-1">
           <legend className="text-xs text-[var(--color-text-secondary)] mb-1">Move this photo to</legend>

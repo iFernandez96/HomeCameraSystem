@@ -5,7 +5,9 @@ import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
+import { WhoMark } from '../components/WhoMark'
 import { formatError } from '../lib/format'
+import { identityForName } from '../lib/identity'
 import { useFaceCaptureEnabled } from '../lib/useFaceCaptureEnabled'
 import { useTicker } from '../lib/useTicker'
 
@@ -145,12 +147,16 @@ export function People() {
               visible title is a <p> for visual-rebuild reasons (the
               WatchRibbon owns identity), but AT users still need a
               level-1 heading to land on. */}
-          <h1 className="sr-only">Familiar faces</h1>
+          {/* Playroom Modern (Task 9): "Familiar faces" -> "Faces" —
+              matches the SideNav route label. The subhead spells out
+              the identity-color system so a first-time viewer isn't
+              left guessing why every card carries a different hue. */}
+          <h1 className="sr-only">Faces</h1>
           <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
-            Familiar faces
+            Faces
           </p>
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-            Sorted by most recent visit. Tap a face to see their events.
+            Everyone the camera knows gets their own color.
           </p>
         </div>
         {/* iter-352/353a/355aa: mobile entry-point to /training
@@ -367,35 +373,51 @@ function _PersonGrid({
 }) {
   return (
     <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lg:gap-3 list-none">
-      {people.map((p) => (
+      {people.map((p) => {
+        // Playroom Modern (Task 9): every known person gets a stable
+        // wheel hue from the identity system — the wheel color becomes
+        // the card's left identity edge, and the WhoMark glyph badges
+        // the avatar corner so the "this card = this color, everywhere"
+        // rule reads at a glance (matches the color legend on Events).
+        const identity = identityForName(p.name)
+        return (
         <li key={p.name}>
           <button
             type="button"
             onClick={() => onPersonClick(p.name)}
-            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 min-h-[48px] shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-3 min-h-[48px] shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+            style={{ borderLeft: `4px solid ${identity.colorVar}` }}
             aria-label={`${p.name}: ${p.count} ${p.count === 1 ? 'visit' : 'visits'}, last seen ${_formatRelative(p.last_seen_ts)}, first seen ${_formatAbsolute(p.first_seen_ts)}`}
           >
-            {p.last_thumb_url ? (
-              <img
-                src={p.last_thumb_url}
-                alt=""
-                loading="lazy"
-                className="w-16 h-16 rounded-xl object-cover bg-[var(--color-surface-raised)] flex-shrink-0"
-              />
-            ) : (
-              // iter-356.3c (Maya Major): match Training avatar
-              // fallback — success-green stays reserved exclusively
-              // for confirmed-recognition signals.
-              // Sunroom sweep: warm-brass portrait chip (the house's
-              // hardware, decorative-neutral) instead of the flat
-              // raised-surface gray. Keeps the family-album feel
-              // without touching the semantic color budget.
-              <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-border)] flex items-center justify-center flex-shrink-0">
-                <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-brass-default)]">
-                  {p.name.charAt(0).toUpperCase()}
-                </span>
+            <div className="relative flex-shrink-0">
+              {p.last_thumb_url ? (
+                <img
+                  src={p.last_thumb_url}
+                  alt=""
+                  loading="lazy"
+                  className="w-16 h-16 rounded-xl object-cover bg-[var(--color-surface-raised)]"
+                />
+              ) : (
+                // iter-356.3c (Maya Major): match Training avatar
+                // fallback — success-green stays reserved exclusively
+                // for confirmed-recognition signals.
+                // Sunroom sweep: warm-brass portrait chip (the house's
+                // hardware, decorative-neutral) instead of the flat
+                // raised-surface gray. Keeps the family-album feel
+                // without touching the semantic color budget.
+                <div className="w-16 h-16 rounded-xl bg-[var(--color-brass-subtle)] border border-[var(--color-brass-border)] flex items-center justify-center">
+                  <span aria-hidden="true" className="text-2xl font-semibold text-[var(--color-brass-default)]">
+                    {p.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              )}
+              {/* Corner badge: the WhoMark glyph in the person's own
+                  wheel hue, ring-cut against the card surface so it
+                  reads as a distinct chip over the thumbnail. */}
+              <div className="absolute -bottom-1 -right-1 rounded-full ring-2 ring-[var(--color-surface)] bg-[var(--color-surface)]">
+                <WhoMark identity={identity} size={20} />
               </div>
-            )}
+            </div>
             <div className="flex-1 min-w-0">
               <div className="text-base font-semibold text-[var(--color-text-primary)] truncate">
                 {p.name}
@@ -413,7 +435,8 @@ function _PersonGrid({
             </div>
           </button>
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
 }

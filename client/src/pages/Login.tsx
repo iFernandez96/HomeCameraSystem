@@ -5,7 +5,7 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { CatTrioMark } from '../components/CatIcons'
+import { BrandMarkRow } from '../components/WhoMark'
 import { Button } from '../components/primitives/Button'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
@@ -13,15 +13,22 @@ import { log } from '../lib/log'
 
 /**
  * Full-page sign-in form — the brand-setting first impression.
- * redesign/warm-boutique (Sunroom): warm-linen full-bleed page, cream
- * paper card, CatTrioMark + Fraunces "HomeCam" wordmark, Panther-ink
- * submit via the Button primitive. Kept from the iter-356 series:
+ * Playroom Modern (Task 9): the page sits directly on the wall ground
+ * (`--color-bg`) rather than a lifted paper card; `<BrandMarkRow>`
+ * (Panther / Mushu / Coco, one shared mark shape with the rest of the
+ * identity system) replaces the old CatTrioMark PNG stitch above the
+ * title, staggering in nose-to-tail (0/90/180ms) via the scoped
+ * `<style>` block below — reuses index.css's `login-fade-in` keyframe
+ * so the global `prefers-reduced-motion: reduce` clamp (index.css)
+ * already covers it without a component-level guard. Username +
+ * password now share ONE rounded bar (radius-xl) instead of two
+ * separately-bordered fields — a hairline divider marks the seam.
+ * Kept from the iter-356 series:
  *  - Surfaced error state (icon + tinted box, not bare red text)
  *  - Loading spinner inside the submit button
  *  - Caps Lock warning on the password field
  *  - 44 px touch targets on inputs + button; 16 px input text so iOS
  *    Safari doesn't zoom-jump the viewport on focus
- *  - Card animates in (login-fade-in keyframe in index.css)
  *
  * Auth contract preserved: AuthProvider's `login` posts /api/auth/
  * login, sets state to 'authed', and we navigate back to /live.
@@ -114,11 +121,11 @@ export function Login() {
 
   return (
     <div className="min-h-full flex items-center justify-center px-6 py-16 bg-[var(--color-bg)]">
-      {/* redesign/warm-boutique (Sunroom): the card is cream paper on
-          the warm-linen page, lifted by --shadow-card plus the
-          --shadow-card-inset white top edge — paper catching daylight,
-          not a glow. rounded-2xl preserved; nests the rounded-xl
-          controls with the canonical 4-px step. */}
+      {/* Playroom Modern (Task 9): card grammar matches the rest of
+          the redesign — rounded-[var(--radius-xl)] + a 1.5px hairline
+          border, still lifted by --shadow-card / --shadow-card-inset
+          (paper catching daylight, not a glow) off the wall-ground
+          page behind it. */}
       <form
         onSubmit={handleSubmit}
         aria-label="Sign in"
@@ -128,18 +135,32 @@ export function Login() {
         // content shrinks the viewport. Card grows to fill available
         // space so the submit button stays bottom-anchored relative
         // to the card body.
-        className="w-full max-w-sm flex flex-col bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 animate-login-in shadow-[var(--shadow-card)]"
+        className="w-full max-w-sm flex flex-col bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-10 animate-login-in shadow-[var(--shadow-card)]"
         style={{ boxShadow: 'var(--shadow-card), var(--shadow-card-inset)' }}
       >
-        {/* iter-356.4-cats: brand identity now CARRIED BY THE THREE
-            CATS (Panther / Mushu / Coco). Pixel-art trio replaces
-            the generic camera-lens glyph — the household-watch crew
-            IS the brand. Tagline tweak ties the wordmark to the
-            ambient cat layer that walks the bottom of every page. */}
-        {/* iter-356.57 (radical redesign): den-entrance brand block.
-            Bigger trio mark, Fraunces serif headline, italic motto,
-            cat names typeset as a small uppercase brass row — reads
-            as a household sigil panel rather than a SaaS login card. */}
+        {/* Playroom Modern (Task 9): the scoped stagger only fires
+            under prefers-reduced-motion: no-preference — reduced-
+            motion users get the marks at their resting (100%
+            opacity, 0 offset) state instantly. Reuses the
+            `login-fade-in` keyframe already defined in index.css
+            (also respected by the global reduced-motion clamp
+            there) rather than introducing a parallel one. */}
+        <style>{`
+          @media (prefers-reduced-motion: no-preference) {
+            .login-brand-stagger svg:nth-of-type(1) {
+              animation: login-fade-in 300ms var(--ease-out, cubic-bezier(0,0,0.2,1)) both;
+              animation-delay: 0ms;
+            }
+            .login-brand-stagger svg:nth-of-type(2) {
+              animation: login-fade-in 300ms var(--ease-out, cubic-bezier(0,0,0.2,1)) both;
+              animation-delay: 90ms;
+            }
+            .login-brand-stagger svg:nth-of-type(3) {
+              animation: login-fade-in 300ms var(--ease-out, cubic-bezier(0,0,0.2,1)) both;
+              animation-delay: 180ms;
+            }
+          }
+        `}</style>
         {wasExpired && (
           <div
             role="status"
@@ -152,7 +173,14 @@ export function Login() {
           </div>
         )}
         <div className="flex flex-col items-center text-center mb-8">
-          <CatTrioMark size={104} className="mb-4" />
+          {/* Playroom Modern (Task 9): BrandMarkRow replaces the old
+              CatTrioMark PNG stitch — same three-cat identity, drawn
+              from the shared WhoMark shape/color system instead of a
+              one-off raster asset. Wrapper class scopes the staggered
+              entrance defined in the <style> block above. */}
+          <div className="login-brand-stagger mb-4">
+            <BrandMarkRow size={44} />
+          </div>
           <h1 className="font-display text-4xl font-bold text-[var(--color-text-primary)] tracking-tight">
             HomeCam
           </h1>
@@ -164,95 +192,104 @@ export function Login() {
           </p>
         </div>
 
-        <label className="flex flex-col mb-5">
-          <span className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-            Username
-          </span>
-          <input
-            type="text"
-            // iter-356.1a (Frank #1): blank field with no hint left
-            // first-time users (Frank: "what do I type? my email?
-            // 'admin'?"). Placeholder + helper text makes the
-            // expected input shape obvious.
-            placeholder="Your account name"
-            autoComplete="username"
-            required
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            // iter-271 a11y: tie inputs to the role="alert" error region
-            // so NVDA reads field+error together, not separately.
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? 'login-error' : undefined}
-            className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3.5 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-border)] transition-all duration-150"
-          />
-          <p className="text-xs text-[var(--color-text-tertiary)] mt-1.5">
-            Created when HomeCam was first set up.
-          </p>
-        </label>
-
-        <label className="flex flex-col mb-2">
-          <span className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-            Password
-          </span>
-          {/* iter-356.1a (Maya Major): show-password eye toggle.
-              Position: absolute right-side inside the input. The
-              `pr-11` on the input reserves 44 px space for the
-              toggle's tap target. Toggle's aria-label flips with
-              state so SR users get accurate announcements. */}
-          <div className="relative">
+        {/* Playroom Modern (Task 9): username + password now share ONE
+            big rounded input bar (radius-xl) instead of two separately
+            bordered fields — a hairline divider marks the seam between
+            them. Each <label> keeps its own visible caption + the
+            same aria wiring (aria-invalid/aria-describedby, Caps Lock
+            probes) as before; only the outer border/radius moved from
+            per-field to the shared bar. */}
+        <div className="flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden mb-2">
+          <label className="flex flex-col px-3.5 py-3 border-b border-[var(--color-border)] focus-within:bg-[var(--color-surface)] transition-colors">
+            <span className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+              Username
+            </span>
             <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Your password"
-              autoComplete="current-password"
+              type="text"
+              // iter-356.1a (Frank #1): blank field with no hint left
+              // first-time users (Frank: "what do I type? my email?
+              // 'admin'?"). Placeholder makes the expected input
+              // shape obvious.
+              placeholder="Your account name"
+              autoComplete="username"
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={handlePasswordKey}
-              onFocus={handlePasswordFocus}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              // iter-271 a11y: tie inputs to the role="alert" error region
+              // so NVDA reads field+error together, not separately.
               aria-invalid={error ? true : undefined}
               aria-describedby={error ? 'login-error' : undefined}
-              className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg pl-3.5 pr-11 py-3 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-accent-default)] focus:ring-2 focus:ring-[var(--color-accent-border)] transition-all duration-150"
+              className="bg-transparent text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
             />
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-r-lg transition-colors duration-150"
-            >
-              {showPassword ? (
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                  <line x1="1" y1="1" x2="23" y2="23" />
-                </svg>
-              ) : (
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </label>
+          </label>
+
+          <label className="flex flex-col px-3.5 py-3 focus-within:bg-[var(--color-surface)] transition-colors">
+            <span className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+              Password
+            </span>
+            {/* iter-356.1a (Maya Major): show-password eye toggle.
+                Position: absolute right-side inside the input. The
+                `pr-11` on the input reserves 44 px space for the
+                toggle's tap target. Toggle's aria-label flips with
+                state so SR users get accurate announcements. */}
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Your password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={handlePasswordKey}
+                onFocus={handlePasswordFocus}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'login-error' : undefined}
+                className="w-full bg-transparent pr-11 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-r-lg transition-colors duration-150"
+              >
+                {showPassword ? (
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </label>
+        </div>
+        <p className="text-xs text-[var(--color-text-tertiary)] -mt-1 mb-4 px-1">
+          Created when HomeCam was first set up.
+        </p>
 
         {/* iter-356.5 (a11y C1 #2 + mobile F1): persistent live-region
             slot — pre-iter-356.5 the warning was a conditional <p>

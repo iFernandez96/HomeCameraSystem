@@ -250,24 +250,43 @@ describe('Login page', () => {
     expect(slot?.className).toMatch(/min-h-\[3\.5rem\]/)
   })
 
-  // iter-356-E (Slice E): Login hero trio mark sits above-the-fold —
-  // first paint depends on the three face PNGs. Pre-iter-356-E they
-  // were `loading="lazy"`, which on slow connections deferred them
-  // BELOW critical resources. Eager + fetchpriority="high" tells the
-  // browser to prioritize them in the network queue.
-  it('given the Login hero renders, then the trio mark imgs are eager + high priority (iter-356-E)', () => {
+  // Playroom Modern (Task 9): the Login hero brand mark switched from
+  // a raster CatTrioMark PNG stitch to <BrandMarkRow>, drawn from the
+  // shared WhoMark identity system (inline SVG, no image network
+  // request to prioritize). Pin the new shape instead of the old
+  // eager/fetchpriority image contract, which no longer applies.
+  it('given the Login hero renders, then the BrandMarkRow shows all three cat marks (Task 9)', () => {
     // arrange / act
     renderLogin()
-    const trio = screen.getByRole('img', { name: /three cats/i })
-    const imgs = trio.querySelectorAll('img')
+    const trio = screen.getByRole('img', {
+      name: /panther, mushu and coco/i,
+    })
 
-    // assert — three cells (panther / mushu / coco), each eager and
-    // carrying the fetchpriority hint.
-    expect(imgs.length).toBe(3)
-    for (const img of imgs) {
-      expect(img.getAttribute('loading')).toBe('eager')
-      expect(img.getAttribute('fetchpriority')).toBe('high')
-    }
+    // assert — three inline SVG marks, one per brand cat.
+    expect(trio.querySelectorAll('svg').length).toBe(3)
+  })
+
+  // Playroom Modern (Task 9): the three marks stagger in (0/90/180ms)
+  // via a scoped <style> block guarded by prefers-reduced-motion:
+  // no-preference, reusing the login-fade-in keyframe already defined
+  // in index.css. jsdom doesn't compute keyframe timing, so pin the
+  // wiring instead: the wrapper class exists and the scoped stylesheet
+  // declares per-mark animation-delay rules inside the no-preference
+  // media guard (never unconditionally, which would fight the global
+  // reduced-motion clamp).
+  it('given the Login hero renders, then the brand marks are wrapped for a reduced-motion-guarded staggered entrance (Task 9)', () => {
+    // arrange / act
+    const { container } = renderLogin()
+
+    // assert
+    expect(container.querySelector('.login-brand-stagger')).not.toBeNull()
+    const styleText = Array.from(container.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n')
+    expect(styleText).toMatch(/prefers-reduced-motion:\s*no-preference/)
+    expect(styleText).toMatch(/animation-delay:\s*0ms/)
+    expect(styleText).toMatch(/animation-delay:\s*90ms/)
+    expect(styleText).toMatch(/animation-delay:\s*180ms/)
   })
 
   // docs/logging_plan.md §2/§5 (Auth): failed sign-in logs WARN with
