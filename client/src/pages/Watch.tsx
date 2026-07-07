@@ -94,7 +94,14 @@ function useTodayEvents() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
-  return { events, quietSince, error }
+  // Final whole-branch review fix batch #1: ClipModal's Delete pill
+  // (see Watch()'s ClipModal usage below) needs a way to make this
+  // list forget the just-deleted event. Reuses the EXISTING
+  // refetch-key mechanism (the same one visibilitychange bumps above)
+  // rather than adding a second, parallel invalidation path.
+  const refetch = () => setRefetchKey((k) => k + 1)
+
+  return { events, quietSince, error, refetch }
 }
 
 export function Watch() {
@@ -103,7 +110,7 @@ export function Watch() {
   const { showToast } = useToast()
   const navigate = useNavigate()
   const ripple = useRipple()
-  const { events, quietSince, error } = useTodayEvents()
+  const { events, quietSince, error, refetch: refetchTodayEvents } = useTodayEvents()
 
   const [full, setFull] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -149,9 +156,9 @@ export function Watch() {
   const watchingDetail = offline
     ? 'Check its power, then see Settings.'
     : lowMemory
-      ? 'Paused — the system is low on memory.'
+      ? 'Paused: the system is low on memory.'
       : thermal
-        ? 'Slowed down — the camera is running warm.'
+        ? 'Slowed down: the camera is running warm.'
         : watching
           ? `${sentryCatName(sentryCat)} is on watch · alerts on`
           : detectionActive === false
@@ -341,15 +348,18 @@ export function Watch() {
           }`}
         >
           <p className="text-[17px] font-extrabold tracking-tight">
-            {watching ? 'Watching' : 'Paused'}
+            {offline ? 'Offline' : watching ? 'Watching' : 'Paused'}
           </p>
-          <p className="text-xs font-semibold">{watchingDetail}</p>
+          {/* Final whole-branch review fix batch #6: text-xs resolves to
+              11px in this theme — a hair too small for the accepted
+              12.5px detail size. Arbitrary value pins the exact px. */}
+          <p className="text-[12.5px] font-semibold">{watchingDetail}</p>
         </div>
         <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
           <p className="text-[17px] font-extrabold tracking-tight text-[var(--color-text-primary)]">
             {todayCount} today
           </p>
-          <p className="text-xs font-semibold text-[var(--color-text-secondary)]">
+          <p className="text-[12.5px] font-semibold text-[var(--color-text-secondary)]">
             {todayBreakdown}
           </p>
         </div>
@@ -367,7 +377,15 @@ export function Watch() {
         <SnapshotPreview url={previewUrl} onClose={() => setPreviewUrl(null)} />
       )}
       {openEvent && (
-        <ClipModal event={openEvent} onClose={() => setOpenEvent(null)} />
+        <ClipModal
+          event={openEvent}
+          onClose={() => setOpenEvent(null)}
+          // Final whole-branch review fix batch #1: bump the SAME
+          // refetch key visibilitychange already uses, so the
+          // just-deleted event drops out of Today's Story without a
+          // second, parallel invalidation mechanism.
+          onDeleted={() => refetchTodayEvents()}
+        />
       )}
     </div>
   )
@@ -497,7 +515,12 @@ function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
             />
           ))}
         </button>
-        <span className="flex-none text-[11px] font-extrabold tracking-wider text-[var(--color-danger)] bg-[var(--color-danger-bg)] ring-1 ring-[var(--color-danger-border)] px-2.5 py-1 rounded-full">
+        {/* Final whole-branch review fix batch #3: fixed over-video
+            colors — the fullscreen scrim is black in both themes;
+            theme danger tokens are tuned for paper (same exception as
+            text-white on video). The tokenized danger colors measured
+            ~4.1:1 against this always-black overlay in light theme. */}
+        <span className="flex-none text-[11px] font-extrabold tracking-wider text-[#f87171] bg-[rgba(248,113,113,0.16)] ring-1 ring-[rgba(248,113,113,0.45)] px-2.5 py-1 rounded-full">
           ● LIVE
         </span>
       </div>

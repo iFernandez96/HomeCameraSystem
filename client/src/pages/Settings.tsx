@@ -241,9 +241,16 @@ function SettingsTabs({
   onChange: (next: SettingsTab) => void
   showCamera: boolean
 }) {
+  // Final whole-branch review fix batch: tab labels renamed to match the
+  // section heads they open ("Detection"/"Notifications" as tab labels
+  // contradicted the panels underneath, which read "Watching"/"Alerts").
+  // Internal tab ids ('camera'/'notifications') are UNCHANGED — they're
+  // the localStorage persistence key, not user-facing copy. The
+  // JetsonSection's own internal "Detection" group heading is a
+  // different panel and is intentionally left alone.
   const tabs: { id: SettingsTab; label: string }[] = []
-  if (showCamera) tabs.push({ id: 'camera', label: 'Detection' })
-  tabs.push({ id: 'notifications', label: 'Notifications' })
+  if (showCamera) tabs.push({ id: 'camera', label: 'Watching' })
+  tabs.push({ id: 'notifications', label: 'Alerts' })
   // iter-355ac (Maya Nit): tab label was "Account & Maintenance" for
   // owners — awkward two-noun construction that advertised the
   // implementation. Maintenance lives inside the tab body; the label

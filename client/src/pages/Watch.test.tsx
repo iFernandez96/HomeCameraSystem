@@ -186,4 +186,28 @@ describe('Watch — Home screen (Playroom Modern)', () => {
       expect(screen.getAllByText(/Camera offline/).length).toBeGreaterThan(0)
     })
   })
+
+  it('Given the worker is offline, When the page renders, Then the Watching glance headline reads "Offline" (not "Paused") — final review fix batch #8', async () => {
+    // arrange — pre-fix the glance card said "Paused" for offline,
+    // which reads as "detection is paused" rather than "the camera
+    // itself is unreachable." Danger styling + the existing detail
+    // line ("Check its power, then see Settings.") are unchanged.
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      worker_alive: false,
+      detection_active: true,
+    })
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('Offline')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Check its power, then see Settings.'),
+    ).toBeInTheDocument()
+  })
 })

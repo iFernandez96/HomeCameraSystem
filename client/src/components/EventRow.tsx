@@ -38,9 +38,13 @@ export function EventRow({
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13.5px] font-bold">{title}</div>
-        <div className="truncate text-[var(--color-text-secondary)]">{subline}</div>
+        {/* Final whole-branch review fix batch #2: subline + time were
+            inheriting the 16px base — LARGER than the bold 13.5px
+            title, inverting the type hierarchy. text-xs pins both
+            below the title. */}
+        <div className="truncate text-xs text-[var(--color-text-secondary)]">{subline}</div>
       </div>
-      <div className="shrink-0 tabular-nums text-[var(--color-text-tertiary)]">{time}</div>
+      <div className="shrink-0 text-xs tabular-nums text-[var(--color-text-tertiary)]">{time}</div>
     </>
   )
 

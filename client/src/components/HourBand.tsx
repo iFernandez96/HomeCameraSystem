@@ -49,19 +49,31 @@ export function HourBand({
   const cellRank: number[] = Array(24).fill(0)
   const cellWord: (string | null)[] = Array(24).fill(null)
   const cellCount: number[] = Array(24).fill(0)
+  // Final whole-branch review fix batch #7: which ts currently "owns"
+  // each cell, so an equal-rank event can be compared against it.
+  const cellTs: (number | null)[] = Array(24).fill(null)
   for (const e of events) {
     const hour = Math.floor((e.ts - dayStartTs) / 3600)
     if (hour < 0 || hour > 23) continue
     cellCount[hour] += 1
     const identity = identityOf(e)
     const rank = _KIND_RANK[identity.kind]
-    // Strictly greater than — ties keep the FIRST event's color (the
-    // rank comparison is what lets a later, higher-ranked event in
-    // the same hour override an earlier lower-ranked one).
-    if (rank > cellRank[hour]) {
+    // A higher rank always wins outright. On a rank TIE, prefer the
+    // EARLIEST ts — `events` arrives newest-first, so a naive "keep
+    // the first event seen" rule (the old `>` -only comparison)
+    // actually kept the NEWEST of a tie, contradicting "first event
+    // of the hour" wins. Comparing ts directly is order-independent.
+    const isNewWinner =
+      rank > cellRank[hour] ||
+      (rank === cellRank[hour] &&
+        cellRank[hour] > 0 &&
+        cellTs[hour] != null &&
+        e.ts < cellTs[hour])
+    if (isNewWinner) {
       cellRank[hour] = rank
       cellColors[hour] = identity.colorVar
       cellWord[hour] = _kindWord(identity.kind, identity.name)
+      cellTs[hour] = e.ts
     }
   }
 

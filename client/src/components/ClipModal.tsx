@@ -43,9 +43,18 @@ const MORE_TONIGHT_WINDOW_S = 2 * 60 * 60
 export function ClipModal({
   event: eventProp,
   onClose,
+  onDeleted,
 }: {
   event: DetectionEvent
   onClose: () => void
+  // Final whole-branch review fix batch #1: ClipModal's own Delete
+  // flow (below) removes the row from the SERVER, but had no way to
+  // tell the parent list (Events.tsx / Watch.tsx's today-events feed)
+  // to prune it — the parent kept rendering the just-deleted event
+  // until its next unrelated refetch. Optional so pages that don't
+  // hold their own list (none today, but keeps the prop non-breaking)
+  // can omit it.
+  onDeleted?: (id: string) => void
 }) {
   // Playroom Modern (Task 7, "More from tonight"): the modal can browse
   // sideways into a neighboring event from the SAME open dialog (tap a
@@ -261,6 +270,7 @@ export function ClipModal({
     try {
       await deleteEvent(event.id)
       showToast('Event deleted', 'success')
+      onDeleted?.(event.id)
       onClose()
     } catch (e) {
       reportError(

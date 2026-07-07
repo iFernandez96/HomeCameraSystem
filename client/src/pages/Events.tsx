@@ -1447,6 +1447,15 @@ export function Events() {
         <ClipModal
           event={selectedEvent}
           onClose={() => setSelectedEvent(null)}
+          // Final whole-branch review fix batch #1: ClipModal's own
+          // Delete pill (owner-only) succeeds server-side but this
+          // page's `events` list is separate state — without pruning
+          // it here the just-deleted row kept rendering until the
+          // next unrelated refetch. Mirrors onDeleteOne's own
+          // `setEvents((cur) => cur.filter(...))` pruning step above.
+          onDeleted={(id) =>
+            setEvents((cur) => cur.filter((ev) => ev.id !== id))
+          }
         />
       )}
     </div>

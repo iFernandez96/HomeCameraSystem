@@ -1921,7 +1921,7 @@ describe('Settings page', () => {
 
   // iter-278: 3-tab IA. BDD-lite naming, AAA structure.
 
-  it('given owner mounts settings, when the page renders, then the tab strip lists Detection, Notifications, Account & System (iter-356.19 Frank Round-8 #4)', async () => {
+  it('given owner mounts settings, when the page renders, then the tab strip lists Watching, Alerts, Account & System (iter-356.19 Frank Round-8 #4; final review fix batch #4: tab labels match panels)', async () => {
     // arrange — iter-356.19 (Frank Round-8 #4): for OWNERS the
     // tab label is "Account & System" so the dangerous half of the
     // tab body (Reboot/Backup/Restore/Update) isn't hidden behind
@@ -1934,17 +1934,17 @@ describe('Settings page', () => {
 
     // assert
     expect(
-      screen.getByRole('tab', { name: /^detection$/i }),
+      screen.getByRole('tab', { name: /^watching$/i }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('tab', { name: /^notifications$/i }),
+      screen.getByRole('tab', { name: /^alerts$/i }),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('tab', { name: /account & system/i }),
     ).toBeInTheDocument()
   })
 
-  it('given a viewer role, when the page renders, then the Detection tab is omitted and System reads "Account" (iter-279)', async () => {
+  it('given a viewer role, when the page renders, then the Watching tab is omitted and System reads "Account" (iter-279)', async () => {
     // arrange
     _authUser = { username: 'kid', role: 'viewer' }
 
@@ -1955,12 +1955,12 @@ describe('Settings page', () => {
     // assert: the Detection tab — owner-only knobs — is hidden so a
     // non-owner doesn't see a tab whose body is empty for them.
     expect(
-      screen.queryByRole('tab', { name: /^detection$/i }),
+      screen.queryByRole('tab', { name: /^watching$/i }),
     ).not.toBeInTheDocument()
     // Notifications + Account ("System" tab renamed for non-owners
     // per ux-grandpa #1 — viewer's tab body is just account stuff).
     expect(
-      screen.getByRole('tab', { name: /^notifications$/i }),
+      screen.getByRole('tab', { name: /^alerts$/i }),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('tab', { name: /^account$/i }),
@@ -2004,7 +2004,7 @@ describe('Settings page', () => {
     // send-test / sign-out, all under Notifications. Default
     // landing should be Notifications regardless of role.
     expect(
-      screen.getByRole('tab', { name: /^notifications$/i }),
+      screen.getByRole('tab', { name: /^alerts$/i }),
     ).toHaveAttribute('aria-selected', 'true')
   })
 
@@ -2025,7 +2025,7 @@ describe('Settings page', () => {
     // assert: corrupt value treated as "no preference" → fall to
     // iter-279 first-visit default of Notifications.
     expect(
-      screen.getByRole('tab', { name: /^notifications$/i }),
+      screen.getByRole('tab', { name: /^alerts$/i }),
     ).toHaveAttribute('aria-selected', 'true')
   })
 
@@ -2034,7 +2034,7 @@ describe('Settings page', () => {
   // Notifications without erasing the stored value (per iter-278
   // pure-derivation refactor).
 
-  it('given a viewer with localStorage="camera" from a prior owner session, when settings mounts, then the Detection tab is hidden and Notifications is active (iter-281)', async () => {
+  it('given a viewer with localStorage="camera" from a prior owner session, when settings mounts, then the Watching tab is hidden and Alerts is active (iter-281)', async () => {
     // arrange: this user was the owner once; they got demoted to
     // viewer (via admin reset_role in a future iter, or an admin
     // demo). Their browser's localStorage still says 'camera'.
@@ -2051,10 +2051,10 @@ describe('Settings page', () => {
     // (the user might be re-promoted; if so, their preference
     // survives).
     expect(
-      screen.queryByRole('tab', { name: /^detection$/i }),
+      screen.queryByRole('tab', { name: /^watching$/i }),
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('tab', { name: /^notifications$/i }),
+      screen.getByRole('tab', { name: /^alerts$/i }),
     ).toHaveAttribute('aria-selected', 'true')
     expect(window.localStorage.getItem('homecam:settingsTab')).toBe('camera')
   })
@@ -2076,7 +2076,7 @@ describe('Settings page', () => {
     await screen.findByRole('tablist', { name: /settings sections/i })
 
     // assert — tab carries the linkage attributes.
-    const detectionTab = screen.getByRole('tab', { name: /^detection$/i })
+    const detectionTab = screen.getByRole('tab', { name: /^watching$/i })
     expect(detectionTab.getAttribute('id')).toBe('settings-tab-camera')
     expect(detectionTab.getAttribute('aria-controls')).toBe(
       'settings-panel-camera',
@@ -2098,7 +2098,7 @@ describe('Settings page', () => {
     await screen.findByRole('tablist', { name: /settings sections/i })
 
     // assert
-    const tab = screen.getByRole('tab', { name: /^notifications$/i })
+    const tab = screen.getByRole('tab', { name: /^alerts$/i })
     expect(tab.getAttribute('aria-controls')).toBe(
       'settings-panel-notifications',
     )

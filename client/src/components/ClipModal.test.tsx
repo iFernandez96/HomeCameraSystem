@@ -844,6 +844,50 @@ describe('ClipModal', () => {
     vi.restoreAllMocks()
   })
 
+  it('Given onDeleted is passed, When the Delete pill resolves, Then onDeleted fires with the event id BEFORE onClose (final review fix batch #1)', async () => {
+    // arrange
+    vi.spyOn(await import('../lib/api'), 'deleteEvent').mockResolvedValue({ deleted: true })
+    const onClose = vi.fn()
+    const onDeleted = vi.fn()
+    const ev = makeEvent({ id: 'evt-notify', label: 'cat' })
+    render(<ClipModal event={ev} onClose={onClose} onDeleted={onDeleted} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
+    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
+
+    // assert — the parent's prune callback fires with the deleted id,
+    // and does so no later than onClose (both happen in the same
+    // resolved-delete branch).
+    await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledWith('evt-notify'))
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('Given onDeleted is OMITTED, When the Delete pill resolves, Then the delete still succeeds and onClose still fires (optional prop, no crash)', async () => {
+    // arrange
+    vi.spyOn(await import('../lib/api'), 'deleteEvent').mockResolvedValue({ deleted: true })
+    const onClose = vi.fn()
+    const ev = makeEvent({ id: 'evt-no-callback', label: 'cat' })
+    render(<ClipModal event={ev} onClose={onClose} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
+    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
+
+    // assert
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
   it('Given the Delete pill is clicked and the confirm dialog is CANCELLED, When the user backs out, Then no delete request is made', async () => {
     // arrange
     const deleteSpy = vi.spyOn(await import('../lib/api'), 'deleteEvent')

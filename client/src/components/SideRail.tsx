@@ -70,7 +70,7 @@ export function SideRail() {
               className={({ isActive }) =>
                 // Playroom Modern (Task 4): same active grammar as the
                 // BottomNav pebble bar, vertically — an ink-filled pill
-                // (bg-[--color-ink] + on-ink text/icon) instead of the
+                // (bg-[var(--color-ink)] + on-ink text/icon) instead of the
                 // old accent-subtle bg + ring treatment.
                 `group relative flex items-center justify-center w-12 h-12 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                   isActive

@@ -488,6 +488,50 @@ describe('Events page', () => {
     )
   })
 
+  it('Given the ClipModal Delete pill is used, When the delete resolves, Then the event row is pruned from this page\'s own list (final review fix batch #1)', async () => {
+    // arrange — pre-fix, ClipModal deleted the event server-side but
+    // had no way to tell Events.tsx's OWN `events` state to forget it;
+    // the just-deleted row kept rendering until an unrelated refetch.
+    const userEvent = (await import('@testing-library/user-event')).default
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1,
+        type: 'detection',
+        id: 'evt-to-delete',
+        ts: Date.now() / 1000,
+        camera_id: 'cam1',
+        label: 'cat',
+        score: 0.91,
+        boxes: [],
+        thumb_url: '/snapshots/thumb_1.jpg',
+      },
+    ])
+    deleteEvent.mockResolvedValueOnce({ deleted: true })
+    confirmFn.mockResolvedValueOnce(true)
+    const user = userEvent.setup()
+    render(<Events />)
+    const row = await screen.findByRole('button', { name: /play clip:|open: cat at/i })
+
+    // act — open the modal, click its Delete pill (confirm() is
+    // mocked at the top of this file to auto-resolve true).
+    await user.click(row)
+    await screen.findByRole('dialog', { name: /at the front door/i })
+    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
+
+    // assert — deleteEvent fired for the modal's event id, the modal
+    // closed, AND the row is gone from this page's own list (not just
+    // the modal's local state).
+    await waitFor(() => expect(deleteEvent).toHaveBeenCalledWith('evt-to-delete'))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /at the front door/i }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole('button', { name: /play clip:|open: cat at/i }),
+    ).not.toBeInTheDocument()
+  })
+
   // iter-290 (test-integrity-auditor #2): pre-iter-290 the
   // markEventSeen mock at line 10 was declared but no test asserted
   // it actually fired on row tap — production handler at
