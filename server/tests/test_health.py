@@ -1,11 +1,14 @@
 """Direct unit tests for the WorkerHealth liveness tracker."""
 from __future__ import annotations
 
+import logging
 import time
 
 import pytest
 
-from app.services.health import WorkerHealth
+import app.services.health as health_mod
+from app.log import RateLimitedLog
+from app.services.health import WorkerHealth, seconds_since_last_frame
 
 
 def test_starts_dead():
@@ -135,3 +138,104 @@ def test_snapshot_uses_time_time_when_now_omitted():
     assert last_seen is not None
     assert last_seen < 1.0  # just heartbeated
     assert metrics == {"fps": 1.0}
+
+
+def test_given_future_wall_heartbeat_when_age_derived_then_last_seen_is_zero():
+    # Given / arrange — a heartbeat was accepted before the wall clock jumped
+    # backward, making the saved wall timestamp appear to be in the future.
+    wall_now = {"t": 1000.0}
+    monotonic_now = {"t": 500.0}
+    h = WorkerHealth(
+        alive_window_s=30.0,
+        clock=lambda: wall_now["t"],
+        monotonic_clock=lambda: monotonic_now["t"],
+    )
+    h.heartbeat({"fps": 4.0})
+    wall_now["t"] = 900.0
+
+    # When / act
+    alive, last_seen, metrics = h.snapshot()
+
+    # Then / assert — the derived age is clamped, not reported negative.
+    assert alive is True
+    assert last_seen == pytest.approx(0.0)
+    assert metrics == {"fps": 4.0}
+
+
+def test_given_future_last_frame_ts_when_heartbeat_lands_then_discarded_with_warning(
+    monkeypatch,
+    caplog,
+):
+    # Given / arrange — the worker sends an implausible future frame timestamp.
+    wall_now = {"t": 1000.0}
+    monotonic_now = {"t": 500.0}
+    gate_now = {"t": 1000.0}
+    monkeypatch.setattr(
+        health_mod,
+        "_future_last_frame_warn_gate",
+        RateLimitedLog(60.0, clock=lambda: gate_now["t"]),
+    )
+    h = WorkerHealth(
+        alive_window_s=30.0,
+        clock=lambda: wall_now["t"],
+        monotonic_clock=lambda: monotonic_now["t"],
+    )
+
+    # When / act
+    with caplog.at_level(logging.WARNING, logger="app.services.health"):
+        h.heartbeat({"fps": 4.0, "last_frame_ts": wall_now["t"] + 61.0})
+
+    # Then / assert — the bad input is absent from the stored metrics and
+    # operators get one rate-limited warning.
+    assert h.metrics() == {"fps": 4.0}
+    assert seconds_since_last_frame(h.metrics(), now=wall_now["t"]) is None
+    warnings = [
+        rec for rec in caplog.records
+        if "discarded implausible future last_frame_ts" in rec.getMessage()
+    ]
+    assert len(warnings) == 1
+
+
+def test_given_wall_clock_jumps_backward_when_liveness_checked_then_worker_stays_alive():
+    # Given / arrange — a heartbeat was received, then wall time moved backward.
+    wall_now = {"t": 1000.0}
+    monotonic_now = {"t": 500.0}
+    h = WorkerHealth(
+        alive_window_s=30.0,
+        clock=lambda: wall_now["t"],
+        monotonic_clock=lambda: monotonic_now["t"],
+    )
+    h.heartbeat({"fps": 4.0})
+    wall_now["t"] = 100.0
+    monotonic_now["t"] = 505.0
+
+    # When / act
+    alive, last_seen, metrics = h.snapshot()
+
+    # Then / assert — liveness follows monotonic time, not shifted wall time.
+    assert alive is True
+    assert last_seen == pytest.approx(5.0)
+    assert metrics == {"fps": 4.0}
+
+
+def test_given_wall_clock_jumps_forward_when_liveness_checked_then_worker_stays_alive():
+    # Given / arrange — wall time jumps far past the alive window, while only
+    # five monotonic seconds have elapsed since heartbeat receipt.
+    wall_now = {"t": 1000.0}
+    monotonic_now = {"t": 500.0}
+    h = WorkerHealth(
+        alive_window_s=30.0,
+        clock=lambda: wall_now["t"],
+        monotonic_clock=lambda: monotonic_now["t"],
+    )
+    h.heartbeat({"fps": 4.0})
+    wall_now["t"] = 100000.0
+    monotonic_now["t"] = 505.0
+
+    # When / act
+    alive, last_seen, metrics = h.snapshot()
+
+    # Then / assert
+    assert alive is True
+    assert last_seen == pytest.approx(5.0)
+    assert metrics == {"fps": 4.0}

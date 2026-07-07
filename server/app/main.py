@@ -16,7 +16,7 @@ from .routes import _internal, auth, clips, control, events, face, healthz, metr
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
-from .services.health import worker_health
+from .services.health import seconds_since_last_frame, worker_health
 from .services.push_service import push_service
 
 # Level from HOMECAM_LOG_LEVEL (default INFO) so an operator can flip to
@@ -450,12 +450,7 @@ def _build_status() -> dict[str, object]:
         # STALE" pill when this exceeds ~60 s. None when no
         # last_frame_ts has arrived yet (worker booting / never
         # received a frame).
-        "seconds_since_last_frame": (
-            round(time.time() - worker_metrics["last_frame_ts"], 1)
-            if worker_metrics
-            and worker_metrics.get("last_frame_ts", 0.0) > 0.0
-            else None
-        ),
+        "seconds_since_last_frame": seconds_since_last_frame(worker_metrics),
         # iter-313 (performance-auditor #3): inline two read-only
         # detection-config fields so the Live page no longer needs
         # a separate /api/detection/config GET on every nav. Pre-
