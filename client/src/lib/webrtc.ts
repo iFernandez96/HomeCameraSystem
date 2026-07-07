@@ -215,7 +215,9 @@ if (typeof window !== 'undefined') {
 export async function connectWhep(
   url: string,
   video: HTMLVideoElement,
+  opts?: { signal?: AbortSignal },
 ): Promise<WhepConnection> {
+  const signal = opts?.signal
   const claimed = _claimWarmed()
   let pc: RTCPeerConnection
   if (claimed) {
@@ -232,11 +234,40 @@ export async function connectWhep(
     pc.addTransceiver('video', { direction: 'recvonly' })
   }
 
+  // Defect-1 fix (WebRTC lifecycle audit): unmount / rung-change mid-connect
+  // must actually close THIS pc, not just abandon it — pre-fix, VideoTile's
+  // cleanup only had a `cancelled` flag; if the WHEP POST was still in
+  // flight, `conn` was still null so nothing closed the pc, leaking its ICE
+  // agent + sockets (and rapid rung changes could stack several open PCs).
+  // `signal` is checked eagerly — covers "already aborted before we even
+  // reach fetch" (cleanup ran during the local offer/ICE phase) — and
+  // threaded into `fetch` below to cover "aborted mid-POST".
+  const throwIfAborted = () => {
+    if (!signal?.aborted) return
+    try {
+      pc.close()
+    } catch {
+      /* ignore — mock / already-closed */
+    }
+    throw new DOMException('Aborted', 'AbortError')
+  }
+  throwIfAborted()
+
+  // Defect-2 fix: track the MediaStream THIS connection bound to the video
+  // element (if any) so `close()` below only clears `video.srcObject` when
+  // it still points at this connection's stream — a superseded connection's
+  // close() must not blank a NEWER connection's live video.
+  let ownStream: MediaStream | null = null
   pc.ontrack = (e) => {
     // Breadcrumb: ontrack firing is the proof the media path negotiated. Its
     // ABSENCE (connect "succeeds" but no frame) is the symptom we diagnose by
     // checking whether this line appears. DEBUG — fires at most once.
     log.debug('webrtc:ontrack', { streams: e.streams.length })
+    // Defect-2 fix: stale ontrack race — quality A connecting, user switches
+    // to B; A's ontrack can still fire (async) after A was aborted. Guard
+    // against writing a dead connection's stream into the shared element.
+    if (signal?.aborted) return
+    ownStream = e.streams[0]
     if (video.srcObject !== e.streams[0]) {
       video.srcObject = e.streams[0]
     }
@@ -265,6 +296,7 @@ export async function connectWhep(
       }
       await iceGatheringComplete(pc)
     }
+    throwIfAborted()
 
     let res: Response
     try {
@@ -272,6 +304,7 @@ export async function connectWhep(
         method: 'POST',
         headers: { 'Content-Type': 'application/sdp' },
         body: pc.localDescription!.sdp,
+        signal,
       })
     } catch (e) {
       // WHEP POST network reject (MediaMTX unreachable / offline). Distinct
@@ -315,6 +348,12 @@ export async function connectWhep(
       pc,
       close: () => {
         pc.getReceivers().forEach((r) => r.track?.stop())
+        // Defect-2 fix: only clear srcObject if it still points at THIS
+        // connection's stream — closing a superseded connection must not
+        // blank a newer connection's already-live video.
+        if (ownStream !== null && video.srcObject === ownStream) {
+          video.srcObject = null
+        }
         pc.close()
       },
     }

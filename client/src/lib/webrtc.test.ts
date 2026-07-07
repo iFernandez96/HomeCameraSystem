@@ -179,6 +179,112 @@ describe('lib/webrtc.connectWhep', () => {
     )
     errSpy.mockRestore()
   })
+
+  // Defect-1/2 fixes (WebRTC lifecycle audit): abort-mid-fetch pc leak +
+  // stale-ontrack race.
+
+  it('Given a caller-supplied AbortSignal is already aborted, When connectWhep runs, Then it closes the pc and rejects with an AbortError WITHOUT touching the network (defect 1)', async () => {
+    // arrange
+    const controller = new AbortController()
+    controller.abort()
+
+    // act / assert
+    await expect(
+      connectWhep('http://example/cam/whep', makeVideo(), {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    const pc = MockRTCPeerConnection.instances[0]
+    expect(pc.closed).toBe(true)
+  })
+
+  it('Given the signal aborts while the WHEP POST is in flight, When the fetch rejects, Then connectWhep closes the pc (no leak on a hung POST) (defect 1)', async () => {
+    // arrange — fetch never resolves on its own; only rejects when the
+    // signal aborts, mirroring the real fetch+AbortController contract.
+    let capturedSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        capturedSignal = init?.signal ?? undefined
+        return new Promise((_resolve, reject) => {
+          capturedSignal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'))
+          })
+        })
+      }),
+    )
+    const controller = new AbortController()
+
+    // act
+    const pending = connectWhep('http://example/cam/whep', makeVideo(), {
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    // assert
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    const pc = MockRTCPeerConnection.instances[0]
+    expect(pc.closed).toBe(true)
+  })
+
+  it('Given ontrack fires after the signal has aborted, When the handler runs, Then it does NOT write the stale stream into video.srcObject (defect 2)', async () => {
+    // arrange — a connection that's about to resolve, but its signal is
+    // aborted before ontrack fires (simulating the async race where a
+    // quality switch cancels attempt A right as A's stream arrives).
+    const controller = new AbortController()
+    const video = makeVideo()
+    const connPromise = connectWhep('http://example/cam/whep', video, {
+      signal: controller.signal,
+    })
+    await connPromise
+    const pc = MockRTCPeerConnection.instances[0]
+
+    // act — abort AFTER connect resolved (mimics cleanup racing ontrack),
+    // then fire the stale track event.
+    controller.abort()
+    const staleStream = { id: 'stale' } as unknown as MediaStream
+    pc.ontrack?.({ streams: [staleStream] })
+
+    // assert — srcObject was never set to the stale stream.
+    expect(video.srcObject).toBeNull()
+  })
+
+  it('Given close() is called after a NEWER connection already wrote its own stream, When it runs, Then it does NOT clear video.srcObject (defect 2 — only owns its own stream)', async () => {
+    // arrange — connection A resolves and binds its stream, then a NEWER
+    // connection B (simulating a quality switch) binds a different stream
+    // to the same shared video element before A's close() runs. Each
+    // connectWhep call needs its own Response (the body can only be read
+    // once), so a fresh instance is returned per invocation.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        () => Promise.resolve(new Response('ANSWER_SDP', { status: 200 })),
+      ),
+    )
+    const video = makeVideo()
+    const connA = await connectWhep('http://example/cam/whep', video)
+    const pcA = MockRTCPeerConnection.instances[0]
+    const streamA = { id: 'A' } as unknown as MediaStream
+    pcA.ontrack?.({ streams: [streamA] })
+    expect(video.srcObject).toBe(streamA)
+
+    const connB = await connectWhep('http://example/cam/whep', video)
+    const pcB = MockRTCPeerConnection.instances[1]
+    const streamB = { id: 'B' } as unknown as MediaStream
+    pcB.ontrack?.({ streams: [streamB] })
+    expect(video.srcObject).toBe(streamB)
+
+    // act — A's (superseded) close() runs after B already owns the video.
+    connA.close()
+
+    // assert — B's stream survives; A's close() did not blank it.
+    expect(video.srcObject).toBe(streamB)
+
+    // sanity — B's own close() DOES clear it (owns the stream it set).
+    connB.close()
+    expect(video.srcObject).toBeNull()
+  })
 })
 
 describe('lib/webrtc.summarizeCandidates', () => {

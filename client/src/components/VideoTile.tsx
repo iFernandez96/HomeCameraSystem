@@ -184,6 +184,11 @@ export function VideoTile({
     if (!video) return
     let conn: WhepConnection | null = null
     let cancelled = false
+    // Defect-1 fix (WebRTC lifecycle audit): a per-attempt AbortController
+    // so cleanup can actually close an in-flight connectWhep — the old
+    // `cancelled` flag alone left a hung WHEP POST's RTCPeerConnection open
+    // (nothing to close: `conn` is still null while the fetch is pending).
+    const controller = new AbortController()
     // iter-174: <video>-element-level error / stall observability,
     // companion to iter-162's `connectionstatechange` listener on the
     // peer connection. The pc transitions only on negotiation-layer
@@ -272,7 +277,7 @@ export function VideoTile({
     video.addEventListener('waiting', onStallOrWaiting)
     video.addEventListener('playing', onPlaying)
     setStatus('connecting')
-    connectWhep(effectiveSrc, video)
+    connectWhep(effectiveSrc, video, { signal: controller.signal })
       .then((c) => {
         if (cancelled) {
           c.close()
@@ -319,12 +324,15 @@ export function VideoTile({
         if (c.pc.connectionState === 'connected') markLive()
       })
       .catch((e) => {
-        // docs/logging_plan.md §2 (Live view): replace the generic
-        // console.error('WHEP connect failed') with the express cause
-        // + identifying ids (quality / effectiveSrc / retryNonce) so
-        // the operator can correlate which rung + which retry failed.
-        // Logged BEFORE the cancelled guard (§1.3). errFields pulls the
+        // Defect-1 fix: cleanup now aborts the in-flight attempt (see
+        // `controller.abort()` below), so a `cancelled` rejection here is
+        // an EXPECTED teardown, not a real failure — skip both the log
+        // noise and the error-state flip. Any other rejection (a genuine
+        // WHEP failure) still logs the express cause + identifying ids
+        // (quality / effectiveSrc / retryNonce) so the operator can
+        // correlate which rung + which retry failed. errFields pulls the
         // status off an HttpError-shaped reject if present.
+        if (cancelled) return
         log.error('videoTile:whep-connect-failed', {
           quality: qualityRef.current,
           effectiveSrc,
@@ -332,10 +340,15 @@ export function VideoTile({
           online: typeof navigator !== 'undefined' ? navigator.onLine : null,
           ...errFields(e),
         })
-        if (!cancelled) setStatus('error')
+        setStatus('error')
       })
     return () => {
       cancelled = true
+      // Defect-1 fix: actually close an in-flight connectWhep. Pre-fix,
+      // `conn` was still null while the WHEP POST was pending, so nothing
+      // closed the pc — a hung request leaked it, and rapid rung changes
+      // (e.g. quality switches) could stack several open PeerConnections.
+      controller.abort()
       if (stallTimer !== null) {
         clearTimeout(stallTimer)
         stallTimer = null
@@ -384,17 +397,35 @@ export function VideoTile({
   //
   // We also reset on `online` so a Wi-Fi → cellular swap (or vice
   // versa) recovers without manual tap.
+  // Defect-4 fix (WebRTC lifecycle audit): mobile resume can fire
+  // `visibilitychange` AND `online` back-to-back in the same JS turn (phone
+  // unlocks + radio reassociates at once) while status is still 'error' in
+  // both handlers' closures — pre-fix each bumped `retryNonce`
+  // independently, so one resume produced TWO concurrent WHEP attempts
+  // (feeding defect 1's leak surface). `resumeInFlightRef` coalesces both
+  // signals through one guarded requestReconnect(): the first caller wins,
+  // the second is a no-op until the ref is cleared (which happens once
+  // `status` leaves 'error' — i.e. the coalesced attempt actually started).
+  // Manual-retry-only semantics are preserved: one resume, at most one new
+  // attempt, never a retry loop.
+  const resumeInFlightRef = useRef(false)
   useEffect(() => {
+    if (status !== 'error') {
+      resumeInFlightRef.current = false
+    }
+  }, [status])
+  useEffect(() => {
+    const requestReconnect = () => {
+      if (status !== 'error') return
+      if (resumeInFlightRef.current) return
+      resumeInFlightRef.current = true
+      setRetryNonce((n) => n + 1)
+    }
     const onVisible = () => {
-      if (
-        document.visibilityState === 'visible' &&
-        status === 'error'
-      ) {
-        setRetryNonce((n) => n + 1)
-      }
+      if (document.visibilityState === 'visible') requestReconnect()
     }
     const onOnline = () => {
-      if (status === 'error') setRetryNonce((n) => n + 1)
+      requestReconnect()
     }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
@@ -696,8 +727,19 @@ export function VideoTile({
             Now: glyph distinguishes the kind regardless of color
             perception, and the colored dot is reused at 8 px so the
             pre-existing iter-356.C visual contract is preserved. */}
+        {/* Defect-3 fix (WebRTC lifecycle audit): this pill's "Reconnect"
+            copy was PASSIVE text — the only actual Retry control lives in
+            the status==='error' overlay below, which never renders while
+            status is 'live' (streamStale only shows when status==='live').
+            The suggested recovery was unreachable. Now a real button that
+            bumps retryNonce — the exact same manual-retry path the error
+            overlay's Retry button uses — so pressing it tears down the
+            stalled WHEP session and reconnects. Still manual-only: one
+            press, one attempt, no auto-retry loop. */}
         {streamStale && status === 'live' && (
-          <div
+          <button
+            type="button"
+            onClick={() => setRetryNonce((n) => n + 1)}
             className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
             aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
           >
@@ -709,7 +751,7 @@ export function VideoTile({
             <span className="text-xs text-white/80 font-normal">
               Reconnect
             </span>
-          </div>
+          </button>
         )}
         {/* iter-356.C: camera-offline = red. The Jetson + camera box
             isn't reachable; restart the camera service (an operator

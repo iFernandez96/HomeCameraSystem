@@ -77,6 +77,7 @@ describe('VideoTile', () => {
     expect(connectWhep).toHaveBeenCalledWith(
       'http://test/cam/whep',
       expect.any(Object),
+      expect.any(Object),
     )
   })
 
@@ -657,6 +658,7 @@ describe('VideoTile', () => {
     expect(connectWhep).toHaveBeenCalledWith(
       `${window.location.origin}/whep/cam/whep`,
       expect.any(Object),
+      expect.any(Object),
     )
   })
 
@@ -669,6 +671,7 @@ describe('VideoTile', () => {
     expect(connectWhep).toHaveBeenLastCalledWith(
       `${window.location.origin}/whep/cam/whep`,
       expect.any(Object),
+      expect.any(Object),
     )
 
     // act — open the popover, pick Data-saver (sd -> cam_lq).
@@ -679,6 +682,7 @@ describe('VideoTile', () => {
     await waitFor(() =>
       expect(connectWhep).toHaveBeenLastCalledWith(
         `${window.location.origin}/whep/cam_lq/whep`,
+        expect.any(Object),
         expect.any(Object),
       ),
     )
@@ -696,6 +700,7 @@ describe('VideoTile', () => {
     // assert
     expect(connectWhep).toHaveBeenCalledWith(
       `${window.location.origin}/whep/cam_uq/whep`,
+      expect.any(Object),
       expect.any(Object),
     )
     expect(
@@ -877,5 +882,134 @@ describe('VideoTile', () => {
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-paused')).toBeInTheDocument(),
     )
+  })
+
+  // WebRTC lifecycle audit — defect 1: unmount/rung-change mid-fetch leaked
+  // the in-flight RTCPeerConnection because cleanup had nothing to close
+  // (`conn` was still null). VideoTile now passes an AbortController signal
+  // into connectWhep and aborts it in cleanup.
+
+  it('given a WHEP connect is still in flight, when the tile unmounts, then connectWhep receives an AbortSignal that is aborted on cleanup (defect 1)', () => {
+    // arrange — never-resolving connectWhep so unmount races the in-flight
+    // attempt exactly like a hung POST would.
+    connectWhep.mockReturnValue(new Promise(() => {}))
+
+    // act
+    const { unmount } = render(<VideoTile src="http://test/cam/whep" />)
+    const [, , opts] = connectWhep.mock.calls[0] as [
+      string,
+      unknown,
+      { signal?: AbortSignal },
+    ]
+    expect(opts?.signal).toBeInstanceOf(AbortSignal)
+    expect(opts!.signal!.aborted).toBe(false)
+    unmount()
+
+    // assert — cleanup aborted the signal connectWhep was given, so the
+    // library-level fetch(signal) can now reject and close the leaked pc.
+    expect(opts!.signal!.aborted).toBe(true)
+  })
+
+  it('given a rung change fires mid-connect, when the previous attempt is superseded, then its AbortSignal is aborted before the new attempt starts (defect 1 — no stacked concurrent sessions)', () => {
+    // arrange
+    connectWhep.mockReturnValue(new Promise(() => {}))
+    window.localStorage.removeItem('homecam:streamQuality')
+
+    // act — mount, then switch quality (re-runs the connect effect on the
+    // new `effectiveSrc`, tearing down the first attempt).
+    render(<VideoTile detectionActive={null} />)
+    const [, , firstOpts] = connectWhep.mock.calls[0] as [
+      string,
+      unknown,
+      { signal?: AbortSignal },
+    ]
+    fireEvent.click(screen.getByRole('button', { name: /stream quality/i }))
+    fireEvent.click(screen.getByRole('option', { name: /data-saver/i }))
+
+    // assert — the FIRST attempt's signal is aborted once the second
+    // (rung-change) attempt takes over.
+    expect(firstOpts!.signal!.aborted).toBe(true)
+  })
+
+  it('given the tile unmounts while connecting, when the aborted connectWhep promise later rejects, then no error is logged and status is not flipped (deliberate teardown, not a failure)', async () => {
+    // arrange
+    let rejectConn!: (e: unknown) => void
+    connectWhep.mockReturnValue(
+      new Promise((_res, rej) => {
+        rejectConn = rej
+      }),
+    )
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    // act
+    const { unmount } = render(<VideoTile src="http://test/cam/whep" />)
+    unmount()
+    await act(async () => {
+      rejectConn(new DOMException('Aborted', 'AbortError'))
+      await Promise.resolve()
+    })
+
+    // assert — no console.error from an unhandled/logged rejection path.
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  // WebRTC lifecycle audit — defect 3: the stream-stale pill's "Reconnect"
+  // copy was passive text with no control wired to it (the real Retry
+  // button only exists in the status==='error' overlay, unreachable while
+  // status stays 'live'). It's now a real button on the same retry path.
+
+  it('given the stream-stale pill is showing, when it is pressed, then exactly one new WHEP connect attempt is triggered (defect 3)', async () => {
+    // arrange
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(
+      <VideoTile
+        src="http://test/cam/whep"
+        workerAlive={true}
+        streamStaleSeconds={90}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText(/stream stalled/i)).toBeInTheDocument())
+    expect(connectWhep).toHaveBeenCalledTimes(1)
+
+    // act — the pill is now a real button (accessible name carries the
+    // full "Stream stalled — no video for Ns. Reconnect." label).
+    const btn = screen.getByRole('button', { name: /stream stalled/i })
+    fireEvent.click(btn)
+
+    // assert — one new attempt, not zero (unreachable) and not a loop.
+    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+  })
+
+  // WebRTC lifecycle audit — defect 4: mobile resume can fire
+  // `visibilitychange` AND `online` in the same turn while status is
+  // 'error', double-bumping retryNonce. Both signals now coalesce through
+  // one guarded requestReconnect().
+
+  it('given status is error, when visibilitychange and online fire simultaneously, then only one new connectWhep attempt is triggered (defect 4)', async () => {
+    // arrange
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    connectWhep.mockRejectedValueOnce(new Error('boom'))
+    connectWhep.mockReturnValue(new Promise(() => {}))
+    render(<VideoTile src="http://test/cam/whep" />)
+    await waitFor(() =>
+      expect(screen.getAllByText(/Offline/i)[0]).toBeInTheDocument(),
+    )
+    expect(connectWhep).toHaveBeenCalledTimes(1)
+
+    // act — both resume signals fire back-to-back, before React re-renders
+    // in response to either (the exact race that used to double-fire).
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    })
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+
+    // assert — coalesced into exactly one new attempt.
+    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(connectWhep).toHaveBeenCalledTimes(2)
+    errorSpy.mockRestore()
   })
 })
