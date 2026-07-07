@@ -554,7 +554,9 @@ export function BrandMarkRow({ size = 28 }: { size?: number }) {
 - [ ] **Step 4:** Same active-grammar pass on `SideRail.tsx` (desktop). Run `npm test -- --run src/components/BottomNav.test.tsx && npm run typecheck`.
 - [ ] **Step 5: Commit** — `feat(nav): pebble bar + Home/Faces labels, ink active pill`
 
----### Task 5: Watch → "Home" (glance cards + story with WhoMarks)
+---
+
+### Task 5: Watch → "Home" (glance cards + story with WhoMarks)
 
 **Files:**
 - Modify: `client/src/pages/Watch.tsx` (590 lines) + `Watch.test.tsx`, `client/src/components/VideoTile.tsx` (chrome only), `client/src/components/LiveStats.tsx`

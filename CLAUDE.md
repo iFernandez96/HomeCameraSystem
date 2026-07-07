@@ -78,8 +78,9 @@ These 13 are the standing way to work in this repo — derived from the codebase
 
 ### Theme
 - Tailwind v4 CSS-vars need `var()`: `bg-[--color-x]` lints clean but renders nothing. Use `bg-[var(--color-x)]`.
-- Light calico theme is baseline. No `bg-neutral-9XX`, `border-neutral-8XX`, `text-blue-XXX`. EXCEPTION: `text-white` on colored fills (primary button, danger/success toasts).
-- Cat brand identity (Panther / Mushu / Coco) is load-bearing at runtime — SideNav, Login, ambient `CatLayer`, `CatEmptyState`, paw-mask active-nav. Cat-themed copy is also pinned by EventList/Events tests.
+- **Playroom Modern** (redesign/playroom-modern, 2026-07-07) is the theme: dual-theme (light "wall" `#f3f1ea` / dark "playroom after dark" `#232019`) via `data-theme` on `<html>`; Bricolage Grotesque display face; pill/1.5px-border control grammar; floating pebble BottomNav with ink active pill. No `bg-neutral-9XX`, `border-neutral-8XX`, `text-blue-XXX`. EXCEPTION: `text-white` on colored fills (primary button ink fill uses `--color-on-ink`).
+- **Identity palette** (`--color-id-*` in index.css + `lib/identity.ts` + `WhoMark`): color encodes WHO appeared — named people get stable wheel hues (djb2 hash → `--color-id-wheel-1..6`), unrecognized person = cobalt, cats = marmalade, other = slate. Alert red is NEVER producible from the identity system (red only means failure/destructive). Detection can't tell cats apart (`label` is just `cat`) — per-cat hues are brand-only. `identityOf` is the single extension point if per-cat identity ever ships worker-side. Boot constants (`theme.ts::THEME_BG`, index.html metas + inline script, vite.config.ts manifest) carry the same bg hex pair in lock-step; `tokens.test.ts` pins contrast floors.
+- Cat brand identity (Panther / Mushu / Coco) is load-bearing at runtime — Login (`BrandMarkRow`), ambient `CatLayer`, `CatEmptyState`. The mascot system renders RASTER sprites sliced from the user's real cat photos (iter-356) — never replace them with generated/vector art. Copy pinned by EventList/Events tests uses the Playroom voice.
 - `CatLayer`: `dt` clamp 33ms, NO CSS `transition` on per-frame `transform` (collapses with React state updates → "teleport"). Keep `willChange: transform`.
 - `<CatEmptyState>` is the only empty-state primitive. Don't render plain-text empty states.
 
@@ -132,7 +133,7 @@ These 13 are the standing way to work in this repo — derived from the codebase
 - `detection/face_recog/` dir name is intentional — pip lib is `face_recognition`; matching name would shadow it.
 - `init_face_recognizer()` lazy-imports `face_recognition` only when `encodings.pkl` exists. Eager import hangs every Nano boot — dlib v20 deadlocks in `PyInit__dlib_pybind11`.
 - Detection zones: three-way alignment — route Pydantic `_Polygon` ↔ service `_valid_zones` ↔ worker `zones.py` (3.6-compat duplicate). Empty list = no gating. Client uses SVG `viewBox="0 0 1 1"` so [0, 1] coords are native.
-- RBAC `admin`-as-`owner` transitional carve-out lives in BOTH server `require_role` and client `Settings.tsx::isOwner`. Both sides drop together when seeded users migrate.
+- RBAC `admin`-as-`owner` transitional carve-out lives in server `require_role` and THREE client copies: `Settings.tsx::isOwner`, `Events.tsx` (~line 61), `ClipModal.tsx` (delete gate). All four drop together when seeded users migrate.
 - ffmpeg muxer `-f mp4` is load-bearing in `recording.py::_build_args` and `preroll.py::run_concat`. `.tmp` output suffixes can't be muxer-inferred. Pin: `test_*_real_ffmpeg_*`.
 - Recorder uses `-c copy` (NVENC bitstream, no re-encode). Don't add `drawbox`/filtergraphs to burn boxes into pixels — bbox overlay is client-side via `lib/drawBoxes.ts`.
 - Pre-roll segments are COPIED into a per-event scratch dir before the merge thread waits. The segment-recorder ffmpeg uses `-segment_wrap` which rewrites slots in-place; the copy decouples merge timing from ring rotation. Don't drop the `shutil.copy2` step in `recording.py::start_clip`.
