@@ -40,6 +40,8 @@ How this works now:
     PEP-604 unions, f-strings in a way that matters, walrus, or match.
 """
 import logging
+import math
+import time
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +122,11 @@ class MediaMtxWatchdog:
         action and then persists `level`/`last_action_at`."""
         if self.failures < self.fail_threshold:
             return None
-        if (now - self.last_action_at) < self.cooldown_s:
+        elapsed = now - self.last_action_at
+        if elapsed < 0:
+            log.warning("watchdog:clock-anomaly delta=%s", elapsed)
+            self.last_action_at = now
+        elif elapsed < self.cooldown_s:
             return None
         action = self._resolve_action(self.level)
         prev_level = self.level
@@ -162,7 +168,7 @@ class MediaMtxWatchdog:
             "last_action_at": None if la == float("-inf") else la,
         }
 
-    def restore(self, level, last_action_at):
+    def restore(self, level, last_action_at, now=None):
         """Re-seed escalation state loaded from disk on worker startup so the
         ladder continues climbing instead of resetting to mediamtx-only."""
         try:
@@ -173,6 +179,11 @@ class MediaMtxWatchdog:
             self.last_action_at = float("-inf")
         else:
             try:
-                self.last_action_at = float(last_action_at)
+                restored = float(last_action_at)
             except (TypeError, ValueError):
-                self.last_action_at = float("-inf")
+                restored = 0.0
+            if now is None:
+                now = time.time()
+            if (not math.isfinite(restored)) or restored > (now + 60.0):
+                restored = 0.0
+            self.last_action_at = restored

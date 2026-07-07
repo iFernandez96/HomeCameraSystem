@@ -47,6 +47,7 @@ to 5 fps when motion is happening is plenty, and dropping to 1 fps while
 idle keeps the GPU cool enough to leave headroom for the encoder.
 """
 import json
+import math
 import os
 import subprocess
 import sys
@@ -886,6 +887,19 @@ _REBOOT_MIN_INTERVAL_S = 1800.0
 _SD_WATCHDOG_PING_S = 20.0
 
 
+def _coerce_watchdog_timestamp(value, now, reject_future_after_s=0.0):
+    """Return a finite persisted wall-clock timestamp, or 0.0 if corrupt."""
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(ts):
+        return 0.0
+    if ts > (now + reject_future_after_s):
+        return 0.0
+    return ts
+
+
 def _load_watchdog_state(path):
     """Read the persisted escalation state ({level, last_action_at,
     last_reboot_at}). Survives the systemd worker-restart so the escalation
@@ -967,7 +981,9 @@ def _do_reboot():
     `_REBOOT_MIN_INTERVAL_S`, a reboot clearly isn't fixing the wedge — DON'T
     loop; fall back to a nvargus-daemon restart instead."""
     now = time.time()
-    last = _WATCHDOG_STATE.get("last_reboot_at") or 0.0
+    last = _coerce_watchdog_timestamp(
+        _WATCHDOG_STATE.get("last_reboot_at"), now,
+    )
     if (now - last) < _REBOOT_MIN_INTERVAL_S:
         print(
             "[detect] WATCHDOG: reboot SUPPRESSED — last reboot {:.0f}s ago "
@@ -1638,6 +1654,7 @@ def main():
     mediamtx_watchdog.restore(
         _WATCHDOG_STATE.get("level", 0),
         _WATCHDOG_STATE.get("last_action_at"),
+        now=time.time(),
     )
     # Memory guard: pauses inference (not capture) when the host runs
     # critically low on RAM. Worker keeps draining frames so the RTSP

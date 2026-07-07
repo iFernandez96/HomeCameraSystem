@@ -10,8 +10,12 @@ reset every systemd restart so escalation never reached nvargus).
 """
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+sys.modules.setdefault("jetson_inference", MagicMock())
+sys.modules.setdefault("jetson_utils", MagicMock())
 
 from mediamtx_watchdog import (  # noqa: E402
     ACTION_REBOOT,
@@ -19,6 +23,7 @@ from mediamtx_watchdog import (  # noqa: E402
     ACTION_RESTART_NVARGUS,
     MediaMtxWatchdog,
 )
+import detect  # noqa: E402
 
 
 def _wedge(w, n=None):
@@ -159,4 +164,60 @@ def test_given_garbage_restore_values_then_safe_defaults():
     w.restore("not-an-int", "not-a-float")
     # assert
     assert w.level == 0
-    assert w.last_action_at == float("-inf")
+    assert w.last_action_at == 0.0
+
+
+def test_given_future_last_action_at_when_next_action_then_fires_and_self_heals(
+    caplog,
+):
+    # arrange
+    w = MediaMtxWatchdog(fail_threshold=1, cooldown_s=60.0)
+    w.restore(0, 1030.0, now=1000.0)
+    _wedge(w)
+
+    # act
+    with caplog.at_level("WARNING"):
+        action = w.next_action(now=1000.0)
+
+    # assert
+    assert action == ACTION_RESTART_MEDIAMTX
+    assert w.snapshot()["last_action_at"] == 1000.0
+    assert any(
+        rec.getMessage().startswith("watchdog:clock-anomaly")
+        for rec in caplog.records
+    )
+
+
+def test_given_future_beyond_sixty_seconds_when_restore_then_timestamp_falls_back():
+    # arrange
+    w = MediaMtxWatchdog()
+
+    # act
+    w.restore(0, 1061.0, now=1000.0)
+
+    # assert
+    assert w.last_action_at == 0.0
+
+
+def test_given_corrupt_last_reboot_at_when_reboot_then_no_typeerror_and_allows_reboot(
+    monkeypatch,
+):
+    # arrange
+    calls = []
+
+    def _fake_run(cmd, timeout, stdout, stderr):
+        calls.append(cmd)
+        return MagicMock()
+
+    monkeypatch.setattr(detect.time, "time", lambda: 2000.0)
+    monkeypatch.setattr(detect.subprocess, "run", _fake_run)
+    monkeypatch.setattr(detect, "_WATCHDOG_STATE_PATH", None)
+    monkeypatch.setattr(detect, "_WATCHDOG_STATE", {"last_reboot_at": "bad"})
+
+    # act
+    did_reboot = detect._do_reboot()
+
+    # assert
+    assert did_reboot is True
+    assert calls == [["sudo", "-n", "systemctl", "reboot"]]
+    assert detect._WATCHDOG_STATE["last_reboot_at"] == 2000.0
