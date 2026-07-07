@@ -209,7 +209,12 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
       // walkers across the bottom of every page; this card opts
       // into the higher stacking-context layer so its text stays
       // legible while cats walk freely on the rest of the surface.
-      className="relative z-10 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3 shadow-[var(--shadow-card)]"
+      // Fix wave F3 (accepted audit finding, flat-paper rule): dropped
+      // shadow-[var(--shadow-card)] — the System Health card is a
+      // list/info surface, and CLAUDE.md's card-paper grammar reserves
+      // the drop shadow for the video tile + modal overlays alone.
+      // Border + radius carry the surface distinction now.
+      className="relative z-10 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-4 py-3 space-y-3"
     >
       {/* Summary row: dot + label + optional sub-line. */}
       <div role="status" aria-live="polite">

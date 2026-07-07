@@ -355,12 +355,14 @@
 }
 
 /* Playroom Modern (redesign/playroom-modern, Task 3): card grammar is
- * a flat hairline-bordered paper surface, NOT a shadow-elevated panel
- * — the soft drop shadow is reserved for the video tile alone (its own
- * `--shadow-overlay` treatment), so every other card reads as sitting
- * IN the page rather than floating over it. Apply via
- * className="card-paper" anywhere a panel surface needs the paper
- * treatment. */
+ * a flat hairline-bordered paper surface, NOT a shadow-elevated panel.
+ * Fix wave F3 (2026-07): the soft drop shadow (`--shadow-overlay`) is
+ * reserved for the video tile and modal overlays (ClipModal,
+ * SnapshotPreview) — every other card, including list/info surfaces
+ * like the People rows and the System Health / Jetson health-verdict
+ * cards, reads as sitting IN the page rather than floating over it.
+ * Apply via className="card-paper" anywhere a panel surface needs the
+ * paper treatment. */
 .card-paper {
   background: var(--color-surface);
   border: 1.5px solid var(--color-border);

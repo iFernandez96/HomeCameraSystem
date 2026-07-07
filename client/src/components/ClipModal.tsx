@@ -527,7 +527,7 @@ export function ClipModal({
         preload="metadata"
         autoPlay
         onError={() => setErroredClipUrl(clipUrl)}
-        containerClassName="inline-block max-w-full max-h-[80vh] rounded-xl shadow-2xl border border-[var(--color-border)]"
+        containerClassName="inline-block max-w-full max-h-[80vh] rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
         videoClassName="max-w-full max-h-[80vh]"
         overlay={
           <>
@@ -589,7 +589,7 @@ export function ClipModal({
           src={event.thumb_url}
           alt={`Snapshot of ${event.person_name ?? event.label} event`}
           onError={() => setErroredImgUrl(event.thumb_url ?? null)}
-          className="max-w-full max-h-[60vh] mx-auto rounded-xl shadow-2xl border border-[var(--color-border)]"
+          className="max-w-full max-h-[60vh] mx-auto rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
         />
       </div>
     )
@@ -774,7 +774,16 @@ export function ClipModal({
           Close clip viewer, Close" three times in a row. Save clip
           uses Button primitive's loading state (Maya iter-356.2
           Major: "this is exactly what the primitive was built for"). */}
-      <div className="relative px-4 pb-4 flex items-center justify-end gap-3">
+      {/* Fix wave F3 (accepted audit finding): the 4-pill row (Share +
+          Save clip + Name them + Delete) overflows a 360px viewport —
+          measured ~379px of pills vs ~328px of available width, no
+          wrap, and Share got pushed fully off-screen with no scroll
+          affordance. `flex-wrap` lets the row break to a second line
+          instead of overflowing; `justify-end` is kept so a wrapped
+          row still hugs the right edge like the single-row layout
+          did. gap-y bumped slightly above gap-x so two wrapped rows
+          don't feel cramped against each other. */}
+      <div className="relative px-4 pb-4 flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
         {/* redesign/warm-boutique: this row sits on the modal's dark
             pane — the ghost variant's umber text fails contrast on
             black, so Share is an explicit over-video dark-glass

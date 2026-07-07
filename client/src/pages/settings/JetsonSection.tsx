@@ -417,7 +417,12 @@ function HealthVerdict({ status }: { status: ServerStatus | null }) {
       aria-live={verdict.kind === 'critical' ? undefined : 'polite'}
       data-testid="jetson-health-verdict"
       data-verdict-kind={verdict.kind}
-      className={`rounded-2xl border px-4 py-3 shadow-[var(--shadow-subtle)] ${palette.surface}`}
+      // Fix wave F3 (accepted audit finding): radius aligned to the
+      // shared --radius-xl token (was a raw rounded-2xl); shadow-subtle
+      // dropped per the flat-paper rule — this banner communicates
+      // severity via its colored fill/border, not elevation, so no
+      // visual signal is lost.
+      className={`rounded-[var(--radius-xl)] border px-4 py-3 ${palette.surface}`}
     >
       <div className="flex items-start gap-3">
         <span

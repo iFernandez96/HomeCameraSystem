@@ -129,7 +129,7 @@ export function SnapshotPreview({
             src={url}
             alt="Snapshot of the camera at the moment of capture"
             onError={() => setErroredUrl(url)}
-            className="max-w-full max-h-full rounded-xl shadow-2xl border border-white/10"
+            className="max-w-full max-h-full rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-white/10"
           />
         )}
       </div>

@@ -7,7 +7,7 @@ import {
 } from 'react'
 import { useToast } from '../lib/toast'
 import type { Zone, ZonePoint } from '../lib/types'
-import { useRipple } from '../lib/ripple'
+import { Button } from './primitives/Button'
 
 /**
  * iter-191c (Feature #5): in-frame polygon-mask editor.
@@ -64,7 +64,6 @@ export function ZoneEditor({
   onChange: (zones: Zone[]) => void
   snapshotUrl?: string
 }) {
-  const ripple = useRipple()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [inProgress, setInProgress] = useState<ZonePoint[]>([])
   const [inputX, setInputX] = useState('50')
@@ -467,20 +466,17 @@ export function ZoneEditor({
           empty otherwise. */}
       {drawing && (
         <div className="flex flex-wrap gap-2 text-sm">
-          {/* Sunroom sweep: `bg-[var(--color-x)]/90`-style opacity-on-var
-              hovers are unreliable in Tailwind v4 — hovers now use solid
-              tokens (brightness for the success fill, border-strong for
-              the paper buttons). 44px touch floor + rounded-lg button
-              radius + 160ms ease-out across the row. */}
-          <button
-            type="button"
-            onClick={finishPolygon}
-            disabled={!canFinish}
-            onPointerDown={canFinish ? ripple : undefined}
-            className="relative overflow-hidden bg-[var(--color-success)] hover:brightness-95 text-[var(--color-on-accent)] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg px-3 py-2 min-h-[44px] font-medium transition-[filter] duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
-          >
+          {/* Fix wave F3 (accepted audit finding): this was a raw
+              rounded-lg rectangle with a solid success fill — one of
+              three ZoneEditor buttons that bypassed the shared Button
+              primitive entirely. Routed through Button now (variant
+              "primary" = the ink pill — matches the "confirm" mapping
+              for this fix); handler/disabled logic unchanged. Button
+              owns its own ripple internally, so the manual
+              onPointerDown={ripple} wiring is gone. */}
+          <Button variant="primary" size="md" onClick={finishPolygon} disabled={!canFinish}>
             {finishLabel}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={undoLastVertex}
@@ -499,19 +495,25 @@ export function ZoneEditor({
       )}
       {!drawing && selectedZone !== null && (
         <div className="flex flex-wrap gap-2 text-sm">
-          {/* Destructive fill = danger-strong (the designated white-text
-              fill token); hover deepens to danger — both solid tokens. */}
-          <button
-            type="button"
+          {/* Fix wave F3 (accepted audit finding): was a raw rounded-lg
+              rectangle with a solid danger-strong + white-text fill.
+              Routed through the Button primitive's "destructive"
+              variant — which by design is now an OUTLINE pill (danger
+              border + danger text, no solid fill) rather than the old
+              solid-red treatment, matching every other destructive
+              action in the app (Events delete, DangerZone, etc.).
+              Handler + aria-label unchanged. */}
+          <Button
+            variant="destructive"
+            size="md"
             onClick={() => deleteZone(selectedZone)}
-            className="bg-[var(--color-danger-strong)] hover:bg-[var(--color-danger)] text-white rounded-lg px-3 py-2 min-h-[44px] font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
             // iter-295: aria-label matches the visible text so it
             // doesn't collide with the per-row ✕ button below
             // (which uses `Delete zone N` for direct addressing).
             aria-label={`Delete this zone (${selectedZone + 1})`}
           >
             Delete this zone
-          </button>
+          </Button>
           <button
             type="button"
             onClick={() => setSelectedZone(null)}
@@ -563,15 +565,16 @@ export function ZoneEditor({
             />
           </label>
           {/* Sunroom: filled buttons are ink (Panther) — marmalade is
-              reserved for links / focus / active / live. */}
-          <button
-            type="button"
-            onClick={handleKeyboardAdd}
-            onPointerDown={ripple}
-            className="relative overflow-hidden bg-[var(--color-ink)] hover:bg-[var(--color-ink-hover)] text-[var(--color-on-ink)] rounded-lg px-3 py-2 min-h-[44px] text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
-          >
+              reserved for links / focus / active / live.
+              Fix wave F3 (accepted audit finding): was a raw
+              rounded-lg rectangle with a solid ink fill — the third
+              of ZoneEditor's three Button-primitive bypasses. "primary"
+              is the ink pill so this is a like-for-like swap; Button
+              owns its own ripple, so the manual onPointerDown={ripple}
+              is gone. */}
+          <Button variant="primary" size="md" onClick={handleKeyboardAdd}>
             Add point
-          </button>
+          </Button>
         </fieldset>
       </details>
 

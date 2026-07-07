@@ -385,7 +385,13 @@ function _PersonGrid({
           <button
             type="button"
             onClick={() => onPersonClick(p.name)}
-            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-3 min-h-[48px] shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
+            // Fix wave F3 (accepted audit finding, flat-paper rule):
+            // this card carried shadow-card + shadow-card-inset — a
+            // shadow-elevated panel look CLAUDE.md's card-paper
+            // grammar reserves for the video tile + modal overlays
+            // alone. Dropped the shadow; the hairline border +
+            // identity-color left edge still read clearly as a card.
+            className="w-full text-left flex items-center gap-3 bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-3 min-h-[48px] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
             style={{ borderLeft: `4px solid ${identity.colorVar}` }}
             aria-label={`${p.name}: ${p.count} ${p.count === 1 ? 'visit' : 'visits'}, last seen ${_formatRelative(p.last_seen_ts)}, first seen ${_formatAbsolute(p.first_seen_ts)}`}
           >
