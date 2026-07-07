@@ -224,7 +224,12 @@ vi.mock('../lib/push', () => ({
 
 // ─── VideoTile / SnapshotPreview stubs (WHEP unwired in JSDOM) ────
 vi.mock('../components/VideoTile', () => ({
-  VideoTile: () => <div data-testid="video-tile" />,
+  // Render the `actions` slot: since the controls-overlap fix, Watch
+  // passes its Snapshot/expand buttons INTO VideoTile's control row,
+  // so a stub that swallows the prop hides the page's primary action.
+  VideoTile: ({ actions }: { actions?: React.ReactNode }) => (
+    <div data-testid="video-tile">{actions}</div>
+  ),
 }))
 vi.mock('../components/SnapshotPreview', () => ({
   SnapshotPreview: () => null,
