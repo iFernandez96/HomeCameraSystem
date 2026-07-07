@@ -48,4 +48,15 @@ describe('EventRow', () => {
     // assert
     expect(onOpen).toHaveBeenCalledTimes(1)
   })
+
+  it('GIVEN an event WHEN rendered THEN the WhoMark is decorative (aria-hidden), not a second announced img', () => {
+    // arrange / act
+    render(<EventRow event={baseEvent} subline="2 clips tonight" />)
+    // assert — no bare role="img" WhoMark inside the row; it's wrapped
+    // aria-hidden since the title already carries the identity, so
+    // VoiceOver doesn't double-announce "A cat, Cat at the front door".
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    const hiddenMark = document.querySelector('span[aria-hidden="true"] svg')
+    expect(hiddenMark).not.toBeNull()
+  })
 })

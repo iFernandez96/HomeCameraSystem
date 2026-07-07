@@ -3,10 +3,12 @@ import { BRAND_CATS } from '../lib/identity'
 
 /**
  * The Playroom signature mark. One shape everywhere: avatar on event
- * cards, filter chips, timeline bands, empty states. Cats (and
- * non-person subjects) are a rounded square with two triangle ears;
- * people are a circle. Color comes from the identity token, so the
- * mark stays correct in both themes.
+ * cards, filter chips, timeline bands, empty states. People are a
+ * circle; cats are a rounded square with two triangle ears; anything
+ * else (dogs, cars, packages — `kind === 'other'`) is a plain rounded
+ * square with NO ears, so an un-eared silhouette doesn't lie and call
+ * itself a cat. Color comes from the identity token, so the mark
+ * stays correct in both themes.
  */
 const KIND_LABEL: Record<Identity['kind'], string> = {
   'named-person': '', // name used instead
@@ -18,6 +20,7 @@ const KIND_LABEL: Record<Identity['kind'], string> = {
 export function WhoMark({ identity, size = 38 }: { identity: Identity; size?: number }) {
   const label = identity.name ?? KIND_LABEL[identity.kind]
   const person = identity.kind === 'person' || identity.kind === 'named-person'
+  const cat = identity.kind === 'cat'
   return (
     <svg
       role="img"
@@ -29,12 +32,14 @@ export function WhoMark({ identity, size = 38 }: { identity: Identity; size?: nu
     >
       {person ? (
         <circle cx="19" cy="19" r="15" fill={identity.colorVar} />
-      ) : (
+      ) : cat ? (
         <>
           <polygon points="7,14 13,3 17,14" fill={identity.colorVar} />
           <polygon points="21,14 25,3 31,14" fill={identity.colorVar} />
           <rect x="4" y="10" width="30" height="24" rx="10" fill={identity.colorVar} />
         </>
+      ) : (
+        <rect x="4" y="4" width="30" height="30" rx="10" fill={identity.colorVar} />
       )}
     </svg>
   )

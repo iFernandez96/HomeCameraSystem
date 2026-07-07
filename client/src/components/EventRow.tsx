@@ -29,7 +29,13 @@ export function EventRow({
 
   const content = (
     <>
-      <WhoMark identity={identity} />
+      {/* Decorative — the accessible identity already lands in the
+          title text below, so a nested role="img" here would double-
+          announce ("A cat, Cat at the front door…"). Matches
+          EventList.tsx's EventCard WhoMark wrapper. */}
+      <span aria-hidden="true">
+        <WhoMark identity={identity} />
+      </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13.5px] font-bold">{title}</div>
         <div className="truncate text-[var(--color-text-secondary)]">{subline}</div>

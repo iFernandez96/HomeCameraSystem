@@ -20,4 +20,14 @@ describe('WhoMark', () => {
     expect(img.querySelectorAll('polygon')).toHaveLength(0)
     expect(img.querySelector('circle')).not.toBeNull()
   })
+
+  it('GIVEN an "other" kind identity (dog, car, package) WHEN rendered THEN a plain un-eared square, not a cat silhouette', () => {
+    // arrange / act
+    render(<WhoMark identity={identityOf({ label: 'dog', person_name: null, person_names: null })} />)
+    // assert
+    const img = screen.getByRole('img', { name: 'Something else' })
+    expect(img.querySelectorAll('polygon')).toHaveLength(0) // no ears
+    expect(img.querySelector('circle')).toBeNull() // not a person
+    expect(img.querySelector('rect')).not.toBeNull() // plain square
+  })
 })

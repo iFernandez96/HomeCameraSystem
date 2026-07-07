@@ -481,12 +481,11 @@ function EventCardImpl({
               : undefined
         }
         aria-pressed={selectionMode ? isSelected : undefined}
-        // redesign/warm-boutique: paper card — warm shadow-card token
-        // so entries read as paper resting on the linen page.
-        // Playroom Modern (Task 6): card grammar matches EventRow's
-        // ROW_CLASSES (--radius-xl + 1.5px hairline border) so Watch
-        // story rows and Events cards read as the same card language.
-        className={`w-full text-left flex gap-3 rounded-[var(--radius-xl)] border-[1.5px] p-2 transition-colors shadow-[var(--shadow-card)] ${
+        // Playroom Modern (Task 6, reconciled): card grammar matches
+        // EventRow's ROW_CLASSES exactly — --radius-xl + 1.5px hairline
+        // border, flat paper (no shadow-card) — so Watch story rows and
+        // Events cards read as ONE card language, not two.
+        className={`w-full text-left flex gap-3 rounded-[var(--radius-xl)] border-[1.5px] p-2 transition-colors ${
           selectionMode && isSelected
             ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-default)]'
             : 'bg-[var(--color-surface)] border-[var(--color-border)]'
@@ -546,7 +545,7 @@ function EventCardImpl({
               front door" clipped to "Person at the fr…" on every
               390px row. Two-line clamp keeps the full iter-249 title
               semantics (location + multi-person fan-out) readable. */}
-          <div className="text-sm font-semibold text-[var(--color-text-primary)] line-clamp-2">
+          <div className="text-[13.5px] font-bold text-[var(--color-text-primary)] line-clamp-2">
             {title}
           </div>
           <div className="text-xs text-[var(--color-text-secondary)]">

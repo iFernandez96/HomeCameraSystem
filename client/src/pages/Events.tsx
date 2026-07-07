@@ -1327,7 +1327,7 @@ export function Events() {
                   (nothing to show yet, and the sleeping-cat empty
                   state below already communicates that). */}
               {!selectedDay && events.length > 0 && (
-                <div className="card-paper p-4 mx-4 lg:mx-0 mb-3">
+                <div className="card-paper px-2.5 py-3 mx-4 lg:mx-0 mb-3">
                   <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
                     Today, hour by hour
                   </h2>
