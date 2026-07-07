@@ -538,6 +538,49 @@ describe('VideoTile', () => {
     ).toBeInTheDocument()
   })
 
+  it('Given a fresh localStorage, When VideoTile mounts, Then a transient "Detection boxes" hint appears near the toggle (painfix wave B #2)', () => {
+    // arrange
+    window.localStorage.removeItem('homecam:bboxHintViews')
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act
+    render(<VideoTile src="http://test/cam/whep" />)
+
+    // assert — first-ever mount shows the hint and records the view.
+    expect(screen.getByTestId('bbox-hint')).toHaveTextContent('Detection boxes')
+    expect(window.localStorage.getItem('homecam:bboxHintViews')).toBe('1')
+  })
+
+  it('Given the hint has already been shown twice, When VideoTile mounts again, Then the hint no longer renders (painfix wave B #2)', () => {
+    // arrange
+    window.localStorage.setItem('homecam:bboxHintViews', '2')
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+
+    // act
+    render(<VideoTile src="http://test/cam/whep" />)
+
+    // assert
+    expect(screen.queryByTestId('bbox-hint')).not.toBeInTheDocument()
+  })
+
+  it('Given the hint is showing, When ~4s elapse, Then it auto-hides (painfix wave B #2)', async () => {
+    // arrange
+    vi.useFakeTimers()
+    window.localStorage.removeItem('homecam:bboxHintViews')
+    connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+    render(<VideoTile src="http://test/cam/whep" />)
+    expect(screen.getByTestId('bbox-hint')).toBeInTheDocument()
+
+    // act
+    await act(async () => {
+      vi.advanceTimersByTime(4001)
+    })
+
+    // assert
+    expect(screen.queryByTestId('bbox-hint')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
   it('when the fullscreen button is clicked, then container.requestFullscreen is called (iter-244c)', async () => {
     // arrange
     const requestFullscreen = vi.fn().mockResolvedValue(undefined)

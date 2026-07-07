@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { log, errFields } from '../lib/log'
+import { useToast } from '../lib/toast'
 
 /**
  * Full-screen preview shown after the user takes a snapshot. Dismisses
@@ -35,9 +37,34 @@ export function SnapshotPreview({
   // the prop URL matches the URL that previously failed.
   const [erroredUrl, setErroredUrl] = useState<string | null>(null)
   const errored = erroredUrl === url
+  const { showToast } = useToast()
 
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const closeRef = useRef<HTMLButtonElement | null>(null)
+
+  // Painfix wave B #5: same Share affordance as ClipModal (navigator.share
+  // with a clipboard fallback), minimally replicated here — the snapshot
+  // is auth-gated like clip URLs, so the shared link routes a recipient
+  // into the same authed PWA rather than a raw (likely 401) image URL.
+  const onShare = async () => {
+    const shareUrl = `${window.location.origin}${url}`
+    try {
+      const nav = navigator as Navigator & {
+        share?: (data: ShareData) => Promise<void>
+      }
+      if (typeof nav.share === 'function') {
+        await nav.share({ title: 'HomeCam snapshot', url: shareUrl })
+        return
+      }
+      await navigator.clipboard.writeText(shareUrl)
+      showToast('Link copied — paste it into a chat to share', 'success')
+    } catch (e) {
+      const name = (e as Error)?.name
+      if (name === 'AbortError') return
+      log.warn('snapshotPreview:share-failed', { url, ...errFields(e) })
+      showToast('Could not share link — try copy/paste', 'error')
+    }
+  }
 
   useEffect(() => {
     // Focus restore: capture whatever the user had focused (likely
@@ -151,6 +178,13 @@ export function SnapshotPreview({
         >
           Save
         </a>
+        <button
+          type="button"
+          onClick={onShare}
+          className="flex-1 min-h-[44px] py-3 text-white bg-white/10 [@media(hover:hover)]:hover:bg-white/15 active:bg-white/15 rounded-full text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
+        >
+          Share
+        </button>
         <button
           ref={closeRef}
           type="button"

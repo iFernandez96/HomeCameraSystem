@@ -17,6 +17,47 @@ describe('SnapshotPreview', () => {
     expect(link).toHaveAttribute('download')
   })
 
+  it('Given navigator.share is available, When Share is tapped, Then it shares an absolute, origin-qualified snapshot link (painfix wave B #5)', async () => {
+    // arrange
+    const share = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: share,
+    })
+    const user = userEvent.setup()
+    render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
+
+    // act
+    await user.click(screen.getByRole('button', { name: /^share$/i }))
+
+    // assert
+    expect(share).toHaveBeenCalledWith(
+      expect.objectContaining({ url: `${window.location.origin}/snapshots/snap_1.jpg` }),
+    )
+    Reflect.deleteProperty(navigator, 'share')
+  })
+
+  it('Given navigator.share is unavailable, When Share is tapped, Then it falls back to copying the link to the clipboard (painfix wave B #5)', async () => {
+    // arrange — userEvent.setup() installs its OWN clipboard stub, so
+    // define ours AFTER setup() or it gets clobbered.
+    Reflect.deleteProperty(navigator, 'share')
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    render(<SnapshotPreview url="/snapshots/snap_1.jpg" onClose={() => {}} />)
+
+    // act
+    await user.click(screen.getByRole('button', { name: /^share$/i }))
+
+    // assert
+    expect(writeText).toHaveBeenCalledWith(
+      `${window.location.origin}/snapshots/snap_1.jpg`,
+    )
+  })
+
   it('closes via the Close button', async () => {
     const onClose = vi.fn()
     const user = userEvent.setup()
@@ -96,6 +137,9 @@ describe('SnapshotPreview', () => {
 
     // assert
     expect(screen.getByRole('link', { name: /save/i }).className).toMatch(
+      /min-h-\[44px\]/,
+    )
+    expect(screen.getByRole('button', { name: /^share$/i }).className).toMatch(
       /min-h-\[44px\]/,
     )
     expect(screen.getByRole('button', { name: /^close$/i }).className).toMatch(

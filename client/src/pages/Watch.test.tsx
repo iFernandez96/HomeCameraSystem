@@ -157,6 +157,25 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.getByRole('dialog', { name: 'clip:k1' })).toBeInTheDocument()
   })
 
+  it('Given repeat sightings of one person today, When the glance card renders, Then the count reads as sightings not distinct people (painfix wave B #1)', async () => {
+    // arrange — the same person crossing the porch many times in one
+    // day used to read "50 people"; every row here is label 'person'
+    // so the honest word is "sightings", not a head count.
+    const items = Array.from({ length: 3 }, (_, i) =>
+      ev({ id: `p${i}`, label: 'person', ts: Date.now() / 1000 - i * 60 }),
+    )
+    items.push(ev({ id: 'c1', label: 'cat', ts: Date.now() / 1000 - 300 }))
+    searchEvents.mockResolvedValue({ items, next_cursor: null })
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('3 person sightings · 1 cat sighting')).toBeInTheDocument()
+    })
+  })
+
   it('Given no events yet today, When the timeline loads, Then the cat empty state explains the quiet', async () => {
     // arrange / act
     renderWatch()

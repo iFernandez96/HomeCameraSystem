@@ -86,7 +86,7 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <ErrorState
         title={`Something went wrong${where}.`}
-        message="The app hit an unexpected error. Try again first; if it doesn't recover, reload the app."
+        message="The app hit an unexpected error. Try again first. If it does not recover, Reload app below usually fixes it."
         technicalDetail={error.message || String(error)}
         retry={this.reload}
         retryLabel="Reload app"

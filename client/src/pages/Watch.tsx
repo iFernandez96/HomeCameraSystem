@@ -232,11 +232,17 @@ export function Watch() {
               ? 'Turn alerts on in Settings.'
               : 'Checking the camera…'
   const todayCount = events?.length ?? 0
+  // Painfix wave B #1: this used to read "N person · M cat sightings",
+  // which reads as N DISTINCT PEOPLE — but `persons` counts EVENTS, so
+  // one person walking by 50 times over a day showed "50 people". Every
+  // event.label === 'person' row is a SIGHTING, not a unique visitor
+  // (no dedup by identity happens here), so both halves now say
+  // "sighting(s)" consistently.
   const todayBreakdown = useMemo(() => {
     if (events == null) return 'Loading…'
     const persons = events.filter((e) => e.label === 'person').length
     const cats = events.filter((e) => e.label === 'cat').length
-    const personWord = persons === 1 ? 'person' : 'people'
+    const personWord = persons === 1 ? 'person sighting' : 'person sightings'
     const catWord = cats === 1 ? 'cat sighting' : 'cat sightings'
     return `${persons} ${personWord} · ${cats} ${catWord}`
   }, [events])

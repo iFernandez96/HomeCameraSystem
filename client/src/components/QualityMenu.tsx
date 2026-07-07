@@ -19,11 +19,19 @@ import type { StreamQuality } from '../lib/streamQuality'
  * click-outside to dismiss. Nothing about keyboard operability is
  * lost — only the unstyleable native popup is gone.
  */
-export const QUALITY_OPTIONS: ReadonlyArray<{ value: StreamQuality; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'hq', label: 'HQ' },
-  { value: 'sd', label: 'Data-saver' },
-  { value: 'xs', label: 'Ultra-low' },
+export const QUALITY_OPTIONS: ReadonlyArray<{
+  value: StreamQuality
+  label: string
+  subtitle: string
+}> = [
+  { value: 'auto', label: 'Auto', subtitle: 'Adjusts to your connection' },
+  { value: 'hq', label: 'HQ', subtitle: 'Sharpest picture, most data' },
+  {
+    value: 'sd',
+    label: 'Data-saver',
+    subtitle: 'Good picture, about a quarter of the data',
+  },
+  { value: 'xs', label: 'Ultra-low', subtitle: 'Rough picture, works on weak signal' },
 ]
 
 export function QualityMenu({
@@ -177,13 +185,31 @@ export function QualityMenu({
                 tabIndex={i === activeIndex ? 0 : -1}
                 onClick={() => commit(i)}
                 onMouseEnter={() => setActiveIndex(i)}
-                className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-xs font-medium cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 ${
+                className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 ${
                   selected
                     ? 'bg-[var(--color-accent-deep)] text-white'
                     : 'text-white/85 hover:bg-white/10'
                 }`}
               >
-                {o.label}
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">{o.label}</span>
+                  {/* Painfix wave B #4: one-line subtitle so a non-technical
+                      user understands the tradeoff without guessing what
+                      "HQ" vs "Data-saver" costs them. Listbox semantics are
+                      unaffected — this is still one `role="option"` row;
+                      the accessible name (option text content) now reads
+                      "Auto Adjusts to your connection" etc., which is still
+                      unambiguous. The trigger's aria-label stays the short
+                      "Stream quality" so the closed-state control isn't
+                      chatty. */}
+                  <span
+                    className={`text-[11px] font-normal ${
+                      selected ? 'text-white/85' : 'text-white/55'
+                    }`}
+                  >
+                    {o.subtitle}
+                  </span>
+                </span>
                 {selected && (
                   <svg
                     width="14"
@@ -195,6 +221,7 @@ export function QualityMenu({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     aria-hidden="true"
+                    className="flex-shrink-0"
                   >
                     <path d="M20 6 9 17l-5-5" />
                   </svg>

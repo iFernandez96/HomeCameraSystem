@@ -131,6 +131,32 @@ export function VideoTile({
     if (typeof window === 'undefined') return
     window.localStorage.setItem('homecam:boxesVisible', boxesVisible ? '1' : '0')
   }, [boxesVisible])
+  // Painfix wave B #2: the bbox-toggle button is glyph-only — its
+  // meaning lives entirely in the aria-label, which a sighted mouse/
+  // touch user never hears. A transient text hint teaches the icon on
+  // first sight without permanently cluttering the video chrome.
+  // Counted via localStorage (persists across mounts/reloads) so it
+  // shows on the first TWO times this tile renders with the button
+  // available, then never again.
+  const [boxHintViewCount] = useState<number>(() => {
+    if (typeof window === 'undefined') return 2
+    return Number(window.localStorage.getItem('homecam:bboxHintViews') ?? '0')
+  })
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (boxHintViewCount >= 2) return
+    window.localStorage.setItem('homecam:bboxHintViews', String(boxHintViewCount + 1))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- write-once on mount; boxHintViewCount is fixed for this component's lifetime.
+  }, [])
+  const [showBoxHint, setShowBoxHint] = useState(() => boxHintViewCount < 2)
+  useEffect(() => {
+    if (!showBoxHint) return
+    // Auto-hides on a timer regardless of prefers-reduced-motion — only
+    // the FADE is skipped for reduced-motion users (via the
+    // motion-reduce:transition-none class below), not the hide itself.
+    const t = setTimeout(() => setShowBoxHint(false), 4000)
+    return () => clearTimeout(t)
+  }, [showBoxHint])
   const [boxes, setBoxes] = useState<DetectionEvent['boxes']>([])
   const [personName, setPersonName] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
@@ -606,6 +632,19 @@ export function VideoTile({
       <div className="absolute bottom-3 left-3">
         <QualityMenu quality={quality} onSelect={onSelectQuality} />
       </div>
+      {showBoxHint && (
+        // Painfix wave B #2: purely visual reinforcement — the button's
+        // aria-label already carries the meaning for assistive tech, so
+        // this transient label is hidden from the accessibility tree.
+        <span
+          aria-hidden="true"
+          data-testid="bbox-hint"
+          style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+          className="absolute right-28 flex items-center h-11 px-3 rounded-full bg-black/70 backdrop-blur ring-1 ring-white/15 text-white text-xs font-medium whitespace-nowrap pointer-events-none opacity-100 transition-opacity duration-500 motion-reduce:transition-none"
+        >
+          Detection boxes
+        </span>
+      )}
       <button
         type="button"
         onClick={() => setBoxesVisible((v) => !v)}
@@ -800,23 +839,38 @@ export function VideoTile({
           </div>
         )}
         {lowMem && status === 'live' && (
+          // Painfix wave B #3: one plain-guidance line under the pill so
+          // a non-technical user isn't left wondering whether THEY need
+          // to do something — this state self-clears.
           <div
-            className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label="Detection paused due to low memory"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-2xl text-xs font-medium text-white pointer-events-auto"
+            aria-label="Detection paused due to low memory. The camera is freeing up memory. Back to normal soon."
           >
-            <PillSeverityIcon kind="low-memory" tone="danger" />
-            <span className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)]" />
-            Low memory — paused
+            <span className="inline-flex items-center gap-2">
+              <PillSeverityIcon kind="low-memory" tone="danger" />
+              <span className="w-2 h-2 rounded-full bg-[var(--color-danger-strong)]" />
+              Low memory — paused
+            </span>
+            <span className="text-xs text-white/80 font-normal">
+              The camera is freeing up memory. Back to normal soon.
+            </span>
           </div>
         )}
         {therm && status === 'live' && (
+          // Painfix wave B #3: same plain-guidance addition for the
+          // thermal pill.
           <div
-            className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label="Detection rate-limited by GPU thermal"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-2xl text-xs font-medium text-white pointer-events-auto"
+            aria-label="Detection rate-limited by GPU thermal. This clears on its own as the camera cools. No action needed."
           >
-            <PillSeverityIcon kind="thermal" tone="warning" />
-            <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
-            Camera too hot — slowed down
+            <span className="inline-flex items-center gap-2">
+              <PillSeverityIcon kind="thermal" tone="warning" />
+              <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
+              Camera too hot — slowed down
+            </span>
+            <span className="text-xs text-white/80 font-normal">
+              This clears on its own as the camera cools. No action needed.
+            </span>
           </div>
         )}
         {paused && status === 'live' && (

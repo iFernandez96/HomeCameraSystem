@@ -90,6 +90,20 @@ describe('ErrorBoundary', () => {
     }
   })
 
+  it('Given the fallback renders, When the message is read, Then it explicitly tells the user Reload app usually fixes an unrecovered error (painfix wave B #6)', () => {
+    // arrange / act
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    )
+
+    // assert — plain-language guidance points at the actual fix button.
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /reload app below usually fixes it/i,
+    )
+  })
+
   it('logs the caught error to console.error for dev visibility', () => {
     render(
       <ErrorBoundary>

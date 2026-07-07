@@ -83,6 +83,25 @@ describe('QualityMenu (fuzz F6 — themed replacement for the native select)', (
     expect(onSelect).toHaveBeenCalledWith('xs')
   })
 
+  it('Given the listbox is open, When each option renders, Then a one-line plain-language subtitle explains the tradeoff (painfix wave B #4)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    render(<QualityMenu quality="auto" onSelect={vi.fn()} />)
+
+    // act
+    await user.click(screen.getByRole('button', { name: 'Stream quality' }))
+
+    // assert
+    expect(screen.getByText('Adjusts to your connection')).toBeInTheDocument()
+    expect(screen.getByText('Sharpest picture, most data')).toBeInTheDocument()
+    expect(
+      screen.getByText('Good picture, about a quarter of the data'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Rough picture, works on weak signal')).toBeInTheDocument()
+    // Trigger keeps a concise accessible name even though options are chatty.
+    expect(screen.getByRole('button', { name: 'Stream quality' })).toBeInTheDocument()
+  })
+
   it('Given the listbox is open, When a click lands outside the menu, Then it closes', async () => {
     // arrange
     const user = userEvent.setup()
