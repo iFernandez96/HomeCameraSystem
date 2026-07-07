@@ -191,7 +191,12 @@ function AppShell() {
         // Swap to a left-clearance reservation instead (mirrors the
         // `lg:ml-16` desktop-rail offset below, gated the same way
         // on `showShell` since the rail only renders when it does).
-        className={`flex-1 overflow-y-auto overscroll-y-contain ${
+        // overflow-x-clip: overflow-y-auto silently computes overflow-x
+        // to auto, so <main> itself could pan sideways when any child ran
+        // a few px wide (user-hit on Firefox Android, whose font scaling
+        // widens text). clip forbids the pan at the real scroll container;
+        // the body-level guard in index.css covers the page itself.
+        className={`flex-1 overflow-y-auto overflow-x-clip overscroll-y-contain ${
           isWatchRoute
             ? 'pb-[calc(6rem+env(safe-area-inset-bottom)+7.5rem)]'
             : 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
