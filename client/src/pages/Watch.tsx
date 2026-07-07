@@ -334,7 +334,13 @@ export function Watch() {
               // technique as the `lg:` overrides elsewhere in this
               // codebase — later media-scoped rule wins at equal
               // specificity).
-              'relative w-full aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3'
+              // NO w-full here: width:100% + mx-4 made the box 2rem
+              // WIDER than the viewport (left gap visible, right edge
+              // clipped past the screen — user-caught on device, and
+              // the same overflow that let Firefox pan the page
+              // sideways). A block div with side margins fills the
+              // remaining width by itself.
+              'relative aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3'
         }
       >
         <div className="relative flex-1 min-h-0">
