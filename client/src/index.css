@@ -354,15 +354,17 @@
   font-feature-settings: 'ss01', 'liga' on;
 }
 
-/* iter-356.57 (radical redesign): card surface with inset top-edge
- * highlight so cards read as physical objects under candlelight,
- * not flat divs. Apply via className="card-paper" anywhere a panel
- * surface needs the leather-bound treatment. */
+/* Playroom Modern (redesign/playroom-modern, Task 3): card grammar is
+ * a flat hairline-bordered paper surface, NOT a shadow-elevated panel
+ * — the soft drop shadow is reserved for the video tile alone (its own
+ * `--shadow-overlay` treatment), so every other card reads as sitting
+ * IN the page rather than floating over it. Apply via
+ * className="card-paper" anywhere a panel surface needs the paper
+ * treatment. */
 .card-paper {
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-card), var(--shadow-card-inset);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-xl);
 }
 
 /* Premium-feel (2026-07-02): route-enter transition. Each page fades
@@ -518,17 +520,16 @@ h1 { letter-spacing: -0.022em; }
 h2 { letter-spacing: -0.018em; }
 h3 { letter-spacing: -0.014em; }
 
-/* iter-356.55 — page-title polish. iter-356.57 (radical redesign):
- * upgraded from Inter-700 to Fraunces variable serif. This is the
- * single highest-leverage typography move — Maya brutal verdict
- * called Inter-on-cream "THE generic-SaaS tell." Fraunces at
- * 28px/700 with optical sizing reads as set type, not Linear/Vercel.
- * Letter-spacing negative because the serif sets wider than Inter
- * at the same size. */
+/* Playroom Modern (redesign/playroom-modern, Task 3): page-title moves
+ * to the Bricolage Grotesque display face (Task 0) at a heavier 800
+ * weight with tight -0.03em tracking — the "structural grotesque"
+ * headline treatment replaces the Sunroom-era Fraunces serif. Bricolage
+ * sets narrower than the serif did, so the tracking goes tighter, not
+ * looser. */
 .page-title {
   font-family: var(--font-display);
-  font-weight: 700;
-  letter-spacing: -0.018em;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   font-feature-settings: 'ss01', 'liga' on;
 }
 @media (min-width: 1024px) {

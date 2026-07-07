@@ -26,16 +26,17 @@ describe('Button primitive', () => {
     expect(btn.className).toMatch(/min-h-\[44px\]/)
   })
 
-  it('given variant="destructive", when rendered, then the solid danger-strong fill with white label is applied (Sunroom redesign)', () => {
+  it('given variant="destructive", when rendered, then the danger pill outline (1.5px border + danger text) is applied (Playroom Modern)', () => {
     // arrange / act
     render(<Button variant="destructive">Reboot</Button>)
 
-    // assert — light-theme destructive is a solid --color-danger-strong
-    // fill (white text is sanctioned on that fill). The old translucent
-    // danger tint read as a pale pink chip on the linen ground.
+    // assert — Playroom Modern destructive is a pill OUTLINE: 1.5px
+    // border-[var(--color-danger)] + text-[var(--color-danger)] on a
+    // transparent fill, not the old solid --color-danger-strong fill.
     const btn = screen.getByRole('button', { name: /reboot/i })
-    expect(btn.className).toMatch(/bg-\[var\(--color-danger-strong\)\]/)
-    expect(btn.className).toMatch(/text-white/)
+    expect(btn.className).toMatch(/border-\[1\.5px\]/)
+    expect(btn.className).toMatch(/border-\[var\(--color-danger\)\]/)
+    expect(btn.className).toMatch(/text-\[var\(--color-danger\)\]/)
   })
 
   it('given variant="ghost", when rendered, then transparent fill class is applied', () => {

@@ -15,11 +15,12 @@ import { useRipple } from '../../lib/ripple'
  * (--color-accent-*, --color-danger, --color-surface-raised, radius
  * scale, focus-ring, motion).
  *
- * Variants:
- *   primary     — single CTA per screen; Panther-ink fill, white label
- *   secondary   — paper surface + hairline border; non-primary action
+ * Variants (Playroom Modern: all are pills via BASE_CLASSES rounded-full):
+ *   primary     — single CTA per screen; ink pill fill, on-ink label
+ *   secondary   — paper pill + 1.5px hairline border; non-primary action
  *   ghost       — text-only; cancel / dismiss / cleanup
- *   destructive — solid danger-strong fill, white label; reboot, delete, sign out
+ *   destructive — danger pill OUTLINE (1.5px border + danger text, no
+ *                 fill); reboot, delete, sign out
  *
  * Sizes:
  *   sm — chip-density (compact rows, action-panel buttons)
@@ -57,58 +58,53 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 }
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  // redesign/warm-boutique (Sunroom): the calico tri-tone discipline —
-  // primary actions are Panther-INK fills, not marmalade. Ink on linen
-  // is the signature move (Things-3-style dark primary on a warm
-  // ground); the marmalade accent stays reserved for links / focus /
-  // live signal so a screen never shouts twice. Label uses
+  // Playroom Modern (redesign/playroom-modern, Task 3): the control
+  // language every screen consumes verbatim — primary is a pill, ink
+  // fill (BASE_CLASSES supplies rounded-full). Label uses
   // --color-on-ink, NOT text-white: the dual theme INVERTS the ink
-  // fill on dark ("Sunroom at night" — ink becomes parchment), so a
-  // hardcoded white label would vanish. on-ink is white on light,
-  // dark ink on dark (~14:1 both ways); the focus ring stays
-  // marmalade via BASE_CLASSES.
+  // fill on dark (ink becomes parchment), so a hardcoded white label
+  // would vanish. on-ink is white on light, dark ink on dark (~14:1
+  // both ways); the focus ring stays accent-default via BASE_CLASSES.
+  // font-bold matches the mockup's heavier pill label weight.
   // Press feedback: hover lifts to ink-hover, active steps back onto
   // the full ink (one past hover) — paired with the base active:scale
   // cue + Material ripple so a press never looks identical to a hover.
   primary:
-    'bg-[var(--color-ink)] text-[var(--color-on-ink)] ' +
+    'bg-[var(--color-ink)] text-[var(--color-on-ink)] font-bold ' +
     'hover:bg-[var(--color-ink-hover)] active:bg-[var(--color-ink)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
-  // redesign/warm-boutique: secondary = paper card. Rest state sits on
-  // --color-surface (cream paper) with the default hairline border;
-  // hover lifts to --color-surface-raised + a stronger border so the
-  // fill-area feedback stays unambiguous (iter-356.5 desktop B1 kept —
-  // on the light theme surface→raised is a clear warm step, unlike the
-  // old dark border-only delta).
+  // Playroom Modern: secondary is a pill outline on the paper surface —
+  // 1.5px hairline border (matches the card-paper border weight) +
+  // font-bold. Hover lifts to --color-surface-raised + a stronger
+  // border so the fill-area feedback stays unambiguous.
   secondary:
-    'bg-[var(--color-surface)] text-[var(--color-text-primary)] ' +
-    'border border-[var(--color-border)] ' +
+    'border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] font-bold ' +
+    'text-[var(--color-text-primary)] ' +
     'hover:bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] ' +
     'active:bg-[var(--color-surface-raised)] active:border-[var(--color-border-strong)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
-  // redesign/warm-boutique: ghost active state moves off
+  // Playroom Modern: ghost active state moves off
   // --color-surface-overlay (now the same paper as --color-surface, so
   // a press would flash LIGHTER than the hover) onto the raised tone.
   ghost:
-    'bg-transparent text-[var(--color-text-secondary)] ' +
+    'bg-transparent text-[var(--color-text-secondary)] font-semibold ' +
     'hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text-primary)] ' +
     'active:bg-[var(--color-surface-raised)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
-  // redesign/warm-boutique: destructive is a SOLID --color-danger-strong
-  // fill with white text. text-white here is CORRECT (unlike primary):
-  // danger-strong stays a constant red fill across both themes, so the
-  // white label never inverts. The old dark-theme treatment was a translucent danger
-  // tint + danger text — on the light linen ground that reads as a
-  // pale pink chip, far too quiet for "Reboot Jetson" / "Delete clip".
-  // Hover deepens to the brick --color-danger token.
+  // Playroom Modern: danger is now a pill OUTLINE, not a solid fill —
+  // border + text both in --color-danger, transparent background. This
+  // replaces the old solid --color-danger-strong fill; the outline
+  // reads as "careful action" without shouting as loud as a filled red
+  // pill would next to an ink-filled primary. Hover/active fill in with
+  // the muted danger tint so the press still registers unambiguously.
   // ANTI-RECO (kept from iter-356.5): do not auto-prepend a warning
   // icon "for color-blind safety." Destructive is reserved for
   // unambiguous labels; a mandatory icon widens button rows and breaks
   // ActionButton geometry. Color + label is sufficient — callers MUST
   // keep labels unambiguous.
   destructive:
-    'bg-[var(--color-danger-strong)] text-white ' +
-    'hover:bg-[var(--color-danger)] active:bg-[var(--color-danger)] ' +
+    'bg-transparent border-[1.5px] border-[var(--color-danger)] text-[var(--color-danger)] font-semibold ' +
+    'hover:bg-[var(--color-danger-muted)] active:bg-[var(--color-danger-muted)] ' +
     'disabled:opacity-60 disabled:cursor-not-allowed',
 }
 
@@ -124,11 +120,11 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
 // physical press cue distinct from its hover state.
 // `relative overflow-hidden` contains the Material press ripple
 // (lib/ripple.ts): the ripple span is absolutely positioned inside the
-// button and must clip to the rounded-xl bounds.
+// button and must clip to the pill (rounded-full) bounds.
 const BASE_CLASSES =
   'relative overflow-hidden ' +
-  'inline-flex items-center justify-center font-semibold ' +
-  'rounded-xl transition-colors duration-150 active:scale-[0.98] ' +
+  'inline-flex items-center justify-center ' +
+  'rounded-full transition-colors duration-150 active:scale-[0.98] ' +
   'focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ' +
   'select-none'
 
