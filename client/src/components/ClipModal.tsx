@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { exportEvents, fetchEventTracks } from '../lib/api'
-import { drawBoxes } from '../lib/drawBoxes'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { deleteEvent, exportEvents, fetchEventTracks, searchEvents } from '../lib/api'
+import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
 import {
   absoluteTime,
   clockTime,
@@ -8,11 +9,19 @@ import {
   humanCameraName,
   recognizedNames,
 } from '../lib/eventLabel'
+import { identityOf } from '../lib/identity'
 import { log, errFields } from '../lib/log'
+import { useConfirm } from '../lib/confirm'
 import { useReportError, useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
+import { EventRow } from './EventRow'
 import { VideoPlayer } from './VideoPlayer'
 import { Button } from './primitives/Button'
+
+// Playroom Modern (Task 7): ±2h window either side of the active event for
+// the "More from tonight" rail. Wide enough to surface a household's usual
+// evening traffic without pulling in yesterday/tomorrow noise.
+const MORE_TONIGHT_WINDOW_S = 2 * 60 * 60
 
 /**
  * Per-event clip modal (iter-203, Feature #1 slice 3).
@@ -31,12 +40,29 @@ import { Button } from './primitives/Button'
  * `react-hooks/set-state-in-effect` lint trap CLAUDE.md documents).
  */
 export function ClipModal({
-  event,
+  event: eventProp,
   onClose,
 }: {
   event: DetectionEvent
   onClose: () => void
 }) {
+  // Playroom Modern (Task 7, "More from tonight"): the modal can browse
+  // sideways into a neighboring event from the SAME open dialog (tap a
+  // "more from tonight" row) without the parent (Watch/Events) needing to
+  // know or re-render — `event` is local state seeded from the prop, and
+  // resets back to the prop whenever the PARENT swaps which event is
+  // selected (a genuinely new `event.id` from outside). This is the React-
+  // docs "adjusting state when a prop changes" pattern (compare during
+  // render, not inside a useEffect) — CLAUDE.md's `set-state-in-effect`
+  // trap only applies to effect bodies, and this deliberately isn't one.
+  const [event, setEvent] = useState(eventProp)
+  const [syncedEventId, setSyncedEventId] = useState(eventProp.id)
+  if (eventProp.id !== syncedEventId) {
+    setSyncedEventId(eventProp.id)
+    setEvent(eventProp)
+  }
+  const navigate = useNavigate()
+  const confirm = useConfirm()
   const clipUrl = `/api/events/${event.id}/clip`
   // Track which clip URL has errored. If the prop event changes
   // (parent passed a new event), `clipErrored` naturally becomes
@@ -147,6 +173,95 @@ export function ClipModal({
       showToast('Could not share link — try copy/paste', 'error')
     }
   }
+
+  // Playroom Modern (identity-colored boxes + evidence-pane grammar):
+  // moved up from the bottom of the component (was computed only for the
+  // WHO/aside JSX) — the bbox-overlay effect below now needs the same
+  // identity + display-name to color and label the canvas overlay, so
+  // there's a single source of truth instead of two derivations drifting.
+  const matchedNames = recognizedNames(event)
+  const personLabel = matchedNames.length > 0 ? matchedNames[0] : null
+  const identity = useMemo(() => identityOf(event), [event])
+  // resolveIdColor reads getComputedStyle once per identity change (NOT
+  // per animation frame) — the resolved rgb/hex string is what the canvas
+  // overlay effect hands to drawBoxes's opts.color.
+  const resolvedIdColor = useMemo(() => resolveIdColor(identity), [identity])
+  // "Someone · 92%" for a detected-but-unrecognized person: reuses
+  // drawBoxes's existing personName-labeling path (matched box gets
+  // `${personName} score%`) by handing it a display name even though no
+  // real name was recognized, rather than adding a second labeling mode.
+  const boxLabelName = personLabel ?? (identity.kind === 'person' ? 'Someone' : null)
+
+  // Playroom Modern (Task 7, "More from tonight"): sibling events within
+  // ±2h of the active event, so a household member reviewing one clip can
+  // browse the rest of the evening without leaving the modal.
+  // No synchronous reset-to-null at the top of the effect (mirrors the
+  // `tracks` fetch above, same react-hooks/set-state-in-effect
+  // constraint from CLAUDE.md) — the rail keeps showing the PREVIOUS
+  // event's siblings for one frame while the new window fetches, rather
+  // than flashing empty on every "More from tonight" tap.
+  const [moreTonight, setMoreTonight] = useState<DetectionEvent[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    searchEvents({
+      since_ts: event.ts - MORE_TONIGHT_WINDOW_S,
+      until_ts: event.ts + MORE_TONIGHT_WINDOW_S,
+      limit: 20,
+    })
+      .then((r) => {
+        if (cancelled) return
+        setMoreTonight(r.items.filter((e) => e.id !== event.id).slice(0, 5))
+      })
+      .catch((e) => {
+        // Non-fatal — the rail just stays empty. WARN (not ERROR): the
+        // clip itself still plays fine, this is a nice-to-have sidebar.
+        log.warn('clipModal:more-tonight-fetch-failed', {
+          eventId: event.id,
+          ...errFields(e),
+        })
+        if (!cancelled) setMoreTonight([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [event.id, event.ts])
+
+  // Playroom Modern (Task 7): "Name them" — persons only, and only when
+  // unrecognized (a named person already has a name; nothing to do).
+  // Reuses the EXISTING uncertain-face review flow rather than inventing
+  // a new naming affordance — `/training/review` (Review.tsx) is where an
+  // operator confirms/corrects a predicted name from a face capture.
+  const onNameThem = () => {
+    navigate('/training/review')
+  }
+
+  const [deleting, setDeleting] = useState(false)
+  const onDelete = async () => {
+    if (deleting) return
+    const ok = await confirm({
+      title: 'Delete this event?',
+      body: `Delete the ${clockTime(event.ts)} ${personLabel ?? event.label} event? The clip will be removed. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+      destructive: true,
+    })
+    if (!ok) return
+    setDeleting(true)
+    try {
+      await deleteEvent(event.id)
+      showToast('Event deleted', 'success')
+      onClose()
+    } catch (e) {
+      reportError(
+        'clipModal:delete-failed',
+        e instanceof Error ? `Could not delete event: ${e.message}` : 'Could not delete event',
+        { eventId: event.id, ...errFields(e) },
+      )
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   useEffect(() => {
     const previouslyFocused =
       typeof document !== 'undefined'
@@ -221,7 +336,11 @@ export function ClipModal({
     if (!canvas || !video) return
     const ctx = canvas.getContext('2d')
     const fallbackBoxes: DetectionBox[] = boxesVisible ? event.boxes : []
-    const visibleName = boxesVisible ? event.person_name ?? null : null
+    // Playroom Modern (identity-colored boxes): `boxLabelName` generalizes
+    // the old `event.person_name` fallback to also cover multi-person
+    // events (first recognized name) and the "Someone" placeholder for a
+    // detected-but-unrecognized person.
+    const visibleName = boxesVisible ? boxLabelName : null
     // iter-356.59 — staleness window. If the latest sample is more
     // than this many seconds older than `currentTime`, treat it as
     // "no current detection" and clear the box. Without this, the
@@ -266,7 +385,7 @@ export function ClipModal({
     const draw = () => {
       if (!ctx) return
       const t = video.currentTime || 0
-      drawBoxes(ctx, canvas, video, pickBoxesAt(t), visibleName)
+      drawBoxes(ctx, canvas, video, pickBoxesAt(t), visibleName, { color: resolvedIdColor })
     }
     draw()
 
@@ -369,7 +488,7 @@ export function ClipModal({
       if (rafHandle != null) cancelAnimationFrame(rafHandle)
       if (observer) observer.disconnect()
     }
-  }, [event.boxes, event.person_name, clipUrl, boxesVisible, clipErrored, tracks])
+  }, [event.boxes, boxLabelName, resolvedIdColor, clipUrl, boxesVisible, clipErrored, tracks])
 
   // Tri-state body content: video (default), snapshot fallback
   // (clip errored), empty state (both errored / no thumb).
@@ -497,14 +616,10 @@ export function ClipModal({
   const title = eventTitle(event)
   const timeLabel = `${clockTime(event.ts)} · ${humanCameraName(event.camera_id)}`
   const dialogLabel = `${title}, ${absoluteTime(event.ts)}`
-  // iter-357 (multi-person face-recog): collapse the legacy
-  // `person_name` + new `person_names` into one ordered list so
-  // the WHO panel + header chip can fan out gracefully when the
-  // event matched several people. Single-person events go through
-  // the same path with `recognizedNames` returning [name] — the
-  // length-1 branch below renders identically to pre-iter-357.
-  const matchedNames = recognizedNames(event)
-  const personLabel = matchedNames.length > 0 ? matchedNames[0] : null
+  // `matchedNames` + `personLabel` now computed once, near the top of the
+  // component (Playroom Modern identity plumbing) — the bbox-overlay
+  // effect needs them too, so they moved up rather than being derived
+  // twice from `event`.
   const matchConfidence =
     typeof event.score === 'number' && event.score > 0 ? Math.round(event.score * 100) : null
 
@@ -677,6 +792,25 @@ export function ClipModal({
         >
           Save clip
         </Button>
+        {/* Playroom Modern (Task 7): "Name them" — persons only, and only
+            when the camera couldn't put a name to the face (a named person
+            has nothing left to name). Reuses the existing uncertain-face
+            review flow instead of inventing a new one. */}
+        {identity.kind === 'person' && (
+          <Button variant="secondary" size="md" onClick={onNameThem}>
+            Name them
+          </Button>
+        )}
+        <Button
+          variant="destructive"
+          size="md"
+          loading={deleting}
+          loadingText="Deleting…"
+          onClick={onDelete}
+          aria-label={`Delete this ${personLabel ?? event.label} event`}
+        >
+          Delete
+        </Button>
       </div>
       </div>
       {/* iter-356.58 (LAYOUT REBUILD) — EVIDENCE PANE.
@@ -791,6 +925,28 @@ export function ClipModal({
             </div>
           )}
         </div>
+        {/* Playroom Modern (Task 7): "More from tonight" — siblings within
+            ±2h of the active event. Tapping a row swaps the WHOLE modal
+            (video, WHO/WHEN/WHERE/HOW-SURE, and this rail itself) to that
+            event via local `setEvent` — no parent involvement needed. */}
+        {moreTonight && moreTonight.length > 0 && (
+          <div className="px-5 py-4 space-y-2">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
+              More from tonight
+            </div>
+            <ul className="space-y-1.5 list-none">
+              {moreTonight.map((e) => (
+                <li key={e.id}>
+                  <EventRow
+                    event={e}
+                    subline={humanCameraName(e.camera_id)}
+                    onOpen={() => setEvent(e)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </aside>
     </div>
   )

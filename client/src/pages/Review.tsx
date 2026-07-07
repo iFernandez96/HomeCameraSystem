@@ -305,13 +305,18 @@ export function Review() {
                       Not sure
                     </Button>
                   </div>
+                  {/* Playroom Modern (Task 7 token pass): swapped the
+                      ghost-variant + `!text-danger` override hack for
+                      the Button primitive's own `destructive` variant
+                      (danger outline pill) — the grammar Task 3
+                      standardized for exactly this "careful action"
+                      case. */}
                   <Button
-                    variant="ghost"
+                    variant="destructive"
                     size="md"
                     loading={busy}
                     onClick={() => handleDelete(item)}
                     aria-label={`Delete this photo (currently filed as ${displayDir(item.current_dir)})`}
-                    className="!text-[var(--color-danger)] hover:!bg-[var(--color-danger-bg)]"
                   >
                     Delete
                   </Button>

@@ -1,4 +1,5 @@
 import { log } from './log'
+import type { Identity } from './identity'
 import type { DetectionBox } from './types'
 
 // drawBoxes runs on a hot redraw path (per live-event / per ClipModal frame),
@@ -7,6 +8,27 @@ import type { DetectionBox } from './types'
 // (positive-dimension) draw happens, so a transient layout glitch logs once
 // and a recurrence after recovery logs again.
 let _degenerateWarned = false
+
+// Playroom Modern (identity-colored boxes): canvas can't resolve `var(...)`
+// tokens, so callers resolve the event's identity color ONCE (per event, not
+// per frame — see `resolveIdColor` below) and pass the concrete rgb/hex
+// string through `opts.color`. jsdom's `getComputedStyle` returns an empty
+// string for unset custom properties, so this always has a real fallback.
+const FALLBACK_ID_COLOR = '#2f5fe0'
+
+/**
+ * Resolves an `Identity`'s CSS custom-property color (e.g.
+ * `var(--color-id-person)`) to a concrete string `drawBoxes` can hand to
+ * `CanvasRenderingContext2D.strokeStyle`. Falls back to a stable blue when
+ * the property isn't defined (jsdom, or a token that hasn't landed yet).
+ */
+export function resolveIdColor(identity: Pick<Identity, 'colorVar'>): string {
+  if (typeof document === 'undefined') return FALLBACK_ID_COLOR
+  const match = /--[\w-]+/.exec(identity.colorVar)
+  if (!match) return FALLBACK_ID_COLOR
+  const value = getComputedStyle(document.documentElement).getPropertyValue(match[0]).trim()
+  return value || FALLBACK_ID_COLOR
+}
 
 /**
  * Renders normalized [0,1] detection boxes onto `canvas`, sized to the
@@ -20,6 +42,12 @@ let _degenerateWarned = false
  * else in red. Colors are intentionally hex-literal, not tokenized:
  * the canvas surface paints over a video frame, where token
  * resolution is moot — the box must read against arbitrary pixels.
+ *
+ * `opts.color` (Playroom Modern, ADDITIVE — VideoTile's 5-arg call is
+ * unchanged and keeps the red/emerald split above) lets a caller override
+ * every box's stroke/fill with one resolved identity color for the whole
+ * event — the `drawBoxes(ctx, canvas, video, boxes, personName)` shape
+ * VideoTile uses is untouched.
  */
 export function drawBoxes(
   ctx: CanvasRenderingContext2D,
@@ -27,6 +55,7 @@ export function drawBoxes(
   video: HTMLVideoElement,
   boxes: ReadonlyArray<DetectionBox>,
   personName: string | null,
+  opts?: { color?: string },
 ): void {
   const w = video.clientWidth
   const h = video.clientHeight
@@ -68,7 +97,7 @@ export function drawBoxes(
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i]
     const matched = i === matchedIdx
-    const color = matched ? '#34d399' : '#ef4444'
+    const color = opts?.color ?? (matched ? '#34d399' : '#ef4444')
     ctx.strokeStyle = color
     ctx.fillStyle = color
     ctx.strokeRect(b.x * w, b.y * h, b.w * w, b.h * h)

@@ -138,10 +138,16 @@ export function SnapshotPreview({
             inherit the page text color, which is now dark ink and
             vanished on the black viewer. text-white on dark fills is
             the sanctioned exception. */}
+        {/* Playroom Modern (Task 7 token pass): rounded-2xl → rounded-full.
+            These stay hand-rolled (not the Button primitive) — they sit on
+            the dark full-screen viewer's dark-glass chrome, one is an
+            `<a download>` (Button only renders a `<button>`), and the
+            other needs the `closeRef` focus-restore ref — but the pill
+            SHAPE now matches the rest of the app's control grammar. */}
         <a
           href={url}
           download
-          className="flex-1 min-h-[44px] py-3 text-center text-white bg-white/10 [@media(hover:hover)]:hover:bg-white/15 active:bg-white/15 rounded-2xl text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
+          className="flex-1 min-h-[44px] py-3 text-center text-white bg-white/10 [@media(hover:hover)]:hover:bg-white/15 active:bg-white/15 rounded-full text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
         >
           Save
         </a>
@@ -149,7 +155,7 @@ export function SnapshotPreview({
           ref={closeRef}
           type="button"
           onClick={onClose}
-          className="flex-1 min-h-[44px] py-3 text-white bg-white/15 [@media(hover:hover)]:hover:bg-white/20 active:bg-white/20 rounded-2xl text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
+          className="flex-1 min-h-[44px] py-3 text-white bg-white/15 [@media(hover:hover)]:hover:bg-white/20 active:bg-white/20 rounded-full text-sm font-medium border border-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
         >
           Close
         </button>

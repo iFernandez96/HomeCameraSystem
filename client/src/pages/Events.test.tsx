@@ -92,6 +92,13 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     useSearchParams: () =>
       [new URLSearchParams(_searchSeed), () => {}] as const,
+    // Playroom Modern (Task 7): ClipModal (rendered by this page when an
+    // event is selected) now calls useNavigate for its "Name them"
+    // action, which throws outside a Router context — these tests render
+    // `<Events />` bare (no Router wrapper) by design, so stub it rather
+    // than add one. Behavior of "Name them" itself is covered by
+    // ClipModal.test.tsx; this page's tests don't exercise it.
+    useNavigate: () => vi.fn(),
   }
 })
 
@@ -118,7 +125,14 @@ describe('Events page', () => {
     logError.mockReset()
     logWarn.mockReset()
     fetchEvents.mockReset()
-    searchEvents.mockReset()
+    // Playroom Modern (Task 7): ClipModal's "More from tonight" rail
+    // calls searchEvents on mount whenever an event is open. Tests that
+    // don't care about that rail (most of them) don't override this —
+    // give it a safe empty default here (same mockReset().mockResolvedValue
+    // pattern as the other API mocks below) rather than `undefined`,
+    // which crashed with "Cannot read properties of undefined (reading
+    // 'then')" the moment a thumb row opened ClipModal.
+    searchEvents.mockReset().mockResolvedValue({ items: [], next_cursor: null })
     getEventCountsByDay.mockReset().mockResolvedValue({ counts: {} })
     markAllEventsSeen.mockReset().mockResolvedValue({ flipped: 0 })
     markEventSeen.mockReset().mockResolvedValue({ flipped: true })

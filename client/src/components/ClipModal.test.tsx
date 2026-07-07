@@ -1,5 +1,41 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render as rtlRender, screen, type RenderOptions } from '@testing-library/react'
+import type { ReactElement, ReactNode } from 'react'
+import { MemoryRouter } from 'react-router-dom'
+import { ConfirmProvider } from '../lib/confirm'
+
+// Playroom Modern (Task 7): ClipModal's "Name them" action now calls
+// react-router's `useNavigate`, which throws outside a Router context.
+// This shadows the RTL `render` import with one that always wraps in a
+// MemoryRouter — every existing `render(<ClipModal .../>)` call (and the
+// `rerender` it returns, per RTL's `wrapper` option contract) picks this
+// up for free with no per-call changes needed.
+//
+// ConfirmProvider is ALSO wrapped unconditionally: without it,
+// `useConfirm()`'s context default resolves every call to `false`
+// (cancel), which would silently no-op the new Delete action in every
+// test. ConfirmProvider renders nothing until a confirm() call is
+// in flight, so pre-existing tests are unaffected.
+function Wrapper({ children }: { children: ReactNode }) {
+  return (
+    <MemoryRouter>
+      <ConfirmProvider>{children}</ConfirmProvider>
+    </MemoryRouter>
+  )
+}
+function render(ui: ReactElement, options?: RenderOptions) {
+  return rtlRender(ui, { wrapper: Wrapper, ...options })
+}
+
+// Mirrors People.test.tsx's pattern: mock just `useNavigate` (keep every
+// other react-router export real) so "Name them" can be pinned against a
+// plain spy instead of asserting on MemoryRouter's internal history.
+const navigateSpy = vi.fn()
+vi.mock('react-router-dom', async () => {
+  const actual =
+    await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return { ...actual, useNavigate: () => navigateSpy }
+})
 
 // docs/logging_plan.md §2/§5 (ClipModal): spy on the client log shim
 // so the export-fail test can assert a structured ERROR (with the
@@ -726,5 +762,171 @@ describe('ClipModal', () => {
     expect(dialog.getAttribute('aria-label')).toMatch(
       /israel & sheenal at the front door/i,
     )
+  })
+
+  // ─── Playroom Modern (Task 7): pill action row — Name them + Delete ──
+
+  it('Given an unrecognized person (no name), When the modal renders, Then a "Name them" action is present', () => {
+    // arrange / act
+    const ev = makeEvent({ label: 'person', person_name: null })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.getByRole('button', { name: /name them/i })).toBeInTheDocument()
+  })
+
+  it('Given a recognized (named) person, When the modal renders, Then "Name them" is absent (nothing left to name)', () => {
+    // arrange / act
+    const ev = makeEvent({ label: 'person', person_name: 'alice' })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.queryByRole('button', { name: /name them/i })).not.toBeInTheDocument()
+  })
+
+  it('Given a cat event, When the modal renders, Then "Name them" is absent (cats aren\'t named via this flow)', () => {
+    // arrange / act
+    const ev = makeEvent({ label: 'cat', person_name: null })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert
+    expect(screen.queryByRole('button', { name: /name them/i })).not.toBeInTheDocument()
+  })
+
+  it('Given "Name them" is clicked, When an unrecognized person is showing, Then it navigates to the existing uncertain-face review flow', async () => {
+    // arrange
+    navigateSpy.mockClear()
+    const ev = makeEvent({ label: 'person', person_name: null })
+    render(<ClipModal event={ev} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.click(screen.getByRole('button', { name: /name them/i }))
+
+    // assert — reuses /training/review (Review.tsx), NOT a new route.
+    expect(navigateSpy).toHaveBeenCalledWith('/training/review')
+  })
+
+  it('Given the Delete pill is clicked and the confirm dialog is accepted, When the delete resolves, Then the event is deleted and the modal closes', async () => {
+    // arrange
+    const deleteSpy = vi
+      .spyOn(await import('../lib/api'), 'deleteEvent')
+      .mockResolvedValue({ deleted: true })
+    const onClose = vi.fn()
+    const ev = makeEvent({ id: 'evt-del', label: 'cat' })
+    render(<ClipModal event={ev} onClose={onClose} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
+    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
+
+    // assert
+    await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('evt-del'))
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('Given the Delete pill is clicked and the confirm dialog is CANCELLED, When the user backs out, Then no delete request is made', async () => {
+    // arrange
+    const deleteSpy = vi.spyOn(await import('../lib/api'), 'deleteEvent')
+    const onClose = vi.fn()
+    const ev = makeEvent({ id: 'evt-keep', label: 'cat' })
+    render(<ClipModal event={ev} onClose={onClose} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+
+    // act
+    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
+    await user.click(await screen.findByRole('button', { name: /^cancel$/i }))
+
+    // assert
+    expect(deleteSpy).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  // ─── Playroom Modern (Task 7): "More from tonight" rail ──────────────
+
+  it('Given sibling events within ±2h, When the modal mounts, Then "More from tonight" fetches that window and excludes the active event', async () => {
+    // arrange
+    const ev = makeEvent({ id: 'evt-active', ts: 1700000000 })
+    const sibling = makeEvent({ id: 'evt-sibling', ts: 1700003000, label: 'cat' })
+    const searchSpy = vi
+      .spyOn(await import('../lib/api'), 'searchEvents')
+      .mockResolvedValue({ items: [ev, sibling], next_cursor: null })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — ±2h (7200s) window centered on the active event's ts.
+    await vi.waitFor(() =>
+      expect(searchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ since_ts: 1700000000 - 7200, until_ts: 1700000000 + 7200 }),
+      ),
+    )
+    expect(await screen.findByText(/more from tonight/i)).toBeInTheDocument()
+    // The active event itself is excluded from its own "more" rail.
+    const rail = screen.getByText(/more from tonight/i).closest('div') as HTMLElement
+    expect(rail.textContent).not.toMatch(/evt-active/)
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('Given no sibling events are found, When "More from tonight" resolves empty, Then the rail is not rendered', async () => {
+    // arrange
+    vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    })
+
+    // act
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // assert
+    await vi.waitFor(() => {
+      expect(screen.queryByText(/more from tonight/i)).not.toBeInTheDocument()
+    })
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('Given a "More from tonight" row is tapped, When the user opens it, Then the SAME modal swaps to that event (video + evidence pane) without the parent re-rendering', async () => {
+    // arrange
+    const active = makeEvent({ id: 'evt-active', ts: 1700000000, label: 'person', person_name: null })
+    const sibling = makeEvent({
+      id: 'evt-sibling',
+      ts: 1700001000,
+      label: 'person',
+      person_name: 'alice',
+    })
+    vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+      items: [sibling],
+      next_cursor: null,
+    })
+
+    // act
+    render(<ClipModal event={active} onClose={() => {}} />)
+    const row = await screen.findByRole('button', { name: /alice/i })
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    await user.click(row)
+
+    // assert — the modal now plays evt-sibling's clip, not evt-active's.
+    expect(screen.getByLabelText(/clip of alice event/i)).toHaveAttribute(
+      'src',
+      '/api/events/evt-sibling/clip',
+    )
+
+    // cleanup
+    vi.restoreAllMocks()
   })
 })
