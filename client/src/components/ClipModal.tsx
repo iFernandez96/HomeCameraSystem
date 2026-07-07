@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { deleteEvent, exportEvents, fetchEventTracks, searchEvents } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
 import {
   absoluteTime,
@@ -63,6 +64,16 @@ export function ClipModal({
   }
   const navigate = useNavigate()
   const confirm = useConfirm()
+  // Fix round (review finding): the Delete pill must not render for
+  // non-owners — mirrors Events.tsx's isOwner gating (admin is a
+  // transitional owner-equivalent, same carve-out as Settings.tsx's
+  // isOwner). Derived here via useAuth() rather than threaded as a
+  // prop: AuthProvider wraps the whole app (see App.tsx), so both of
+  // ClipModal's call sites (Events.tsx, Watch.tsx) always have it in
+  // context, and reading it locally avoids plumbing a prop through
+  // both.
+  const { user } = useAuth()
+  const isOwner = user?.role === 'owner' || user?.role === 'admin'
   const clipUrl = `/api/events/${event.id}/clip`
   // Track which clip URL has errored. If the prop event changes
   // (parent passed a new event), `clipErrored` naturally becomes
@@ -237,7 +248,7 @@ export function ClipModal({
 
   const [deleting, setDeleting] = useState(false)
   const onDelete = async () => {
-    if (deleting) return
+    if (!isOwner || deleting) return
     const ok = await confirm({
       title: 'Delete this event?',
       body: `Delete the ${clockTime(event.ts)} ${personLabel ?? event.label} event? The clip will be removed. This cannot be undone.`,
@@ -801,16 +812,22 @@ export function ClipModal({
             Name them
           </Button>
         )}
-        <Button
-          variant="destructive"
-          size="md"
-          loading={deleting}
-          loadingText="Deleting…"
-          onClick={onDelete}
-          aria-label={`Delete this ${personLabel ?? event.label} event`}
-        >
-          Delete
-        </Button>
+        {/* Fix round (review finding): parity with Events.tsx, which hides
+            delete affordances entirely for non-owners (isOwner gating
+            around lines 704/1384) rather than just disabling the handler.
+            Delete must not render for non-owner sessions. */}
+        {isOwner && (
+          <Button
+            variant="destructive"
+            size="md"
+            loading={deleting}
+            loadingText="Deleting…"
+            onClick={onDelete}
+            aria-label={`Delete this ${personLabel ?? event.label} event`}
+          >
+            Delete
+          </Button>
+        )}
       </div>
       </div>
       {/* iter-356.58 (LAYOUT REBUILD) — EVIDENCE PANE.

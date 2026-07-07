@@ -37,6 +37,19 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => navigateSpy }
 })
 
+// Fix round (review finding): ClipModal's Delete pill is now gated by
+// isOwner (parity with Events.tsx). Mirrors Events.test.tsx's auth mock
+// idiom — default to 'admin' (owner-equivalent via the transitional
+// carve-out) so pre-existing Delete-flow tests below keep passing
+// unchanged; the new owner/non-owner tests override `_authUser.role`.
+const _authUser: { username: string; role: 'owner' | 'admin' | 'viewer' } = {
+  username: 'testuser',
+  role: 'admin',
+}
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({ user: _authUser, logout: vi.fn() }),
+}))
+
 // docs/logging_plan.md §2/§5 (ClipModal): spy on the client log shim
 // so the export-fail test can assert a structured ERROR (with the
 // discarded HTTP status) fires at the swallow site. The real
@@ -850,6 +863,40 @@ describe('ClipModal', () => {
 
     // cleanup
     vi.restoreAllMocks()
+  })
+
+  // ─── Fix round (review finding): Delete pill owner gating ────────────
+
+  it('Given a non-owner session, When the clip modal renders, Then no Delete button is shown', () => {
+    // arrange
+    _authUser.role = 'viewer'
+
+    // act
+    render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
+
+    // assert
+    expect(
+      screen.queryByRole('button', { name: /delete this cat event/i }),
+    ).not.toBeInTheDocument()
+
+    // cleanup
+    _authUser.role = 'admin'
+  })
+
+  it('Given an owner session, When the clip modal renders, Then the Delete button is shown', () => {
+    // arrange
+    _authUser.role = 'owner'
+
+    // act
+    render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
+
+    // assert
+    expect(
+      screen.getByRole('button', { name: /delete this cat event/i }),
+    ).toBeInTheDocument()
+
+    // cleanup
+    _authUser.role = 'admin'
   })
 
   // ─── Playroom Modern (Task 7): "More from tonight" rail ──────────────
