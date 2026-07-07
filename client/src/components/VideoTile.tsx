@@ -12,6 +12,7 @@ import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
 import { OfflineState } from './states/OfflineState'
+import { QualityMenu } from './QualityMenu'
 
 type Status = 'connecting' | 'live' | 'error' | 'idle'
 
@@ -27,6 +28,7 @@ export function VideoTile({
   thermal = null,
   streamStaleSeconds = null,
   fit = 'cover',
+  showStatusPill = true,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -83,6 +85,18 @@ export function VideoTile({
    * feed would hide the edges of the scene.
    */
   fit?: 'cover' | 'contain'
+  /**
+   * Fuzz F3/F7/F13 (docked/fullscreen chrome consolidation, Watch.tsx):
+   * the tile's own connection-status pill ("Live"/"Connecting"/
+   * "Offline", top-12 left-3) is the ONE status pill Watch wants
+   * docked. In fullscreen Watch already renders a combined
+   * "{armed state} · {camera}" cluster plus the scrubber's red LIVE
+   * pill, so this tile's pill would be a third, redundant "Live"
+   * label crowding the back chevron (fuzz F7). Default true so
+   * every other VideoTile consumer (tests, future multi-cam) keeps
+   * the pill unless it opts out.
+   */
+  showStatusPill?: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -534,8 +548,10 @@ export function VideoTile({
         aria-label="Live camera feed"
       />
       <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none" />
-      <StatusPill status={status} />
-      <QualityControl quality={quality} onSelect={onSelectQuality} />
+      {showStatusPill && <StatusPill status={status} />}
+      <div className="absolute bottom-3 left-3">
+        <QualityMenu quality={quality} onSelect={onSelectQuality} />
+      </div>
       <button
         type="button"
         onClick={() => setBoxesVisible((v) => !v)}
@@ -775,69 +791,6 @@ export function VideoTile({
         </div>
       )}
     </div>
-  )
-}
-
-/**
- * Cellular-adaptive streaming (2026-06-16): per-tile quality picker.
- * Auto reads navigator.connection and downshifts on cellular/metered
- * links; the other tiers force a fixed bitrate. Rendered as a labelled
- * native <select> so it's keyboard-operable, reachable by accessible
- * name, and announces the current tier without any custom ARIA.
- *
- * Theme: the picker overlays the dark video field, so it uses the same
- * black/glass + white-text treatment as the StatusPill and the
- * box-overlay / fullscreen buttons (text-white is allowed on a colored
- * fill). The focus ring uses the accent token.
- */
-const QUALITY_OPTIONS: ReadonlyArray<{ value: StreamQuality; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'hq', label: 'HQ' },
-  { value: 'sd', label: 'Data-saver' },
-  { value: 'xs', label: 'Ultra-low' },
-]
-
-function QualityControl({
-  quality,
-  onSelect,
-}: {
-  quality: StreamQuality
-  onSelect: (q: StreamQuality) => void
-}) {
-  return (
-    <label className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2 py-1 rounded-full text-xs font-medium text-white">
-      <span className="sr-only">Stream quality</span>
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        {/* signal-bars glyph */}
-        <line x1="6" y1="20" x2="6" y2="14" />
-        <line x1="12" y1="20" x2="12" y2="9" />
-        <line x1="18" y1="20" x2="18" y2="4" />
-      </svg>
-      <select
-        aria-label="Stream quality"
-        value={quality}
-        onChange={(e) => onSelect(e.target.value as StreamQuality)}
-        className="bg-transparent text-white text-xs font-medium outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 rounded-sm cursor-pointer"
-      >
-        {QUALITY_OPTIONS.map((o) => (
-          // option bg follows the native picker; force a readable surface
-          // for the open list on dark-UA defaults.
-          <option key={o.value} value={o.value} className="text-[var(--color-text-primary)]">
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
   )
 }
 

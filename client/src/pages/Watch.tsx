@@ -7,13 +7,42 @@ import { SnapshotPreview } from '../components/SnapshotPreview'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
 import { captureSnapshot, searchEvents, HttpError } from '../lib/api'
-import { clockTime } from '../lib/eventLabel'
-import { formatAge } from '../lib/format'
+import { clockTime, recognizedNames, relativeTime } from '../lib/eventLabel'
+import { identityOf, type IdentityKind } from '../lib/identity'
 import { useRipple } from '../lib/ripple'
 import { sentryCatName, useSentryCat } from '../lib/sentryCat'
 import { useToast } from '../lib/toast'
+import { useTicker } from '../lib/useTicker'
 import type { DetectionEvent } from '../lib/types'
 import { useStatus } from '../lib/useStatus'
+
+/**
+ * Fuzz F4 (real device SM-S928U1, 2026-07-07): landscape fullscreen
+ * left ~45% of the width as dead black bars because `object-contain`
+ * letterboxes a 16:9 stream inside a landscape phone's much wider
+ * (~19.5:9+) viewport. Portrait fullscreen deliberately keeps
+ * `contain` (full-bleed mode note above) so the scene's edges are
+ * never cropped — but on an already-wide landscape screen the crop a
+ * `cover` fit introduces is minor (top/bottom sliver) and buys back
+ * the wasted width, which reads far better for an immersive live
+ * view. Tracks `matchMedia('(orientation: landscape)')` so the fit
+ * mode follows physical rotation, not just the full/docked toggle.
+ */
+function useIsLandscape(): boolean {
+  const [landscape, setLandscape] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(orientation: landscape)').matches
+      : false,
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mql = window.matchMedia('(orientation: landscape)')
+    const onChange = () => setLandscape(mql.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return landscape
+}
 
 /**
  * Watch — the app's home screen ("Home" in the Playroom Modern
@@ -110,6 +139,8 @@ export function Watch() {
   const { showToast } = useToast()
   const navigate = useNavigate()
   const ripple = useRipple()
+  const isLandscape = useIsLandscape()
+  const nowMs = useTicker()
   const { events, quietSince, error, refetch: refetchTodayEvents } = useTodayEvents()
 
   const [full, setFull] = useState(false)
@@ -141,12 +172,10 @@ export function Watch() {
       : detectionActive === false
         ? 'bg-[var(--color-warning)]'
         : 'bg-[var(--color-text-tertiary)]'
-  const ageLabel =
-    status?.seconds_since_last_frame == null
-      ? null
-      : status.seconds_since_last_frame < 5
-        ? 'Live now'
-        : `${formatAge(status.seconds_since_last_frame)} ago`
+  // Fuzz F3/F13: the old `ageLabel` ("Live now" / "Ns ago") text chip
+  // was dropped from the on-video chrome — it duplicated both this
+  // tile's own connection-status pill and, in fullscreen, the
+  // scrubber's LIVE pill.
 
   // Glance row copy — Step 3 of the Home redesign. "Watching" card
   // swaps to the full-contrast danger treatment when the camera is
@@ -243,14 +272,36 @@ export function Watch() {
             lowMemory={lowMemory}
             thermal={thermal}
             streamStaleSeconds={streamStaleSeconds}
-            fit={full ? 'contain' : 'cover'}
+            // Fuzz F4: landscape fullscreen switches to `cover` so the
+            // stream fills the wide viewport instead of leaving ~45%
+            // dead black bars (see useIsLandscape comment above).
+            // Portrait fullscreen and the docked tile are unaffected —
+            // docked stays `cover` inside its true 16:9 box, and
+            // portrait full-bleed keeps `contain` so the scene's
+            // edges are never cropped (original full-bleed rationale).
+            fit={full ? (isLandscape ? 'cover' : 'contain') : 'cover'}
+            // Fuzz F3/F7/F13: docked wants exactly ONE status pill —
+            // this tile's own connection pill ("Live"/"Connecting"/
+            // "Offline"). Fullscreen already has a combined armed +
+            // camera cluster below plus the scrubber's LIVE pill, so
+            // this tile's pill would be a third, redundant "Live"
+            // label crowding the back chevron.
+            showStatusPill={!full}
           />
 
           {/* Floating pill overlays — the armed state lives ON the
               video here (the ribbon is hidden on this route on
-              mobile). Safe-area padded for the notch. Two distinct
-              pills (state + camera name) replace the old continuous
-              scrim bar per the Playroom pill grammar. */}
+              mobile). Safe-area padded for the notch.
+              Fuzz F3/F9/F13 consolidation: docked shows ONLY the
+              camera-name pill (the armed/offline state now belongs
+              solely to the glance card below, and the connection
+              state is VideoTile's own pill) — down from 4 chips
+              stacked on one video. Fullscreen collapses the old
+              3-piece cluster (state pill + camera pill + "Live now"
+              age text) into ONE combined "{state} · {camera}" pill,
+              since the scrubber's red LIVE pill already carries the
+              live signal and a standalone "Live now" text was pure
+              duplication (fuzz F3). */}
           <div
             className="absolute top-0 left-0 right-0 flex items-center gap-2 px-4 pointer-events-none"
             style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
@@ -266,22 +317,20 @@ export function Watch() {
                 ‹
               </button>
             )}
-            <span
-              role="status"
-              aria-live="polite"
-              className="pointer-events-auto inline-flex items-center gap-2 bg-[var(--color-surface-scrim)] backdrop-blur rounded-full px-3 py-1.5 ring-1 ring-[var(--color-border)]"
-            >
-              <span aria-hidden="true" className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
-              <span className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {stateLabel}
+            {full ? (
+              <span
+                role="status"
+                aria-live="polite"
+                className="pointer-events-auto inline-flex items-center gap-2 bg-[var(--color-surface-scrim)] backdrop-blur rounded-full px-3 py-1.5 ring-1 ring-[var(--color-border)]"
+              >
+                <span aria-hidden="true" className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
+                <span className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {stateLabel} · {cameraLabel}
+                </span>
               </span>
-            </span>
-            <span className="pointer-events-auto bg-black/70 text-white text-xs font-semibold rounded-full px-3 py-1 truncate">
-              {cameraLabel}
-            </span>
-            {ageLabel && (
-              <span className="ml-auto pointer-events-auto text-xs text-white/80 tabular-nums bg-black/50 rounded-full px-2.5 py-1">
-                {ageLabel}
+            ) : (
+              <span className="pointer-events-auto bg-black/70 text-white text-xs font-semibold rounded-full px-3 py-1 truncate">
+                {cameraLabel}
               </span>
             )}
           </div>
@@ -310,18 +359,28 @@ export function Watch() {
             </div>
           )}
 
-          {/* Full-mode thumb rail */}
+          {/* Full-mode thumb rail. Fuzz F11: the "Talk · soon"
+              placeholder button was dropped — two-way audio is
+              out-of-scope hardware work (see CLAUDE.md "Out of
+              scope"); it occupied prime fullscreen real estate for a
+              feature with no ETA. Re-add here once audio_enabled
+              ships. Fuzz F5: safe-area padding so Snapshot's label
+              never sits under the status-bar/camera-cutout area in
+              landscape (real-device SM-S928U1 clipped it). */}
           {full && (
-            <div className="absolute right-3 bottom-40 flex flex-col gap-3">
+            <div
+              className="absolute right-3 bottom-40 flex flex-col gap-3"
+              style={{
+                paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
+                paddingRight: 'max(0.5rem, env(safe-area-inset-right))',
+              }}
+            >
               <RailButton
                 label={busy ? 'Saving…' : 'Snapshot'}
                 onClick={onSnapshot}
                 disabled={busy}
               >
                 <SnapshotIcon />
-              </RailButton>
-              <RailButton label="Talk · soon" disabled>
-                <MicIcon />
               </RailButton>
             </div>
           )}
@@ -371,6 +430,7 @@ export function Watch() {
         quietSince={quietSince}
         error={error}
         onOpen={setOpenEvent}
+        nowMs={nowMs}
       />
 
       {previewUrl && (
@@ -393,16 +453,38 @@ export function Watch() {
 
 /* ================= Today timeline ================= */
 
+/**
+ * Fuzz F8: the row subline used to be the constant "Tap to review" —
+ * a wasted line, since the row is already a button (the tap
+ * affordance is implicit). `DetectionEvent` has no clip-duration
+ * field on the wire (checked `lib/types.ts` — only
+ * `clip_url`/`thumb_url`/box data), so this surfaces the next most
+ * useful thing instead: recognition state for person events (the
+ * title already names a KNOWN person, so the subline only needs to
+ * flag the unrecognized case) plus relative time for everyone. If a
+ * duration field ever lands on the wire, thread it in here ahead of
+ * the relative-time fallback.
+ */
+function eventSubline(e: DetectionEvent, nowMs: number): string {
+  const rel = relativeTime(e.ts, nowMs)
+  if (e.label === 'person' && recognizedNames(e).length === 0) {
+    return `Not recognized · ${rel}`
+  }
+  return rel
+}
+
 function TodayTimeline({
   events,
   quietSince,
   error,
   onOpen,
+  nowMs,
 }: {
   events: DetectionEvent[] | null
   quietSince: string | null
   error: boolean
   onOpen: (e: DetectionEvent) => void
+  nowMs: number
 }) {
   const navigate = useNavigate()
 
@@ -447,15 +529,15 @@ function TodayTimeline({
             Quiet since {quietSince}
           </li>
         )}
-        {(events ?? []).map((e) => {
-          const subline =
-            e.label === 'person' && !e.person_name ? 'Tap to review' : 'Tap for the clip'
-          return (
-            <li key={e.id}>
-              <EventRow event={e} subline={subline} onOpen={() => onOpen(e)} />
-            </li>
-          )
-        })}
+        {(events ?? []).map((e) => (
+          <li key={e.id}>
+            <EventRow
+              event={e}
+              subline={eventSubline(e, nowMs)}
+              onOpen={() => onOpen(e)}
+            />
+          </li>
+        ))}
       </ol>
     </section>
   )
@@ -463,25 +545,101 @@ function TodayTimeline({
 
 /* ================= Full-mode hour scrubber ================= */
 
+/**
+ * Fuzz F1: the fullscreen scrubber used a completely different color
+ * language than Events' `HourBand` — activity cells were flat orange
+ * ("accent-bright") regardless of who appeared, and the current-time
+ * cell was filled solid `--color-success` green, which nowhere else
+ * in the identity system means "now" (it's the alert-adjacent
+ * "healthy" hue). Same underlying data (today's events bucketed by
+ * time), two unrelated color stories.
+ *
+ * Fix: bucket ownership uses the SAME rank (`_KIND_RANK`, mirrored
+ * from `HourBand.tsx` — a person always outranks a cat, ties go to
+ * the earliest event in the bucket) and the SAME `identityOf()`
+ * mapping, so a recognized person's personal hue, the shared person
+ * cobalt, or the cat marmalade reads identically here and on Events.
+ *
+ * This scrubber sits on a permanently-black gradient (the fullscreen
+ * scrim), not a themed surface, so — matching the precedent already
+ * set by the LIVE pill and the danger-token comment below — it
+ * resolves each identity token to its FIXED dark-range hex instead
+ * of `var(--color-id-*)`. The light-theme tokens (e.g. cobalt
+ * `#2f5fe0`) read fine on paper but under-contrast against always-
+ * black; the dark-theme values were tuned for exactly this kind of
+ * dark-glass chrome.
+ */
+const _HOUR_KIND_RANK: Record<IdentityKind, number> = {
+  'named-person': 3,
+  person: 3,
+  cat: 2,
+  other: 1,
+}
+
+/** `var(--color-id-<token>)` -> its fixed dark-theme hex (see block
+ * comment above for why fixed, not `var()`, on this always-black
+ * chrome). Falls back to the neutral panther hex for any token this
+ * table doesn't know about yet (defensive — every current identity
+ * token is covered). */
+const _DARK_ID_HEX: Record<string, string> = {
+  panther: '#8f8ba0',
+  mushu: '#f08536',
+  coco: '#e8859e',
+  person: '#6c8ff0',
+  'wheel-1': '#6c8ff0',
+  'wheel-2': '#2dd4bf',
+  'wheel-3': '#a78bfa',
+  'wheel-4': '#f472b6',
+  'wheel-5': '#4ade80',
+  'wheel-6': '#eab308',
+}
+
+function _darkHexForColorVar(colorVar: string): string {
+  const token = /--color-id-([a-z0-9-]+)\)/.exec(colorVar)?.[1]
+  return (token && _DARK_ID_HEX[token]) || _DARK_ID_HEX.panther
+}
+
+type HourBucket = { count: number; rank: number; color: string | null; ts: number | null }
+
+function _emptyBuckets(): HourBucket[] {
+  return Array.from({ length: 16 }, () => ({ count: 0, rank: 0, color: null, ts: null }))
+}
+
 function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
-  const [buckets, setBuckets] = useState<number[] | null>(null)
+  const [buckets, setBuckets] = useState<HourBucket[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
     searchEvents({ since_ts: localMidnightTs(), limit: 200 })
       .then((r) => {
         if (cancelled) return
-        const bins = new Array<number>(16).fill(0)
+        const bins = _emptyBuckets()
         const start = localMidnightTs()
         const span = Math.max(Date.now() / 1000 - start, 1)
         for (const e of r.items) {
           const i = Math.min(15, Math.floor(((e.ts - start) / span) * 16))
-          if (i >= 0) bins[i] += 1
+          if (i < 0) continue
+          const b = bins[i]
+          b.count += 1
+          const identity = identityOf(e)
+          const rank = _HOUR_KIND_RANK[identity.kind]
+          // Same tie-break as HourBand: a higher rank always wins;
+          // on a rank tie, the EARLIEST event in the bucket wins
+          // ("first event of the hour" reads more naturally than
+          // whichever the newest-first API response happened to
+          // list first).
+          const isNewWinner =
+            rank > b.rank || (rank === b.rank && b.rank > 0 && b.ts != null && e.ts < b.ts)
+          if (isNewWinner) {
+            b.rank = rank
+            b.color = _darkHexForColorVar(identity.colorVar)
+            b.ts = e.ts
+          }
         }
         setBuckets(bins)
       })
       .catch(() => {
-        if (!cancelled) setBuckets(new Array(16).fill(0))
+        if (!cancelled) setBuckets(_emptyBuckets())
       })
     return () => {
       cancelled = true
@@ -500,20 +658,29 @@ function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
           aria-label="Open full history"
           className="flex-1 flex items-end gap-[3px] h-8 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 rounded"
         >
-          {(buckets ?? new Array<number>(16).fill(0)).map((n, i) => (
-            <span
-              key={i}
-              aria-hidden="true"
-              className={`flex-1 rounded-sm ${
-                i === 15
-                  ? 'bg-[var(--color-success)] h-6'
-                  : n > 0
-                    ? 'bg-[var(--color-accent-bright)]'
-                    : 'bg-white/15'
-              }`}
-              style={i === 15 ? undefined : { height: n > 0 ? 16 : 5 }}
-            />
-          ))}
+          {(buckets ?? _emptyBuckets()).map((b, i) => {
+            const isNow = i === 15
+            return (
+              <span
+                key={i}
+                aria-hidden="true"
+                data-testid={isNow ? 'hour-cell-now' : `hour-cell-${i}`}
+                // Fuzz F1: the NOW marker is a neutral bright ring, NOT
+                // a `--color-success` fill — green nowhere else means
+                // "current time" in this app. The cell's fill still
+                // follows the same identity coloring as every other
+                // cell (quiet = dim white, active = the winning
+                // identity's dark-range hex).
+                className={`flex-1 rounded-sm ${isNow ? 'h-6 ring-2 ring-white/80' : ''} ${
+                  b.color ? '' : 'bg-white/15'
+                }`}
+                style={{
+                  background: b.color ?? undefined,
+                  height: isNow ? undefined : b.color ? 16 : 5,
+                }}
+              />
+            )
+          })}
         </button>
         {/* Final whole-branch review fix batch #3: fixed over-video
             colors — the fullscreen scrim is black in both themes;
@@ -583,12 +750,5 @@ function SnapshotIcon() {
   )
 }
 
-function MicIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" y1="19" x2="12" y2="23" />
-    </svg>
-  )
-}
+// MicIcon (Talk button glyph) removed with the "Talk · soon"
+// placeholder — fuzz F11, two-way audio returns post-hardware.

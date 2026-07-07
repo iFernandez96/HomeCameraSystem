@@ -28,9 +28,24 @@ vi.mock('../lib/api', () => {
 })
 
 // The WebRTC tile owns WHEP wiring that jsdom can't exercise — stub
-// it; Watch's job is the chrome AROUND it.
+// it; Watch's job is the chrome AROUND it. Renders the `fit` and
+// `showStatusPill` props as data-attributes so fuzz F4/F3 wiring
+// (landscape-aware fit, docked-only status pill) is assertable
+// without dragging WHEP into this test file.
 vi.mock('../components/VideoTile', () => ({
-  VideoTile: () => <div data-testid="video-tile-stub" />,
+  VideoTile: ({
+    fit,
+    showStatusPill,
+  }: {
+    fit?: string
+    showStatusPill?: boolean
+  }) => (
+    <div
+      data-testid="video-tile-stub"
+      data-fit={fit}
+      data-show-status-pill={String(showStatusPill)}
+    />
+  ),
 }))
 // ClipModal drags in <video> + tracks fetching; Watch only needs to
 // know it opened with the right event.
@@ -92,17 +107,22 @@ beforeEach(() => {
 })
 
 describe('Watch — Home screen (Playroom Modern)', () => {
-  it('Given a healthy armed camera, When the page renders, Then the heading reads Home and both the on-video scrim and the glance card show the armed state', async () => {
+  it('Given a healthy armed camera, When the page renders, Then the heading reads Home, the docked video shows only the camera-name pill, and the glance card owns the armed state (fuzz F3/F9/F13 consolidation)', async () => {
     // arrange / act
     renderWatch()
 
-    // assert — page heading, on-video scrim, glance card copy
+    // assert — page heading + glance card copy carry the armed state.
     expect(screen.getByRole('heading', { name: 'Home', level: 1 })).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.getByText('On watch')).toBeInTheDocument()
+      expect(screen.getByText('Watching')).toBeInTheDocument()
     })
-    expect(screen.getByText('Watching')).toBeInTheDocument()
     expect(screen.getByText(/is on watch · alerts on/)).toBeInTheDocument()
+    // Fuzz F3/F9/F13: the docked video no longer duplicates the armed
+    // state on top of it — "On watch" now lives ONLY on the glance
+    // card. The video's own chrome is just the camera-name pill (the
+    // stubbed VideoTile owns the ONE connection-status pill).
+    expect(screen.queryByText('On watch')).not.toBeInTheDocument()
+    expect(screen.getByText('Front Door')).toBeInTheDocument()
   })
 
   it("Given events today, When the timeline loads, Then rows show who appeared and tapping one opens the clip", async () => {
@@ -151,7 +171,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     })
   })
 
-  it('Given the docked viewport, When Full screen is tapped, Then the viewport goes full-bleed and Exit restores it', async () => {
+  it('Given the docked viewport, When Full screen is tapped, Then the viewport goes full-bleed with a combined armed+camera pill and Exit restores it', async () => {
     // arrange
     const user = userEvent.setup()
     renderWatch()
@@ -161,16 +181,26 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // act — enter full screen
     await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
 
-    // assert — fixed overlay + thumb rail present
+    // assert — fixed overlay + the ONE consolidated status cluster
+    // (fuzz F3/F9/F13: was 3 separate pieces — state pill, camera
+    // pill, "Live now" text — now one "{state} · {camera}" pill).
     expect(viewport.className).toMatch(/fixed inset-0/)
-    expect(screen.getByRole('button', { name: /Talk · soon/ })).toBeDisabled()
+    await waitFor(() => {
+      expect(screen.getByText('On watch · Front Door')).toBeInTheDocument()
+    })
+    // Fuzz F11: the "Talk · soon" placeholder is gone — two-way audio
+    // is out-of-scope hardware work, not a fullscreen-worthy button.
+    expect(
+      screen.queryByRole('button', { name: /Talk/ }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Snapshot/ })).toBeInTheDocument()
 
     // act — exit
     await user.click(screen.getByRole('button', { name: 'Exit full screen' }))
     expect(viewport.className).toMatch(/relative/)
   })
 
-  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline (whimsy never masks danger)', async () => {
+  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the glance card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled glance card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -183,8 +213,11 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getAllByText(/Camera offline/).length).toBeGreaterThan(0)
+      expect(screen.getByText('Offline')).toBeInTheDocument()
     })
+    expect(
+      screen.getByText('Check its power, then see Settings.'),
+    ).toBeInTheDocument()
   })
 
   it('Given the worker is offline, When the page renders, Then the Watching glance headline reads "Offline" (not "Paused") — final review fix batch #8', async () => {
@@ -209,5 +242,175 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(
       screen.getByText('Check its power, then see Settings.'),
     ).toBeInTheDocument()
+  })
+
+  // Fuzz F4: landscape fullscreen wasted ~45% of the width because
+  // `object-contain` letterboxes a 16:9 stream inside a much-wider
+  // landscape phone viewport. Fix flips to `object-cover` only when
+  // BOTH full AND the physical device is landscape-oriented.
+
+  it('Given fullscreen on a portrait device, When rendered, Then the video keeps object-contain so the scene is never cropped (fuzz F4)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+
+    // act
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-fit', 'contain'),
+    )
+  })
+
+  it('Given fullscreen on a landscape device, When rendered, Then the video switches to object-cover to fill the wide viewport (fuzz F4)', async () => {
+    // arrange — matchMedia('(orientation: landscape)') reports landscape.
+    const originalMatchMedia = window.matchMedia
+    const mql = {
+      matches: true,
+      media: '(orientation: landscape)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    window.matchMedia = vi.fn().mockReturnValue(mql) as unknown as typeof window.matchMedia
+    try {
+      const user = userEvent.setup()
+      renderWatch()
+
+      // act
+      await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+      // assert
+      await waitFor(() =>
+        expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-fit', 'cover'),
+      )
+    } finally {
+      window.matchMedia = originalMatchMedia
+    }
+  })
+
+  it('Given the docked viewport, When rendered, Then VideoTile owns the ONE status pill (showStatusPill=true) and fullscreen turns it off in favor of the combined cluster (fuzz F3/F7/F13)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+
+    // assert — docked
+    await waitFor(() =>
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute(
+        'data-show-status-pill',
+        'true',
+      ),
+    )
+
+    // act — enter full screen
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+    // assert — fullscreen suppresses the tile's own pill (the combined
+    // "{state} · {camera}" cluster + scrubber LIVE pill cover it).
+    await waitFor(() =>
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute(
+        'data-show-status-pill',
+        'false',
+      ),
+    )
+  })
+
+  // Fuzz F5: the fullscreen thumb rail (Snapshot) clipped under the
+  // status-bar / camera-cutout area on a real landscape device.
+
+  it('Given fullscreen, When the thumb rail renders, Then it carries safe-area-inset top/right padding (fuzz F5)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+
+    // act
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+    const rail = await screen.findByRole('button', { name: /Snapshot/ })
+
+    // assert — jsdom drops bare env() from computed style, so assert
+    // against the raw style attribute string (see project memory:
+    // jsdom-env-style-drop).
+    const style = rail.parentElement?.getAttribute('style') ?? ''
+    expect(style).toMatch(/padding-top:\s*max\(0\.5rem,\s*env\(safe-area-inset-top\)\)/)
+    expect(style).toMatch(/padding-right:\s*max\(0\.5rem,\s*env\(safe-area-inset-right\)\)/)
+  })
+
+  // Fuzz F8: the story-row subline was always the constant "Tap to
+  // review" — dead weight since the row is already a button.
+
+  it('Given an unrecognized person event, When the story row renders, Then the subline names the recognition state instead of "Tap to review" (fuzz F8)', async () => {
+    // arrange
+    const stranger = ev({ id: 's1', label: 'person', ts: Date.now() / 1000 - 90 })
+    searchEvents.mockResolvedValue({ items: [stranger], next_cursor: null })
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText(/Not recognized · /)).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Tap to review')).not.toBeInTheDocument()
+  })
+
+  it('Given a cat event, When the story row renders, Then the subline shows relative time instead of the generic "Tap for the clip" (fuzz F8)', async () => {
+    // arrange
+    const cat = ev({ id: 'c1', label: 'cat', ts: Date.now() / 1000 - 90 })
+    searchEvents.mockResolvedValue({ items: [cat], next_cursor: null })
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('1m ago')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Tap for the clip')).not.toBeInTheDocument()
+  })
+
+  // Fuzz F1: the fullscreen hour scrubber colored activity cells flat
+  // orange and the NOW cell solid green — two colors that mean
+  // nothing in the Playroom identity system (which colors WHO
+  // appeared: cobalt person, marmalade cat, per-person wheel hues).
+
+  it('Given a person event near the start of today, When fullscreen renders, Then the owning scrubber cell uses the identity dark hex instead of the old flat accent orange (fuzz F1)', async () => {
+    // arrange — bucket 0 covers the first ~1/16th of the elapsed day;
+    // an event a minute after local midnight always lands there.
+    const midnight = new Date()
+    midnight.setHours(0, 0, 0, 0)
+    const personEvent = ev({
+      id: 'p1',
+      label: 'person',
+      ts: midnight.getTime() / 1000 + 60,
+    })
+    searchEvents.mockResolvedValue({ items: [personEvent], next_cursor: null })
+    const user = userEvent.setup()
+
+    // act
+    renderWatch()
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+    // assert — dark-range person hex (#6c8ff0, jsdom normalizes to
+    // rgb()), not the old `--color-accent-bright` orange fill.
+    await waitFor(() => {
+      const cell = screen.getByTestId('hour-cell-0')
+      expect(cell.getAttribute('style')).toMatch(/background:\s*rgb\(108,\s*143,\s*240\)/)
+      expect(cell.getAttribute('style')).not.toMatch(/accent-bright/)
+    })
+  })
+
+  it('Given the fullscreen scrubber renders, When the NOW cell is inspected, Then it carries a neutral ring marker instead of a --color-success green fill (fuzz F1)', async () => {
+    // arrange
+    const user = userEvent.setup()
+
+    // act
+    renderWatch()
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+    // assert
+    const nowCell = await screen.findByTestId('hour-cell-now')
+    expect(nowCell.className).toMatch(/ring-2 ring-white\/80/)
+    expect(nowCell.className).not.toMatch(/color-success/)
+    expect(nowCell.getAttribute('style') ?? '').not.toMatch(/color-success/)
   })
 })
