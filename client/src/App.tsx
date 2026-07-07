@@ -261,9 +261,19 @@ function AppShell() {
       {/* iter-356.58: BottomNav stays on mobile only; SideRail
           covers desktop. Login also hides it. */}
       {showShell && (
-        <div className="lg:hidden">
-          <BottomNav />
-        </div>
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-x-0 bottom-[calc(5.625rem+env(safe-area-inset-bottom,0px))] z-[9] h-7 lg:hidden"
+            style={{
+              background:
+                'linear-gradient(to top, var(--color-bg), transparent)',
+            }}
+          />
+          <div className="lg:hidden">
+            <BottomNav />
+          </div>
+        </>
       )}
       {/* iter-356.4-cats: ambient cat layer. Three personality-driven
           sprites walk along the bottom of the viewport, react to each

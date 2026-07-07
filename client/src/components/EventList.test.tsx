@@ -626,4 +626,17 @@ describe('EventList', () => {
     // assert — one mark per rendered event card.
     expect(marks.length).toBe(3)
   })
+
+  it('Given a person event renders, When the timeline axis dot is inspected, Then it carries the person identity color var', () => {
+    // arrange
+    render(<EventList events={[evt({ id: 'axis-person', label: 'person' })]} />)
+
+    // act
+    const dot = screen.getByTestId('event-axis-dot')
+
+    // assert
+    expect(dot.getAttribute('style')).toContain(
+      'background-color: var(--color-id-person)',
+    )
+  })
 })

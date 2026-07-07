@@ -183,7 +183,9 @@ export function EventList({
                 {/* AXIS tick — small filled circle on the axis line */}
                 <span
                   aria-hidden="true"
-                  className="absolute left-[3.875rem] top-3.5 w-2.5 h-2.5 rounded-full bg-[var(--color-accent-default)] ring-2 ring-[var(--color-bg)]"
+                  data-testid="event-axis-dot"
+                  className="absolute left-[3.875rem] top-3.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg)]"
+                  style={{ backgroundColor: identityOf(e).colorVar }}
                 />
                 <EventCard
                   event={e}
@@ -617,9 +619,11 @@ function EventCardImpl({
           // INSIDE the card gutter (44px hit area via padding, 32px
           // visual), still always-visible on touch, hover-revealed on
           // desktop. Swipe-to-delete unchanged.
-          className="absolute top-1/2 -translate-y-1/2 right-1 p-1.5 min-w-[44px] min-h-[44px] rounded-full text-[var(--color-danger)] flex items-center justify-center text-sm font-bold hover:bg-[var(--color-danger-bg)] opacity-80 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
+          className="absolute top-1/2 -translate-y-1/2 right-1 p-2.5 -m-2.5 rounded-full text-[var(--color-danger)] flex items-center justify-center text-sm font-bold opacity-80 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
         >
-          ✕
+          <span className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-[var(--color-danger-bg)]">
+            ✕
+          </span>
         </button>
       )}
       </div>
