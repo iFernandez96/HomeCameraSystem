@@ -1,6 +1,8 @@
 import { memo, useRef, useState } from 'react'
 import { CatEmptyState } from './CatEmptyState'
+import { WhoMark } from './WhoMark'
 import type { DetectionEvent } from '../lib/types'
+import { identityOf } from '../lib/identity'
 import { useTicker } from '../lib/useTicker'
 
 // iter-249 (UX overhaul, fix for iter-247): card-style layout that
@@ -481,7 +483,10 @@ function EventCardImpl({
         aria-pressed={selectionMode ? isSelected : undefined}
         // redesign/warm-boutique: paper card — warm shadow-card token
         // so entries read as paper resting on the linen page.
-        className={`w-full text-left flex gap-3 rounded-xl border p-2 transition-colors shadow-[var(--shadow-card)] ${
+        // Playroom Modern (Task 6): card grammar matches EventRow's
+        // ROW_CLASSES (--radius-xl + 1.5px hairline border) so Watch
+        // story rows and Events cards read as the same card language.
+        className={`w-full text-left flex gap-3 rounded-[var(--radius-xl)] border-[1.5px] p-2 transition-colors shadow-[var(--shadow-card)] ${
           selectionMode && isSelected
             ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-default)]'
             : 'bg-[var(--color-surface)] border-[var(--color-border)]'
@@ -514,6 +519,14 @@ function EventCardImpl({
             ) : null}
           </span>
         )}
+        {/* Playroom Modern (Task 6): WhoMark — the same identity mark
+            used on Watch story rows (EventRow) — leads the card so
+            "who" reads at a glance before the photo. Decorative here
+            (aria-hidden); the accessible identity already lands in
+            the title + row aria-label below. */}
+        <span aria-hidden="true" className="self-center">
+          <WhoMark identity={identityOf(e)} size={28} />
+        </span>
         {/* THUMBNAIL — left, fixed 112x72 with 16:9 framing. */}
         <div className="relative w-28 h-[72px] flex-none rounded-lg overflow-hidden bg-[var(--color-surface-raised)]">
           <EventThumbnail url={e.thumb_url} alt={title} />

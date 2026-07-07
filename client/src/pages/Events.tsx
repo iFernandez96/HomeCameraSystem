@@ -8,6 +8,7 @@ import { ClipModal } from '../components/ClipModal'
 // lg+ right rail). Deferring it cuts the Events route's first paint.
 const EventHeatmap = lazy(() => import('../components/EventHeatmap.lazy'))
 import { EventList } from '../components/EventList'
+import { HourBand } from '../components/HourBand'
 import { EventListSkeleton, HeatmapSkeleton } from '../components/Skeleton'
 import { ErrorState } from '../components/states/ErrorState'
 import { Button } from '../components/primitives/Button'
@@ -23,6 +24,7 @@ import {
 } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
 import { clockTime } from '../lib/eventLabel'
+import { identityForName } from '../lib/identity'
 import { log, errFields } from '../lib/log'
 import { useAuth } from '../lib/auth'
 import { useConfirm } from '../lib/confirm'
@@ -471,6 +473,20 @@ export function Events() {
     if (filter === '__unknown__') return pool.filter((e) => !e.person_name)
     return pool.filter((e) => e.person_name === filter)
   }, [events, filter, labelFilter])
+
+  // Playroom Modern (Task 6): the "Today, hour by hour" band reuses
+  // the already-fetched `events` state (no extra fetch) — it just
+  // narrows to today's local-midnight window. `todayStartTs` is
+  // computed once via useMemo (same lazy-init pattern EventHeatmap
+  // uses for `currentMonth()`), not recomputed per render.
+  const todayStartTs = useMemo(() => {
+    const d = new Date()
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000
+  }, [])
+  const todaysEvents = useMemo(
+    () => events.filter((e) => e.ts >= todayStartTs),
+    [events, todayStartTs],
+  )
 
   const retry = async () => {
     setLoading(true)
@@ -999,7 +1015,22 @@ export function Events() {
                 renderLabel={(v) =>
                   v === null
                     ? 'All types'
-                    : v.charAt(0).toUpperCase() + v.slice(1)
+                    : v === 'person'
+                      ? 'People'
+                      : v === 'cat'
+                        ? 'Cats'
+                        : v.charAt(0).toUpperCase() + v.slice(1)
+                }
+                // Playroom Modern (Task 6): who-chips carry a 12px
+                // identity-color square — person=cobalt, cat=marmalade
+                // per the mockup. Other classes (dog, car, ...) have
+                // no dot; they're not part of the identity system.
+                dotColor={(v) =>
+                  v === 'person'
+                    ? 'var(--color-id-person)'
+                    : v === 'cat'
+                      ? 'var(--color-id-mushu)'
+                      : null
                 }
                 marginTopClass="mt-3"
               />
@@ -1015,13 +1046,22 @@ export function Events() {
               onSelect={setFilter}
               renderLabel={(v) =>
                 v === 'all'
-                  ? 'All'
+                  ? 'Everyone'
                   : v === '__unknown__'
                   ? 'Unrecognized'
                   : v
               }
-              accent={(v) =>
-                v !== 'all' && v !== '__unknown__'
+              // Playroom Modern (Task 6): 'all' has no dot (catch-all);
+              // '__unknown__' gets the cobalt person dot (it's still an
+              // unrecognized PERSON sighting); named individuals get
+              // their stable per-name wheel hue from identityForName —
+              // same color a named event's WhoMark renders with.
+              dotColor={(v) =>
+                v === 'all'
+                  ? null
+                  : v === '__unknown__'
+                    ? 'var(--color-id-person)'
+                    : identityForName(v).colorVar
               }
               marginTopClass="mt-2"
             />
@@ -1279,6 +1319,21 @@ export function Events() {
             />
           ) : (
             <>
+              {/* Playroom Modern (Task 6): "Today, hour by hour" card
+                  — 24-cell identity timeline above the list. Skipped
+                  while a day filter is active (selectedDay browses a
+                  different day than "today", so the band would be
+                  misleading) and while there are zero events overall
+                  (nothing to show yet, and the sleeping-cat empty
+                  state below already communicates that). */}
+              {!selectedDay && events.length > 0 && (
+                <div className="card-paper p-4 mx-4 lg:mx-0 mb-3">
+                  <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
+                    Today, hour by hour
+                  </h2>
+                  <HourBand events={todaysEvents} dayStartTs={todayStartTs} />
+                </div>
+              )}
               {/* iter-356.x desktop D1: selection-mode action bar.
                   Sticky just below the page header so the bar stays
                   visible while scrolling through 100+ rows. Renders
@@ -1418,7 +1473,7 @@ function ChipRadiogroup<T>({
   current,
   onSelect,
   renderLabel,
-  accent,
+  dotColor,
   marginTopClass = 'mt-2',
 }: {
   ariaLabel: string
@@ -1426,7 +1481,10 @@ function ChipRadiogroup<T>({
   current: T
   onSelect: (v: T) => void
   renderLabel: (v: T) => string
-  accent?: (v: T) => boolean
+  /** Playroom Modern (Task 6): optional 12px identity-color square
+   * rendered before the chip label. Returns null for chips with no
+   * identity color (catch-all "Everyone"/"All types"). */
+  dotColor?: (v: T) => string | null
   marginTopClass?: string
 }) {
   const refs = useRef<Array<HTMLButtonElement | null>>([])
@@ -1457,7 +1515,7 @@ function ChipRadiogroup<T>({
           active={current === v}
           onClick={() => onSelect(v)}
           label={renderLabel(v)}
-          accent={accent ? accent(v) : false}
+          dotColor={dotColor ? dotColor(v) : null}
           forwardedRef={(el) => {
             refs.current[i] = el
           }}
@@ -1474,33 +1532,30 @@ function FilterChip({
   active,
   onClick,
   label,
-  accent = false,
+  dotColor = null,
   forwardedRef,
 }: {
   active: boolean
   onClick: () => void
   label: string
-  /** When true, the chip uses an emerald accent to indicate it's a known
-   * face filter (matches the badge colour on EventList rows). */
-  accent?: boolean
+  /** Playroom Modern (Task 6): 12px identity-color square rendered
+   * before the label (person=cobalt, cat=marmalade, named individuals
+   * get their per-name wheel hue). null = no dot. */
+  dotColor?: string | null
   /** iter-339: parent registers each chip in a refs array for
    * arrow-key focus shifting. Optional so non-radiogroup callers
    * (none today) still work. */
   forwardedRef?: (el: HTMLButtonElement | null) => void
 }) {
   const base =
-    'inline-flex items-center min-h-[44px] px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors capitalize border focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 flex-shrink-0'
-  // iter-356.50: active-chip styling tokenized for the light theme.
-  // Pre-iter-356.50 the accent branch used `text-emerald-200` (light
-  // green meant for dark bg, ~2:1 on cream — illegible) and the
-  // default branch used `bg-neutral-100` (cold light-grey, fights
-  // the warm cream page). Now both use semantic tokens that match
-  // SideNav's active-NavLink treatment: subtle accent fill + bold
-  // accent text + accent-tinted border.
+    'inline-flex items-center gap-1.5 min-h-[44px] px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors capitalize border focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 flex-shrink-0'
+  // Playroom Modern (Task 6): selected who-chip is an ink-fill pill —
+  // same "selected = ink fill" grammar as Button's primary variant
+  // (bg-ink / text-on-ink). Pre-Task-6 the selected state was a
+  // two-tone accent/success tint; the mockup calls for one consistent
+  // ink fill regardless of which chip (identity now lives in the dot).
   const cls = active
-    ? accent
-      ? 'bg-[var(--color-success-bg)] text-[var(--color-success)] border-[var(--color-success-border)]'
-      : 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-default)] border-[var(--color-accent-border)]'
+    ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] border-[var(--color-ink)]'
     : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
   return (
     <button
@@ -1512,6 +1567,13 @@ function FilterChip({
       onClick={onClick}
       className={`${base} ${cls}`}
     >
+      {dotColor ? (
+        <span
+          aria-hidden="true"
+          className="w-3 h-3 rounded-full shrink-0"
+          style={{ background: dotColor }}
+        />
+      ) : null}
       {label}
     </button>
   )

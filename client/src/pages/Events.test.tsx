@@ -370,7 +370,8 @@ describe('Events page', () => {
     ])
     render(<Events />)
     await waitFor(() =>
-      expect(screen.getByRole('radio', { name: /^all$/i })).toBeInTheDocument(),
+      // Playroom Modern (Task 6): who-chip re-skin — "All"→"Everyone".
+      expect(screen.getByRole('radio', { name: /^everyone$/i })).toBeInTheDocument(),
     )
     expect(screen.getByRole('radio', { name: /israel/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /unrecognized/i })).toBeInTheDocument()
@@ -1292,8 +1293,10 @@ describe('Events page', () => {
     expect(
       screen.getByRole('radio', { name: /^dog$/i }),
     ).toBeInTheDocument()
+    // Playroom Modern (Task 6): the "person" class chip is relabeled
+    // "People" (who-chip re-skin: person→People, cat→Cats).
     expect(
-      screen.getByRole('radio', { name: /^person$/i }),
+      screen.getByRole('radio', { name: /^people$/i }),
     ).toBeInTheDocument()
   })
 
@@ -1342,7 +1345,7 @@ describe('Events page', () => {
       } as ServerEvent,
     ])
     render(<Events />)
-    const allChip = await screen.findByRole('radio', { name: /^all$/i })
+    const allChip = await screen.findByRole('radio', { name: /^everyone$/i })
     allChip.focus()
     const userEvent = (await import('@testing-library/user-event')).default
     const user = userEvent.setup()
@@ -1375,7 +1378,7 @@ describe('Events page', () => {
     render(<Events />)
 
     // assert — All chip is selected by default; Alice chip has tabindex=-1.
-    const allChip = await screen.findByRole('radio', { name: /^all$/i })
+    const allChip = await screen.findByRole('radio', { name: /^everyone$/i })
     expect(allChip.getAttribute('tabindex')).toBe('0')
     expect(
       screen.getByRole('radio', { name: /alice/i }).getAttribute('tabindex'),
@@ -1438,7 +1441,8 @@ describe('Events page', () => {
     })
     const radios = group.querySelectorAll('[role="radio"]')
     const labels = Array.from(radios).map((r) => r.textContent?.trim())
-    expect(labels).toEqual(['All types', 'Person'])
+    // Playroom Modern (Task 6): "person" chip relabeled "People".
+    expect(labels).toEqual(['All types', 'People'])
   })
 
   it('given the Events page renders, when AT users query for the page heading, then a level-1 sr-only "Watch log" heading is present (iter-356.63: Slice D a11y — sr-only h1 per route)', async () => {
