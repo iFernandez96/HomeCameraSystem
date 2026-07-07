@@ -102,4 +102,22 @@ describe('WatchRibbon a11y', () => {
       /padding-right:\s*max\(1rem,\s*env\(safe-area-inset-right\)\)/,
     )
   })
+
+  it('GIVEN landscape-phone WHEN the ribbon renders THEN it carries a left margin matching the BottomNav rail reservation, so its surface no longer paints over the docked left rail on non-Watch routes (nav-coherence fix, item 1)', () => {
+    // arrange / act — pre-fix the ribbon was full-bleed with no
+    // inset while BottomNav docks as a `landscape-phone:` left rail
+    // (w-16, z-10) under it (z-[15]); the ribbon's opaque scrim
+    // background painted straight over the rail. `margin-left` (not
+    // `padding-left`) is required here — padding alone would still
+    // let the ribbon's background extend behind the rail, only the
+    // content would shift. Mirrors the exact calc App.tsx's <main>
+    // already reserves: `landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))]`.
+    renderRibbon()
+    const banner = screen.getByRole('banner')
+
+    // assert
+    expect(banner.className).toMatch(
+      /landscape-phone:ml-\[calc\(5rem\+env\(safe-area-inset-left\)\)\]/,
+    )
+  })
 })

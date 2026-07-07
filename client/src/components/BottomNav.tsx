@@ -14,10 +14,22 @@ import { useRipple } from '../lib/ripple'
 // Playroom Modern (Task 4): relabeled for the pebble bar — Home
 // (was Watch), Events (was History), Faces (was People). Routes are
 // unchanged; only the accessible names/visible copy moved.
+//
+// Nav-coherence fix (painfix, nav parity): the desktop SideRail has
+// room for 5 items (Home/Events/Faces/Review/Settings); the portrait
+// pebble bar deliberately stays at 4 (Review is one tap inside Faces
+// instead, per iter-356.x Frank feedback on bar density). But the
+// landscape-phone left-rail dock has the same vertical room as the
+// desktop rail, so parity was broken there specifically — Review was
+// reachable on desktop and portrait-via-Faces, but invisible in the
+// landscape-phone dock. `landscapeOnly` items render `hidden` by
+// default and `landscape-phone:flex` only in that dock; the portrait
+// pebble bar (no `landscape-phone:` match) never shows them.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },
   { to: '/people', label: 'Faces', icon: PeopleIcon },
+  { to: '/training/review', label: 'Review', icon: TrainingIcon, landscapeOnly: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
@@ -108,7 +120,9 @@ export function BottomNav() {
             // bar's rounded-full language. overflow-hidden still
             // contains the press ripple.
             className={({ isActive }) =>
-              `relative overflow-hidden flex-1 landscape-phone:flex-none landscape-phone:w-full py-1.5 flex flex-col items-center gap-0.5 text-xs landscape-phone:text-[9px] rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
+              `relative overflow-hidden flex-1 landscape-phone:flex-none landscape-phone:w-full py-1.5 ${
+                t.landscapeOnly ? 'hidden landscape-phone:flex' : 'flex'
+              } flex-col items-center gap-0.5 text-xs landscape-phone:text-[9px] rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
                 isActive
                   ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] font-semibold'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
@@ -168,6 +182,17 @@ function PeopleIcon({ active: _active }: { active: boolean }) {
   )
 }
 
+
+// Nav-coherence fix (painfix): matches SideRail's TrainingIcon glyph —
+// keep the two in sync.
+function TrainingIcon({ active: _active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 10l10-5 10 5-10 5-10-5z" />
+      <path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" />
+    </svg>
+  )
+}
 
 function SettingsIcon({ active: _active }: { active: boolean }) {
   return (

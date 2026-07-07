@@ -25,7 +25,7 @@ describe('BottomNav', () => {
     ).toBeInTheDocument()
   })
 
-  it('when rendered, then exposes one link per configured tab (Playroom Modern Task 4: relabeled tabs — Home/Events/Faces/Settings; Review (Training) lives inside Faces)', () => {
+  it('when rendered, then exposes one link per configured tab (nav-coherence fix: Review rejoins as a landscape-phone-only 5th tab, see the CSS-hide test below; jsdom applies no stylesheet — `css: false` in vitest.config.ts — so the link is present in the DOM at every viewport and is only actually hidden by the real browser cascade)', () => {
     // arrange
     renderAt('/')
 
@@ -35,16 +35,17 @@ describe('BottomNav', () => {
     // assert: getAllByRole returns ALL links; if a future tab is
     // added or removed without updating this test it'll fail loudly.
     // Pin both the count and the labels so a rename also fires.
-    expect(links).toHaveLength(4)
+    expect(links).toHaveLength(5)
     expect(links.map((el) => el.textContent?.toLowerCase())).toEqual([
       expect.stringContaining('home'),
       expect.stringContaining('events'),
       expect.stringContaining('faces'),
+      expect.stringContaining('review'),
       expect.stringContaining('settings'),
     ])
   })
 
-  it('when rendered, then each link points to its own /tab path (iter-356.x; Playroom Modern Task 4 relabeled Watch->Home, History->Events, People->Faces)', () => {
+  it('when rendered, then each link points to its own /tab path (iter-356.x; Playroom Modern Task 4 relabeled Watch->Home, History->Events, People->Faces; nav-coherence fix routes Review to the /training/review queue, matching SideRail)', () => {
     // arrange
     renderAt('/live')
 
@@ -53,6 +54,7 @@ describe('BottomNav', () => {
       home: screen.getByRole('link', { name: /home/i }).getAttribute('href'),
       events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
       faces: screen.getByRole('link', { name: /faces/i }).getAttribute('href'),
+      review: screen.getByRole('link', { name: /review/i }).getAttribute('href'),
       settings: screen.getByRole('link', { name: /settings/i }).getAttribute('href'),
     }
 
@@ -61,8 +63,19 @@ describe('BottomNav', () => {
       home: '/',
       events: '/events',
       faces: '/people',
+      review: '/training/review',
       settings: '/settings',
     })
+  })
+
+  it('GIVEN the Review tab WHEN BottomNav renders THEN it carries `hidden landscape-phone:flex` so it only shows in the docked left-rail variant, not the portrait pebble bar (nav-coherence fix, item 3: landscape-phone rail parity with the desktop SideRail)', () => {
+    // arrange / act
+    renderAt('/')
+    const review = screen.getByRole('link', { name: /review/i })
+
+    // assert
+    expect(review.className).toMatch(/\bhidden\b/)
+    expect(review.className).toMatch(/landscape-phone:flex\b/)
   })
 
   it('given the route matches /events, when BottomNav renders, then the Events link carries aria-current="page" (iter-338: pin via ARIA, not Tailwind class — same fix as iter-290 SideNav)', () => {

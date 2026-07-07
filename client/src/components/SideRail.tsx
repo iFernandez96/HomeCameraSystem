@@ -45,12 +45,18 @@ type NavItem = {
 // Playroom Modern (Task 4): relabeled to match the pebble BottomNav's
 // vocabulary — Home (was Watch), Events (was History), Faces (was
 // People), Review (was Training). Routes are unchanged.
+//
+// Nav-coherence fix (painfix): the "Review" item routed to /training
+// (the raw capture browser), which doesn't match what the label
+// promises — a review QUEUE of only the captures the classifier is
+// uncertain about. /training/review (Review.tsx, shipped iter-356.12)
+// is that queue. Label stays "Review"; only the destination moves.
 const NAV_ITEMS: NavItem[] = [
-  { to: '/',         label: 'Home',     icon: (a) => <LiveIcon active={a} /> },
-  { to: '/events',   label: 'Events',   icon: () => <EventsIcon /> },
-  { to: '/people',   label: 'Faces',    icon: () => <PeopleIcon /> },
-  { to: '/training', label: 'Review',   icon: () => <TrainingIcon /> },
-  { to: '/settings', label: 'Settings', icon: () => <SettingsIcon /> },
+  { to: '/',                label: 'Home',     icon: (a) => <LiveIcon active={a} /> },
+  { to: '/events',          label: 'Events',   icon: () => <EventsIcon /> },
+  { to: '/people',          label: 'Faces',    icon: () => <PeopleIcon /> },
+  { to: '/training/review', label: 'Review',   icon: () => <TrainingIcon /> },
+  { to: '/settings',        label: 'Settings', icon: () => <SettingsIcon /> },
 ]
 
 export function SideRail() {

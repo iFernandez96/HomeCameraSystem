@@ -92,7 +92,20 @@ export function WatchRibbon() {
       // `max(1rem, env(...))` preserves the prior 16 px gutter on
       // devices with no inset (Android, all desktops) and expands
       // it only when the OS reports an inset.
-      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface-scrim)] backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)]"
+      // Nav-coherence fix (painfix): on landscape-phone, BottomNav docks
+      // as a left rail (App.tsx's <main> reserves
+      // `landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))]` for
+      // it). This full-bleed sticky ribbon had no matching inset, so
+      // its `bg-[var(--color-surface-scrim)]` surface painted straight
+      // OVER the rail on every non-Watch route (the rail sits at z-10,
+      // the ribbon at z-[15]). A `padding-left` fix wouldn't have
+      // solved it — the ribbon's background would still extend behind
+      // the rail even with padded content. `margin-left` shrinks the
+      // ribbon's box itself so it starts to the right of the rail,
+      // mirroring exactly the calc `<main>` already uses. Portrait and
+      // desktop (`lg:`) are untouched — the rail only docks left under
+      // `landscape-phone:`.
+      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface-scrim)] backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))]"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
         paddingLeft: 'max(1rem, env(safe-area-inset-left))',

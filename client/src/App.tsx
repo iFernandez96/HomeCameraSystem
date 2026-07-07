@@ -4,6 +4,7 @@ import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { LoadingState } from './components/states/LoadingState'
+import { PushDeniedBanner } from './components/PushDeniedBanner'
 import { RequireAuth } from './components/RequireAuth'
 import { SideRail } from './components/SideRail'
 import { WatchRibbon } from './components/WatchRibbon'
@@ -98,6 +99,11 @@ function AppShell() {
   return (
     <div className="flex flex-col h-full">
       <ConnectionBanner />
+      {/* Nav-coherence fix (painfix, item 4): push permission denial
+          is a silent, standing dead-end for alerts — the Settings
+          toggle can look "on" while nothing ever arrives. Same fixed-
+          strip grammar as ConnectionBanner, rendered alongside it. */}
+      <PushDeniedBanner />
       {/* iter-356.58 (layout rebuild) — STRUCTURAL: kill the 224px
           sidebar + per-page-h1 pattern. Replace with:
             (a) <WatchRibbon> — 56px persistent top bar with brand +
