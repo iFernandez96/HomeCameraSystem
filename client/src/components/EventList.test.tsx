@@ -600,4 +600,30 @@ describe('EventList', () => {
       screen.getByText(/israel at the front door/i),
     ).toBeInTheDocument()
   })
+
+  // ─── Task 6 (Playroom Modern) review fix — WhoMark coverage ──────
+
+  it('Given multiple events render, When each card is inspected, Then it leads with a decorative WhoMark identity mark before the thumbnail (Task 6 review finding)', () => {
+    // arrange — three events so the assertion pins per-card presence,
+    // not just "at least one mark somewhere in the list".
+    render(
+      <EventList
+        events={[
+          evt({ id: 'wm1', label: 'person', camera_id: 'cam1' }),
+          evt({ id: 'wm2', label: 'person', person_name: 'Israel', camera_id: 'cam1' }),
+          evt({ id: 'wm3', label: 'cat', camera_id: 'cam1' }),
+        ]}
+      />,
+    )
+
+    // act — WhoMark renders as an aria-hidden wrapper (decorative;
+    // the accessible identity already lands via title + row
+    // aria-label) containing an inline <svg role="img">.
+    const marks = document.querySelectorAll(
+      'ol > li span[aria-hidden="true"] > svg[role="img"]',
+    )
+
+    // assert — one mark per rendered event card.
+    expect(marks.length).toBe(3)
+  })
 })

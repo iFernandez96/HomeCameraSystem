@@ -153,11 +153,13 @@ describe('ErrorBoundary', () => {
 
   it('Given the fallback renders, When the action buttons are queried, Then they carry the Button-primitive base classes (min-h-[44px] tap target, focus-visible:outline-2, primitive bg tokens — proves we routed through <Button>, not hand-rolled <button>)', () => {
     // arrange / act — primitive's BASE_CLASSES include the
-    // `focus-visible:outline-2` family and `font-semibold`; size="md"
+    // `focus-visible:outline-2` family and `font-bold`; size="md"
     // forces `min-h-[44px]`. Hand-rolled buttons in the pre-fix
     // boundary used `py-2` (~32 px), `font-medium`, and a custom
     // focus-ring style — none of which matched the primitive
-    // contract.
+    // contract. (Fix-round: pill-grammar Button migrated the base
+    // weight from `font-semibold` to `font-bold`; this pin follows
+    // the primitive, not a hardcoded weight.)
     render(
       <ErrorBoundary>
         <Boom />
@@ -168,7 +170,7 @@ describe('ErrorBoundary', () => {
     for (const name of [/try again/i, /reload app/i]) {
       const btn = screen.getByRole('button', { name })
       // Primitive base contract.
-      expect(btn.className).toContain('font-semibold')
+      expect(btn.className).toContain('font-bold')
       expect(btn.className).toMatch(/focus-visible:outline-2/)
       expect(btn.className).toContain('min-h-[44px]')
     }
