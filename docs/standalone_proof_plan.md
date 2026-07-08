@@ -326,7 +326,7 @@ setuptools>=81 removes pkg_resources which the models package needs).
 - [x] R6 gated: real encode_known_faces build into temp encodings.pkl
 - [x] R7 gated: threshold ledger on real same-person/stranger crops
 - [x] R8 gated: replay all real person crops, record outcomes
-- [ ] R9 PARITY: replay decisions vs production person_name (all-null now)
+- [x] R9 PARITY: replay decisions vs production person_name (all-null now)
 - [x] R10 null-name propagation through ingest + face_unrecognized search
 - [x] R11 named propagation contract (person_names -> legacy person_name)
 - [x] R12 training/review routes against copied real fixture tree
