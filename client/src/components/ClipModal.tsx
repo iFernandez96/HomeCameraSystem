@@ -25,6 +25,22 @@ import { Button } from './primitives/Button'
 // evening traffic without pulling in yesterday/tomorrow noise.
 const MORE_TONIGHT_WINDOW_S = 2 * 60 * 60
 
+// UI/UX overhaul 2026-07-07 (hari GESTURE-5): swipe-between-clips
+// gesture constants. A horizontal drag on the video pane flips to the
+// prev/next event from the already-fetched "More from tonight" window.
+// Threshold/feedback numbers mirror EventList's swipe-to-delete scale
+// so the two gestures feel like one system.
+/** Raw finger travel (px) at/past which release advances to the neighbor. */
+const SWIPE_ADVANCE_PX = 70
+/** Visual drag feedback cap (px) when a neighbor exists in that direction. */
+const SWIPE_FEEDBACK_MAX_PX = 48
+/** Rubber-band cap (px) at either end of the window (no neighbor). */
+const SWIPE_RUBBER_MAX_PX = 20
+/** Bottom strip of the video pane reserved for the NATIVE <video controls>
+ *  scrubber — a horizontal drag there is a seek, never a clip swipe. The
+ *  guard is skipped when the pane has no layout box (jsdom). */
+const SWIPE_CONTROLS_GUARD_PX = 64
+
 /** Content dedupe pass (Frank phone-round finding): the "More from
  * tonight" rows used to show the current camera's location on EVERY
  * row — useless repetition since every event in this rail is already
@@ -315,6 +331,132 @@ export function ClipModal({
       cancelled = true
     }
   }, [event.id, event.ts])
+
+  // UI/UX overhaul 2026-07-07 (hari GESTURE-5): swipe-between-clips.
+  // A horizontal swipe on the VIDEO PANE flips to the neighboring event
+  // from the same sibling window the "More from tonight" rail shows —
+  // no new fetching, and the advance goes through the SAME `setEvent`
+  // mechanism a rail-row tap uses, so focus, pending/loading states and
+  // the bbox-overlay wiring all behave identically.
+  //
+  // DIRECTION: the rail lists siblings newest-first (the /api/events/
+  // search order), so the timeline below sorts descending by ts to
+  // match it. Swipe LEFT advances DOWN the list (the next, OLDER
+  // event); swipe RIGHT goes back UP it (NEWER). i.e. the content
+  // follows the finger toward the row you'd tap next.
+  const swipeTimeline = useMemo(() => {
+    const all = [...(moreTonight ?? []), event]
+    all.sort((a, b) => b.ts - a.ts)
+    return all
+  }, [moreTonight, event])
+  const videoPaneRef = useRef<HTMLDivElement | null>(null)
+  // Same touchAxis discipline as EventList's swipe-to-delete: axis is
+  // decided ONCE per gesture at the first >6px move, and a vertical
+  // start (scrolling the stacked mobile modal) can never become a
+  // swipe mid-gesture. All gesture state lives in refs and the drag
+  // feedback is an imperative style write — zero per-move renders.
+  const swipeStartX = useRef<number | null>(null)
+  const swipeStartY = useRef<number | null>(null)
+  const swipeAxis = useRef<'h' | 'v' | null>(null)
+  const swipeDx = useRef(0)
+  const swipeNeighbor = useCallback(
+    (dx: number): DetectionEvent | null => {
+      const idx = swipeTimeline.findIndex((e) => e.id === event.id)
+      if (idx === -1) return null
+      // dx<0 = finger moved left = next (older); dx>0 = prev (newer).
+      return swipeTimeline[dx < 0 ? idx + 1 : idx - 1] ?? null
+    },
+    [swipeTimeline, event.id],
+  )
+  const onPaneTouchStart = (ev: React.TouchEvent) => {
+    // Controls stay controls: a touch that begins on any interactive
+    // element (bbox toggle, speed select, Repeat, a focused overlay
+    // button) is never a swipe.
+    const target = ev.target as HTMLElement | null
+    if (target && target.closest('button, select, input, a, label')) return
+    const t = ev.touches[0]
+    const pane = videoPaneRef.current
+    if (pane) {
+      const rect = pane.getBoundingClientRect()
+      // Native <video controls> scrubber lives along the pane's bottom
+      // edge — horizontal drags there must keep seeking. (rect is all
+      // zeros in jsdom / pre-layout; skip the guard then.)
+      if (rect.height > 0 && t.clientY > rect.bottom - SWIPE_CONTROLS_GUARD_PX) {
+        return
+      }
+      pane.style.transition = ''
+    }
+    swipeStartX.current = t.clientX
+    swipeStartY.current = t.clientY
+    swipeAxis.current = null
+    swipeDx.current = 0
+  }
+  const onPaneTouchMove = (ev: React.TouchEvent) => {
+    if (swipeStartX.current === null) return
+    const t = ev.touches[0]
+    const dx = t.clientX - swipeStartX.current
+    const dy = t.clientY - (swipeStartY.current ?? t.clientY)
+    if (swipeAxis.current === null) {
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+        swipeAxis.current = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'
+      }
+    }
+    if (swipeAxis.current !== 'h') return
+    swipeDx.current = dx
+    const pane = videoPaneRef.current
+    if (!pane) return
+    // 30-60px of drag feedback; at either end of the window there is
+    // no neighbor, so the pane rubber-bands (1/3 resistance, smaller
+    // cap) and will snap back on release — no wrap-around.
+    const hasNeighbor = swipeNeighbor(dx) !== null
+    const cap = hasNeighbor ? SWIPE_FEEDBACK_MAX_PX : SWIPE_RUBBER_MAX_PX
+    const eased = hasNeighbor ? dx : dx / 3
+    const shown = Math.max(-cap, Math.min(cap, eased))
+    pane.style.transform = `translateX(${shown}px)`
+  }
+  const resetSwipeRefs = () => {
+    swipeStartX.current = null
+    swipeStartY.current = null
+    swipeAxis.current = null
+    swipeDx.current = 0
+  }
+  const snapPaneBack = () => {
+    const pane = videoPaneRef.current
+    if (!pane) return
+    const reduceMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // Reduced motion: jump straight back, no snap animation.
+    pane.style.transition = reduceMotion ? '' : 'transform 160ms ease-out'
+    pane.style.transform = ''
+  }
+  const onPaneTouchEnd = () => {
+    const started = swipeStartX.current !== null
+    const axis = swipeAxis.current
+    const dx = swipeDx.current
+    resetSwipeRefs()
+    if (!started || axis !== 'h') return
+    const neighbor = Math.abs(dx) >= SWIPE_ADVANCE_PX ? swipeNeighbor(dx) : null
+    if (neighbor) {
+      const pane = videoPaneRef.current
+      if (pane) {
+        pane.style.transition = ''
+        pane.style.transform = ''
+      }
+      // The EXACT mechanism a "More from tonight" row tap uses.
+      setEvent(neighbor)
+      return
+    }
+    snapPaneBack()
+  }
+  const onPaneTouchCancel = () => {
+    // Gesture aborted by the browser (e.g. an incoming system gesture):
+    // never advance, just settle back.
+    const axis = swipeAxis.current
+    resetSwipeRefs()
+    if (axis === 'h') snapPaneBack()
+  }
 
   // Playroom Modern (Task 7): "Name them" — persons only, and only when
   // unrecognized (a named person already has a name; nothing to do).
@@ -941,7 +1083,21 @@ export function ClipModal({
           else in this column. lg+ drops the ratio in favor of filling
           the height-capped row (`lg:flex-1 lg:aspect-auto
           lg:min-h-0`), matching the split-pane desktop layout. */}
-      <div className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1">
+      {/* UI/UX overhaul 2026-07-07 (hari GESTURE-5): the video pane is
+          the swipe surface for flipping between "More from tonight"
+          neighbors. touch-pan-y keeps native vertical scrolling alive
+          while horizontal drags belong to the gesture; the axis lock in
+          the handlers means a vertical scroll that starts here never
+          becomes a swipe. */}
+      <div
+        ref={videoPaneRef}
+        data-testid="clip-swipe-pane"
+        onTouchStart={onPaneTouchStart}
+        onTouchMove={onPaneTouchMove}
+        onTouchEnd={onPaneTouchEnd}
+        onTouchCancel={onPaneTouchCancel}
+        className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden touch-pan-y bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1"
+      >
         {body}
       </div>
       {/* Playback speed, repeat, scrub/play and fullscreen now live IN the

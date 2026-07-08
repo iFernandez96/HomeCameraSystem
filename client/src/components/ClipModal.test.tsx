@@ -1219,4 +1219,243 @@ describe('ClipModal', () => {
     expect(aside.className).toMatch(/landscape-phone:border-l/)
     expect(aside.className).toMatch(/landscape-phone:border-t-0/)
   })
+
+  // ─── UI/UX overhaul 2026-07-07 (hari GESTURE-5): swipe-between-clips.
+  // A horizontal swipe on the video pane flips to the neighboring event
+  // from the already-fetched "More from tonight" window, via the SAME
+  // setEvent mechanism a rail-row tap uses. Direction matches the rail's
+  // newest-first order: swipe LEFT = next row DOWN the list (older),
+  // swipe RIGHT = back UP (newer). At either end of the window the pane
+  // rubber-bands slightly and stays (no wrap).
+  describe('swipe between clips (GESTURE-5)', () => {
+    // Rail order is newest-first: [evt-newer, evt-older] around the
+    // active event, so the swipe timeline is newer → active → older.
+    async function renderWithSiblings() {
+      const active = makeEvent({ id: 'evt-active', ts: 1700000000, label: 'person' })
+      const newer = makeEvent({ id: 'evt-newer', ts: 1700000600, label: 'cat' })
+      const older = makeEvent({ id: 'evt-older', ts: 1699999000, label: 'dog' })
+      vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+        items: [newer, older],
+        next_cursor: null,
+      })
+      render(<ClipModal event={active} onClose={() => {}} />)
+      await screen.findByText(/more from tonight/i)
+      return { active, newer, older, pane: screen.getByTestId('clip-swipe-pane') }
+    }
+
+    function drag(pane: HTMLElement, dx: number, dy = 0) {
+      fireEvent.touchStart(pane, { touches: [{ clientX: 200, clientY: 150 }] })
+      fireEvent.touchMove(pane, {
+        touches: [{ clientX: 200 + dx, clientY: 150 + dy }],
+      })
+    }
+
+    it('Given siblings are loaded, When the user swipes LEFT past the threshold on the video pane, Then the modal advances to the next OLDER event (down the rail)', async () => {
+      // arrange
+      const { pane } = await renderWithSiblings()
+
+      // act
+      drag(pane, -90)
+      fireEvent.touchEnd(pane)
+
+      // assert — same swap mechanism as tapping a rail row: the video
+      // src now points at the older sibling's clip.
+      expect(screen.getByLabelText(/clip of dog event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-older/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given siblings are loaded, When the user swipes RIGHT past the threshold, Then the modal goes back UP the rail to the NEWER event', async () => {
+      // arrange
+      const { pane } = await renderWithSiblings()
+
+      // act
+      drag(pane, 90)
+      fireEvent.touchEnd(pane)
+
+      // assert
+      expect(screen.getByLabelText(/clip of cat event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-newer/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given a drag BELOW the ~70px threshold, When the finger lifts, Then the pane snaps back and the event does not change', async () => {
+      // arrange
+      const { pane } = await renderWithSiblings()
+
+      // act
+      drag(pane, -40)
+      const midDrag = pane.style.transform
+      fireEvent.touchEnd(pane)
+
+      // assert — feedback tracked the finger, then released to rest.
+      expect(midDrag).toBe('translateX(-40px)')
+      expect(pane.style.transform).toBe('')
+      expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-active/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given a long drag, When the finger keeps pulling, Then the visual feedback is clamped to the ~48px cap (imperative style, no runaway)', async () => {
+      // arrange
+      const { pane } = await renderWithSiblings()
+
+      // act
+      drag(pane, -200)
+
+      // assert
+      expect(pane.style.transform).toBe('translateX(-48px)')
+
+      // cleanup
+      fireEvent.touchEnd(pane)
+      vi.restoreAllMocks()
+    })
+
+    it('Given a gesture that starts VERTICALLY (scrolling), When it later gains horizontal travel, Then the axis lock keeps it a scroll — no feedback and no event change', async () => {
+      // arrange
+      const { pane } = await renderWithSiblings()
+
+      // act — first >6px move is vertical, so the axis locks to 'v';
+      // a later strongly-horizontal move must NOT be re-interpreted.
+      fireEvent.touchStart(pane, { touches: [{ clientX: 200, clientY: 150 }] })
+      fireEvent.touchMove(pane, { touches: [{ clientX: 202, clientY: 190 }] })
+      fireEvent.touchMove(pane, { touches: [{ clientX: 60, clientY: 210 }] })
+      fireEvent.touchEnd(pane)
+
+      // assert
+      expect(pane.style.transform).toBe('')
+      expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-active/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given the active event is the NEWEST in the window, When the user swipes right past the threshold, Then the pane rubber-bands (small resisted feedback) and stays — no wrap', async () => {
+      // arrange — active is newest: no neighbor to the right.
+      const active = makeEvent({ id: 'evt-active', ts: 1700001000, label: 'person' })
+      const older = makeEvent({ id: 'evt-older', ts: 1700000000, label: 'cat' })
+      vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+        items: [older],
+        next_cursor: null,
+      })
+      render(<ClipModal event={active} onClose={() => {}} />)
+      await screen.findByText(/more from tonight/i)
+      const pane = screen.getByTestId('clip-swipe-pane')
+
+      // act
+      drag(pane, 90)
+      const midDrag = pane.style.transform
+      fireEvent.touchEnd(pane)
+
+      // assert — 90px of finger travel shows only the resisted,
+      // capped rubber-band (90/3 = 30, capped at 20), then settles.
+      expect(midDrag).toBe('translateX(20px)')
+      expect(pane.style.transform).toBe('')
+      expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-active/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given a touch that starts on a CONTROL (the bbox toggle button), When it moves horizontally past the threshold, Then no swipe happens — controls stay controls', async () => {
+      // arrange — boxes present so the toggle button renders.
+      const active = makeEvent({
+        id: 'evt-active',
+        ts: 1700000000,
+        label: 'person',
+        boxes: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2, label: 'person', score: 0.9 }],
+      })
+      const older = makeEvent({ id: 'evt-older', ts: 1699999000, label: 'cat' })
+      vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+        items: [older],
+        next_cursor: null,
+      })
+      render(<ClipModal event={active} onClose={() => {}} />)
+      await screen.findByText(/more from tonight/i)
+      const pane = screen.getByTestId('clip-swipe-pane')
+      const toggle = screen.getByRole('button', { name: /hide detection boxes/i })
+
+      // act — the gesture BEGINS on the button; moves bubble through
+      // the pane but the gesture was never armed.
+      fireEvent.touchStart(toggle, { touches: [{ clientX: 200, clientY: 150 }] })
+      fireEvent.touchMove(pane, { touches: [{ clientX: 80, clientY: 150 }] })
+      fireEvent.touchEnd(pane)
+
+      // assert
+      expect(pane.style.transform).toBe('')
+      expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-active/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given prefers-reduced-motion, When a below-threshold drag releases, Then the pane returns with NO snap animation (no transition)', async () => {
+      // arrange — jsdom has no matchMedia; install a reduce=true stub.
+      const mm = vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes('prefers-reduced-motion'),
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+      vi.stubGlobal('matchMedia', mm)
+      const { pane } = await renderWithSiblings()
+
+      // act
+      drag(pane, -40)
+      fireEvent.touchEnd(pane)
+
+      // assert — snapped back instantly, no transition property set.
+      expect(pane.style.transform).toBe('')
+      expect(pane.style.transition).toBe('')
+
+      // cleanup
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    it('Given motion is allowed, When a below-threshold drag releases, Then the snap-back uses an ease-out transform transition', async () => {
+      // arrange — matchMedia present, reduce NOT matched.
+      const mm = vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+      vi.stubGlobal('matchMedia', mm)
+      const { pane } = await renderWithSiblings()
+
+      // act
+      drag(pane, -40)
+      fireEvent.touchEnd(pane)
+
+      // assert
+      expect(pane.style.transform).toBe('')
+      expect(pane.style.transition).toContain('transform')
+
+      // cleanup
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+  })
 })
