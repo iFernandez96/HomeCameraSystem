@@ -252,10 +252,10 @@ real clip bytes. Fixtures: proof_fixtures/clips/ (6 real MP4s, 9.8-80MB,
 IDs match events.sqlite rows).
 - [x] H9.1 fixtures.py + inventory (clips<->DB rows, sizes)
 - [x] H9.2 fixture integrity (every clip has a DB row, bytes nonzero)
-- [ ] H9.3 scratch recordings_dir builder (byte-for-byte)
-- [ ] H9.4 get_by_ids order + row parity vs captured DB
-- [ ] H9.5 single-clip ZIP: manifest + exact MP4 bytes
-- [ ] H9.6 six-clip ZIP: all bytes match, manifest rows match DB
+- [x] H9.3 scratch recordings_dir builder (byte-for-byte)
+- [x] H9.4 get_by_ids order + row parity vs captured DB
+- [x] H9.5 single-clip ZIP: manifest + exact MP4 bytes
+- [x] H9.6 six-clip ZIP: all bytes match, manifest rows match DB
 - [ ] H9.7 tempfile called with dir=recordings_dir, delete=False
 - [ ] H9.8 measured RSS flat vs 289MB input (bounded delta)
 - [ ] H9.9 Semaphore(1) serializes concurrent builds
@@ -276,10 +276,10 @@ events (F16 ledger separates worker-lost attempts).
 - [x] F5 route ingest replay with pinned time
 - [x] F6 lazy-import circular-dep pin
 - [x] F7 idempotent duplicate stream (rows unchanged pass 2)
-- [ ] F8 duplicate live-fanout contract pinned
-- [ ] F9 slow subscriber never blocks publish
-- [ ] F10 queue overflow drops only the stuck subscriber
-- [ ] F11 overflow warning rate-limited + resets
+- [x] F8 duplicate live-fanout contract pinned
+- [x] F9 slow subscriber never blocks publish
+- [x] F10 queue overflow drops only the stuck subscriber
+- [x] F11 overflow warning rate-limited + resets
 - [ ] F12 WS closed-transport unsubscribes cleanly
 - [ ] F13 SQLite lock contention fail-open pinned (may expose busy_timeout gap)
 - [ ] F14 concurrent readers during ingest
@@ -299,10 +299,10 @@ Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 - [ ] W6 LIVE rung xs (/whep/cam_uq/whep)
 - [ ] W7 LIVE quality switch: old attempt closes, no stale-blank
 - [ ] W8 LIVE resume/error coalescing: at most one reconnect
-- [ ] W9 local error-harness fixture (404/503/hang/net-close/invalid-sdp)
-- [ ] W10 local: non-2xx -> error UI, manual Retry = exactly one POST
-- [ ] W11 local: hung POST aborted on unmount/switch, no leak
-- [ ] W12 local: invalid SDP -> set-remote-failed, never Live
+- [x] W9 local error-harness fixture (404/503/hang/net-close/invalid-sdp)
+- [x] W10 local: non-2xx -> error UI, manual Retry = exactly one POST
+- [x] W11 local: hung POST aborted on unmount/switch, no leak
+- [x] W12 local: invalid SDP -> set-remote-failed, never Live
 - [ ] W13 observability: attempt ledger (id, rung, timings, no SDP/IPs)
 - [ ] W14 parity prep: settled-attempt client logging
 - [ ] W15 parity capture: live run + fresh Jetson log fetch
