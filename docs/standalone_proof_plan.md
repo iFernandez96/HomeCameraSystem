@@ -618,28 +618,28 @@ in detection/, no per-frame log lines, SD-card write budget, no secrets.
 - [x] O4 hardware-profile exporter in fetch script: measured GOP + fps +
       resolution from a real recent clip (ffprobe), encoder element names
       from mediamtx.yml; written to .jetson-snapshot/hardware-profile.json.
-- [ ] O5 local harness fixtures READ the profile when present (multicam
+- [x] O5 local harness fixtures READ the profile when present (multicam
       publisher GOP/fps/size from profile, not constants); absent profile =
       today's defaults.
 
 ### O-C Worker decision ledgers + flight recorder (py36, gated, sampled)
-- [ ] O6 detection/decision_ledger.py: pure py36 JSONL appender (atomic,
+- [x] O6 detection/decision_ledger.py: pure py36 JSONL appender (atomic,
       size-capped, EPIPE-safe via applog conventions); unit-tested offline.
-- [ ] O7 presence-tracker transitions ledgered (emit/suppress/re-arm/gap
+- [x] O7 presence-tracker transitions ledgered (emit/suppress/re-arm/gap
       with iou + reason) — transitions ONLY, never per-frame.
-- [ ] O8 gear + watchdog transitions ledgered (active/idle, mem/thermal
+- [x] O8 gear + watchdog transitions ledgered (active/idle, mem/thermal
       pause, ladder rung climbs with persisted level).
-- [ ] O9 flight recorder (sampled): every Nth processed frame append raw
+- [x] O9 flight recorder (sampled): every Nth processed frame append raw
       detectNet outputs (boxes/scores/labels/ts) to a capped JSONL ring;
       DETECT_FLIGHT_SAMPLE_N env (0=off default ON at 10), fetch script
       pulls it; invariant: byte budget capped, no frames written.
-- [ ] O10 PARITY leg: replay flight-recorder JSONL through the real
+- [x] O10 PARITY leg: replay flight-recorder JSONL through the real
       PresenceTracker offline and diff emit decisions vs the presence
       ledger lines the worker recorded live — exact.
 
 ### O-D Shadow mode (narrowest: presence tracker only) — LAST
-- [ ] O11 shadow PresenceTracker: second instance fed the same detections,
+- [x] O11 shadow PresenceTracker: second instance fed the same detections,
       decisions ledgered with shadow=true, NEVER acts; env-gated
       DETECT_SHADOW_PRESENCE=0 default; crash-isolated (exceptions
       swallowed+counted, never touch the active path).
-- [ ] O12 shadow diff tool: offline diff of shadow vs active ledger lines.
+- [x] O12 shadow diff tool: offline diff of shadow vs active ledger lines.
