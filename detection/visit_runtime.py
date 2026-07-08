@@ -70,6 +70,15 @@ WORKER_MIN_FREE_BYTES = 450 * 1024 * 1024  # ~450 MB (> server's ~300 MB)
 STATE_OPEN = "OPEN"
 STATE_FINALIZING = "FINALIZING"
 
+# Bounded recovery retries (2026-07-07 replay-harness finding): a FINALIZING
+# entry whose scratch is GONE (boot sweep raced it / disk loss) can never
+# produce a clip — the old behavior retried it on EVERY boot forever
+# ("leaving FINALIZING for a later retry" repeating across worker lives in
+# the prod journal). One retry is still allowed (a transiently-unmounted
+# card recovers), but after this many failed finalize attempts the entry is
+# abandoned with a loud ERROR — the footage is unrecoverable by then.
+RECOVERY_MAX_FINALIZE_ATTEMPTS = 3
+
 # On-disk artifacts the boot sweep is allowed to touch (plan R8). The
 # scratch root is a child of recordings_dir; we NEVER touch _preroll/seg_*.
 _VISITS_SUBDIR = "_visits"
@@ -248,15 +257,17 @@ def recover_open_visits(recordings_dir, validate_clip, finalize_visit,
         concat so a re-crash mid-finalize re-enters here, finds either a valid
         clip -> skip, or no clip -> retry — never a double publish), then call
         ``finalize_visit(visit_id, scratch_dir, start_ts, end_ts)`` over
-        ``[start_ts, min(last_extend + absence_finalize_s, now)]`` from the
-        surviving scratch. On success drop the entry.
+        ``[start_ts, min(last_extend, now)]`` — exactly the footage scratch
+        can hold (bug-B3 fix: the grace tail after last_extend was never
+        recorded pre-crash, so claiming it duration-refused honest clips).
+        On success drop the entry.
 
     ``finalize_visit`` returns True on a published clip. Side-effect callables
     are injected so the whole routine is unit-testable with no ffmpeg. Returns
     a summary dict ``{"skipped": [...], "finalized": [...], "failed": [...]}``.
     """
     visits = read_open_visits(recordings_dir)
-    summary = {"skipped": [], "finalized": [], "failed": []}
+    summary = {"skipped": [], "finalized": [], "failed": [], "abandoned": []}
     if not visits:
         return summary
 
@@ -277,18 +288,32 @@ def recover_open_visits(recordings_dir, validate_clip, finalize_visit,
             continue
 
         # No valid output -> finalize from surviving scratch. Move to
-        # FINALIZING + persist FIRST so a re-crash resumes correctly.
+        # FINALIZING + persist FIRST so a re-crash resumes correctly. The
+        # attempt counter (bounded retry, 2026-07-07) is bumped in the same
+        # persisted write so a crash mid-finalize still counts the attempt.
         rec["state"] = STATE_FINALIZING
+        try:
+            attempts = int(rec.get("finalize_attempts", 0) or 0) + 1
+        except (TypeError, ValueError):
+            attempts = 1
+        rec["finalize_attempts"] = attempts
         visits[visit_id] = rec
         write_open_visits(recordings_dir, visits)
 
-        absence_s = rec.get("absence_finalize_s")
-        if not isinstance(absence_s, (int, float)) or absence_s <= 0:
-            absence_s = default_absence_finalize_s
         start_ts = rec.get("start_ts")
         last_extend = rec.get("last_extend", rec.get("last_seen", start_ts))
+        # Recovery window fix (2026-07-07, harness bug B3 — deliberate
+        # change to the plan-B4 formula): the OLD window added the
+        # absence grace (`last_extend + absence_finalize_s`), but scratch
+        # only ever holds footage up to last_extend — the grace tail was
+        # never recorded before the crash and the ring is gone by the
+        # next boot. Claiming it made finalize's duration check REFUSE
+        # the honest clip whenever recovery ran later than the tolerance
+        # (guaranteed loss at absence=30, coin-flip at 10), burning the
+        # bounded retries on footage that could never exist. Recover
+        # exactly what was captured: end at last_extend.
         try:
-            end_ts = min(float(last_extend) + float(absence_s), float(now))
+            end_ts = min(float(last_extend), float(now))
         except (TypeError, ValueError):
             end_ts = now
         scratch = scratch_dir_for(recordings_dir, visit_id)
@@ -306,14 +331,33 @@ def recover_open_visits(recordings_dir, validate_clip, finalize_visit,
             del visits[visit_id]
             write_open_visits(recordings_dir, visits)
             summary["finalized"].append(visit_id)
+        elif attempts >= RECOVERY_MAX_FINALIZE_ATTEMPTS:
+            # Bounded retry (2026-07-07): the entry has failed finalize on
+            # this many separate recovery passes — its scratch is gone for
+            # good (tonight's prod journal showed the same visit re-failing
+            # boot after boot, forever). Abandon LOUDLY: drop the entry so
+            # the next boot stops burning a finalize on it. The event row
+            # keeps its honest 404 clip.
+            applog.emit(
+                "visit",
+                "ERROR recovery: giving up on visit {} after {} failed "
+                "finalize attempts (scratch lost?) — dropping entry; "
+                "footage unrecoverable".format(visit_id, attempts),
+            )
+            del visits[visit_id]
+            write_open_visits(recordings_dir, visits)
+            summary["abandoned"].append(visit_id)
         else:
             # Leave the FINALIZING entry: a later boot re-attempts it (the
             # scratch may have been partially lost — we tolerate a short clip
-            # next time rather than publishing garbage now).
+            # next time rather than publishing garbage now). Bounded: after
+            # RECOVERY_MAX_FINALIZE_ATTEMPTS total failures it is abandoned.
             applog.emit(
                 "visit",
                 "recovery: finalize of visit {} produced no clip — leaving "
-                "FINALIZING for a later retry".format(visit_id),
+                "FINALIZING for a later retry (attempt {}/{})".format(
+                    visit_id, attempts, RECOVERY_MAX_FINALIZE_ATTEMPTS,
+                ),
             )
             summary["failed"].append(visit_id)
     return summary
@@ -609,10 +653,56 @@ class VisitRunner(object):
         visit_id = tr["visit_id"]
         start_ts = tr["start_ts"]
         end_ts = tr["end_ts"]
+        # Final catch-up copy (2026-07-07 replay-harness fix — tonight's prod
+        # journal: "finalize: scratch_dir unreadable ... FileNotFoundError").
+        # Two footage-loss holes shared one root cause: NOTHING copied ring
+        # segments at finalize time. (a) A visit whose subject appeared on
+        # exactly ONE frame never got an extend, so its scratch dir was never
+        # created — finalize found nothing and the event's clip 404'd forever.
+        # (b) The absence-grace tail after the LAST extend was never copied,
+        # so the published clip ran ~absence_finalize_s shorter than its
+        # nominal window — at the operator's 30s setting the duration check
+        # (±10s) refused EVERY clip. The ring still holds this footage here
+        # (tick fires with now >= end_ts and the grace tail is far shorter
+        # than the ring window), so copy [start_ts, end_ts] before handing
+        # off to the background finalize.
+        self._catchup_copy(visit_id, start_ts, end_ts)
         self._open.pop(visit_id, None)
         self._copy_state.pop(visit_id, None)
         self._persist()
         self._spawn_finalize(visit_id, start_ts, end_ts)
+
+    def _catchup_copy(self, visit_id, start_ts, end_ts):
+        """One last incremental copy over the visit's FULL window, run
+        synchronously on the finalize paths (absence/cap finalize AND the
+        watchdog-escalation drain) before the concat thread takes over.
+        Same disk-floor + error posture as ``_on_extend``: below the floor we
+        skip (finalize what already exists), and a raise degrades to a short
+        clip rather than crashing the loop."""
+        if self._disk_below_floor():
+            free = self._free_space(self.recordings_dir)
+            applog.emit(
+                "visit",
+                "disk floor: skipping finalize catch-up copy for visit {} — "
+                "free space {} bytes < worker floor {} bytes; finalizing "
+                "what already copied".format(
+                    visit_id, free, self._min_free_bytes,
+                ),
+            )
+            return
+        scratch = scratch_dir_for(self.recordings_dir, visit_id)
+        try:
+            _new, accumulated = self._copy_segments(
+                visit_id, start_ts, end_ts, scratch,
+                self._copy_state.get(visit_id),
+            )
+            self._copy_state[visit_id] = accumulated
+        except Exception as e:
+            applog.emit(
+                "visit",
+                "ERROR finalize catch-up copy raised for visit {}: {}: {} "
+                "(clip may be short)".format(visit_id, type(e).__name__, e),
+            )
 
     # -- finalize threading ---------------------------------------------------
 
@@ -676,6 +766,10 @@ class VisitRunner(object):
                 end_ts = min(float(last_seen), float(now))
             except (TypeError, ValueError):
                 end_ts = now
+            # Same catch-up copy as _on_finalize (a single-observe visit has
+            # no scratch yet; the tail since the last extend isn't copied).
+            # Bounded + best-effort, so it can't stall a pending reboot long.
+            self._catchup_copy(visit_id, start_ts, end_ts)
             self._open.pop(visit_id, None)
             self._copy_state.pop(visit_id, None)
             self._spawn_finalize(visit_id, start_ts, end_ts)

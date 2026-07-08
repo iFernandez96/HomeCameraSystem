@@ -165,17 +165,21 @@ def test_given_visit_with_no_output_when_recovered_then_finalized_from_scratch(
         seen["call"] = (vid, scratch, start_ts, end_ts)
         return True
 
-    # act — now=200 so the window is clamped to last_extend+absence (150).
+    # act
     summary = visit_runtime.recover_open_visits(
         rec_dir, validate, finalize, now=200.0,
     )
 
-    # assert — finalized over [start, min(last_extend+absence, now)] = [100,150]
+    # assert — finalized over [start, min(last_extend, now)] = [100, 140].
+    # Bug-B3 fix (2026-07-07, replay harness): the window used to add the
+    # absence grace (end 150) — footage scratch never held, so finalize's
+    # duration check refused honest clips on slow restarts. Recovery now
+    # claims exactly what was captured: up to last_extend.
     assert summary["finalized"] == ["vid_orphan"]
     vid, scratch, start_ts, end_ts = seen["call"]
     assert vid == "vid_orphan"
     assert start_ts == 100.0
-    assert end_ts == 150.0
+    assert end_ts == 140.0
     assert visit_runtime.read_open_visits(rec_dir) == {}
 
 
@@ -429,3 +433,103 @@ def test_given_open_visits_when_persisted_then_roundtrips(tmp_path):
     assert ok is True
     assert os.path.exists(os.path.join(rec_dir, ".open_visits.json"))
     assert visit_runtime.read_open_visits(rec_dir) == table
+
+
+# --------------------------------------------------------------------------- #
+# 7. Finalize catch-up copy (2026-07-07 replay-harness fixes)                 #
+# --------------------------------------------------------------------------- #
+
+def test_given_single_observe_visit_when_finalized_then_catchup_copy_covers_window(
+    tmp_path,
+):
+    # arrange — tonight's prod bug: a visit whose subject appears on exactly
+    # ONE frame never extends, so nothing ever copied ring segments into its
+    # scratch ("finalize: scratch_dir unreadable ... FileNotFoundError").
+    runner, events = _make_runner(tmp_path)
+    runner.set_absence_finalize_s(10.0)
+    runner.observe("person:cam1", (0.0, 0.0, 0.1, 0.1), now=100.0,
+                   pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0)
+    assert events["copy"] == [], "no extend yet -> no copy yet"
+
+    # act — the absence deadline fires on an all-absent tick.
+    runner.tick(now=120.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    # assert — a final catch-up copy ran over the FULL nominal window
+    # [start_ts, end_ts] = [100, 110] BEFORE the finalize handoff, so the
+    # scratch exists and the grace tail is included.
+    assert events["copy"] == [("vid1", 100.0, 110.0)]
+    assert len(events["finalize"]) == 1
+    assert events["finalize"][0] == ("vid1", 100.0, 110.0)
+
+
+def test_given_extended_visit_when_finalized_then_grace_tail_copied(tmp_path):
+    # arrange — extends copied up to last_seen=108; the 10s grace tail after
+    # it used to be absent from scratch (clip ~absence_s short -> at the
+    # operator's 30s setting the ±10s duration check refused every clip).
+    runner, events = _make_runner(tmp_path)
+    runner.set_absence_finalize_s(10.0)
+    box = (0.0, 0.0, 0.2, 0.2)
+    runner.observe("person:cam1", box, now=100.0, pre_roll_s=0.0,
+                   absence_finalize_s=10.0, max_visit_s=150.0)
+    runner.observe("person:cam1", box, now=108.0, pre_roll_s=0.0,
+                   absence_finalize_s=10.0, max_visit_s=150.0)
+    assert events["copy"] == [("vid1", 100.0, 108.0)]
+
+    # act
+    runner.tick(now=125.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    # assert — catch-up copy extends the band to end_ts = 108 + 10 = 118.
+    assert events["copy"][-1] == ("vid1", 100.0, 118.0)
+    assert events["finalize"] == [("vid1", 100.0, 118.0)]
+
+
+def test_given_escalation_drain_when_finalized_then_catchup_copy_runs(tmp_path):
+    # arrange — a single-observe visit; the watchdog is about to reboot.
+    runner, events = _make_runner(tmp_path)
+    runner.set_absence_finalize_s(10.0)
+    runner.observe("person:cam1", (0.0, 0.0, 0.2, 0.2), now=100.0,
+                   pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    # act
+    runner.finalize_open_visits_for_escalation(now=104.0)
+
+    # assert — the escalation drain also catch-up copies (at last_seen).
+    assert events["copy"] == [("vid1", 100.0, 100.0)]
+    assert events["finalize"] == [("vid1", 100.0, 100.0)]
+
+
+# --------------------------------------------------------------------------- #
+# 8. Bounded recovery retries (2026-07-07 replay-harness fix)                 #
+# --------------------------------------------------------------------------- #
+
+def test_given_finalize_keeps_failing_when_recovered_repeatedly_then_abandoned(
+    tmp_path,
+):
+    # arrange — a FINALIZING entry whose scratch is gone for good: finalize
+    # can never succeed. Tonight's prod journal showed this retrying on
+    # every single boot, forever.
+    rec_dir = str(tmp_path)
+    _write_open_visit(rec_dir, "vid_lost")
+
+    def validate(_path):
+        return False
+
+    def finalize(vid, scratch, s, e):
+        return False
+
+    # act — three recovery passes (three worker boots).
+    s1 = visit_runtime.recover_open_visits(rec_dir, validate, finalize, now=300.0)
+    s2 = visit_runtime.recover_open_visits(rec_dir, validate, finalize, now=400.0)
+    s3 = visit_runtime.recover_open_visits(rec_dir, validate, finalize, now=500.0)
+
+    # assert — two bounded retries survive in FINALIZING; the third attempt
+    # (RECOVERY_MAX_FINALIZE_ATTEMPTS) abandons the entry loudly so the next
+    # boot stops burning finalizes on unrecoverable footage.
+    assert s1["failed"] == ["vid_lost"] and s1["abandoned"] == []
+    assert s2["failed"] == ["vid_lost"] and s2["abandoned"] == []
+    assert s3["failed"] == [] and s3["abandoned"] == ["vid_lost"]
+    assert visit_runtime.read_open_visits(rec_dir) == {}
+
+    # and a fourth pass is a clean no-op (idempotent after abandonment).
+    s4 = visit_runtime.recover_open_visits(rec_dir, validate, finalize, now=600.0)
+    assert s4 == {"skipped": [], "finalized": [], "failed": [], "abandoned": []}
