@@ -345,8 +345,8 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [x] H6.10 events NetworkFirst: cached 200 offline; 401 never cached
 - [x] H6.11 notificationclick: dismiss/view/tap contracts
 - [x] H6.12 stale-handler risk pinned across A->B
-- [ ] H6.13 observability prep (build-id visibility) if needed for parity
-- [ ] H6.14 PARITY vs production log window post-deploy
+- [x] H6.13 observability prep (build-id visibility) if needed for parity
+- [x] H6.14 PARITY vs production log window post-deploy
 
 ## Harness #10 — multicam synthetic: atomic steps (spec: codex r12, 2026-07-08)
 - [x] M10.1 contract doc vs code audit (verified 2026-07-08: regex identical across camera_ident.py/_internal.py/doc; registry+default+reject+getCameras pins all present)
@@ -406,16 +406,16 @@ must happen before any "proof" can claim the features work.
   rollback, kill-switch, or update ledger is implemented.
 
 ### OTA update flow — atomic de-stub steps
-- [ ] U1 inventory pin: test proves only the current scaffold exists and no
+- [x] U1 inventory pin: test proves only the current scaffold exists and no
       service helper is wired; invariant: any successful update response with
       `note` is treated as non-applied.
-- [ ] U2 update ledger schema/file: append-only local ledger records requested,
+- [x] U2 update ledger schema/file: append-only local ledger records requested,
       rejected, started, applied, rolled_back; invariant: every attempt gets
       exactly one terminal status offline.
-- [ ] U3 current-version contract: normalize `HOMECAM_VERSION` to semver-ish
+- [x] U3 current-version contract: normalize `HOMECAM_VERSION` to semver-ish
       plus build id; invariant: malformed current version blocks apply before
       touching deploy files.
-- [ ] U4 manifest reader: read a local update manifest file from a scratch
+- [x] U4 manifest reader: read a local update manifest file from a scratch
       path, not network; invariant: missing/malformed manifest returns
       unavailable, never apply.
 - [ ] U5 version comparison: available version is newer/equal/older; invariant:
@@ -516,16 +516,16 @@ must happen before any "proof" can claim the features work.
   `server/app/services/training_export.py:128-174`).
 
 ### Backup/restore — atomic de-stub steps
-- [ ] B1 inventory pin: test proves backup/restore are scaffold-only today;
+- [x] B1 inventory pin: test proves backup/restore are scaffold-only today;
       invariant: `note` means no archive was written/read.
-- [ ] B2 backup manifest schema: define versioned manifest with created_at,
+- [x] B2 backup manifest schema: define versioned manifest with created_at,
       app version, include list, file size, sha256, mode, and logical role;
       invariant: manifest validates without touching live files.
-- [ ] B3 include inventory: enumerate persisted state roots from settings
+- [x] B3 include inventory: enumerate persisted state roots from settings
       (users.db, jwt secret, VAPID keys, push_subs, detection_config, face
       consent/capture state as policy decides, zones within config); invariant:
       every included path is under an allowed root.
-- [ ] B4 missing-file policy: classify required vs optional persisted files;
+- [x] B4 missing-file policy: classify required vs optional persisted files;
       invariant: missing required file blocks backup, missing optional file is
       recorded.
 - [ ] B5 archive writer to temp file: create backup archive in target dir via

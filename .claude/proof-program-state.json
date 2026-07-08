@@ -19,21 +19,16 @@
   },
   "4_snapshot_thumb": {
    "status": "DONE 15/15",
-   "tests": "server/tests/harness_snapshots + detection/tests/harness_snapshots_worker + 3 client test files"
+   "tests": "server/tests/harness_snapshots + detection/tests/harness_snapshots_worker + 3 client test files",
+   "note": "H4.1/H4.15 logged-fetch legs now skip-gated: container recreation reset the docker log; regenerate by refetch after a push-with-image renders on a device"
   },
   "5_webrtc_whep": {
-   "status": "in_progress",
-   "done": "W1-W8 live + W9-W14; W15 DONE: ledger client deployed (index-BBfT9rx7), live suite 6/6, real settled-attempt lines confirmed in journald (privacy-safe)",
-   "in_flight": null,
-   "remaining": "W16 diff tooling in flight (codex byx1ia8vv); then run diff, W17 gate",
-   "findings": "Live-pill playing-vs-rVFC fixed+deployed (57b251b); abort-on-supersede fixed+deployed (8fadee0); starlette BaseHTTPMiddleware swallows http.disconnect (documented in whepErrorHarness stub)",
-   "note": "client_log ships warn/error only \u2014 connected settles are e2e-ledger-side; parity diff = in-page ledger vs mediamtx session log"
+   "status": "DONE",
+   "tests": "W1-W17: live 6/6 + errors 4/4 (HOMECAM_RUN_WHEP_ERRORS=1) + attempt-ledger parity green vs mediamtx session log (whep-parity-diff.mjs); 'connected' = media-level"
   },
   "6_sw_cache_update": {
-   "status": "in_progress",
-   "done": "H6.1-6.12 (nav-fallback fix 81b7944 deployed; H6.11-12 pinned as honest skips \u2014 no Playwright OS-click trigger, device-validated on real phone)",
-   "in_flight": null,
-   "remaining": "H6.13-6.14 parity vs production log window"
+   "status": "DONE",
+   "tests": "sw-lifecycle 7 passed + 2 device-validated skips (HOMECAM_RUN_SW_HARNESS=1, rm -rf /tmp/homecam-sw-e2e-builds first); H6.14 parity: sw:activated buildId in journald == deployed manifest revision"
   },
   "7_eventbus_sqlite": {
    "status": "DONE 16/16 incl. full-night parity replay"
@@ -41,21 +36,19 @@
   "8_face_recognition": {
    "status": "DONE for current ground truth (14/15)",
    "remaining": "R15 named parity \u2014 armed by the R14 inverted sentinel; fires when a refreshed snapshot has named person rows",
-   "note": "venv recipe for face_recognition/dlib is in the plan doc (setuptools<81)"
+   "note": "R3 count pin converted to floor >= 2454 (snapshot refreshes while production detects)"
   },
   "9_export_zip": {
    "status": "DONE 13/13 incl. measured-RSS OOM guard"
   },
   "10_multicam": {
-   "status": "in_progress",
-   "done": "M10.2-4, M10.7-9, M10.11-12 (6 passing w/ real mediamtx v1.18.0)",
-   "in_flight": null,
-   "remaining": "M10.5-6 browser switcher/rung e2e, M10.10 live publish probe",
-   "note": "mediamtx v1.18.0 binary in session scratchpad (HOMECAM_MEDIAMTX_BIN); 1.15.1 rejects webrtcAllowOrigins plural key"
+   "status": "DONE",
+   "tests": "server/tests/harness_multicam 6 (HOMECAM_MEDIAMTX_BIN=v1.18.0) + client multicam-switch e2e 2 + detection harness_multicam_worker 2 + M10.10 honest config-gate skip"
   },
   "11_rebuild_list": {
-   "status": "pending",
-   "note": "OTA + backup/restore: de-stub honestly BEFORE proving"
+   "status": "in_progress",
+   "done": "spec (001d38e) + U1-4 OTA modules + B1-4 backup modules (a00a83d, 32 tests)",
+   "remaining": "U5-U19, B5-B19ish per plan doc; operator decision needed: deploy strategy for OTA apply (git-pull vs rsync artifact vs docker pull)"
   }
  },
  "production": {
@@ -63,6 +56,6 @@
   "all_verified": "healthz + bundle hash + live suite 6/6"
  },
  "blocked": [],
- "last_update": "2026-07-08T13:16 M10.8 committed; W16 + H11-spec lanes running",
+ "last_update": "2026-07-08T13:50 harnesses 1-10 ALL DONE (R15 armed); #11 U1-4/B1-4 landed",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom on the LIVE FEED user-confirmed working (2026-07-08 ~13:15); clips-modal pinch not explicitly confirmed."
 }
