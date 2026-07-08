@@ -1,7 +1,11 @@
 /// <reference lib="webworker" />
 import { clientsClaim } from 'workbox-core'
-import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
-import { registerRoute } from 'workbox-routing'
+import {
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  precacheAndRoute,
+} from 'workbox-precaching'
+import { NavigationRoute, registerRoute } from 'workbox-routing'
 import { CacheFirst, NetworkFirst } from 'workbox-strategies'
 import { CacheableResponsePlugin } from 'workbox-cacheable-response'
 import { ExpirationPlugin } from 'workbox-expiration'
@@ -18,6 +22,26 @@ clientsClaim()
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
+
+// H6.9 (harness #6): the app shell is precached, but Workbox did
+// not have a navigation fallback. Offline navigations to deep SPA
+// routes (measured: /events) escaped the precache and failed with
+// ERR_INTERNET_DISCONNECTED. Serve index.html for browser
+// navigations while denying every server-owned non-SPA path from
+// server/app/main.py: /api, optional WHEP proxying, media file
+// endpoints, Prometheus metrics, and health checks.
+registerRoute(
+  new NavigationRoute(createHandlerBoundToURL('index.html'), {
+    denylist: [
+      /^\/api(?:\/|$)/,
+      /^\/whep(?:\/|$)/,
+      /^\/snapshots(?:\/|$)/,
+      /^\/timelapses(?:\/|$)/,
+      /^\/metrics$/,
+      /^\/healthz$/,
+    ],
+  }),
+)
 
 // iter-356.65 (mobile slice A): cat PNG sprites are excluded from
 // the precache (vite.config.ts globIgnores) because they're heavy
