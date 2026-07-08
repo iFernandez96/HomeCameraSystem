@@ -29,6 +29,21 @@ function fakePc(initialState: RTCPeerConnectionState = 'connected') {
   return pc
 }
 
+/**
+ * First-frame gate (2026-07-07): status flips to 'live' ONLY on a real
+ * frame signal from the <video> element (`playing` / `loadeddata` /
+ * requestVideoFrameCallback) — pc `connectionState === 'connected'` no
+ * longer counts (ICE up is not frames on screen). jsdom never fires
+ * media events on its own, so tests simulate the first decoded frame
+ * explicitly. The leading empty `act` lets connectWhep's `.then` run
+ * first (arming the 8 s media-timer) so the frame event also clears it,
+ * matching the real-browser ordering.
+ */
+async function fireFirstFrame() {
+  await act(async () => {})
+  fireEvent.loadedData(document.querySelector('video')!)
+}
+
 vi.mock('../lib/webrtc', () => ({
   connectWhep: (...a: unknown[]) => connectWhep(...a),
 }))
@@ -60,6 +75,30 @@ describe('VideoTile', () => {
     render(<VideoTile src="http://test/cam/whep" />)
     expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
     resolveConn({ close: closeFn, pc: fakePc() })
+    await fireFirstFrame()
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+  })
+
+  it('Given WHEP resolved and the pc reports connected, When no frame signal has fired, Then the pill stays Connecting; a subsequent loadeddata flips it to Live (first-frame gate, 2026-07-07)', async () => {
+    // arrange — WHEP handshake succeeds and ICE reaches 'connected'.
+    const pc = fakePc('connecting')
+    connectWhep.mockResolvedValue({ close: closeFn, pc })
+    render(<VideoTile src="http://test/cam/whep" />)
+    await act(async () => {}) // let connectWhep's .then register the pc listener
+
+    // act — ICE up. This used to mark live, but ICE connects seconds
+    // before the first decodable keyframe (~4 s GOP), so 'connected'
+    // alone must NOT produce the Live pill anymore.
+    act(() => pc.setState('connected'))
+
+    // assert — still Connecting, no Live pill.
+    expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
+    expect(screen.queryByText('Live')).not.toBeInTheDocument()
+
+    // act — the first decoded frame arrives.
+    await fireFirstFrame()
+
+    // assert — NOW it's Live.
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
   })
 
@@ -90,6 +129,7 @@ describe('VideoTile', () => {
   it('closes the connection when unmounted', async () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     const { unmount } = render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     unmount()
     expect(closeFn).toHaveBeenCalled()
@@ -107,6 +147,7 @@ describe('VideoTile', () => {
   it('shows the PAUSED pill when detection is gated off and live', async () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" detectionActive={false} />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
   })
@@ -149,6 +190,7 @@ describe('VideoTile', () => {
 
     // assert — frames are confirmed flowing (status === 'live'), so
     // the pill must never claim the camera itself is offline.
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
     expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
@@ -172,6 +214,7 @@ describe('VideoTile', () => {
     )
 
     // assert
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
     expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
@@ -187,6 +230,7 @@ describe('VideoTile', () => {
         workerAlive={false}
       />,
     )
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/^detection paused$/i)).not.toBeInTheDocument()
@@ -217,6 +261,7 @@ describe('VideoTile', () => {
     )
 
     // assert
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     // iter-356.C: visible text "Stream stalled"; the "no video for Ns"
     // detail moved into the aria-label so SR users still hear it but
@@ -242,6 +287,7 @@ describe('VideoTile', () => {
 
     // assert — give the LIVE pill time to render so we know the
     // status branch is "live" (when stale would be eligible).
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
   })
@@ -263,6 +309,7 @@ describe('VideoTile', () => {
     )
 
     // assert
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     // iter-356.C: stream-stale aria-label collapses seconds + Reconnect
     // hint into a single string; visible text says "Stream stalled".
@@ -285,6 +332,7 @@ describe('VideoTile', () => {
         detectionActive={true}
       />,
     )
+    await fireFirstFrame()
     await waitFor(() =>
       expect(
         screen.getByLabelText(/detection paused due to low memory/i),
@@ -305,6 +353,7 @@ describe('VideoTile', () => {
         detectionActive={true}
       />,
     )
+    await fireFirstFrame()
     await waitFor(() =>
       expect(
         screen.getByLabelText(/rate-limited by gpu thermal/i),
@@ -325,6 +374,7 @@ describe('VideoTile', () => {
         thermal={true}
       />,
     )
+    await fireFirstFrame()
     await waitFor(() =>
       expect(
         screen.getByLabelText(/detection paused due to low memory/i),
@@ -342,6 +392,7 @@ describe('VideoTile', () => {
         lowMemory={true}
       />,
     )
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByLabelText(/detection paused/i)).toBeInTheDocument(),
     )
@@ -352,6 +403,7 @@ describe('VideoTile', () => {
     const pc = fakePc()
     connectWhep.mockResolvedValue({ close: closeFn, pc })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('failed')
     await waitFor(() =>
@@ -369,6 +421,7 @@ describe('VideoTile', () => {
     const pc = fakePc()
     connectWhep.mockResolvedValue({ close: closeFn, pc })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('disconnected')
     await waitFor(() =>
@@ -389,6 +442,7 @@ describe('VideoTile', () => {
     const pc = fakePc()
     connectWhep.mockResolvedValue({ close: closeFn, pc })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('connected')
     expect(screen.getByText('Live')).toBeInTheDocument()
@@ -402,6 +456,7 @@ describe('VideoTile', () => {
       .mockResolvedValueOnce({ close: closeFn, pc: pc1 })
       .mockResolvedValueOnce({ close: closeFn, pc: pc2 })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(connectWhep).toHaveBeenCalledTimes(1)
     pc1.setState('failed')
@@ -410,6 +465,7 @@ describe('VideoTile', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
     await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
   })
 
@@ -421,6 +477,7 @@ describe('VideoTile', () => {
     const pc = fakePc()
     connectWhep.mockResolvedValue({ close: closeFn, pc })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     const video = screen.getByLabelText('Live camera feed')
     fireEvent.error(video)
@@ -442,6 +499,7 @@ describe('VideoTile', () => {
     const pc = fakePc()
     connectWhep.mockResolvedValue({ close: closeFn, pc })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     vi.useFakeTimers()
     try {
@@ -471,6 +529,7 @@ describe('VideoTile', () => {
     const pc = fakePc()
     connectWhep.mockResolvedValue({ close: closeFn, pc })
     render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     vi.useFakeTimers()
     try {
@@ -694,6 +753,8 @@ describe('VideoTile', () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(<VideoTile src="http://test/cam/whep" />)
     await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(1))
+    await fireFirstFrame()
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
 
     // act
     Object.defineProperty(document, 'visibilityState', {
@@ -834,6 +895,7 @@ describe('VideoTile', () => {
 
     // act
     render(<VideoTile src="http://test/cam/whep" workerAlive={true} />)
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
 
     // assert — the role="status" element is the (single) one inside
@@ -893,6 +955,7 @@ describe('VideoTile', () => {
     // assert — the kind-specific glyph is rendered, aria-hidden so
     // it's pure visual reinforcement (the parent pill's aria-label
     // carries the accessible meaning).
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-stream-stale')).toBeInTheDocument(),
     )
@@ -909,6 +972,7 @@ describe('VideoTile', () => {
 
     // assert — frames are confirmed flowing; must never render the
     // camera-offline glyph while status === 'live'.
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-worker-offline')).toBeInTheDocument(),
     )
@@ -931,6 +995,7 @@ describe('VideoTile', () => {
     )
 
     // assert
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-worker-offline')).toBeInTheDocument(),
     )
@@ -942,6 +1007,7 @@ describe('VideoTile', () => {
     render(<VideoTile src="http://test/cam/whep" workerAlive={true} lowMemory={true} />)
 
     // assert
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-low-memory')).toBeInTheDocument(),
     )
@@ -953,6 +1019,7 @@ describe('VideoTile', () => {
     render(<VideoTile src="http://test/cam/whep" workerAlive={true} thermal={true} />)
 
     // assert
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-thermal')).toBeInTheDocument(),
     )
@@ -964,6 +1031,7 @@ describe('VideoTile', () => {
     render(<VideoTile src="http://test/cam/whep" workerAlive={true} detectionActive={false} />)
 
     // assert
+    await fireFirstFrame()
     await waitFor(() =>
       expect(screen.getByTestId('pill-icon-paused')).toBeInTheDocument(),
     )
@@ -1054,6 +1122,7 @@ describe('VideoTile', () => {
         streamStaleSeconds={90}
       />,
     )
+    await fireFirstFrame()
     await waitFor(() => expect(screen.getByText(/stream stalled/i)).toBeInTheDocument())
     expect(connectWhep).toHaveBeenCalledTimes(1)
 

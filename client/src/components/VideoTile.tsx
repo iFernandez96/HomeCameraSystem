@@ -312,12 +312,17 @@ export function VideoTile({
     // soon as `connectWhep` resolved (SDP exchange complete) — but
     // ICE/media could still fail (e.g., phone-on-tailnet → Jetson UDP
     // candidate not reachable) and the user saw a pulsing LIVE pill
-    // with no actual video. Now 'live' requires either the <video>
-    // element's `playing` event (real frames decoded) or the peer
-    // connection's `connected` state. The `mediaTimer` fallback flips
-    // to 'error' if neither fires within 8 s of WHEP resolve so the
-    // user gets a Retry button instead of staring at a frozen
-    // 'connecting' state forever.
+    // with no actual video.
+    // Overhaul follow-up (2026-07-07, user screenshot): pc
+    // `connectionState === 'connected'` used to also mark live, but ICE
+    // connects seconds before the first decodable keyframe arrives (the
+    // encoder GOP is ~4 s), so the pill said "Live" over a pure black
+    // box. 'live' now requires a real frame signal — the <video>
+    // element's `playing`/`loadeddata` event or a presented frame via
+    // requestVideoFrameCallback. The pc listener below only handles
+    // FAILURE states. The `mediaTimer` fallback flips to 'error' if no
+    // frame arrives within 8 s of WHEP resolve so the user gets a Retry
+    // button instead of staring at a frozen 'connecting' state forever.
     let mediaTimer: ReturnType<typeof setTimeout> | null = null
     const markLive = () => {
       if (cancelled) return
@@ -334,10 +339,26 @@ export function VideoTile({
       }
       markLive()
     }
+    const onFirstFrameDecoded = () => markLive()
+    // Frame-presentation truth where the API exists (Chrome/Safari, and
+    // Firefox 130+): fires only after a frame actually hit the screen,
+    // which is the exact thing the pill is promising.
+    const rvfcVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number
+      cancelVideoFrameCallback?: (id: number) => void
+    }
+    let rvfcId: number | null = null
+    if (typeof rvfcVideo.requestVideoFrameCallback === 'function') {
+      rvfcId = rvfcVideo.requestVideoFrameCallback(() => {
+        rvfcId = null
+        markLive()
+      })
+    }
     video.addEventListener('error', onVideoError)
     video.addEventListener('stalled', onStallOrWaiting)
     video.addEventListener('waiting', onStallOrWaiting)
     video.addEventListener('playing', onPlaying)
+    video.addEventListener('loadeddata', onFirstFrameDecoded)
     setStatus('connecting')
     connectWhep(effectiveSrc, video, { signal: controller.signal })
       .then((c) => {
@@ -371,19 +392,15 @@ export function VideoTile({
         pcStateChange = () => {
           if (cancelled) return
           const s = c.pc.connectionState
-          if (s === 'connected') {
-            markLive()
-          } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
+          // 'connected' deliberately does NOT mark live — ICE up is not
+          // frames on screen (see the frame-gating comment above). The
+          // listener exists for mid-stream FAILURE observability only.
+          if (s === 'failed' || s === 'disconnected' || s === 'closed') {
             midStreamFail('pc-state-' + s)
             setStatus('error')
           }
         }
         c.pc.addEventListener('connectionstatechange', pcStateChange)
-        // Cover the "already connected before listener registration"
-        // race — the connectionstatechange event won't replay, so check
-        // once at registration time. Common when WHEP turnaround is
-        // very fast on LAN.
-        if (c.pc.connectionState === 'connected') markLive()
       })
       .catch((e) => {
         // Defect-1 fix: cleanup now aborts the in-flight attempt (see
@@ -423,6 +440,11 @@ export function VideoTile({
       video.removeEventListener('stalled', onStallOrWaiting)
       video.removeEventListener('waiting', onStallOrWaiting)
       video.removeEventListener('playing', onPlaying)
+      video.removeEventListener('loadeddata', onFirstFrameDecoded)
+      if (rvfcId !== null && typeof rvfcVideo.cancelVideoFrameCallback === 'function') {
+        rvfcVideo.cancelVideoFrameCallback(rvfcId)
+        rvfcId = null
+      }
       // iter-177: explicit cleanup of the iter-162 pc listener.
       // `conn?.close()` below already invalidates it, but removing
       // first means a defer/skip of close (transition reuse, etc.)
@@ -651,6 +673,22 @@ export function VideoTile({
         aria-label="Live camera feed"
       />
       <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none" />
+      {/* First-frame gap treatment (2026-07-07, user screenshot): while
+          WHEP negotiates and the encoder walks to the next keyframe
+          (~4 s GOP) the video field used to be raw black under a "Live"
+          pill — read as broken. The pill now stays "Connecting" until a
+          real frame renders (see the frame-gating effect), and this
+          shimmer makes the wait read as deliberate. Video field is
+          always black regardless of theme, so white-alpha tones are
+          safe. Removed from the DOM the moment frames flow. */}
+      {status === 'connecting' && (
+        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+          <div className="absolute inset-0 bg-white/[0.04] animate-pulse" />
+          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center">
+            <span className="w-10 h-10 rounded-full border-[1.5px] border-white/15 border-t-white/50 animate-spin motion-reduce:animate-none" />
+          </div>
+        </div>
+      )}
       {showStatusPill && <StatusPill status={status} />}
       <div className="absolute bottom-3 left-3">
         <QualityMenu quality={quality} onSelect={onSelectQuality} />
