@@ -1,0 +1,30 @@
+import pytest
+
+from server.tests.harness_face_recog.fixtures import (
+    EVENTS_DB,
+    PERSONS_DIR,
+    count_named_person_name_rows,
+    count_person_events,
+)
+
+
+pytestmark = [
+    pytest.mark.skipif(
+        not PERSONS_DIR.exists(),
+        reason="no Jetson person crop fixtures - capture .jetson-snapshot/proof_fixtures/persons",
+    ),
+    pytest.mark.skipif(
+        not EVENTS_DB.exists(),
+        reason="no Jetson events DB fixture - capture .jetson-snapshot/db/events.sqlite",
+    ),
+]
+
+
+def test_given_current_snapshot_when_counting_person_events_then_count_is_pinned():
+    assert count_person_events() == 2454
+
+
+def test_given_current_snapshot_when_counting_named_person_rows_then_capture_only_reality_is_pinned():
+    # This pins production's capture-only reality: recognition has not fired live.
+    # A future refreshed snapshot with names must update this pin deliberately.
+    assert count_named_person_name_rows() == 0

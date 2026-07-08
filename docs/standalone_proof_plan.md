@@ -312,7 +312,10 @@ Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 ## Harness #8 — face recognition: atomic steps (spec: codex r10, 2026-07-08)
 FINDING: production has ZERO named person rows — recognition has never
 fired live (capture-only). Named parity gated on a future refreshed
-snapshot (R14 sentinel). Deps: face_recognition/dlib in dev venv (installing).
+snapshot (R14 sentinel). Deps INSTALLED in /tmp/homecam-venv (ephemeral!
+recreate recipe: pip install face_recognition "setuptools<81" +
+pip install git+https://github.com/ageitgey/face_recognition_models —
+setuptools>=81 removes pkg_resources which the models package needs).
 - [ ] R1 fixtures.py: persons/ inventory + sidecar schema + DB overlap
 - [ ] R2 sidecar integrity vs DB rows
 - [ ] R3 DB ground truth: pin zero-named-rows state explicitly
