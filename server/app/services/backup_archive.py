@@ -27,6 +27,27 @@ class PublishedBackup:
     archive_sha256: str
 
 
+def backup_api_response_from_published(published: PublishedBackup) -> dict[str, object]:
+    """Build the success response for an already-published archive."""
+    if not published.archive_path.exists() or not published.archive_path.is_file():
+        raise FileNotFoundError("published archive does not exist")
+    if not published.manifest_path.exists() or not published.manifest_path.is_file():
+        raise FileNotFoundError("published manifest does not exist")
+    archive_digest = sha256_file(published.archive_path)
+    if archive_digest != published.archive_sha256:
+        raise ValueError("published archive digest does not match ledger")
+
+    manifest_id = sha256_file(published.manifest_path)
+    return {
+        "ok": True,
+        "filename": published.archive_path.name,
+        "size": published.archive_path.stat().st_size,
+        "manifest_id": manifest_id,
+        "archive_digest": archive_digest,
+        "ledger_id": archive_digest,
+    }
+
+
 def write_archive_to_temp(
     *,
     target_dir: Path,
