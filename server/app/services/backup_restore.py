@@ -13,6 +13,7 @@ from tempfile import mkdtemp
 from threading import Lock
 from typing import Any, Callable, Iterable, Mapping
 
+from app.services.backup_archive import sha256_file
 from app.services.backup_manifest import MANIFEST_VERSION, validate_manifest
 
 log = logging.getLogger(__name__)
@@ -65,6 +66,20 @@ class RestoreStaging:
 class RestoreApplyResult:
     changed_count: int
     target_sha256: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RestoreOrchestratorRequest:
+    filename: str
+    backup_target_dir: Path
+    current_app_version: str
+    current_schema_version: int | str | None
+    restore_roots: Mapping[str, Path]
+    required_roles: Iterable[str]
+    staging_parent: Path
+    backup_parent: Path
+    ledger_id: str
+    restart_command: Iterable[str] | None = None
 
 
 class MaintenanceLock:
@@ -139,6 +154,86 @@ def open_restore_backup(*, backup_target_dir: Path, filename: str) -> RestoreBac
         manifest_path=manifest_path,
         manifest=validate_manifest(manifest),
     )
+
+
+def restore_api_response_from_orchestrator(
+    request: RestoreOrchestratorRequest,
+    *,
+    maintenance_lock: MaintenanceLock | None = None,
+    restart_runner: Callable[[list[str]], object] | None = None,
+) -> dict[str, object]:
+    """Compose B10-B16 restore steps into a route-ready response body."""
+
+    try:
+        lease = (
+            maintenance_lock.acquire("restore")
+            if maintenance_lock is not None
+            else _NullLease()
+        )
+        with lease:
+            restore = open_restore_backup(
+                backup_target_dir=request.backup_target_dir,
+                filename=request.filename,
+            )
+            compatibility = check_restore_compatibility(
+                restore.manifest,
+                current_app_version=request.current_app_version,
+                current_schema_version=request.current_schema_version,
+            )
+            if not compatibility.compatible:
+                return _restore_not_restored(
+                    reason=compatibility.reason or "incompatible_backup",
+                    phase="compatibility",
+                    detail=compatibility.detail,
+                )
+
+            staging = stage_restore_archive(
+                restore,
+                restore_roots=request.restore_roots,
+                required_roles=request.required_roles,
+                staging_parent=request.staging_parent,
+            )
+            apply_result = apply_staged_restore(
+                staging,
+                backup_parent=request.backup_parent,
+                validators=[validate_restored_state],
+            )
+
+            restart_required = request.restart_command is not None
+            restart_applied = False
+            if request.restart_command is not None and restart_runner is not None:
+                run_restart_handoff(request.restart_command, runner=restart_runner)
+                restart_applied = True
+
+            return {
+                "ok": True,
+                "restored": True,
+                "status": "restored",
+                "filename": restore.archive_path.name,
+                "manifest_id": sha256_file(restore.manifest_path),
+                "changed_file_count": apply_result.changed_count,
+                "restart_required": restart_required,
+                "restart_applied": restart_applied,
+                "ledger_id": request.ledger_id,
+            }
+    except MaintenanceConflict as exc:
+        return _restore_not_restored(
+            reason="maintenance_conflict",
+            phase="maintenance_lock",
+            detail=str(exc),
+        )
+    except RestoreBlocked as exc:
+        return _restore_not_restored(
+            reason=exc.reason,
+            phase="restore",
+            detail=str(exc.path) if exc.path is not None else exc.role,
+        )
+    except (OSError, tarfile.TarError, ValueError) as exc:
+        return _restore_not_restored(
+            reason=exc.__class__.__name__,
+            phase="restore",
+            detail=str(exc),
+        )
 
 
 def check_restore_compatibility(
@@ -299,6 +394,7 @@ def apply_staged_restore(
     replace: Callable[[str, str], None] = os.replace,
 ) -> RestoreApplyResult:
     """Replace live files from staging; rollback restores pre-restore bytes."""
+    backup_parent.mkdir(parents=True, exist_ok=True)
     backup_root = Path(mkdtemp(prefix="homecam-pre-restore-", dir=backup_parent))
     applied: list[tuple[Path, Path | None]] = []
 
@@ -389,6 +485,33 @@ def run_restart_handoff(
     if not command or not all(isinstance(part, str) and part for part in command):
         raise ValueError("restart command must be a non-empty argv list")
     return runner(command)
+
+
+@dataclass(frozen=True)
+class _NullLease:
+    def __enter__(self) -> "_NullLease":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        return None
+
+
+def _restore_not_restored(
+    *,
+    reason: str,
+    phase: str,
+    detail: str | None = None,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "ok": False,
+        "restored": False,
+        "status": "not_restored",
+        "reason": reason,
+        "phase": phase,
+    }
+    if detail:
+        body["detail"] = detail
+    return body
 
 
 def _is_list_backups_safe_name(filename: str) -> bool:
