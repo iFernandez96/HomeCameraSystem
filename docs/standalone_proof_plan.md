@@ -459,7 +459,7 @@ must happen before any "proof" can claim the features work.
 - [x] U17 offline harness: drive U2-U16 against a scratch deploy clone and
       local manifest/artifact; invariant: no network, no sudo, no production
       path writes.
-- [ ] U18 PARITY prep: production records update-request/apply/rollback
+- [x] U18 PARITY prep: production records update-request/apply/rollback
       ledger lines with current version, target version, manifest id, artifact
       digest, chosen deploy strategy, and health result.
 - [ ] U19 PARITY: replay a real Jetson update ledger + real manifest/artifact
