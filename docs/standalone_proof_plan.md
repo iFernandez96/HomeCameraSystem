@@ -250,8 +250,8 @@ Main job: prove the OOM fix (tempfile-on-recordings_dir + FileResponse
 + BackgroundTask unlink + Semaphore(1)) keeps RSS flat vs ~289MB of
 real clip bytes. Fixtures: proof_fixtures/clips/ (6 real MP4s, 9.8-80MB,
 IDs match events.sqlite rows).
-- [ ] H9.1 fixtures.py + inventory (clips<->DB rows, sizes)
-- [ ] H9.2 fixture integrity (every clip has a DB row, bytes nonzero)
+- [x] H9.1 fixtures.py + inventory (clips<->DB rows, sizes)
+- [x] H9.2 fixture integrity (every clip has a DB row, bytes nonzero)
 - [ ] H9.3 scratch recordings_dir builder (byte-for-byte)
 - [ ] H9.4 get_by_ids order + row parity vs captured DB
 - [ ] H9.5 single-clip ZIP: manifest + exact MP4 bytes
@@ -269,13 +269,13 @@ IDs match events.sqlite rows).
 Fixtures: continuous_capture_fixtures/events_tonight.json + journal cadence,
 events.sqlite, fresh docker app log. Parity target: accepted persisted
 events (F16 ledger separates worker-lost attempts).
-- [ ] F1 fixtures.py + inventory
-- [ ] F2 fixture row normalization (json<->sqlite parity of the fixture itself)
-- [ ] F3 real row -> DetectionPayload conversion
-- [ ] F4 scratch DB replay through real event_bus.publish
-- [ ] F5 route ingest replay with pinned time
-- [ ] F6 lazy-import circular-dep pin
-- [ ] F7 idempotent duplicate stream (rows unchanged pass 2)
+- [x] F1 fixtures.py + inventory
+- [x] F2 fixture row normalization (json<->sqlite parity of the fixture itself)
+- [x] F3 real row -> DetectionPayload conversion
+- [x] F4 scratch DB replay through real event_bus.publish
+- [x] F5 route ingest replay with pinned time
+- [x] F6 lazy-import circular-dep pin
+- [x] F7 idempotent duplicate stream (rows unchanged pass 2)
 - [ ] F8 duplicate live-fanout contract pinned
 - [ ] F9 slow subscriber never blocks publish
 - [ ] F10 queue overflow drops only the stuck subscriber
@@ -291,8 +291,8 @@ Two honest legs: LIVE vs the real Jetson (env HOMECAM_LIVE_WHEP=1; real
 first frames per rung) + LOCAL whep-error-harness (real Chromium
 RTCPeerConnection, error paths only — a canned SDP cannot make frames).
 Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
-- [ ] W1 live config reusing auth-harness runner shape
-- [ ] W2 live fixture: console/event capture + JSON attempt ledger
+- [x] W1 live config reusing auth-harness runner shape
+- [x] W2 live fixture: console/event capture + JSON attempt ledger
 - [ ] W3 LIVE smoke: real frame -> Live pill only after frame evidence
 - [ ] W4 LIVE rung hq (/whep/cam/whep, first frame <8s)
 - [ ] W5 LIVE rung sd (/whep/cam_lq/whep)
@@ -316,13 +316,13 @@ snapshot (R14 sentinel). Deps INSTALLED in /tmp/homecam-venv (ephemeral!
 recreate recipe: pip install face_recognition "setuptools<81" +
 pip install git+https://github.com/ageitgey/face_recognition_models —
 setuptools>=81 removes pkg_resources which the models package needs).
-- [ ] R1 fixtures.py: persons/ inventory + sidecar schema + DB overlap
-- [ ] R2 sidecar integrity vs DB rows
-- [ ] R3 DB ground truth: pin zero-named-rows state explicitly
-- [ ] R4 lazy-import boundary: no face_recognition import w/o encodings.pkl
-- [ ] R5 load-mode: missing/corrupt encodings => capture-only
-- [ ] R6 gated: real encode_known_faces build into temp encodings.pkl
-- [ ] R7 gated: threshold ledger on real same-person/stranger crops
+- [x] R1 fixtures.py: persons/ inventory + sidecar schema + DB overlap
+- [x] R2 sidecar integrity vs DB rows
+- [x] R3 DB ground truth: pin zero-named-rows state explicitly
+- [x] R4 lazy-import boundary: no face_recognition import w/o encodings.pkl
+- [x] R5 load-mode: missing/corrupt encodings => capture-only
+- [x] R6 gated: real encode_known_faces build into temp encodings.pkl
+- [x] R7 gated: threshold ledger on real same-person/stranger crops
 - [ ] R8 gated: replay all real person crops, record outcomes
 - [ ] R9 PARITY: replay decisions vs production person_name (all-null now)
 - [ ] R10 null-name propagation through ingest + face_unrecognized search
