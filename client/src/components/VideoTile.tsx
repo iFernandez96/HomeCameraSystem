@@ -32,6 +32,7 @@ export function VideoTile({
   onPlayingChange,
   actions,
   showFullscreenButton = true,
+  safeAreaBottom = false,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -136,6 +137,14 @@ export function VideoTile({
    * keep the button unless they opt out.
    */
   showFullscreenButton?: boolean
+  /**
+   * Add the viewport's bottom safe-area inset to the control row's
+   * offset. Only correct when the tile's bottom edge sits on the
+   * viewport's bottom edge (fullscreen); leave false for a docked
+   * mid-page tile or the row drifts when mobile browsers re-report
+   * the inset on toolbar collapse / app resume.
+   */
+  safeAreaBottom?: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -330,6 +339,9 @@ export function VideoTile({
         clearTimeout(mediaTimer)
         mediaTimer = null
       }
+      // Frames are flowing again — re-arm the one-shot silent reconnect
+      // for the next mid-stream drop (see pcStateChange below).
+      silentRetryUsedRef.current = false
       setStatus('live')
     }
     const onPlaying = () => {
@@ -397,6 +409,25 @@ export function VideoTile({
           // listener exists for mid-stream FAILURE observability only.
           if (s === 'failed' || s === 'disconnected' || s === 'closed') {
             midStreamFail('pc-state-' + s)
+            // Resume-drop fix (2026-07-07, user report): backgrounding
+            // the tab kills the transport, and the failure lands a beat
+            // AFTER the resume visibilitychange (which only reconnects
+            // when status is ALREADY 'error'), so every app switch
+            // ended at the manual-Retry screen. One SILENT reconnect
+            // per live episode: bounded (the flag re-arms only after
+            // real frames flow again, so a dead server goes
+            // retry → connect fails → error, no loop), and gated on the
+            // tab being visible (a hidden tab can't win — the existing
+            // resume handler owns that case). Manual-Retry-only stays
+            // the rule for everything past this single attempt.
+            if (
+              !silentRetryUsedRef.current &&
+              document.visibilityState === 'visible'
+            ) {
+              silentRetryUsedRef.current = true
+              setRetryNonce((n) => n + 1)
+              return
+            }
             setStatus('error')
           }
         }
@@ -503,6 +534,10 @@ export function VideoTile({
   // Manual-retry-only semantics are preserved: one resume, at most one new
   // attempt, never a retry loop.
   const resumeInFlightRef = useRef(false)
+  // One-shot guard for the silent mid-stream reconnect (see
+  // pcStateChange): true = this live episode already spent its free
+  // retry; re-armed only by markLive (real frames).
+  const silentRetryUsedRef = useRef(false)
   useEffect(() => {
     if (status !== 'error') {
       resumeInFlightRef.current = false
@@ -707,10 +742,24 @@ export function VideoTile({
           now lives in the SAME row (justify-between pushes it left),
           so every bottom overlay shares one baseline in docked AND
           fullscreen modes. The row itself is pointer-events-none so
-          the strip between the clusters doesn't swallow touches. */}
+          the strip between the clusters doesn't swallow touches.
+          Safe-area gating (2026-07-07, user report "buttons move
+          upwards when I leave and come back"): env(safe-area-inset-
+          bottom) is a VIEWPORT inset — mid-page it must be zero for
+          this row, but Firefox Android re-reports a nonzero inset when
+          its dynamic toolbar collapses on app resume, floating the row
+          up the tile by the gesture-bar height. The inset only makes
+          sense when the tile's bottom edge IS the viewport's bottom
+          edge, so the page opts in via `safeAreaBottom` (Watch passes
+          its fullscreen state). Docked: plain 0.75rem, immune to
+          toolbar/visibility churn. */}
       <div
         className="absolute inset-x-3 flex items-center justify-between gap-2 pointer-events-none"
-        style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        style={{
+          bottom: safeAreaBottom
+            ? 'calc(0.75rem + env(safe-area-inset-bottom))'
+            : '0.75rem',
+        }}
       >
         <div className="pointer-events-auto">
           <QualityMenu quality={quality} onSelect={onSelectQuality} />

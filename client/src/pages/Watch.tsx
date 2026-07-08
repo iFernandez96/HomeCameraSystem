@@ -398,6 +398,7 @@ export function Watch() {
             // element and carries the hour scrubber; the native
             // Fullscreen API button would be a second, competing one).
             showFullscreenButton={false}
+            safeAreaBottom={full}
             actions={
               full ? undefined : (
                 <>

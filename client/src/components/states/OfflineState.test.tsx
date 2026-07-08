@@ -58,8 +58,12 @@ describe('OfflineState', () => {
     expect(
       screen.queryByText(/powered on and connected/i),
     ).not.toBeInTheDocument()
-    // Tight actionable hint is present instead.
-    expect(screen.getByText(/power-cycle the camera/i)).toBeInTheDocument()
+    // Tight actionable hint is present instead (2026-07-07: copy names
+    // both plausible causes — phone-side drops land here too, so
+    // "power-cycle the camera" alone was misleading).
+    expect(
+      screen.getByText(/check your connection or the camera/i),
+    ).toBeInTheDocument()
   })
 
   it('Given size="compact" + retry callback, When the Retry button is rendered, Then it is sized "sm" so it fits inside the video tile without overflow (premium-launch slice — Maya Critical #4)', () => {

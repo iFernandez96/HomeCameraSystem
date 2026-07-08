@@ -40,7 +40,10 @@ const FULL_BODIES = {
 } as const
 
 const COMPACT_BODIES = {
-  camera: 'Power-cycle the camera, then tap Retry.',
+  // "Power-cycle the camera" alone was misleading (2026-07-07): the
+  // tile lands here for phone-side drops too (backgrounded tab, radio
+  // handoff), where the camera is fine — name both causes.
+  camera: 'Check your connection or the camera, then tap Retry.',
   network: 'Check your connection, then tap Retry.',
 } as const
 

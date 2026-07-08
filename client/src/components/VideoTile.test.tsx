@@ -399,39 +399,57 @@ describe('VideoTile', () => {
     expect(screen.queryByText(/Low memory/i)).not.toBeInTheDocument()
   })
 
-  it('flips to error when the peer connection state becomes failed (iter-162)', async () => {
-    const pc = fakePc()
-    connectWhep.mockResolvedValue({ close: closeFn, pc })
+  it('Given a live stream, When the transport drops once while the tab is visible, Then one silent reconnect fires without showing the error overlay (resume-drop fix 2026-07-07)', async () => {
+    // arrange — first episode reaches Live via real frames.
+    const pc1 = fakePc()
+    const pc2 = fakePc()
+    connectWhep
+      .mockResolvedValueOnce({ close: closeFn, pc: pc1 })
+      .mockResolvedValueOnce({ close: closeFn, pc: pc2 })
     render(<VideoTile src="http://test/cam/whep" />)
     await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    pc.setState('failed')
+    expect(connectWhep).toHaveBeenCalledTimes(1)
+
+    // act — mid-stream drop (the backgrounded-tab kill shape).
+    pc1.setState('failed')
+
+    // assert — a second WHEP attempt fires silently: the tile shows
+    // Connecting, never the Camera-offline overlay.
+    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/connecting/i)).toBeInTheDocument()
+
+    // act — frames flow on the new connection.
+    await fireFirstFrame()
+
+    // assert — back to Live with no user interaction.
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+  })
+
+  it('flips to error when the peer connection fails again after the one silent reconnect (iter-162 + resume-drop fix)', async () => {
+    // arrange — episode 1 goes live; its drop spends the silent retry.
+    const pc1 = fakePc()
+    const pc2 = fakePc()
+    connectWhep
+      .mockResolvedValueOnce({ close: closeFn, pc: pc1 })
+      .mockResolvedValueOnce({ close: closeFn, pc: pc2 })
+    render(<VideoTile src="http://test/cam/whep" />)
+    await fireFirstFrame()
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+
+    // act — first drop consumes the silent retry; the retry's pc then
+    // fails before any frame arrives (server really down).
+    pc1.setState('failed')
+    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    pc2.setState('disconnected')
+
+    // assert — now the manual-Retry error surface shows (compact
+    // OfflineState heading + Retry button).
     await waitFor(() =>
-      // Premium-launch slice (Maya Critical #4): VideoTile error
-      // overlay now uses the compact OfflineState variant ("Camera
-      // offline" heading + "Power-cycle…" hint) instead of the full-
-      // page body. Either visible string identifies the error
-      // surface; we query the stable heading.
       expect(screen.getByText(/camera offline/i)).toBeInTheDocument(),
     )
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
-  })
-
-  it('flips to error when the peer connection state becomes disconnected (iter-162)', async () => {
-    const pc = fakePc()
-    connectWhep.mockResolvedValue({ close: closeFn, pc })
-    render(<VideoTile src="http://test/cam/whep" />)
-    await fireFirstFrame()
-    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    pc.setState('disconnected')
-    await waitFor(() =>
-      // Premium-launch slice (Maya Critical #4): VideoTile error
-      // overlay now uses the compact OfflineState variant ("Camera
-      // offline" heading + "Power-cycle…" hint) instead of the full-
-      // page body. Either visible string identifies the error
-      // surface; we query the stable heading.
-      expect(screen.getByText(/camera offline/i)).toBeInTheDocument(),
-    )
   })
 
   it('does NOT flip to error on benign mid-stream state changes (iter-162)', async () => {
@@ -446,25 +464,33 @@ describe('VideoTile', () => {
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     pc.setState('connected')
     expect(screen.getByText('Live')).toBeInTheDocument()
-    expect(screen.queryByText(/power-cycle the camera/i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/check your connection or the camera/i),
+    ).not.toBeInTheDocument()
   })
 
-  it('Retry after mid-stream failure triggers a new WHEP connect (iter-162)', async () => {
+  it('Retry after mid-stream failure triggers a new WHEP connect (iter-162; failures 1+2 spend the silent reconnect first)', async () => {
     const pc1 = fakePc()
     const pc2 = fakePc()
+    const pc3 = fakePc()
     connectWhep
       .mockResolvedValueOnce({ close: closeFn, pc: pc1 })
       .mockResolvedValueOnce({ close: closeFn, pc: pc2 })
+      .mockResolvedValueOnce({ close: closeFn, pc: pc3 })
     render(<VideoTile src="http://test/cam/whep" />)
     await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
     expect(connectWhep).toHaveBeenCalledTimes(1)
+    // First drop is absorbed by the one silent reconnect (attempt 2);
+    // its pc failing too is what surfaces the manual Retry button.
     pc1.setState('failed')
+    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    pc2.setState('failed')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument(),
     )
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
-    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(3))
     await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
   })
@@ -922,11 +948,13 @@ describe('VideoTile', () => {
     // act
     render(<VideoTile src="http://test/cam/whep" />)
 
-    // assert — the compact body ("Power-cycle the camera, then tap
-    // Retry.") is present; the full-size body ("powered on and
-    // connected") is NOT.
+    // assert — the compact body ("Check your connection or the
+    // camera, then tap Retry.") is present; the full-size body
+    // ("powered on and connected") is NOT.
     await waitFor(() =>
-      expect(screen.getByText(/power-cycle the camera/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/check your connection or the camera/i),
+      ).toBeInTheDocument(),
     )
     expect(
       screen.queryByText(/powered on and connected/i),
