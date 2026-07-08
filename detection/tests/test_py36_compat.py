@@ -50,6 +50,8 @@ _GUARDED_MODULES = (
     "detection/box_norm.py",
     "detection/camera_ident.py",
     "detection/decision_ledger.py",
+    "detection/shadow_presence.py",
+    "detection/tools/shadow_diff.py",
     "detection/memory_guard.py",
     "detection/thermal_guard.py",
     "detection/schedule.py",

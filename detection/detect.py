@@ -193,6 +193,7 @@ import sdnotify  # noqa: E402  (systemd Type=notify liveness; no-op off-systemd)
 from memory_guard import MemoryGuard, read_mem_available_mb  # noqa: E402
 from metrics import Metrics  # noqa: E402
 from presence import PresenceTracker  # noqa: E402
+from shadow_presence import ShadowPresenceRunner  # noqa: E402
 import visit_runtime  # noqa: E402  (continuous-capture wiring + recovery, S4)
 from schedule import in_off_window  # noqa: E402
 from thermal_guard import ThermalGuard, read_gpu_temp_c  # noqa: E402
@@ -1382,6 +1383,9 @@ def main():
     source_uri = _env("DETECT_SOURCE", "rtsp://localhost:8554/cam")
     threshold = _env("DETECT_THRESHOLD", 0.55, float)
     cooldown = _env("DETECT_COOLDOWN_S", 5.0, float)
+    shadow_presence_enabled = _env("DETECT_SHADOW_PRESENCE", "0") not in (
+        "0", "false", "False", "no", "NO", "off", "OFF",
+    )
     event_url = _env("EVENT_URL", "http://127.0.0.1:8000/api/_internal/event")
     # iter-288 (security-auditor G1, queued since iter-264): the
     # systemd unit file (`deploy/systemd/homecam-detect.service`) is
@@ -1679,6 +1683,19 @@ def main():
     # See detection/presence.py and the gate below. The old `cooldown_s` now
     # acts as the min-gap floor between emits for one key.
     presence_tracker = PresenceTracker()
+    shadow_presence_tracker = PresenceTracker(
+        iou_threshold=_env("DETECT_SHADOW_IOU_THRESHOLD", 0.3, float),
+        max_keys=_env("DETECT_SHADOW_MAX_KEYS", 32, int),
+    )
+    shadow_presence = ShadowPresenceRunner(
+        shadow_presence_tracker,
+        _ledger_append,
+        lambda msg: log.warning(msg),
+        enabled=shadow_presence_enabled,
+        clip_duration_s=_env("DETECT_SHADOW_CLIP_DURATION_S", None, float),
+        presence_gap_s=_env("DETECT_SHADOW_PRESENCE_GAP_S", None, float),
+        min_gap_s=_env("DETECT_SHADOW_MIN_GAP_S", None, float),
+    )
     # --- continuous-capture runner + crash recovery (plan S4) -------------
     # HARD XOR with the legacy ClipRecorder.start_clip path: the runner is
     # built ONLY when the flag is on, and the loop branches on it so both
@@ -2266,6 +2283,10 @@ def main():
                 "iou": presence_decision.get("iou"),
                 "emit": bool(should_emit),
             })
+        shadow_presence.observe(
+            emit_key, top_box, now, clip_duration_s,
+            _PRESENCE_GAP_S, cooldown_now,
+        )
         if not should_emit:
             # iter-172 cudaImage release symmetry — release the dmabuf promptly
             # so jetson-utils can recycle it; matches every other early-continue.
