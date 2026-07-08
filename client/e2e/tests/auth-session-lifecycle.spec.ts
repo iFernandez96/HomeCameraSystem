@@ -1,5 +1,7 @@
 import { test, expect } from '../authHarness'
 import type { Cookie, Page } from '@playwright/test'
+import { randomBytes } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
 
 const ACCESS_COOKIE = 'homecam_access'
 const REFRESH_COOKIE = 'homecam_refresh'
@@ -88,6 +90,21 @@ async function installWebSocketProbe(page: Page): Promise<void> {
       }
     } as typeof WebSocket
   })
+}
+
+async function expectSessionExpiredViaBoundedRefresh401(
+  page: Page,
+  refreshResponses: number[],
+): Promise<void> {
+  await expect
+    .poll(() => refreshResponses.length, { timeout: 10_000 })
+    .toBeGreaterThan(0)
+  expect(refreshResponses.every((status) => status === 401)).toBe(true)
+  expect(refreshResponses.length).toBeLessThanOrEqual(3)
+  await expect(page).toHaveURL(/\/login\?expired=1$/)
+  await expect(
+    page.getByText("You've been signed out for security."),
+  ).toBeVisible()
 }
 
 test.describe('Auth session lifecycle harness', () => {
@@ -366,14 +383,49 @@ test.describe('Auth session lifecycle harness', () => {
     // so the status poll and the navigation fetch can each contribute one
     // attempt. The invariant: every attempt 401s (never a late 200) and the
     // count stays bounded — not exactly one.
-    await expect
-      .poll(() => refreshResponses.length, { timeout: 10_000 })
-      .toBeGreaterThan(0)
-    expect(refreshResponses.every((status) => status === 401)).toBe(true)
-    expect(refreshResponses.length).toBeLessThanOrEqual(3)
-    await expect(page).toHaveURL(/\/login\?expired=1$/)
-    await expect(
-      page.getByText("You've been signed out for security."),
-    ).toBeVisible()
+    await expectSessionExpiredViaBoundedRefresh401(page, refreshResponses)
+  })
+
+  test('given a logged-in session, when the JWT secret rotates and the next API round-trip runs after access expiry, then session-expired UX is reached', async ({
+    authServer,
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    const refreshResponses: number[] = []
+    page.on('response', (response) => {
+      const request = response.request()
+      if (
+        request.method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/auth/refresh'
+      ) {
+        refreshResponses.push(response.status())
+      }
+    })
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await writeFile(authServer.jwtSecretPath, randomBytes(32), { mode: 0o600 })
+    await page.waitForTimeout((ACCESS_TOKEN_TTL_S + 0.5) * 1_000)
+
+    // Don't click a nav link here: background traffic (WS reconnect /
+    // residual poll) can hit the rotated secret during the wait and the app
+    // may already be on /login, making the link vanish before the click.
+    // Restoring visibility is the natural resume round-trip either way.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await expectSessionExpiredViaBoundedRefresh401(page, refreshResponses)
   })
 })

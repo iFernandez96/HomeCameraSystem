@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 type AuthHarnessServer = {
   baseURL: string
   healthzStatus: number
+  jwtSecretPath: string
   logPath: string
   root: string
 }
@@ -120,6 +121,7 @@ export const test = base.extend<
     }
     await Promise.all(Object.values(dirs).map((dir) => mkdir(dir, { recursive: true })))
 
+    const jwtSecretPath = path.join(root, 'jwt_secret.bin')
     const env = {
       ...process.env,
       HOMECAM_SIMULATOR: '1',
@@ -127,7 +129,7 @@ export const test = base.extend<
       PORT: String(port),
       CLIENT_DIST: clientDist,
       USERS_DB_PATH: path.join(root, 'users.db'),
-      JWT_SECRET_PATH: path.join(root, 'jwt_secret.bin'),
+      JWT_SECRET_PATH: jwtSecretPath,
       ACCESS_TOKEN_TTL_S: '3',
       REFRESH_TOKEN_TTL_S: '20',
       COOKIE_SECURE: 'false',
@@ -180,7 +182,7 @@ export const test = base.extend<
 
     try {
       const healthzStatus = await waitForHealthz(baseURL, logPath)
-      await use({ baseURL, healthzStatus, logPath, root })
+      await use({ baseURL, healthzStatus, jwtSecretPath, logPath, root })
     } finally {
       testInfo.attachments.push({
         name: 'auth-harness-log',
