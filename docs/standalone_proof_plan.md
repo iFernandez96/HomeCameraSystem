@@ -124,7 +124,7 @@ Every harness and every feature is built as SMALL ATOMIC STEPS:
 Claude redirects: live steps target ONE known-current sub (single buzz,
 not 8); prune test mutates the DISPOSABLE fixture copy over real
 network, never the prod registry.
-- [ ] P1 fixture parser + secret-hygiene pin
+- [x] P1 fixture parser + secret-hygiene pin
 - [ ] P2 real VAPID PEMs load through real PushService
 - [ ] P3 log redaction: failure paths never emit endpoint/key bytes
 - [ ] P4 payload contract (title/body/tag/url/event_id/unread_count/image)
