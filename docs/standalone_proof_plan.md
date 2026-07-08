@@ -184,13 +184,13 @@ is the product fix contract if A7 confirms.
 - [x] A3 wrong-kind boundary 401s both directions
 - [x] A4 access-expired + refresh-valid REST path rotates and retries
 - [x] A5 refresh single-flight under concurrent 401s (server side: sliding-window reuse pinned)
-- [ ] A6 refresh-expired emits ONE session-expired
+- [x] A6 refresh-expired emits ONE session-expired
 - [x] A7 REPRODUCER: WS 1008 + /me 401 signs out despite valid refresh
       (confirmed vs production trace — zero refresh attempts; 7552510)
 - [x] A8 fix contract: 1008 attempts refresh before anon (88fc13e;
       single-flight reuse, signals stay distinct, full client suite green)
 - [x] A9 1008 + failed refresh -> session-expired (3ca4018)
-- [ ] A10 real-browser cookie expiry/rotation (Playwright, scratch uvicorn)
+- [x] A10 real-browser cookie expiry/rotation (Playwright, scratch uvicorn)
       — decomposed (codex design r5, 2026-07-08): runner = existing
       Playwright conventions; new playwright.auth-harness.config.ts (no
       global webServer) + client/e2e/authHarness.ts fixture (temp dirs,
@@ -200,14 +200,14 @@ is the product fix contract if A7 confirms.
   - [x] A10.1 real-Chromium login cookie attrs (httpOnly/path/sameSite/expiry) (live-run green 2026-07-08)
   - [x] A10.2 access expiry rotates via refresh; cookie values/expiry change; stays authed (live-run green 2026-07-08, exactly one refresh 200)
   - [x] A10.3 both-expired reaches session-expired UX (live-run green 2026-07-08; all refresh attempts 401, bounded, lands /login?expired=1)
-- [ ] A11 background/resume past access TTL stays signed in
+- [x] A11 background/resume past access TTL stays signed in
   - [x] A11.1 resume past access TTL refreshes and stays signed in (live-run green 2026-07-08 — the production mobile-resume scenario, browser-proven)
   - [x] A11.2 WS reconnect self-heal after expiry (browser leg of A8) —
         FOUND+FIXED production bug 23f2a50: pre-accept close(1008) reached
         real browsers as 1006, so ws.ts's no-retry + homecam:auth-failed
         contract had NEVER fired from the live server (jsdom mocks hid it);
         accept-then-close makes the whole chain real (866d760, live-run green)
-- [ ] A12 secret rotation kills sessions into session-expired
+- [x] A12 secret rotation kills sessions into session-expired
   - [x] A12.1 rotation kills REST refresh into session-expired (live-run green 2026-07-08; confirms restart-with-unpersisted-secret WOULD sign everyone out — check the deploy volume persists jwt secret)
   - [x] A12.2 rotation kills WS self-heal into session-expired (live-run green 2026-07-08; quiescence check pins no-storm after landing on /login)
   - [x] A12.3 parity ledger: browser/server event ledger diffs against Jetson auth trace shapes
@@ -428,15 +428,15 @@ must happen before any "proof" can claim the features work.
 - [x] U8 scratch deploy layout detector: identify required compose/env/data
       paths in a temp clone; invariant: incomplete layout is rejected without
       writes.
-- [ ] U9 stage artifact: unpack/copy to a versioned staging dir; invariant:
+- [x] U9 stage artifact: unpack/copy to a versioned staging dir; invariant:
       current live dir and persisted data dirs are untouched.
-- [ ] U10 preflight: validate staged compose/config references and required
+- [x] U10 preflight: validate staged compose/config references and required
       persisted volumes; invariant: failed preflight deletes/inert-marks
       staging and keeps current version active.
-- [ ] U11 apply transaction: atomically switch a scratch "current" pointer or
+- [x] U11 apply transaction: atomically switch a scratch "current" pointer or
       equivalent deploy marker; invariant: exactly one active version pointer
       exists after success.
-- [ ] U12 restart handoff seam: implement command runner injection, defaulting
+- [x] U12 restart handoff seam: implement command runner injection, defaulting
       to no real host restart in tests; invariant: apply records the exact
       command that would run and never shells through unvalidated strings.
 - [ ] U13 post-apply health gate: after injected restart, poll real health
@@ -537,29 +537,29 @@ must happen before any "proof" can claim the features work.
 - [x] B8 backup retention: keep newest N or age policy in scratch dir;
       invariant: retention deletes only valid backup filenames and never the
       just-created archive.
-- [ ] B9 backup API response: return filename, size, manifest id, archive
+- [x] B9 backup API response: return filename, size, manifest id, archive
       digest, and ledger id; invariant: no success response without a final
       archive existing.
-- [ ] B10 restore reader: open selected archive+manifest from
+- [x] B10 restore reader: open selected archive+manifest from
       backup_target_dir; invariant: path traversal and unsafe filenames remain
       rejected before open.
-- [ ] B11 restore compatibility: compare manifest version/app version/schema
+- [x] B11 restore compatibility: compare manifest version/app version/schema
       version; invariant: incompatible backup blocks before extracting bytes.
-- [ ] B12 restore dry-run: verify archive contents, checksums, required roles,
+- [x] B12 restore dry-run: verify archive contents, checksums, required roles,
       and target paths; invariant: dry-run produces a file action plan and no
       writes.
-- [ ] B13 maintenance lock: block concurrent backup/restore/update and normal
+- [x] B13 maintenance lock: block concurrent backup/restore/update and normal
       writes during restore; invariant: second operation is rejected with a
       typed conflict.
-- [ ] B14 atomic restore staging: extract into temp staging root; invariant:
+- [x] B14 atomic restore staging: extract into temp staging root; invariant:
       live persisted files are untouched until all checks pass.
-- [ ] B15 atomic replace: swap staged files into the scratch persisted roots
+- [x] B15 atomic replace: swap staged files into the scratch persisted roots
       with backups of overwritten files; invariant: partial failure rolls back
       to pre-restore bytes.
-- [ ] B16 post-restore validation: init/read users_db, detection_config,
+- [x] B16 post-restore validation: init/read users_db, detection_config,
       push_subs/VAPID, jwt secret, and any included state; invariant: invalid
       restored state rolls back.
-- [ ] B17 restart handoff seam: injected command runner records the restart
+- [x] B17 restart handoff seam: injected command runner records the restart
       command; invariant: tests never require sudo and never shell interpolate
       archive names.
 - [ ] B18 restore API response: return restored filename, manifest id, changed
