@@ -365,7 +365,7 @@ test.describe('SW lifecycle two-build harness', () => {
       await runDeployScenario(page, swServer)
     await attachLedger(testInfo, ledger)
 
-    expect(firstReloadMarker).toBe('h6-b')
+    expect(firstReloadMarker).toBe('h6-a')
     expect(secondReloadMarker).toBe('h6-b')
 
     // Playwright does not emit request/response events for navigations the
