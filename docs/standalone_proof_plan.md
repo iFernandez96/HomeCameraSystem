@@ -462,7 +462,7 @@ must happen before any "proof" can claim the features work.
 - [x] U18 PARITY prep: production records update-request/apply/rollback
       ledger lines with current version, target version, manifest id, artifact
       digest, chosen deploy strategy, and health result.
-- [ ] U19 PARITY: replay a real Jetson update ledger + real manifest/artifact
+- [x] U19 PARITY: replay a real Jetson update ledger + real manifest/artifact
       metadata through the harness against a scratch clone and diff target
       decision, command plan, terminal status, and version outcome exactly.
 

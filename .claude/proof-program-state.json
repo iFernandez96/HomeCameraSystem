@@ -1,5 +1,5 @@
 {
- "goal": "Prove every feature standalone against real data per docs/standalone_proof_plan.md; Claude plans+gates+commits, codex gpt-5.5 codes one atomic step per invocation.",
+ "goal": "Prove every feature standalone against real data per docs/standalone_proof_plan.md; Claude plans+gates+commits, codex gpt-5.5 codes one atomic step per invocation. \u2014 COMPLETE 2026-07-08: all 11 harnesses closed with parity legs green vs real Jetson data. Armed sentinels: R15 (named person), thumb-fetch log regeneration.",
  "north_star": "GROUND-TRUTH PARITY (Israel, 2026-07-08): standalones must be IDENTICAL to live \u2014 given raw Jetson captures, the harness (real modules, real fixtures) must reproduce the exact results the Jetson produced, verified by diffing against Jetson logs/db/artifacts. Every harness ends with a PARITY leg (see plan doc STANDING RULE); contract pins alone never close a harness; missing Jetson-side ground truth means adding observability + refetching, not skipping. Every codex prompt carries this; every gate enforces it.",
  "parallelism_rule": "STANDING (Israel, 2026-07-08): run at MAX parallelism constantly without losing quality \u2014 every disjoint-directory codex lane filled (server harness dirs, detection harness dirs, client e2e vs client src are all separate lanes; read-only spec rounds are free); the gate stays serial and strict (run suite, review diff, reject dishonest tests, atomic commits); convert every landed spec into an implementation lane immediately; prefetch long poles (deps, builds, fixtures) the moment they're foreseeable.",
  "resume_contract": "On wake: 0) re-read north_star AND parallelism_rule \u2014 reject any drift from ground-truth parity even if tests are green; keep all lanes full; 1) read this file + docs/standalone_proof_plan.md checklists; 2) `git log --oneline -15` to see what landed; 3) run the harness suites to confirm green; 4) for any in_flight codex step: check the tree for its files \u2014 if present and green, gate+commit+tick checklist; if absent, re-issue that step verbatim; 5) issue the next unchecked step (one per codex invocation, workspace-write); 6) update this file; 7) do NOT ask the user anything \u2014 only write a blocked entry on a genuinely unrecoverable blocker. Parallel lanes allowed across DISJOINT harness dirs only. Fixtures live under .jetson-snapshot/proof_fixtures/ (gitignored; push/ contains SECRETS, never commit or log bytes). Capture new Jetson fixtures opportunistically when it is reachable.",
@@ -46,10 +46,9 @@
    "tests": "server/tests/harness_multicam 6 (HOMECAM_MEDIAMTX_BIN=v1.18.0) + client multicam-switch e2e 2 + detection harness_multicam_worker 2 + M10.10 honest config-gate skip"
   },
   "11_rebuild_list": {
-   "status": "in_progress",
-   "done": "U1-18 (update route REAL, bd18b25) + B1-20 + artifact builder; 0.1.1 artifact pre-staged on Jetson",
-   "remaining": "gate B21 -> ONE cross-build server deploy (both routes) -> U19 real update parity + B22 real backup/restore parity; artifact+manifest must be copied INTO the secrets volume (/app/secrets/dist-ota), staged copy is at ~/HomeCameraSystem/dist-ota",
-   "in_flight": "B21 backup/restore route wiring (codex bo5pm49ty)"
+   "status": "DONE",
+   "tests": "harness_ota 55 + harness_backup 35; OTA + backup/restore de-stubbed to REAL routes; U19 parity: production ledger (21 lines incl. honest rejections + applied 0.1.2) replays exactly; B22 parity: real production archive restores byte-identical to in-place device hashes",
+   "production": "OTA applied 0.1.2 live (client tier atomic swap, host commands recorded); real backup archive created + ledgered; compose client_dist now rw (OTA enablement)"
   }
  },
  "production": {
@@ -57,6 +56,6 @@
   "all_verified": "healthz + bundle hash + live suite 6/6"
  },
  "blocked": [],
- "last_update": "2026-07-08T14:45 U18 real; detection order-dep fixed (460 green); server 1151 green",
+ "last_update": "2026-07-08T15:45 PROGRAM COMPLETE",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom on the LIVE FEED user-confirmed working (2026-07-08 ~13:15); clips-modal pinch not explicitly confirmed."
 }
