@@ -101,7 +101,7 @@ These 13 are the standing way to work in this repo — derived from the codebase
 - `/api/_internal/*` is never auth-gated. Worker posts events without auth. Don't add `dependencies=[...]` on the `_internal.router` include.
 - `/api/_internal/detection/config` mirrors the user-facing GET unauthenticated for worker config-poll. Keep BOTH routes.
 - `/metrics` and `/healthz` live at root, not `/api/*`. Scrapers/probes don't speak cookies.
-- WebSocket Origin gate: full `urlparse(origin).netloc` equality, close 1008 BEFORE `ws.accept()` on mismatch.
+- WebSocket Origin gate: full `urlparse(origin).netloc` equality. `events_ws` accepts first, then closes 1008 on origin/auth rejection; pre-accept close becomes browser 1006 under uvicorn.
 - Auth `kind` claim is load-bearing (`tokens.decode`). PyJWT considers a kind-mismatched token "valid" — `decode` re-checks and raises. Pin: `test_decode_rejects_kind_mismatch_*`.
 - Default-authed `client` test fixture auto-logs in. Tests pinning 401-on-anon must use `client_anon`. Pin: `tests/test_auth_gating.py`.
 - `users.db` mode 0o600 pre-create via `os.open(..., 0o600)` BEFORE `sqlite3.connect`.

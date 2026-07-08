@@ -489,6 +489,10 @@ async def list_people(
 
 @router.websocket("/events/ws")
 async def events_ws(ws: WebSocket) -> None:
+    # Accept first so real browsers can observe policy close codes. With
+    # uvicorn, a pre-accept close becomes an HTTP 403 handshake rejection
+    # and browser JS only sees abnormal close 1006.
+    await ws.accept()
     # iter-168: same-origin gate on the WS handshake. Pre-iter-168 the
     # WS upgrade was the only `/api/*` surface that didn't go through
     # ANY validation — and it streams the most sensitive data on the
@@ -522,12 +526,11 @@ async def events_ws(ws: WebSocket) -> None:
             )
         await ws.close(code=1008, reason="origin mismatch")
         return
-    # iter-185 (Auth Plan Phase 6): cookie precondition. Both
-    # gates run BEFORE `ws.accept()` per the plan — we close with
-    # 1008 (Policy Violation, same code as the origin gate) so the
-    # iter-182 client side's no-auto-retry treatment applies. The
-    # client's AuthProvider listens for `homecam:auth-failed` events
-    # dispatched on 1008 close to drop session state.
+    # iter-185 (Auth Plan Phase 6): cookie precondition. Auth failures
+    # close with 1008 (Policy Violation, same code as the origin gate)
+    # so the iter-182 client side's no-auto-retry treatment applies.
+    # The client's AuthProvider listens for `homecam:auth-failed`
+    # events dispatched on 1008 close to drop session state.
     # iter-logging: all four auth branches log at WARNING (today they
     # were silent while the origin gate above logged — an asymmetry that
     # hid every WS auth rejection). Tailnet exposure makes auth-rejection
@@ -587,12 +590,10 @@ async def events_ws(ws: WebSocket) -> None:
         )
         await ws.close(code=1008, reason="auth required")
         return
-    # iter-263 (security-auditor F1): bus-level subscriber cap. We
-    # MUST attempt subscribe BEFORE ws.accept() so a rejected client
-    # never sees a 101 Switching Protocols. close code 1013 (Try
-    # Again Later) tells the iter-158 client reconnect logic to back
-    # off — distinct from the 1008 policy-violation closes that
-    # signal a configuration / auth problem.
+    # iter-263 (security-auditor F1): bus-level subscriber cap. Close
+    # code 1013 (Try Again Later) tells the iter-158 client reconnect
+    # logic to back off — distinct from the 1008 policy-violation
+    # closes that signal a configuration / auth problem.
     # iter-logging: identify the connecting client (the authed `sub` +
     # the request client host) so a capacity rejection / stream crash is
     # attributable. `client` is the (host, port) starlette Address or
@@ -612,7 +613,6 @@ async def events_ws(ws: WebSocket) -> None:
         )
         await ws.close(code=1013, reason="server at capacity")
         return
-    await ws.accept()
     try:
         while True:
             evt = await queue.get()

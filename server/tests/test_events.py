@@ -9,6 +9,15 @@ from starlette.websockets import WebSocketDisconnect
 _SAME_ORIGIN_HEADERS = {"origin": "http://testserver"}
 
 
+def _assert_ws_closes_with_1008(
+    client: TestClient, headers: dict[str, str] | None = None
+) -> None:
+    with client.websocket_connect("/api/events/ws", headers=headers or {}) as ws:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+    assert exc.value.code == 1008
+
+
 def test_get_events_returns_list(client: TestClient):
     r = client.get("/api/events")
     assert r.status_code == 200
@@ -55,10 +64,7 @@ def test_websocket_rejects_missing_origin_header(client: TestClient):
     always send Origin on WS upgrades, and this endpoint has no non-
     browser consumer (the worker uses REST `/api/_internal/*`, not the
     WS). Reject with close code 1008 (Policy Violation)."""
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect("/api/events/ws"):
-            pass
-    assert exc.value.code == 1008
+    _assert_ws_closes_with_1008(client)
 
 
 def test_websocket_rejects_cross_origin(client: TestClient):
@@ -68,13 +74,9 @@ def test_websocket_rejects_cross_origin(client: TestClient):
     this test would have been a successful WS upgrade and the
     attacker-page would have streamed every detection event in real
     time, including `person_name` matches."""
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(
-            "/api/events/ws",
-            headers={"origin": "http://attacker.lan"},
-        ):
-            pass
-    assert exc.value.code == 1008
+    _assert_ws_closes_with_1008(
+        client, headers={"origin": "http://attacker.lan"}
+    )
 
 
 def test_websocket_rejects_origin_with_matching_path_but_different_host(
@@ -83,13 +85,9 @@ def test_websocket_rejects_origin_with_matching_path_but_different_host(
     """iter-168 corner case: a clever attacker might set Origin to
     `http://testserver.attacker.lan` hoping a startswith check would
     pass. Pin that we use full netloc equality, not prefix match."""
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(
-            "/api/events/ws",
-            headers={"origin": "http://testserver.attacker.lan"},
-        ):
-            pass
-    assert exc.value.code == 1008
+    _assert_ws_closes_with_1008(
+        client, headers={"origin": "http://testserver.attacker.lan"}
+    )
 
 
 def _post_event(client: TestClient, **over):
@@ -137,16 +135,10 @@ def test_history_unbounded_after_sqlite_swap(client: TestClient):
 
 def test_websocket_rejects_anonymous_handshake(client_anon: TestClient):
     """iter-185 (Auth Plan Phase 6): the WS handshake now requires
-    a valid `homecam_access` cookie BEFORE `ws.accept()`. Anonymous
-    clients close with 1008 reason='auth required' — same code as
-    the iter-168 origin gate so the client's iter-182 no-auto-retry
-    treatment applies cleanly."""
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client_anon.websocket_connect(
-            "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
-        ):
-            pass
-    assert exc.value.code == 1008
+    a valid `homecam_access` cookie. Anonymous clients close with
+    1008 reason='auth required' — same code as the iter-168 origin gate
+    so the client's iter-182 no-auto-retry treatment applies cleanly."""
+    _assert_ws_closes_with_1008(client_anon, headers=_SAME_ORIGIN_HEADERS)
 
 
 def test_websocket_rejects_invalid_access_cookie(client_anon: TestClient):
@@ -154,12 +146,7 @@ def test_websocket_rejects_invalid_access_cookie(client_anon: TestClient):
     client_anon.cookies.set(
         "homecam_access", "not-a-real-jwt", domain="testserver", path="/api"
     )
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client_anon.websocket_connect(
-            "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
-        ):
-            pass
-    assert exc.value.code == 1008
+    _assert_ws_closes_with_1008(client_anon, headers=_SAME_ORIGIN_HEADERS)
 
 
 def test_websocket_rejects_refresh_token_in_access_slot(client_anon: TestClient):
@@ -182,12 +169,7 @@ def test_websocket_rejects_refresh_token_in_access_slot(client_anon: TestClient)
     client_anon.cookies.set(
         "homecam_access", refresh_token, domain="testserver", path="/api"
     )
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client_anon.websocket_connect(
-            "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
-        ):
-            pass
-    assert exc.value.code == 1008
+    _assert_ws_closes_with_1008(client_anon, headers=_SAME_ORIGIN_HEADERS)
 
 
 def test_websocket_rejects_token_for_deleted_user(client_anon: TestClient):
@@ -214,12 +196,7 @@ def test_websocket_rejects_token_for_deleted_user(client_anon: TestClient):
     with sqlite3.connect(settings.users_db_path) as conn:
         conn.execute("DELETE FROM users WHERE username = ?", ("ghost",))
         conn.commit()
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client_anon.websocket_connect(
-            "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
-        ):
-            pass
-    assert exc.value.code == 1008
+    _assert_ws_closes_with_1008(client_anon, headers=_SAME_ORIGIN_HEADERS)
 
 
 def test_multiple_subscribers_each_receive_an_event(client: TestClient):
@@ -1061,11 +1038,11 @@ def test_given_no_cookie_when_ws_handshake_then_auth_rejection_logged_at_warning
     # arrange — same-origin so the origin gate passes; no cookie set.
     with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
         # act
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with client_anon.websocket_connect(
-                "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
-            ):
-                pass
+        with client_anon.websocket_connect(
+            "/api/events/ws", headers=_SAME_ORIGIN_HEADERS
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_text()
 
     # assert
     assert exc.value.code == 1008
@@ -1088,11 +1065,11 @@ def test_given_garbage_cookie_when_ws_handshake_then_invalid_token_branch_logged
 
     with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
         # act
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with client_anon.websocket_connect(
-                "/api/events/ws", headers=headers
-            ):
-                pass
+        with client_anon.websocket_connect(
+            "/api/events/ws", headers=headers
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_text()
 
     # assert
     assert exc.value.code == 1008
@@ -1118,11 +1095,11 @@ def test_given_empty_sub_token_when_ws_handshake_then_malformed_sub_branch_logge
 
     with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
         # act
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with client_anon.websocket_connect(
-                "/api/events/ws", headers=headers
-            ):
-                pass
+        with client_anon.websocket_connect(
+            "/api/events/ws", headers=headers
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_text()
 
     # assert
     assert exc.value.code == 1008
@@ -1150,11 +1127,11 @@ def test_given_deleted_user_token_when_ws_handshake_then_user_row_gone_logged(
 
     with caplog.at_level(_logging.WARNING, logger="app.routes.events"):
         # act
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with client_anon.websocket_connect(
-                "/api/events/ws", headers=headers
-            ):
-                pass
+        with client_anon.websocket_connect(
+            "/api/events/ws", headers=headers
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_text()
 
     # assert
     assert exc.value.code == 1008
