@@ -456,7 +456,7 @@ must happen before any "proof" can claim the features work.
 - [x] U16 client status copy: UI distinguishes update unavailable, blocked,
       staged, applied, rolled back; invariant: no success toast on any
       terminal non-applied state.
-- [ ] U17 offline harness: drive U2-U16 against a scratch deploy clone and
+- [x] U17 offline harness: drive U2-U16 against a scratch deploy clone and
       local manifest/artifact; invariant: no network, no sudo, no production
       path writes.
 - [ ] U18 PARITY prep: production records update-request/apply/rollback
@@ -567,13 +567,13 @@ must happen before any "proof" can claim the features work.
 - [x] B17 restart handoff seam: injected command runner records the restart
       command; invariant: tests never require sudo and never shell interpolate
       archive names.
-- [ ] B18 restore API response: return restored filename, manifest id, changed
+- [x] B18 restore API response: return restored filename, manifest id, changed
       file count, restart-required/applied, and ledger id; invariant: no
       `ok:true` restore unless B10-B16 passed.
 - [x] B19 client restore status: UI distinguishes no backups, invalid backup,
       dry-run failure, restored, and rolled back; invariant: no success toast
       on stub/blocked/fail/rollback.
-- [ ] B20 offline round-trip harness: backup scratch state, mutate scratch
+- [x] B20 offline round-trip harness: backup scratch state, mutate scratch
       state, restore archive, and diff exact bytes/rows; invariant: users,
       detection config/zones, push subscriptions, keys/secrets policy, and
       selected capture/consent state match the pre-backup source.
