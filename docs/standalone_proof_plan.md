@@ -334,7 +334,7 @@ setuptools>=81 removes pkg_resources which the models package needs).
 
 ## Harness #6 — SW cache/update: atomic steps (spec: codex r11, 2026-07-08)
 A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
-- [ ] H6.1-H6.4 rig: two real builds with markers, scratch serve, SW active
+- [x] H6.1-H6.4 rig: two real builds with markers, scratch serve, SW active
 - [ ] H6.5 first-load-after-deploy truth pinned (A or B — observed reality)
 - [ ] H6.6 takeover timing (controllerchange -> B)
 - [ ] H6.7 fetch ledger explains 6.5/6.6
@@ -357,5 +357,5 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [ ] M10.8 per-camera persistence + search filter
 - [ ] M10.9 client Events camera chip narrows
 - [ ] M10.10 LIVE dynamic publish probe (gated)
-- [ ] M10.11 PARITY: cam1->front_door migration on scratch copy
-- [ ] M10.12 PARITY: production DB single-camera invariants
+- [x] M10.11 PARITY: cam1->front_door migration on scratch copy
+- [x] M10.12 PARITY: production DB single-camera invariants
