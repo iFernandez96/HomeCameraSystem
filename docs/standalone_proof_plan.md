@@ -343,8 +343,8 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [x] H6.8 precache completeness (no excluded cat PNGs)
 - [x] H6.9 offline shell renders from cache
 - [x] H6.10 events NetworkFirst: cached 200 offline; 401 never cached
-- [ ] H6.11 notificationclick: dismiss/view/tap contracts
-- [ ] H6.12 stale-handler risk pinned across A->B
+- [x] H6.11 notificationclick: dismiss/view/tap contracts
+- [x] H6.12 stale-handler risk pinned across A->B
 - [ ] H6.13 observability prep (build-id visibility) if needed for parity
 - [ ] H6.14 PARITY vs production log window post-deploy
 
