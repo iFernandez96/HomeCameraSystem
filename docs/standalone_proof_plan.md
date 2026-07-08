@@ -233,9 +233,10 @@ push-daemon fetches).
 - [x] H4.4 DB->file overlap set nonempty, reported
 - [x] H4.5 worker save_thumb contract (path shape, dir, no external URLs)
 - [x] H4.6 worker retention: prunes only thumb_*, spares latest/snap
-- [ ] H4.7 wire accept: real-shaped event with fixture thumb_url preserved
-- [ ] H4.8 wire reject: external/traversal/wrong-shape thumb_url refused
-- [ ] H4.9 push image == thumb_url exactly (spied send_matching)
+- [x] H4.7 wire accept: real-shaped event with fixture thumb_url preserved
+- [x] H4.8 wire reject: external/traversal/wrong-shape thumb_url refused
+- [x] H4.9 push image == thumb_url exactly (spied send_matching)
+HARNESS #4 COMPLETE 2026-07-08 — 15/15, parity chain green.
 - [x] H4.10 unauth thumb serve: 200, image/jpeg, exact bytes, no Set-Cookie
 - [x] H4.11 latest/snap 308 to auth-gated path; arbitrary names 404
 - [x] H4.12 EventList thumb consumption (img src, selectability)
