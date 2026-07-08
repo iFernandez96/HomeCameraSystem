@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { EventRow } from '../components/EventRow'
 import { SnapshotPreview } from '../components/SnapshotPreview'
+import { ErrorState } from '../components/states/ErrorState'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
 import { captureSnapshot, searchEvents, HttpError } from '../lib/api'
@@ -15,6 +16,11 @@ import { useToast } from '../lib/toast'
 import { useTicker } from '../lib/useTicker'
 import type { DetectionEvent } from '../lib/types'
 import { useStatus } from '../lib/useStatus'
+import {
+  WATCH_STATE_LABEL,
+  watchStateDotClass,
+  watchStateOf,
+} from '../lib/watchState'
 
 /**
  * Fuzz F4 (real device SM-S928U1, 2026-07-07): landscape fullscreen
@@ -129,7 +135,9 @@ function useTodayEvents() {
   // list forget the just-deleted event. Reuses the EXISTING
   // refetch-key mechanism (the same one visibilitychange bumps above)
   // rather than adding a second, parallel invalidation path.
-  const refetch = () => setRefetchKey((k) => k + 1)
+  // Overhaul W1 item 7: stable identity (useCallback) so the memoized
+  // TodayTimeline's props don't churn on every 5 s status-poll render.
+  const refetch = useCallback(() => setRefetchKey((k) => k + 1), [])
 
   return { events, quietSince, error, refetch }
 }
@@ -160,6 +168,18 @@ export function Watch() {
   // NOT treated as a negative, so cold mount doesn't flash danger
   // before the first WHEP handshake resolves.
   const [videoPlaying, setVideoPlaying] = useState<boolean | null>(null)
+  // Overhaul W1 item 9 (frank I1, the Wife Test): a silently-revoked
+  // notification permission was only discoverable inside Settings →
+  // Alerts — a missed alert means a missed visitor. Surface a passive
+  // chip on Home when the browser reports 'denied'. Read once at
+  // mount (permission changes mid-session are rare and Settings
+  // re-checks on its own); lazy initializer keeps this out of effects.
+  const [alertsBlocked] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      Notification.permission === 'denied',
+  )
 
   const detectionActive = status?.detection_active ?? null
   const workerAlive = status?.worker_alive ?? null
@@ -168,54 +188,37 @@ export function Watch() {
   const thermal = status?.worker_metrics?.gear === 'thermal-throttled'
   const cameraLabel = status?.camera_label ?? _DEFAULT_CAMERA_LABEL
 
-  // Three-state truth model:
-  //  1. STATUS-CONFIRMED DOWN — /api/status is reachable and says the
-  //     worker is dead. Full danger treatment, regardless of video —
-  //     unchanged from before this fix.
-  //  2. STATUS UNKNOWN — /api/status is unreachable/erroring/hasn't
-  //     loaded yet (useStatus collapses all of these to `status ===
-  //     null` after its own failure-streak debounce). We DON'T claim
-  //     the camera is down here on the API's say-so alone:
-  //       - video confirmed playing -> low-alarm "reconnecting" state
-  //       - video confirmed NOT playing (WHEP itself errored) -> both
-  //         channels are dark, so treat it as really down
-  //       - video not yet resolved either -> fall through to the
-  //         existing neutral "Paused"/"Checking…" copy, same as
-  //         pre-fix behavior.
-  //  3. HEALTHY — as today.
+  // Overhaul W1 item 2 (one state vocabulary): the three-state truth
+  // model (status-confirmed down / status unknown with video-truth
+  // tiebreak / healthy) moved to lib/watchState.ts::watchStateOf so
+  // this page, the WatchRibbon, and the glance card all say the SAME
+  // word for the same state ("On watch" / "Off duty" / "Camera
+  // offline"). VideoTile's own pill deliberately keeps its separate
+  // stream-truth vocabulary ("Live"/"Connecting"/"Offline").
   const statusConfirmedDown = status != null && status.worker_alive === false
-  const statusUnknown = status == null
-  const reconnecting = statusUnknown && videoPlaying === true
-  const dangerDown = statusConfirmedDown || (statusUnknown && videoPlaying === false)
-  const armed = detectionActive === true && workerAlive === true
+  const stateKind = watchStateOf({
+    statusKnown: status != null,
+    workerAlive,
+    detectionActive,
+    videoPlaying,
+  })
+  const dangerDown = stateKind === 'offline'
+  const reconnecting = stateKind === 'reconnecting'
+  const armed = stateKind === 'armed'
   const unhealthy = dangerDown || lowMemory || thermal
-  const stateLabel = dangerDown
-    ? 'Camera offline'
-    : armed
-      ? 'On watch'
-      : reconnecting
-        ? 'Reconnecting…'
-        : detectionActive === false
-          ? 'Off duty'
-          : 'Checking…'
-  const dotClass = dangerDown
-    ? 'bg-[var(--color-danger)]'
-    : armed
-      ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
-      : reconnecting
-        ? 'bg-[var(--color-warning)] animate-pulse'
-        : detectionActive === false
-          ? 'bg-[var(--color-warning)]'
-          : 'bg-[var(--color-text-tertiary)]'
+  const stateLabel = WATCH_STATE_LABEL[stateKind]
+  const dotClass = watchStateDotClass(stateKind)
   // Fuzz F3/F13: the old `ageLabel` ("Live now" / "Ns ago") text chip
   // was dropped from the on-video chrome — it duplicated both this
   // tile's own connection-status pill and, in fullscreen, the
   // scrubber's LIVE pill.
 
-  // Glance row copy — Step 3 of the Home redesign. "Watching" card
+  // Glance row copy — Step 3 of the Home redesign. The state card
   // swaps to the full-contrast danger treatment when the camera is
   // offline or the worker has degraded to a low-memory/thermal gear
-  // (whimsy never masks danger — CLAUDE.md).
+  // (whimsy never masks danger — CLAUDE.md). Overhaul W1 item 2: the
+  // headline is now the shared ribbon vocabulary (stateLabel above),
+  // not a page-local synonym set ("Watching"/"Paused").
   const watching = armed
   const watchingDetail = dangerDown
     ? statusConfirmedDown
@@ -299,7 +302,15 @@ export function Watch() {
     // overlay that ignores this grid entirely, and the docked-vs-full
     // CSS-only toggle on the SAME container (so VideoTile never
     // remounts) is preserved.
-    <div className="flex flex-col landscape-phone:grid landscape-phone:grid-cols-[58%_1fr] landscape-phone:grid-rows-[auto_1fr] landscape-phone:h-[calc(100dvh-var(--ribbon-h,0px))] landscape-phone:overflow-hidden">
+    // Overhaul W1 item 1 (landscape-desktop Top/A1): Watch was the
+    // only route with zero `lg:` treatment — on a desktop it rendered
+    // the phone stack full-bleed. The `lg:` grid mirrors the proven
+    // landscape-phone two-pane pattern: video left, glance + timeline
+    // in a width-capped right rail that scrolls independently. The
+    // left column's video keeps a TRUE 16:9 box at lg (max-w cap
+    // below) instead of landscape-phone's full-height cover fit, so
+    // `cover` never canyon-crops on a wide monitor.
+    <div className="flex flex-col landscape-phone:grid landscape-phone:grid-cols-[58%_1fr] landscape-phone:grid-rows-[auto_1fr] landscape-phone:h-[calc(100dvh-var(--ribbon-h,0px))] landscape-phone:overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] lg:grid-rows-[auto_1fr] lg:h-[calc(100dvh-var(--ribbon-h,0px))] lg:overflow-hidden lg:w-full lg:max-w-[100rem] lg:mx-auto">
       {/* Audit seam fix: `landscape-phone` is height-only, so a
           short-but-wide lg window can render App.tsx's WatchRibbon
           while this grid is active. Subtract the shell-provided
@@ -309,7 +320,7 @@ export function Watch() {
           internal right-pane scroll degrades to page-level scroll in
           that edge case, which is acceptable). */}
       {/* ============ PAGE HEADER ============ */}
-      <header className="px-4 pt-4 pb-1 flex items-center justify-between gap-3 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:px-3 landscape-phone:pt-2 landscape-phone:pb-1">
+      <header className="px-4 pt-4 pb-1 flex items-center justify-between gap-3 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:px-3 landscape-phone:pt-2 landscape-phone:pb-1 lg:col-span-2 lg:row-start-1 lg:px-6">
         <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
           Home
         </h1>
@@ -340,7 +351,11 @@ export function Watch() {
               // the same overflow that let Firefox pan the page
               // sideways). A block div with side margins fills the
               // remaining width by itself.
-              'relative aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3'
+              // lg (overhaul W1 item 1): left grid pane, still a TRUE
+              // 16:9 box — `max-w-[85.33dvh]` is 48dvh × 16/9, so the
+              // box can never outgrow its own max-h into a wider-than-
+              // 16:9 shape (which is what made `cover` canyon-crop).
+              'relative aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3 lg:col-start-1 lg:row-start-2 lg:self-start lg:mx-6 lg:mt-3 lg:mb-6 lg:max-w-[85.33dvh]'
         }
       >
         <div className="relative flex-1 min-h-0">
@@ -386,12 +401,17 @@ export function Watch() {
             actions={
               full ? undefined : (
                 <>
+                  {/* Overhaul W1 item 4 (mira#5): these render inside
+                      VideoTile's rounded-full w-11 control row —
+                      rounded-2xl squircles next to circles read
+                      unfinished. Pill/circle shapes + the row owner's
+                      exact glass treatment (black/60, white/20 ring). */}
                   <button
                     type="button"
                     onClick={onSnapshot}
                     disabled={busy}
                     onPointerDown={busy ? undefined : ripple}
-                    className="relative overflow-hidden inline-flex items-center gap-1.5 min-h-[44px] px-3.5 rounded-2xl bg-black/55 backdrop-blur ring-1 ring-white/20 text-white text-xs font-semibold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/70"
+                    className="relative overflow-hidden inline-flex items-center gap-1.5 h-11 px-4 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white text-xs font-semibold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
                   >
                     {busy ? 'Saving…' : 'Snapshot'}
                   </button>
@@ -400,7 +420,7 @@ export function Watch() {
                     aria-label="Full screen live view"
                     onClick={() => setFull(true)}
                     onPointerDown={ripple}
-                    className="relative overflow-hidden inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-2xl bg-black/55 backdrop-blur ring-1 ring-white/20 text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/70"
+                    className="relative overflow-hidden inline-flex items-center justify-center w-11 h-11 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
                   >
                     <ExpandIcon />
                   </button>
@@ -432,7 +452,11 @@ export function Watch() {
                 aria-label="Exit full screen"
                 onClick={() => setFull(false)}
                 onPointerDown={ripple}
-                className="pointer-events-auto relative overflow-hidden mr-1 flex items-center justify-center w-9 h-9 rounded-xl bg-black/45 ring-1 ring-white/15 text-white text-lg focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
+                // Overhaul W1 item 4 (frank#1, hari REACH-2): w-9 was
+                // the one sub-44px target in the app, on the button
+                // users need most in fullscreen. Also rounded-full so
+                // the over-video chrome shares one radius language.
+                className="pointer-events-auto relative overflow-hidden mr-1 flex items-center justify-center w-11 h-11 rounded-full bg-black/45 ring-1 ring-white/15 text-white text-lg focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
               >
                 ‹
               </button>
@@ -500,9 +524,46 @@ export function Watch() {
           extra scroll container / DOM landmark on portrait or
           desktop, where these two sections already flow normally in
           the page's own scroll). */}
-      <div className="contents landscape-phone:flex landscape-phone:flex-col landscape-phone:col-start-2 landscape-phone:row-start-2 landscape-phone:min-h-0 landscape-phone:overflow-y-auto">
+      <div className="contents landscape-phone:flex landscape-phone:flex-col landscape-phone:col-start-2 landscape-phone:row-start-2 landscape-phone:min-h-0 landscape-phone:overflow-y-auto lg:flex lg:flex-col lg:col-start-2 lg:row-start-2 lg:min-h-0 lg:overflow-y-auto lg:pr-6">
+        {/* Overhaul W1 item 9: passive "alerts are off" nudge. Links
+            to Settings → Alerts by seeding the tab key Settings
+            already reads from localStorage (it has no URL tab param).
+            Warning treatment, not danger — the camera still watches;
+            only the phone stays silent. */}
+        {alertsBlocked && (
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                window.localStorage.setItem('homecam:settingsTab', 'notifications')
+              } catch {
+                // localStorage can throw in private/lockdown modes —
+                // the navigation below still lands on Settings.
+              }
+              navigate('/settings')
+            }}
+            className="mx-4 mt-3.5 flex items-center gap-2.5 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-warning)] bg-[var(--color-warning-bg)] px-3 py-2.5 text-left focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 landscape-phone:mx-3 landscape-phone:mt-0 md:w-full md:max-w-[40rem] md:mx-auto lg:mx-0"
+          >
+            <span
+              aria-hidden="true"
+              className="w-2 h-2 rounded-full flex-shrink-0 bg-[var(--color-warning)]"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-bold text-[var(--color-text-primary)]">
+                Alerts are off
+              </span>
+              <span className="block text-xs font-medium text-[var(--color-text-secondary)]">
+                Notifications are blocked for this app. Tap to fix in Settings.
+              </span>
+            </span>
+            <span aria-hidden="true" className="text-[var(--color-text-tertiary)]">
+              ›
+            </span>
+          </button>
+        )}
+
         {/* ============ GLANCE ROW ============ */}
-        <div className="mx-4 mt-3.5 flex gap-2.5 landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:flex-col landscape-phone:gap-2">
+        <div className="mx-4 mt-3.5 flex gap-2.5 landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:flex-col landscape-phone:gap-2 md:w-full md:max-w-[40rem] md:mx-auto lg:mx-0 lg:mt-3 lg:flex-col lg:gap-2">
           <div
             className={`flex-1 rounded-[var(--radius-xl)] px-3 py-2.5 ${
               unhealthy
@@ -510,19 +571,21 @@ export function Watch() {
                 : 'bg-[var(--color-ink)] text-[var(--color-on-ink)]'
             }`}
           >
-            <p className="text-[17px] font-extrabold tracking-tight">
-              {dangerDown ? 'Offline' : watching || reconnecting ? 'Watching' : 'Paused'}
+            {/* Overhaul W1 items 2+6: headline speaks the shared
+                ribbon vocabulary, and the one-off text-[17px]/[12.5px]
+                sizes map onto the --text-* scale (text-lg 18px /
+                text-sm 14px — the previous 12.5px was a hand-rolled
+                "xs is too small" compromise; the token scale wins). */}
+            <p className="text-lg leading-tight font-extrabold tracking-tight">
+              {stateLabel}
             </p>
-            {/* Final whole-branch review fix batch #6: text-xs resolves to
-                11px in this theme — a hair too small for the accepted
-                12.5px detail size. Arbitrary value pins the exact px. */}
-            <p className="text-[12.5px] font-semibold">{watchingDetail}</p>
+            <p className="text-sm font-semibold">{watchingDetail}</p>
           </div>
           <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
-            <p className="text-[17px] font-extrabold tracking-tight text-[var(--color-text-primary)]">
+            <p className="text-lg leading-tight font-extrabold tracking-tight text-[var(--color-text-primary)]">
               {todayCount} today
             </p>
-            <p className="text-[12.5px] font-semibold text-[var(--color-text-secondary)]">
+            <p className="text-sm font-semibold text-[var(--color-text-secondary)]">
               {todayBreakdown}
             </p>
           </div>
@@ -534,6 +597,7 @@ export function Watch() {
           quietSince={quietSince}
           error={error}
           onOpen={setOpenEvent}
+          onRetry={refetchTodayEvents}
           nowMs={nowMs}
         />
       </div>
@@ -578,31 +642,46 @@ function eventSubline(e: DetectionEvent, nowMs: number): string {
   return rel
 }
 
-function TodayTimeline({
+// Overhaul W1 item 7 (perf C2): memoized — the parent re-renders on
+// every 5 s status poll, and without memo all ~50 EventRow children
+// re-rendered each time even though this component's props only
+// change on a real refetch (or the 30 s relative-time tick).
+const TodayTimeline = memo(function TodayTimeline({
   events,
   quietSince,
   error,
   onOpen,
+  onRetry,
   nowMs,
 }: {
   events: DetectionEvent[] | null
   quietSince: string | null
   error: boolean
   onOpen: (e: DetectionEvent) => void
+  onRetry: () => void
   nowMs: number
 }) {
   const navigate = useNavigate()
 
   return (
-    <section className="px-4 pt-4 pb-6" aria-label="Today's activity">
+    // Overhaul W1 item 1: content-width ceiling — on mid-size
+    // viewports (portrait tablets / narrow desktop) the timeline used
+    // to stretch the full window. Inside the lg grid the right rail's
+    // own column cap wins (max-w-2xl is wider than the rail).
+    <section
+      className="px-4 pt-4 pb-6 w-full md:max-w-[40rem] md:mx-auto md:px-0 lg:max-w-none lg:mx-0"
+      aria-label="Today's activity"
+    >
       <div className="flex items-baseline justify-between">
         <h2 className="font-display text-lg font-bold text-[var(--color-text-primary)]">
           Today at home
         </h2>
+        {/* Overhaul W1 item 4: -m-2 p-2 grows the tap target without
+            moving the visual text (was a bare text-xs link). */}
         <button
           type="button"
           onClick={() => navigate('/events')}
-          className="text-xs font-semibold text-[var(--color-accent-deep)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+          className="-m-2 p-2 text-xs font-semibold text-[var(--color-accent-deep)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
         >
           Full history →
         </button>
@@ -615,10 +694,16 @@ function TodayTimeline({
             : 'Newest first'}
       </p>
 
+      {/* Overhaul W1 item 3 (mira#4, hari GESTURE-4/STATE-1): the
+          designed ErrorState with a real Retry button replaces the
+          bare red <p> — whose copy told users to "pull to refresh",
+          a gesture that does not exist anywhere in the app. */}
       {error && (
-        <p className="text-sm text-[var(--color-danger)]" role="alert">
-          Couldn&rsquo;t load today&rsquo;s events — pull to refresh or try again shortly.
-        </p>
+        <ErrorState
+          title="Couldn't load today's events"
+          message="Check your connection, then try again."
+          retry={onRetry}
+        />
       )}
 
       {events != null && events.length === 0 && !error && (
@@ -646,7 +731,7 @@ function TodayTimeline({
       </ol>
     </section>
   )
-}
+})
 
 /* ================= Full-mode hour scrubber ================= */
 
@@ -752,55 +837,60 @@ function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
   }, [])
 
   return (
+    // Overhaul W1 item 4: lateral safe-area padding so the LIVE pill
+    // and the strip's right edge never sit under a landscape notch /
+    // home-indicator inset.
     <div
-      className="flex-none px-4 pb-6 pt-3 bg-gradient-to-t from-black/80 to-transparent"
-      style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+      className="flex-none pt-3 bg-gradient-to-t from-black/80 to-transparent"
+      style={{
+        paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))',
+        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right))',
+      }}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-start gap-2.5">
+        {/* Overhaul W1 item 5 (hari GESTURE-2): this strip used to be
+            DRESSED as a seek scrubber (12AM/6AM/12PM/NOW axis labels
+            + a ringed NOW cell) while the whole thing was one nav
+            button to /events — every visual cue promised "drag/tap to
+            seek" and delivered a page change. Events has no per-hour
+            deep link on its URL, so the honest fix is to stop the
+            dress-up: the identity-colored cells stay as a glanceable
+            activity summary (fuzz F1 coloring untouched), and a
+            visible label now says exactly what a tap does. */}
         <button
           type="button"
           onClick={onJumpHistory}
-          aria-label="Open full history"
-          className="flex-1 flex items-end gap-[3px] h-8 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 rounded"
+          className="flex-1 flex flex-col focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 rounded"
         >
-          {(buckets ?? _emptyBuckets()).map((b, i) => {
-            const isNow = i === 15
-            return (
+          <span className="w-full flex items-end gap-[3px] h-8" aria-hidden="true">
+            {(buckets ?? _emptyBuckets()).map((b, i) => (
               <span
                 key={i}
-                aria-hidden="true"
-                data-testid={isNow ? 'hour-cell-now' : `hour-cell-${i}`}
-                // Fuzz F1: the NOW marker is a neutral bright ring, NOT
-                // a `--color-success` fill — green nowhere else means
-                // "current time" in this app. The cell's fill still
-                // follows the same identity coloring as every other
-                // cell (quiet = dim white, active = the winning
-                // identity's dark-range hex).
-                className={`flex-1 rounded-sm ${isNow ? 'h-6 ring-2 ring-white/80' : ''} ${
-                  b.color ? '' : 'bg-white/15'
-                }`}
+                data-testid={`hour-cell-${i}`}
+                className={`flex-1 rounded-sm ${b.color ? '' : 'bg-white/15'}`}
                 style={{
                   background: b.color ?? undefined,
-                  height: isNow ? undefined : b.color ? 16 : 5,
+                  height: b.color ? 16 : 5,
                 }}
               />
-            )
-          })}
+            ))}
+          </span>
+          {/* Overhaul W1 item 4: label bumped from 9px to the
+              --text-xs token (11px). */}
+          <span className="w-full flex items-baseline justify-between mt-1.5 text-xs">
+            <span className="font-semibold text-white/70">Today&apos;s activity</span>
+            <span className="text-white/50">Open history ›</span>
+          </span>
         </button>
         {/* Final whole-branch review fix batch #3: fixed over-video
             colors — the fullscreen scrim is black in both themes;
             theme danger tokens are tuned for paper (same exception as
             text-white on video). The tokenized danger colors measured
             ~4.1:1 against this always-black overlay in light theme. */}
-        <span className="flex-none text-[11px] font-extrabold tracking-wider text-[#f87171] bg-[rgba(248,113,113,0.16)] ring-1 ring-[rgba(248,113,113,0.45)] px-2.5 py-1 rounded-full">
+        <span className="flex-none text-xs font-extrabold tracking-wider text-[#f87171] bg-[rgba(248,113,113,0.16)] ring-1 ring-[rgba(248,113,113,0.45)] px-2.5 py-1 rounded-full">
           ● LIVE
         </span>
-      </div>
-      <div className="flex justify-between text-[9px] text-white/40 mt-1.5 tabular-nums pr-16">
-        <span>12 AM</span>
-        <span>6 AM</span>
-        <span>12 PM</span>
-        <span>NOW</span>
       </div>
     </div>
   )
@@ -830,7 +920,9 @@ function RailButton({
       className="relative overflow-hidden w-[54px] h-[54px] rounded-[19px] bg-black/55 backdrop-blur ring-1 ring-white/15 text-white flex flex-col items-center justify-center gap-0.5 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
     >
       {children}
-      <span className="text-[8.5px] text-white/65 leading-none">{label}</span>
+      {/* Overhaul W1 item 4: 8.5px was below any legible floor — use
+          the --text-xs token (11px). */}
+      <span className="text-xs text-white/65 leading-none">{label}</span>
     </button>
   )
 }

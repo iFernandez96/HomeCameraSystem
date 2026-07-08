@@ -2,6 +2,12 @@ import { useNavigate } from 'react-router-dom'
 import { CatTrioMark } from './CatIcons'
 import { useStatus } from '../lib/useStatus'
 import { formatAge } from '../lib/format'
+import {
+  WATCH_STATE_LABEL,
+  watchStateDotClass,
+  watchStateOf,
+  watchStateTextClass,
+} from '../lib/watchState'
 
 /**
  * iter-356.58 (layout rebuild): the WatchRibbon is a persistent top
@@ -38,22 +44,18 @@ export function WatchRibbon() {
   const status = useStatus()
   const navigate = useNavigate()
 
-  const armed = status?.detection_active === true && status?.worker_alive === true
-  const offline = status != null && status.worker_alive === false
-  const dotClass = offline
-    ? 'bg-[var(--color-danger)]'
-    : armed
-      ? 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
-      : status?.detection_active === false
-        ? 'bg-[var(--color-warning)]'
-        : 'bg-[var(--color-text-tertiary)]'
-  const stateLabel = offline
-    ? 'Camera offline'
-    : armed
-      ? 'On watch'
-      : status?.detection_active === false
-        ? 'Off duty'
-        : 'Checking…'
+  // Overhaul W1 item 2 (one state vocabulary): the label + dot logic
+  // that used to be duplicated (with drifting word sets) across this
+  // ribbon, Watch's glance card, and Watch's fullscreen cluster now
+  // lives in lib/watchState.ts. The ribbon has no video-truth channel
+  // so it omits `videoPlaying`.
+  const stateKind = watchStateOf({
+    statusKnown: status != null,
+    workerAlive: status?.worker_alive ?? null,
+    detectionActive: status?.detection_active ?? null,
+  })
+  const dotClass = watchStateDotClass(stateKind)
+  const stateLabel = WATCH_STATE_LABEL[stateKind]
 
   const cameraLabel = status?.camera_label ?? 'Front Door'
   const lastFrameLabel =
@@ -117,7 +119,7 @@ export function WatchRibbon() {
           home (Live). */}
       <button
         type="button"
-        onClick={() => navigate('/live')}
+        onClick={() => navigate('/')}
         aria-label="HomeCam home"
         // Bug sweep (2026-07-02): the brand mark now shows on MOBILE
         // too — without it the ribbon on non-Watch pages was a bare
@@ -147,15 +149,7 @@ export function WatchRibbon() {
         <span
           role="status"
           aria-live="polite"
-          className={`text-sm font-semibold flex-shrink-0 ${
-            offline
-              ? 'text-[var(--color-danger)]'
-              : armed
-                ? 'text-[var(--color-success)]'
-                : status?.detection_active === false
-                  ? 'text-[var(--color-warning)]'
-                  : 'text-[var(--color-text-tertiary)]'
-          }`}
+          className={`text-sm font-semibold flex-shrink-0 ${watchStateTextClass(stateKind)}`}
         >
           {stateLabel}
         </span>
@@ -181,7 +175,7 @@ export function WatchRibbon() {
           BottomNav already exposes it. */}
       <button
         type="button"
-        onClick={() => navigate('/live')}
+        onClick={() => navigate('/')}
         aria-label="Jump to Live view"
         className="hidden lg:inline-flex items-center justify-center h-9 px-3 rounded-xl text-xs font-semibold text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] hover:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 transition-colors"
       >

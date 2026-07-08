@@ -49,6 +49,29 @@ describe('EventRow', () => {
     expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
+  it('GIVEN an interactive row WHEN rendered THEN it carries the EventCard hover/active parity classes, and the static row stays inert (overhaul W1 item 8, landscape B1)', () => {
+    // arrange / act — interactive variant
+    const { unmount } = render(
+      <EventRow event={baseEvent} subline="2 clips tonight" onOpen={() => {}} />,
+    )
+    const button = screen.getByRole('button', { name: new RegExp(eventTitle(baseEvent)) })
+
+    // assert — same pointer response as EventList's EventCard so the
+    // two "one card language" components behave identically on desktop.
+    expect(button.className).toMatch(/hover:border-\[var\(--color-border-strong\)\]/)
+    expect(button.className).toMatch(/hover:bg-\[var\(--color-surface-raised\)\]/)
+    expect(button.className).toMatch(/focus-visible:outline-2/)
+    unmount()
+
+    // arrange / act — non-interactive variant
+    const { container } = render(<EventRow event={baseEvent} subline="2 clips tonight" />)
+
+    // assert — a plain div must not advertise hover affordances.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    const row = container.firstElementChild as HTMLElement
+    expect(row.className).not.toMatch(/hover:bg-/)
+  })
+
   it('GIVEN an event WHEN rendered THEN the WhoMark is decorative (aria-hidden), not a second announced img', () => {
     // arrange / act
     render(<EventRow event={baseEvent} subline="2 clips tonight" />)

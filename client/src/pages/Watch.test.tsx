@@ -139,21 +139,22 @@ beforeEach(() => {
 })
 
 describe('Watch — Home screen (Playroom Modern)', () => {
-  it('Given a healthy armed camera, When the page renders, Then the heading reads Home, the docked video shows only the camera-name pill, and the glance card owns the armed state (fuzz F3/F9/F13 consolidation)', async () => {
+  it('Given a healthy armed camera, When the page renders, Then the heading reads Home, the docked video shows only the camera-name pill, and the glance card owns the armed state in the shared ribbon vocabulary (overhaul W1 item 2)', async () => {
     // arrange / act
     renderWatch()
 
     // assert — page heading + glance card copy carry the armed state.
+    // The glance headline now speaks the ONE shared vocabulary from
+    // lib/watchState.ts ("On watch", same as the ribbon), replacing
+    // the page-local "Watching" synonym.
     expect(screen.getByRole('heading', { name: 'Home', level: 1 })).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.getByText('Watching')).toBeInTheDocument()
+      expect(screen.getByText('On watch')).toBeInTheDocument()
     })
     expect(screen.getByText(/is on watch · alerts on/)).toBeInTheDocument()
-    // Fuzz F3/F9/F13: the docked video no longer duplicates the armed
-    // state on top of it — "On watch" now lives ONLY on the glance
-    // card. The video's own chrome is just the camera-name pill (the
-    // stubbed VideoTile owns the ONE connection-status pill).
-    expect(screen.queryByText('On watch')).not.toBeInTheDocument()
+    // Fuzz F3/F9/F13 still holds: the armed state renders exactly ONCE
+    // docked (the glance card) — no duplicate pill over the video.
+    expect(screen.getAllByText('On watch')).toHaveLength(1)
     expect(screen.getByText('Front Door')).toBeInTheDocument()
   })
 
@@ -286,7 +287,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Offline')).toBeInTheDocument()
+      expect(screen.getByText('Camera offline')).toBeInTheDocument()
     })
     expect(
       screen.getByText('Check its power, then see Settings.'),
@@ -301,7 +302,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
   // -dead always wins regardless of video; status-unreachable +
   // video-confirmed-not-playing is a real "both channels dark" outage.
 
-  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the glance card shows the reconnecting copy, not Offline', async () => {
+  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the glance card shows the reconnecting copy, not Camera offline', async () => {
     // arrange — /api/status errors on every poll (simulates the
     // server-restart window); the stubbed VideoTile drives its own
     // onPlayingChange signal via the test-hook button.
@@ -312,13 +313,14 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     renderWatch()
     await user.click(screen.getByRole('button', { name: 'simulate-video-playing' }))
 
-    // assert — headline stays "Watching" (low-alarm), sublabel is
-    // honest about the API, no "Offline" danger copy anywhere.
+    // assert — headline is the low-alarm shared-vocabulary
+    // "Reconnecting…", sublabel is honest about the API, no danger
+    // copy anywhere.
     await waitFor(() => {
       expect(screen.getByText('Status reconnecting…')).toBeInTheDocument()
     })
-    expect(screen.getByText('Watching')).toBeInTheDocument()
-    expect(screen.queryByText('Offline')).not.toBeInTheDocument()
+    expect(screen.getByText('Reconnecting…')).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   it('Given /api/status confirms the worker is dead, When the video tile ALSO confirms frames are playing, Then the Offline danger state still shows (status-confirmed-down wins regardless of video)', async () => {
@@ -336,7 +338,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Offline')).toBeInTheDocument()
+      expect(screen.getByText('Camera offline')).toBeInTheDocument()
     })
     expect(
       screen.getByText('Check its power, then see Settings.'),
@@ -354,14 +356,14 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Offline')).toBeInTheDocument()
+      expect(screen.getByText('Camera offline')).toBeInTheDocument()
     })
     expect(
       screen.getByText("Can't reach the camera. Check its connection."),
     ).toBeInTheDocument()
   })
 
-  it('Given the status fetch fails and the video tile has not resolved yet, When the page renders, Then it stays neutral instead of flashing Offline (cold-mount guard)', async () => {
+  it('Given the status fetch fails and the video tile has not resolved yet, When the page renders, Then it stays neutral instead of flashing Camera offline (cold-mount guard)', async () => {
     // arrange — neither channel has confirmed anything yet (the
     // pre-fix cold-mount state). Must not read as a danger.
     getStatusM.mockRejectedValue(new Error('network down'))
@@ -369,14 +371,14 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // act
     renderWatch()
 
-    // assert
+    // assert — neutral "Checking…" (shared vocabulary), no danger copy.
     await waitFor(() => {
-      expect(screen.getByText('Paused')).toBeInTheDocument()
+      expect(screen.getByText('Checking…')).toBeInTheDocument()
     })
-    expect(screen.queryByText('Offline')).not.toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
-  it('Given the worker is offline, When the page renders, Then the Watching glance headline reads "Offline" (not "Paused") — final review fix batch #8', async () => {
+  it('Given the worker is offline, When the page renders, Then the glance headline reads "Camera offline" (not an off-duty synonym) — final review fix batch #8 + overhaul W1 item 2', async () => {
     // arrange — pre-fix the glance card said "Paused" for offline,
     // which reads as "detection is paused" rather than "the camera
     // itself is unreachable." Danger styling + the existing detail
@@ -392,9 +394,9 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Offline')).toBeInTheDocument()
+      expect(screen.getByText('Camera offline')).toBeInTheDocument()
     })
-    expect(screen.queryByText('Paused')).not.toBeInTheDocument()
+    expect(screen.queryByText('Off duty')).not.toBeInTheDocument()
     expect(
       screen.getByText('Check its power, then see Settings.'),
     ).toBeInTheDocument()
@@ -555,7 +557,13 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     })
   })
 
-  it('Given the fullscreen scrubber renders, When the NOW cell is inspected, Then it carries a neutral ring marker instead of a --color-success green fill (fuzz F1)', async () => {
+  // Overhaul W1 item 5 (hari GESTURE-2): the fullscreen strip used to
+  // be DRESSED as a seek scrubber (12AM/6AM/12PM/NOW axis + a ringed
+  // NOW cell) while actually being one nav button to /events — a
+  // misleading affordance. It is now an honestly-labeled activity
+  // button; the identity-colored cells stay as a glanceable summary.
+
+  it('Given fullscreen, When the activity strip renders, Then it is a labeled history button with no fake time-axis dress-up (overhaul W1 item 5)', async () => {
     // arrange
     const user = userEvent.setup()
 
@@ -563,10 +571,145 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     renderWatch()
     await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
 
+    // assert — the visible label says exactly what a tap does…
+    const strip = await screen.findByRole('button', {
+      name: /Today's activity.*Open history/,
+    })
+    expect(strip).toBeInTheDocument()
+    // …and the seek-scrubber costume is gone: no time axis, no ringed
+    // NOW cell, no --color-success fill anywhere in the strip.
+    expect(screen.queryByText('12 AM')).not.toBeInTheDocument()
+    expect(screen.queryByText('6 AM')).not.toBeInTheDocument()
+    expect(screen.queryByText('12 PM')).not.toBeInTheDocument()
+    expect(screen.queryByText('NOW')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('hour-cell-now')).not.toBeInTheDocument()
+    const lastCell = screen.getByTestId('hour-cell-15')
+    expect(lastCell.className).not.toMatch(/color-success/)
+    expect(lastCell.getAttribute('style') ?? '').not.toMatch(/color-success/)
+  })
+
+  it('Given fullscreen, When the activity strip is tapped, Then it exits fullscreen (navigates to full history) (overhaul W1 item 5)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+    const viewport = screen.getByTestId('live-viewport')
+    expect(viewport.className).toMatch(/fixed inset-0/)
+
+    // act
+    await user.click(
+      await screen.findByRole('button', { name: /Today's activity.*Open history/ }),
+    )
+
+    // assert — the docked layout is restored (navigate('/events') is a
+    // MemoryRouter no-op here; the observable half is the exit).
+    expect(viewport.className).toMatch(/relative/)
+  })
+
+  // Overhaul W1 item 3 (mira#4, hari GESTURE-4): the timeline error
+  // used to be a bare red <p> telling users to "pull to refresh" — a
+  // gesture that does not exist anywhere in the app, with no retry.
+
+  it("Given today's events fail to load, When the timeline renders, Then the designed error state shows with a working Retry button and no phantom pull-to-refresh copy (overhaul W1 item 3)", async () => {
+    // arrange — first fetch rejects, the retried fetch succeeds.
+    searchEvents.mockRejectedValueOnce(new Error('boom'))
+    const user = userEvent.setup()
+
+    // act
+    renderWatch()
+
+    // assert — designed error surface, honest copy.
+    await waitFor(() => {
+      expect(screen.getByText("Couldn't load today's events")).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/pull to refresh/i)).not.toBeInTheDocument()
+
+    // act — Retry refetches through the same refetch-key mechanism.
+    searchEvents.mockResolvedValue({
+      items: [ev({ id: 'r1', person_name: 'Israel' })],
+      next_cursor: null,
+    })
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+
     // assert
-    const nowCell = await screen.findByTestId('hour-cell-now')
-    expect(nowCell.className).toMatch(/ring-2 ring-white\/80/)
-    expect(nowCell.className).not.toMatch(/color-success/)
-    expect(nowCell.getAttribute('style') ?? '').not.toMatch(/color-success/)
+    await waitFor(() => {
+      expect(screen.getByText('Israel at cam')).toBeInTheDocument()
+    })
+    expect(screen.queryByText("Couldn't load today's events")).not.toBeInTheDocument()
+  })
+
+  // Overhaul W1 item 9 (frank I1): a silently-revoked notification
+  // permission was only discoverable inside Settings → Alerts.
+
+  it('Given notification permission is denied, When Home renders, Then an "Alerts are off" chip shows and tapping it deep-links to Settings → Alerts (overhaul W1 item 9)', async () => {
+    // arrange — jsdom has no Notification global; install one.
+    vi.stubGlobal('Notification', { permission: 'denied' })
+    window.localStorage.removeItem('homecam:settingsTab')
+    const user = userEvent.setup()
+    try {
+      // act
+      renderWatch()
+      const chip = screen.getByRole('button', { name: /Alerts are off/ })
+
+      // assert — visible, honest copy (no jargon).
+      expect(chip).toHaveTextContent('Notifications are blocked for this app.')
+
+      // act — tapping seeds the Settings tab key and navigates.
+      await user.click(chip)
+
+      // assert — Settings has no URL tab param; the deep-link works by
+      // seeding the localStorage key Settings reads on mount.
+      expect(window.localStorage.getItem('homecam:settingsTab')).toBe('notifications')
+    } finally {
+      vi.unstubAllGlobals()
+      window.localStorage.removeItem('homecam:settingsTab')
+    }
+  })
+
+  it('Given notification permission is granted, When Home renders, Then no alerts chip shows (overhaul W1 item 9)', () => {
+    // arrange
+    vi.stubGlobal('Notification', { permission: 'granted' })
+    try {
+      // act
+      renderWatch()
+
+      // assert
+      expect(
+        screen.queryByRole('button', { name: /Alerts are off/ }),
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // Overhaul W1 item 1 (landscape-desktop Top/A1): Watch was the only
+  // route with zero lg: treatment.
+
+  it('Given a desktop viewport, When Watch renders, Then the page root carries the lg two-pane grid with an overall width ceiling (overhaul W1 item 1)', () => {
+    // arrange / act
+    const { container } = renderWatch()
+
+    // assert — class pins (jsdom can't lay out; the grid classes are
+    // the contract, mirroring the proven landscape-phone pattern).
+    const root = container.firstElementChild as HTMLElement
+    expect(root.className).toMatch(/lg:grid /)
+    expect(root.className).toMatch(/lg:grid-cols-\[minmax\(0,1fr\)_minmax\(20rem,26rem\)\]/)
+    expect(root.className).toMatch(/lg:max-w-\[100rem\]/)
+    expect(root.className).toMatch(/lg:overflow-hidden/)
+  })
+
+  it('Given fullscreen, When the exit control renders, Then it meets the 44px touch floor (overhaul W1 item 4, frank#1 / hari REACH-2)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+
+    // act
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+    // assert — w-11/h-11 (44px), not the old sub-target w-9.
+    const exit = screen.getByRole('button', { name: 'Exit full screen' })
+    expect(exit.className).toMatch(/w-11/)
+    expect(exit.className).toMatch(/h-11/)
+    expect(exit.className).not.toMatch(/w-9/)
   })
 })

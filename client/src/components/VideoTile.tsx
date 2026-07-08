@@ -834,7 +834,7 @@ export function VideoTile({
           <button
             type="button"
             onClick={() => setRetryNonce((n) => n + 1)}
-            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-lg text-xs font-medium text-white pointer-events-auto"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
           >
             <span className="inline-flex items-center gap-2">
@@ -875,7 +875,7 @@ export function VideoTile({
           // a non-technical user isn't left wondering whether THEY need
           // to do something — this state self-clears.
           <div
-            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-2xl text-xs font-medium text-white pointer-events-auto"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection paused due to low memory. The camera is freeing up memory. Back to normal soon."
           >
             <span className="inline-flex items-center gap-2">
@@ -892,7 +892,7 @@ export function VideoTile({
           // Painfix wave B #3: same plain-guidance addition for the
           // thermal pill.
           <div
-            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-2xl text-xs font-medium text-white pointer-events-auto"
+            className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
             aria-label="Detection rate-limited by GPU thermal. This clears on its own as the camera cools. No action needed."
           >
             <span className="inline-flex items-center gap-2">

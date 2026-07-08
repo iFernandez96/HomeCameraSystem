@@ -37,7 +37,9 @@ export function EventRow({
         <WhoMark identity={identity} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13.5px] font-bold">{title}</div>
+        {/* Overhaul W1 item 6 (mira#2): 13.5px was a one-off size —
+            mapped onto the --text-sm token (14px). */}
+        <div className="truncate text-sm font-bold">{title}</div>
         {/* Final whole-branch review fix batch #2: subline + time were
             inheriting the 16px base — LARGER than the bold 13.5px
             title, inverting the type hierarchy. text-xs pins both
@@ -50,9 +52,13 @@ export function EventRow({
 
   if (onOpen) {
     return (
+      // Overhaul W1 item 8 (landscape B1): hover/active/focus parity
+      // with EventList's EventCard — same border-strong + raised
+      // surface treatment, so the two "one card language" components
+      // respond identically to a pointer.
       <button
         type="button"
-        className={`${ROW_CLASSES} relative overflow-hidden w-full text-left`}
+        className={`${ROW_CLASSES} relative overflow-hidden w-full text-left transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-raised)] active:border-[var(--color-border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2`}
         onClick={onOpen}
         onPointerDown={ripple}
       >
