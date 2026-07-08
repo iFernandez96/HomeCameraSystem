@@ -231,8 +231,8 @@ push-daemon fetches).
 - [x] H4.2 every DB thumb_url matches ^/snapshots/thumb_[0-9]+\.jpg$
 - [x] H4.3 fixture filenames are only production shapes
 - [x] H4.4 DB->file overlap set nonempty, reported
-- [ ] H4.5 worker save_thumb contract (path shape, dir, no external URLs)
-- [ ] H4.6 worker retention: prunes only thumb_*, spares latest/snap
+- [x] H4.5 worker save_thumb contract (path shape, dir, no external URLs)
+- [x] H4.6 worker retention: prunes only thumb_*, spares latest/snap
 - [ ] H4.7 wire accept: real-shaped event with fixture thumb_url preserved
 - [ ] H4.8 wire reject: external/traversal/wrong-shape thumb_url refused
 - [ ] H4.9 push image == thumb_url exactly (spied send_matching)
@@ -243,3 +243,23 @@ push-daemon fetches).
 - [ ] H4.14 SW: payload image -> notification options image, unrewritten
 - [x] H4.15 PARITY: every production-logged thumb 200 replays 200 with
       matching bytes AND appears in events.sqlite thumb_url (green 2026-07-08)
+
+## Harness #9 — export ZIP: atomic steps (spec: codex r7, 2026-07-08)
+Main job: prove the OOM fix (tempfile-on-recordings_dir + FileResponse
++ BackgroundTask unlink + Semaphore(1)) keeps RSS flat vs ~289MB of
+real clip bytes. Fixtures: proof_fixtures/clips/ (6 real MP4s, 9.8-80MB,
+IDs match events.sqlite rows).
+- [ ] H9.1 fixtures.py + inventory (clips<->DB rows, sizes)
+- [ ] H9.2 fixture integrity (every clip has a DB row, bytes nonzero)
+- [ ] H9.3 scratch recordings_dir builder (byte-for-byte)
+- [ ] H9.4 get_by_ids order + row parity vs captured DB
+- [ ] H9.5 single-clip ZIP: manifest + exact MP4 bytes
+- [ ] H9.6 six-clip ZIP: all bytes match, manifest rows match DB
+- [ ] H9.7 tempfile called with dir=recordings_dir, delete=False
+- [ ] H9.8 measured RSS flat vs 289MB input (bounded delta)
+- [ ] H9.9 Semaphore(1) serializes concurrent builds
+- [ ] H9.10 missing clip -> 200 + clip_included=false, no 500
+- [ ] H9.11 unlink after serve (no homecam_export_*.zip left)
+- [ ] H9.12 failure mid-zip -> 500 + partial cleaned
+- [ ] H9.13 PARITY: manifest rows vs captured DB; members vs captured bytes;
+      note absent Jetson export-log ground truth as observability gap
