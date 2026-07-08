@@ -6,6 +6,7 @@ const REFRESH_COOKIE = 'homecam_refresh'
 const ACCESS_TOKEN_TTL_S = 3
 const REFRESH_TOKEN_TTL_S = 20
 const COOKIE_EXPIRY_TOLERANCE_S = 3
+const EVENTS_WS_PATH = '/api/events/ws'
 
 async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto('/')
@@ -38,6 +39,55 @@ async function authCookies(
     accessCookie: accessCookie!,
     refreshCookie: refreshCookie!,
   }
+}
+
+async function installWebSocketProbe(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket
+    type WsProbeRecord = {
+      url: string
+      opens: number
+      closes: Array<{ code: number; reason: string }>
+    }
+    const records: WsProbeRecord[] = []
+    const sockets: WebSocket[] = []
+
+    Object.defineProperty(window, '__homecamWsProbe', {
+      configurable: true,
+      value: {
+        records,
+        closeLast() {
+          const ws = sockets[sockets.length - 1]
+          if (
+            ws &&
+            ws.readyState !== NativeWebSocket.CLOSED &&
+            ws.readyState !== NativeWebSocket.CLOSING
+          ) {
+            ws.close(4000, 'e2e stale reconnect')
+          }
+        },
+      },
+    })
+
+    window.WebSocket = class HomecamE2EWebSocket extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        if (protocols === undefined) {
+          super(url)
+        } else {
+          super(url, protocols)
+        }
+        const record: WsProbeRecord = { url: String(url), opens: 0, closes: [] }
+        records.push(record)
+        sockets.push(this)
+        this.addEventListener('open', () => {
+          record.opens += 1
+        })
+        this.addEventListener('close', (event) => {
+          record.closes.push({ code: event.code, reason: event.reason })
+        })
+      }
+    } as typeof WebSocket
+  })
 }
 
 test.describe('Auth session lifecycle harness', () => {
@@ -172,6 +222,117 @@ test.describe('Auth session lifecycle harness', () => {
     await expect(page.getByRole('link', { name: /home/i })).toBeVisible()
     await expect(page.getByRole('link', { name: /events/i })).toBeVisible()
     await expect(page.getByRole('link', { name: /settings/i })).toBeVisible()
+  })
+
+  test('given events WS is connected, when access expires and a stale reconnect gets 1008, then auth self-heals without sign-out', async ({
+    page,
+  }) => {
+    const playwrightWsUrls: string[] = []
+    const refreshResponses: number[] = []
+    const consoleMessages: string[] = []
+
+    page.on('websocket', (ws) => {
+      if (new URL(ws.url()).pathname === EVENTS_WS_PATH) {
+        playwrightWsUrls.push(ws.url())
+      }
+    })
+    page.on('response', (response) => {
+      const request = response.request()
+      const pathname = new URL(response.url()).pathname
+      if (request.method() === 'POST' && pathname === '/api/auth/refresh') {
+        refreshResponses.push(response.status())
+      }
+    })
+    page.on('console', (message) => {
+      consoleMessages.push(message.text())
+    })
+
+    await installWebSocketProbe(page)
+    await loginAsAdmin(page)
+    await page.getByRole('link', { name: /events/i }).click()
+
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            (eventsWsPath) =>
+              (
+                window as unknown as {
+                  __homecamWsProbe?: {
+                    records: Array<{ url: string; opens: number }>
+                  }
+                }
+              ).__homecamWsProbe?.records.some(
+                (record) =>
+                  new URL(record.url).pathname === eventsWsPath &&
+                  record.opens > 0,
+              ) ?? false,
+            EVENTS_WS_PATH,
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true)
+    expect(playwrightWsUrls.length).toBeGreaterThan(0)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await page.waitForTimeout((ACCESS_TOKEN_TTL_S + 0.5) * 1_000)
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __homecamWsProbe?: { closeLast: () => void }
+        }
+      ).__homecamWsProbe?.closeLast()
+    })
+
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            (eventsWsPath) =>
+              (
+                window as unknown as {
+                  __homecamWsProbe?: {
+                    records: Array<{
+                      url: string
+                      closes: Array<{ code: number; reason: string }>
+                    }>
+                  }
+                }
+              ).__homecamWsProbe?.records.some(
+                (record) =>
+                  new URL(record.url).pathname === eventsWsPath &&
+                  record.closes.some((close) => close.code === 1008),
+              ) ?? false,
+            EVENTS_WS_PATH,
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true)
+    await expect
+      .poll(() => refreshResponses, { timeout: 10_000 })
+      .toContain(200)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await expect(page).not.toHaveURL(/\/login(?:$|[/?#])/)
+    await expect(page.getByRole('link', { name: /home/i })).toBeVisible()
+    await expect(page.getByRole('link', { name: /events/i })).toBeVisible()
+    await expect(page.getByRole('link', { name: /settings/i })).toBeVisible()
+    expect(consoleMessages.some((text) => text.includes('auth:self-heal-ok'))).toBe(
+      true,
+    )
   })
 
   test('given a logged-in session, when both tokens expire and the next app interaction runs, then session-expired UX is reached', async ({
