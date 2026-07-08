@@ -44,6 +44,70 @@ async function fireFirstFrame() {
   fireEvent.loadedData(document.querySelector('video')!)
 }
 
+function installRvfcMock() {
+  const originalRequest = Object.getOwnPropertyDescriptor(
+    HTMLVideoElement.prototype,
+    'requestVideoFrameCallback',
+  )
+  const originalCancel = Object.getOwnPropertyDescriptor(
+    HTMLVideoElement.prototype,
+    'cancelVideoFrameCallback',
+  )
+  const callbacks = new Map<number, () => void>()
+  let nextId = 1
+  const requestVideoFrameCallback = vi.fn((cb: () => void) => {
+    const id = nextId++
+    callbacks.set(id, cb)
+    return id
+  })
+  const cancelVideoFrameCallback = vi.fn((id: number) => {
+    callbacks.delete(id)
+  })
+  Object.defineProperty(HTMLVideoElement.prototype, 'requestVideoFrameCallback', {
+    configurable: true,
+    value: requestVideoFrameCallback,
+  })
+  Object.defineProperty(HTMLVideoElement.prototype, 'cancelVideoFrameCallback', {
+    configurable: true,
+    value: cancelVideoFrameCallback,
+  })
+  return {
+    requestVideoFrameCallback,
+    cancelVideoFrameCallback,
+    async fire(id: number) {
+      await act(async () => {
+        callbacks.get(id)?.()
+      })
+    },
+    restore() {
+      if (originalRequest) {
+        Object.defineProperty(
+          HTMLVideoElement.prototype,
+          'requestVideoFrameCallback',
+          originalRequest,
+        )
+      } else {
+        Reflect.deleteProperty(
+          HTMLVideoElement.prototype,
+          'requestVideoFrameCallback',
+        )
+      }
+      if (originalCancel) {
+        Object.defineProperty(
+          HTMLVideoElement.prototype,
+          'cancelVideoFrameCallback',
+          originalCancel,
+        )
+      } else {
+        Reflect.deleteProperty(
+          HTMLVideoElement.prototype,
+          'cancelVideoFrameCallback',
+        )
+      }
+    },
+  }
+}
+
 vi.mock('../lib/webrtc', () => ({
   connectWhep: (...a: unknown[]) => connectWhep(...a),
 }))
@@ -100,6 +164,26 @@ describe('VideoTile', () => {
 
     // assert — NOW it's Live.
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+  })
+
+  it('Given requestVideoFrameCallback exists, When playing fires before a presented frame, Then the pill stays Connecting until rVFC fires (harness #5 W3)', async () => {
+    const rvfc = installRvfcMock()
+    try {
+      connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+      render(<VideoTile src="http://test/cam/whep" />)
+      await act(async () => {})
+
+      fireEvent.playing(screen.getByLabelText('Live camera feed'))
+
+      expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
+      expect(screen.queryByText('Live')).not.toBeInTheDocument()
+
+      await rvfc.fire(1)
+
+      await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+    } finally {
+      rvfc.restore()
+    }
   })
 
   it('shows Offline when the connection fails', async () => {
@@ -574,6 +658,22 @@ describe('VideoTile', () => {
       expect(screen.queryByText(/power-cycle the camera/i)).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('Given requestVideoFrameCallback exists, When a live stream stalls, Then VideoTile re-arms rVFC for frame-truth recovery (harness #5 W3)', async () => {
+    const rvfc = installRvfcMock()
+    try {
+      connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
+      render(<VideoTile src="http://test/cam/whep" />)
+      await rvfc.fire(1)
+      await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+
+      fireEvent.stalled(screen.getByLabelText('Live camera feed'))
+
+      expect(rvfc.requestVideoFrameCallback).toHaveBeenCalledTimes(2)
+    } finally {
+      rvfc.restore()
     }
   })
 

@@ -328,6 +328,19 @@ export function VideoTile({
         ...extra,
       })
     }
+    const rvfcVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number
+      cancelVideoFrameCallback?: (id: number) => void
+    }
+    const supportsRvfc = typeof rvfcVideo.requestVideoFrameCallback === 'function'
+    let rvfcId: number | null = null
+    const armFrameCallback = () => {
+      if (!supportsRvfc || rvfcId !== null) return
+      rvfcId = rvfcVideo.requestVideoFrameCallback?.(() => {
+        rvfcId = null
+        markLive()
+      }) ?? null
+    }
     const onVideoError = () => {
       // Log BEFORE the cancelled guard (§1.3) so a failure during
       // unmount is still recorded. The <video> error event carries the
@@ -339,6 +352,9 @@ export function VideoTile({
     }
     const onStallOrWaiting = () => {
       if (cancelled || stallTimer !== null) return
+      // rVFC is one-shot. After a mid-stream stall, re-arm it so the
+      // recovery Live signal is again a presented frame, not just 'playing'.
+      armFrameCallback()
       stallTimer = setTimeout(() => {
         stallTimer = null
         midStreamFail('stall-3s')
@@ -378,23 +394,16 @@ export function VideoTile({
         clearTimeout(stallTimer)
         stallTimer = null
       }
-      markLive()
+      // Real camera measurement on the ~4 s GOP stream showed 'playing'
+      // firing ~2.1 s before first decoded frame. Use it only as the
+      // no-rVFC fallback; rVFC/loadeddata remain frame-truth signals.
+      if (!supportsRvfc) markLive()
     }
     const onFirstFrameDecoded = () => markLive()
     // Frame-presentation truth where the API exists (Chrome/Safari, and
     // Firefox 130+): fires only after a frame actually hit the screen,
     // which is the exact thing the pill is promising.
-    const rvfcVideo = video as HTMLVideoElement & {
-      requestVideoFrameCallback?: (cb: () => void) => number
-      cancelVideoFrameCallback?: (id: number) => void
-    }
-    let rvfcId: number | null = null
-    if (typeof rvfcVideo.requestVideoFrameCallback === 'function') {
-      rvfcId = rvfcVideo.requestVideoFrameCallback(() => {
-        rvfcId = null
-        markLive()
-      })
-    }
+    armFrameCallback()
     video.addEventListener('error', onVideoError)
     video.addEventListener('stalled', onStallOrWaiting)
     video.addEventListener('waiting', onStallOrWaiting)
