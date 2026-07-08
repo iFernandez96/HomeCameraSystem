@@ -21,7 +21,10 @@ pytestmark = [
 
 
 def test_given_current_snapshot_when_counting_person_events_then_count_is_pinned():
-    assert count_person_events() == 2454
+    # Floor, not equality: the snapshot refreshes while production keeps
+    # detecting (2454 verified 2026-07-08 pre-refetch, 2480 post). A shrink
+    # below the last verified floor means data loss or a truncated fetch.
+    assert count_person_events() >= 2454
 
 
 def test_given_current_snapshot_when_counting_named_person_rows_then_capture_only_reality_is_pinned():

@@ -20,6 +20,14 @@ pytestmark = [
         reason="no Jetson events DB fixture - capture .jetson-snapshot/db/events.sqlite",
     ),
     pytest.mark.skipif(
+        APP_LOG.exists() and not logged_thumb_fetches(),
+        # docker log resets on container recreation (deploys), so a refetched
+        # window can lack push-image fetches. Proven green 2026-07-08 against
+        # the pre-restart log; regenerate by refetching after a push-with-image
+        # renders on a subscribed device.
+        reason="snapshot app log window has no production thumb fetches - refetch after a push-with-image renders on a device",
+    ),
+    pytest.mark.skipif(
         not APP_LOG.exists(),
         reason="no Jetson app log fixture - capture .jetson-snapshot/logs/homecam-server-app.log",
     ),
