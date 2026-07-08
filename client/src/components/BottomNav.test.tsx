@@ -25,7 +25,7 @@ describe('BottomNav', () => {
     ).toBeInTheDocument()
   })
 
-  it('when rendered, then exposes one link per configured tab (nav-coherence fix: Review rejoins as a landscape-phone-only 5th tab, see the CSS-hide test below; jsdom applies no stylesheet — `css: false` in vitest.config.ts — so the link is present in the DOM at every viewport and is only actually hidden by the real browser cascade)', () => {
+  it('GIVEN a phone in ANY orientation WHEN BottomNav renders THEN it exposes exactly the same 4 destinations — no orientation-only tabs (UI/UX overhaul 2026-07-07 NAV-1: rotating the phone must not change the information architecture; Review lives one tap inside Faces)', () => {
     // arrange
     renderAt('/')
 
@@ -35,17 +35,26 @@ describe('BottomNav', () => {
     // assert: getAllByRole returns ALL links; if a future tab is
     // added or removed without updating this test it'll fail loudly.
     // Pin both the count and the labels so a rename also fires.
-    expect(links).toHaveLength(5)
+    // The old `landscapeOnly` Review 5th tab is GONE — its
+    // hidden/landscape-phone:flex conditional made landscape show 5
+    // destinations while portrait showed 4 (device run-through #6).
+    expect(links).toHaveLength(4)
     expect(links.map((el) => el.textContent?.toLowerCase())).toEqual([
       expect.stringContaining('home'),
       expect.stringContaining('events'),
       expect.stringContaining('faces'),
-      expect.stringContaining('review'),
       expect.stringContaining('settings'),
     ])
+    // No tab may be display-gated by orientation: `hidden` (with a
+    // landscape-phone:flex re-show) was the mechanism — pin its
+    // absence on every link. Whitespace-delimited match: a plain
+    // \b boundary would false-positive on `overflow-hidden`.
+    for (const link of links) {
+      expect(link.className).not.toMatch(/(?:^|\s)hidden(?:\s|$)/)
+    }
   })
 
-  it('when rendered, then each link points to its own /tab path (iter-356.x; Playroom Modern Task 4 relabeled Watch->Home, History->Events, People->Faces; nav-coherence fix routes Review to the /training/review queue, matching SideRail)', () => {
+  it('when rendered, then each link points to its own /tab path (iter-356.x; Playroom Modern Task 4 relabeled Watch->Home, History->Events, People->Faces; NAV-1 2026-07-07 dropped the landscapeOnly Review tab)', () => {
     // arrange
     renderAt('/live')
 
@@ -54,7 +63,6 @@ describe('BottomNav', () => {
       home: screen.getByRole('link', { name: /home/i }).getAttribute('href'),
       events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
       faces: screen.getByRole('link', { name: /faces/i }).getAttribute('href'),
-      review: screen.getByRole('link', { name: /review/i }).getAttribute('href'),
       settings: screen.getByRole('link', { name: /settings/i }).getAttribute('href'),
     }
 
@@ -63,19 +71,19 @@ describe('BottomNav', () => {
       home: '/',
       events: '/events',
       faces: '/people',
-      review: '/training/review',
       settings: '/settings',
     })
   })
 
-  it('GIVEN the Review tab WHEN BottomNav renders THEN it carries `hidden landscape-phone:flex` so it only shows in the docked left-rail variant, not the portrait pebble bar (nav-coherence fix, item 3: landscape-phone rail parity with the desktop SideRail)', () => {
+  it('GIVEN the docked landscape-phone rail WHEN BottomNav renders THEN tab labels use the 11px landscape size, not the sub-readable 9px (UI/UX overhaul 2026-07-07, frank B3)', () => {
     // arrange / act
     renderAt('/')
-    const review = screen.getByRole('link', { name: /review/i })
+    const home = screen.getByRole('link', { name: /home/i })
 
-    // assert
-    expect(review.className).toMatch(/\bhidden\b/)
-    expect(review.className).toMatch(/landscape-phone:flex\b/)
+    // assert — the label size rides on the NavLink class string;
+    // jsdom applies no stylesheet so pin the class token itself.
+    expect(home.className).toMatch(/landscape-phone:text-\[11px\]/)
+    expect(home.className).not.toMatch(/text-\[9px\]/)
   })
 
   it('given the route matches /events, when BottomNav renders, then the Events link carries aria-current="page" (iter-338: pin via ARIA, not Tailwind class — same fix as iter-290 SideNav)', () => {

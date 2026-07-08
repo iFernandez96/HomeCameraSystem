@@ -1,5 +1,12 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import {
+  EventsIcon,
+  LiveIcon,
+  PeopleIcon,
+  SettingsIcon,
+  TrainingIcon,
+} from './NavIcons'
 import { useRipple } from '../lib/ripple'
 
 /**
@@ -51,6 +58,11 @@ type NavItem = {
 // promises — a review QUEUE of only the captures the classifier is
 // uncertain about. /training/review (Review.tsx, shipped iter-356.12)
 // is that queue. Label stays "Review"; only the destination moves.
+//
+// UI/UX overhaul 2026-07-07 (NAV-1): the desktop rail DELIBERATELY
+// keeps 5 items while the phone BottomNav has 4 in every
+// orientation. Cross-device difference is fine; cross-orientation
+// difference (the retired `landscapeOnly` Review) was the bug.
 const NAV_ITEMS: NavItem[] = [
   { to: '/',                label: 'Home',     icon: (a) => <LiveIcon active={a} /> },
   { to: '/events',          label: 'Events',   icon: () => <EventsIcon /> },
@@ -156,51 +168,9 @@ export function SideRail() {
   )
 }
 
-function LiveIcon({ active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M23 7l-7 5 7 5V7z" />
-      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-      {active && <circle cx="5" cy="9" r="1.5" fill="var(--color-danger)" stroke="none" />}
-    </svg>
-  )
-}
-function EventsIcon() {
-  // Activity-pulse glyph (warm-boutique redesign): the old clock face
-  // read as "history/time", not "activity". Matches BottomNav's Events
-  // glyph — keep the two in sync.
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-    </svg>
-  )
-}
-function PeopleIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  )
-}
-function TrainingIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 10l10-5 10 5-10 5-10-5z" />
-      <path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" />
-    </svg>
-  )
-}
-function SettingsIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  )
-}
+// Nav glyphs are shared with BottomNav via NavIcons.tsx — one
+// source, no "keep in sync" duplication. SignOutIcon stays local:
+// the rail is its only consumer.
 function SignOutIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

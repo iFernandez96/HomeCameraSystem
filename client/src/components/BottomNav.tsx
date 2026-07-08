@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { EventsIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
 import { useRipple } from '../lib/ripple'
 
 // iter-356.x (Frank P3-6): pre-fix Training and Review queue were
@@ -15,21 +16,21 @@ import { useRipple } from '../lib/ripple'
 // (was Watch), Events (was History), Faces (was People). Routes are
 // unchanged; only the accessible names/visible copy moved.
 //
-// Nav-coherence fix (painfix, nav parity): the desktop SideRail has
-// room for 5 items (Home/Events/Faces/Review/Settings); the portrait
-// pebble bar deliberately stays at 4 (Review is one tap inside Faces
-// instead, per iter-356.x Frank feedback on bar density). But the
-// landscape-phone left-rail dock has the same vertical room as the
-// desktop rail, so parity was broken there specifically — Review was
-// reachable on desktop and portrait-via-Faces, but invisible in the
-// landscape-phone dock. `landscapeOnly` items render `hidden` by
-// default and `landscape-phone:flex` only in that dock; the portrait
-// pebble bar (no `landscape-phone:` match) never shows them.
+// UI/UX overhaul 2026-07-07 (NAV-1): the previous nav-coherence fix
+// added a `landscapeOnly` Review entry that showed ONLY in the
+// landscape-phone left-rail dock. The live device run-through found
+// the opposite bug: rotating the phone now CHANGED the app's
+// information architecture — 4 destinations in portrait, 5 in
+// landscape — which is disorienting on rotate. Orientation must not
+// change IA. Phone (portrait AND landscape) exposes the same 4
+// destinations; Review is one tap inside Faces (the People page
+// header link). The desktop SideRail keeps its 5-item roster — a
+// cross-DEVICE difference is acceptable, a cross-ORIENTATION one
+// is not.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },
   { to: '/people', label: 'Faces', icon: PeopleIcon },
-  { to: '/training/review', label: 'Review', icon: TrainingIcon, landscapeOnly: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
@@ -120,9 +121,10 @@ export function BottomNav() {
             // bar's rounded-full language. overflow-hidden still
             // contains the press ripple.
             className={({ isActive }) =>
-              `relative overflow-hidden flex-1 landscape-phone:flex-none landscape-phone:w-full py-1.5 ${
-                t.landscapeOnly ? 'hidden landscape-phone:flex' : 'flex'
-              } flex-col items-center gap-0.5 text-xs landscape-phone:text-[9px] rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
+              // Landscape label: 9px was below the readable floor
+              // (frank B3) — 11px still fits "Settings" inside the
+              // 64px rail width with the px-1.5 nav padding.
+              `relative overflow-hidden flex flex-1 landscape-phone:flex-none landscape-phone:w-full py-1.5 flex-col items-center gap-0.5 text-xs landscape-phone:text-[11px] rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
                 isActive
                   ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] font-semibold'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
@@ -145,60 +147,6 @@ export function BottomNav() {
   )
 }
 
-// iter-356.56 (Dana #2): every icon SVG carries `aria-hidden="true"`
-// so VoiceOver swipe doesn't land on a "graphic" node before reaching
-// the visible label. SideNav already has this (iter-261); BottomNav
-// was left out and screen-reader users got a double-announcement on
-// every nav item.
-function LiveIcon({ active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M23 7l-7 5 7 5V7z" />
-      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-      {active && <circle cx="5" cy="9" r="1.5" fill="var(--color-danger)" stroke="none" />}
-    </svg>
-  )
-}
-
-function EventsIcon({ active: _active }: { active: boolean }) {
-  // Activity-pulse glyph (warm-boutique redesign): the old clock face
-  // read as "history/time", not "activity". Matches SideRail's Events
-  // glyph — keep the two in sync.
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-    </svg>
-  )
-}
-
-function PeopleIcon({ active: _active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  )
-}
-
-
-// Nav-coherence fix (painfix): matches SideRail's TrainingIcon glyph —
-// keep the two in sync.
-function TrainingIcon({ active: _active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 10l10-5 10 5-10 5-10-5z" />
-      <path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" />
-    </svg>
-  )
-}
-
-function SettingsIcon({ active: _active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  )
-}
+// Icon glyphs live in NavIcons.tsx (shared with SideRail — one
+// source, no drift). Every glyph is aria-hidden (iter-356.56 Dana
+// #2) so screen readers announce only the visible label.

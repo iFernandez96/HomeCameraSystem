@@ -679,4 +679,14 @@ describe('EventList', () => {
       'background-color: var(--color-id-person)',
     )
   })
+
+  it('Given the timeline container renders, When its classes are inspected, Then it caps at lg:max-w-3xl WITHOUT re-centering via lg:mx-auto (UI/UX overhaul 2026-07-07, landscape-desktop D3: the Events page already centers the content row; a second mx-auto double-centered the timeline and left an uneven gap next to the calendar rail)', () => {
+    // arrange / act
+    const { container } = render(<EventList events={[evt()]} />)
+    const root = container.firstElementChild as HTMLElement
+
+    // assert
+    expect(root.className).toMatch(/lg:max-w-3xl/)
+    expect(root.className).not.toMatch(/lg:mx-auto/)
+  })
 })

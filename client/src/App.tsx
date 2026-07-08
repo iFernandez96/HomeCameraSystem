@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useLayoutEffect, useRef } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -67,14 +67,21 @@ const Review = lazy(() =>
 // continuous shape from auth-resolution → chunk-load → first frame.
 // PageFallback is the fallback for everything else; not worth
 // per-route skeletons until a specific page requests one.
-function PageFallback() {
+function PageFallback({ pathname }: { pathname: string }) {
   // iter-356.63 (mobile redesign Slice F): swap the centered
   // PawSpinner Suspense fallback for a route-shaped <LoadingState>.
   // The "list" shape is a reasonable default — most route bundles
   // (Events, People, Training, Review) resolve to a list/grid that
   // matches it; the grid/video/form variants are picked at the page
   // level when the route can be more specific.
-  return <LoadingState shape="list" />
+  //
+  // UI/UX overhaul 2026-07-07 (perf C1): the "/" home route resolves
+  // to the Watch page, which opens on a 16:9 video tile — a list-
+  // shaped skeleton there meant "rows appear, then jump-cut into a
+  // video frame" on every cold visit. The video shape mirrors the
+  // resolved layout so the geometry settles once. Other routes keep
+  // the list default.
+  return <LoadingState shape={pathname === '/' ? 'video' : 'list'} />
 }
 
 // Each page is wrapped in its own ErrorBoundary so an uncaught throw
@@ -96,6 +103,18 @@ function AppShell() {
   // the full viewport with its own brand block.
   const isLoginRoute = location.pathname === '/login'
   const showShell = state === 'authed' && !isLoginRoute
+  // UI/UX overhaul 2026-07-07 (hari FOCUS-1): reset the main scroll
+  // container to the top on every route change. <main> is the real
+  // scroller (overflow-y-auto), NOT window, so React Router's
+  // default "do nothing" left each page opening at the previous
+  // page's scroll offset — deep in Events, tap Settings, land mid-
+  // Settings. Layout effect (before paint, no flash of the stale
+  // offset) reading a ref; no setState, so the React 19
+  // set-state-in-effect rule stays quiet.
+  const mainRef = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0
+  }, [location.pathname])
   return (
     <div
       className={`flex flex-col h-full [--ribbon-h:0px] ${
@@ -157,6 +176,7 @@ function AppShell() {
       </a>
       <main
         id="main"
+        ref={mainRef}
         // iter-356.58 (layout rebuild): main column now offsets for
         // the 64px SideRail (was 224px) on lg+ AND clears the 56px
         // WatchRibbon on top via padding. Sidenav-width var
@@ -220,7 +240,7 @@ function AppShell() {
         {/* Premium-feel: keyed on the route so every page change plays
             the 160ms native-style enter transition. */}
         <div key={location.pathname} className="w-full mx-auto animate-page-in">
-          <Suspense fallback={<PageFallback />}>
+          <Suspense fallback={<PageFallback pathname={location.pathname} />}>
             <Routes>
             <Route path="/login" element={<Login />} />
             <Route

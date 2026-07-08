@@ -959,26 +959,31 @@ export function Events() {
               act as the section anchor for content. The Events
               page now opens directly into the filter chips +
               timeline, no decorative title row. */}
-          {/* iter-356.63 (Slice D a11y): sr-only <h1> sibling so AT
-              users get a level-1 heading per route. The visible
-              "Watch log" stays aria-hidden + decorative (WatchRibbon
-              already carries identity).
-
-              Premium-launch slice (Maya Critical — log-label
-              triplication): pre-fix the visible decorative
-              `<span>Watch log</span>` echoed BOTH the sr-only h1
-              AND the day-headers below ("Today's log", "Yesterday's
-              log"). A user reads "Watch log → Today's log → entries"
-              — three log labels stacking. The visible span is
-              dropped; the day-headers become the visible section
-              anchors. The sr-only h1 stays (route-level a11y
-              landmark). The right-side meta cluster (Showing N +
-              Select) stays where it is — its `flex justify-between`
-              parent handles a single child by hugging the right
-              edge, which is the same pattern Settings + Live use
-              for their "page meta" row. */}
-          <h1 className="sr-only">Watch log</h1>
-          <div className="flex items-center gap-3 ml-auto">
+          {/* UI/UX overhaul 2026-07-07 (codex#3, mira#3): compact
+              VISIBLE page header. The previous pass left only an
+              sr-only "Watch log" h1 (the premium-launch slice killed
+              the visible span to stop log-label triplication), but
+              the live device run-through showed the opposite failure:
+              sighted users land on "Showing the last N / Select /
+              calendar" floating far right with a huge empty gap —
+              it reads as a MISSING header, not minimalism. Now: a
+              small left-anchored "Events" title in the .page-title
+              grammar plus one quiet subtitle line — a 40-48px band,
+              not a hero. It also anchors the right-side meta cluster
+              (device run-through #8). The h1 is the accessible
+              route heading (level 1, visible — better than sr-only).
+              The day-headers below ("Today's log") stay the section
+              anchors; "Events" matches the nav label so the tab and
+              the page agree on the name. */}
+          <div className="min-w-0">
+            <h1 className="page-title text-xl leading-tight text-[var(--color-text-primary)]">
+              Events
+            </h1>
+            <p className="text-xs text-[var(--color-text-secondary)] landscape-phone:hidden">
+              Recent motion and clips
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
             {!loading && !error && events.length > 0 && !selectionMode && (
               // iter-356.49: "100 recent" reads as a noun-phrase
               // riddle — "100 recent what?" Now: "Last 100" /
@@ -1030,7 +1035,17 @@ export function Events() {
           </div>
         </div>
         {showFilters && (
-          <>
+          // UI/UX overhaul 2026-07-07 (device run-through #7): on a
+          // landscape phone the TYPE and WHO groups used to stack as
+          // four full-width rows (caption, chips, caption, chips) and
+          // eat the entire ~390px-tall viewport — zero events visible
+          // above the fold. At `landscape-phone:` the two groups now
+          // sit side by side on one wrapping row, captions inline to
+          // the left of their chips. Each group keeps min-w-0 so the
+          // chip strips fall back to their own horizontal scroll
+          // instead of overflowing the row. Portrait and lg: keep the
+          // stacked layout (the wrappers are plain blocks there).
+          <div className="landscape-phone:flex landscape-phone:flex-wrap landscape-phone:items-center landscape-phone:gap-x-5 landscape-phone:max-w-2xl landscape-phone:mx-auto">
             {/* iter-330 (ux-grandpa Frank #3 + mobile A1): class
                 chip row sits ABOVE the person row — Frank reads the
                 broader "what was seen" filter first, then refines by
@@ -1043,7 +1058,7 @@ export function Events() {
                 jargon. */}
             {(labels.length > 1 ||
               (configClasses !== null && configClasses.length >= 1)) && (
-              <>
+              <div className="landscape-phone:flex landscape-phone:items-center landscape-phone:gap-2 landscape-phone:min-w-0">
                 {/* Painfix #4 (audited on-device): two chip rows with
                     no labels read as ONE filter row, so a user could
                     narrow by type AND person without realizing they'd
@@ -1051,7 +1066,7 @@ export function Events() {
                     results). A small section-eyebrow caption above
                     each row makes the two independent filter axes
                     legible at a glance. */}
-                <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold">
+                <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold landscape-phone:mt-0 landscape-phone:shrink-0">
                   Type
                 </p>
                 <ChipRadiogroup
@@ -1079,48 +1094,50 @@ export function Events() {
                         ? 'var(--color-id-mushu)'
                         : null
                   }
-                  marginTopClass="mt-1"
+                  marginTopClass="mt-1 landscape-phone:mt-0"
                 />
-              </>
+              </div>
             )}
-            {/* Painfix #4: "Who" caption above the person-filter row —
-                pairs with "Type" above. Always renders when
-                showFilters is true (this row is the one that always
-                shows). */}
-            <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold">
-              Who
-            </p>
-            <ChipRadiogroup
-              ariaLabel="Filter events by person"
-              values={[
-                'all' as PersonFilter,
-                ...personNames as PersonFilter[],
-                ...((hasUnmatched ? ['__unknown__'] : []) as PersonFilter[]),
-              ]}
-              current={filter}
-              onSelect={setFilter}
-              renderLabel={(v) =>
-                v === 'all'
-                  ? 'Everyone'
-                  : v === '__unknown__'
-                  ? 'Unrecognized'
-                  : v
-              }
-              // Playroom Modern (Task 6): 'all' has no dot (catch-all);
-              // '__unknown__' gets the cobalt person dot (it's still an
-              // unrecognized PERSON sighting); named individuals get
-              // their stable per-name wheel hue from identityForName —
-              // same color a named event's WhoMark renders with.
-              dotColor={(v) =>
-                v === 'all'
-                  ? null
-                  : v === '__unknown__'
-                    ? 'var(--color-id-person)'
-                    : identityForName(v).colorVar
-              }
-              marginTopClass="mt-1"
-            />
-          </>
+            <div className="landscape-phone:flex landscape-phone:items-center landscape-phone:gap-2 landscape-phone:min-w-0 landscape-phone:flex-1">
+              {/* Painfix #4: "Who" caption above the person-filter row —
+                  pairs with "Type" above. Always renders when
+                  showFilters is true (this row is the one that always
+                  shows). */}
+              <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold landscape-phone:mt-0 landscape-phone:shrink-0">
+                Who
+              </p>
+              <ChipRadiogroup
+                ariaLabel="Filter events by person"
+                values={[
+                  'all' as PersonFilter,
+                  ...personNames as PersonFilter[],
+                  ...((hasUnmatched ? ['__unknown__'] : []) as PersonFilter[]),
+                ]}
+                current={filter}
+                onSelect={setFilter}
+                renderLabel={(v) =>
+                  v === 'all'
+                    ? 'Everyone'
+                    : v === '__unknown__'
+                    ? 'Unrecognized'
+                    : v
+                }
+                // Playroom Modern (Task 6): 'all' has no dot (catch-all);
+                // '__unknown__' gets the cobalt person dot (it's still an
+                // unrecognized PERSON sighting); named individuals get
+                // their stable per-name wheel hue from identityForName —
+                // same color a named event's WhoMark renders with.
+                dotColor={(v) =>
+                  v === 'all'
+                    ? null
+                    : v === '__unknown__'
+                      ? 'var(--color-id-person)'
+                      : identityForName(v).colorVar
+                }
+                marginTopClass="mt-1 landscape-phone:mt-0"
+              />
+            </div>
+          </div>
         )}
         </div>
         {/* iter-251: calendar heatmap is collapsed by default. The

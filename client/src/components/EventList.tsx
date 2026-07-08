@@ -177,7 +177,14 @@ export function EventList({
     // axis line gives spatial coherence; the time column makes
     // when-something-happened scannable without scanning into
     // each card.
-    <div className="pb-4 lg:max-w-3xl lg:mx-auto">
+    // UI/UX overhaul 2026-07-07 (landscape-desktop D3): keep the
+    // lg:max-w-3xl readable-width cap but DROP the inner lg:mx-auto.
+    // The Events page already centers the whole content row
+    // (lg:max-w-6xl lg:mx-auto with the calendar rail); re-centering
+    // the timeline inside its flex-1 slot double-centered it and
+    // left an uneven gap next to the rail on wide screens. Left-
+    // hugging inside the already-centered column reads anchored.
+    <div className="pb-4 lg:max-w-3xl">
       {groups.map((group) => (
         <section
           key={group.dayKey}

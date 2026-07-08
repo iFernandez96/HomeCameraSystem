@@ -312,6 +312,25 @@ describe('EventHeatmap brand consistency (premium-launch slice)', () => {
     expect(legend.innerHTML).toMatch(/--color-accent-muted/)
     expect(container.innerHTML).not.toMatch(/bg-amber-300/)
   })
+
+  it('Given a day cell with events, When the count renders, Then it uses the 11px readable size instead of the sub-floor 9px (UI/UX overhaul 2026-07-07, frank B4)', async () => {
+    // arrange — put 3 events on today so a count span renders.
+    const today = new Date()
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    getEventCountsByDay.mockResolvedValue({ counts: { [todayKey]: 3 } })
+
+    // act
+    render(<EventHeatmap />)
+    const cell = await screen.findByLabelText(/3 detections \(today\)/i)
+
+    // assert — jsdom applies no stylesheet; pin the class token.
+    const count = Array.from(cell.querySelectorAll('span')).find(
+      (s) => s.textContent === '3',
+    )
+    expect(count).toBeDefined()
+    expect(count!.className).toMatch(/text-\[11px\]/)
+    expect(count!.className).not.toMatch(/text-\[9px\]/)
+  })
 })
 
 describe('dayBounds', () => {

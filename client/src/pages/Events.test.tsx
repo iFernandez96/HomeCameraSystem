@@ -180,16 +180,17 @@ describe('Events page', () => {
   })
 
   it('renders the page header', async () => {
-    // iter-356.58 (LAYOUT REBUILD): Events page-title H1 is gone.
-    // The shell-level WatchRibbon carries identity. The page now
-    // opens with a "Watch log" subhead in the sticky filter bar.
-    // iter-356.63 (Slice D a11y): "Watch log" appears twice now —
-    // once as the visible aria-hidden span and once as the sr-only
-    // <h1>. Match by heading level so we pin the route-anchor h1.
+    // UI/UX overhaul 2026-07-07 (codex#3, mira#3): the sr-only-only
+    // "Watch log" h1 is replaced by a compact VISIBLE "Events" page
+    // header — sighted users used to land on a right-floating meta
+    // cluster ("Showing the last N / Select / calendar") that read
+    // as a MISSING header, not minimalism. The h1 stays the route-
+    // level accessible heading; it now says "Events" (matching the
+    // nav tab label) and is visible.
     fetchEvents.mockResolvedValue([])
     render(<Events />)
     expect(
-      screen.getByRole('heading', { level: 1, name: /watch log/i }),
+      screen.getByRole('heading', { level: 1, name: /^events$/i }),
     ).toBeInTheDocument()
   })
 
@@ -1517,46 +1518,74 @@ describe('Events page', () => {
     expect(labels).toEqual(['All types', 'People'])
   })
 
-  it('given the Events page renders, when AT users query for the page heading, then a level-1 sr-only "Watch log" heading is present (iter-356.63: Slice D a11y — sr-only h1 per route)', async () => {
+  it('given the Events page renders, when AT users query for the page heading, then a VISIBLE level-1 "Events" heading is present (UI/UX overhaul 2026-07-07: compact page header replaces the sr-only-only h1)', async () => {
     // arrange
     fetchEvents.mockResolvedValue([])
 
     // act
     render(<Events />)
 
-    // assert — the visible "Watch log" span is aria-hidden; AT
-    // users land on the sr-only h1 instead.
-    expect(
-      await screen.findByRole('heading', { level: 1, name: /watch log/i }),
-    ).toBeInTheDocument()
+    // assert — the h1 is the accessible route heading AND visible to
+    // sighted users (the sr-only-only "Watch log" era left sighted
+    // users staring at an unanchored meta row). Pin that the sr-only
+    // treatment is gone from the heading itself.
+    const heading = await screen.findByRole('heading', {
+      level: 1,
+      name: /^events$/i,
+    })
+    expect(heading).toBeInTheDocument()
+    expect(heading.className).not.toMatch(/\bsr-only\b/)
+    // .page-title is the shared headline grammar (Playroom Modern
+    // Task 3) — the header must reuse it, not invent a new scale.
+    expect(heading.className).toMatch(/\bpage-title\b/)
   })
 
-  it('Given the Events page renders, When the user reads the visible header, Then "Watch log" appears EXACTLY ONCE (the sr-only h1) and NOT as a visible decorative span (premium-launch slice — Maya Critical: drop log-label triplication)', async () => {
-    // arrange — pre-fix "Watch log" appeared twice in the DOM:
-    // a sr-only <h1> for AT structural navigation AND a visible
-    // aria-hidden <span> rendered as a decorative title row.
-    // Maya: the visible span echoed the WatchRibbon (which
-    // already carries identity) AND duplicated the day-header
-    // ("Today's log") that is the real visible section anchor.
-    // Three log labels stacked. The slice drops the visible
-    // span and keeps only the sr-only <h1>.
+  it('Given the Events page renders, When the user reads the header band, Then a single compact header carries the title plus the "Recent motion and clips" subtitle and no "Watch log" label remains (UI/UX overhaul 2026-07-07 — codex#3: it read as a MISSING header, not minimalism)', async () => {
+    // arrange — the premium-launch slice removed the visible "Watch
+    // log" span (log-label triplication with "Today's log" day
+    // headers). This pass keeps that de-triplication (day headers
+    // stay the section anchors) but restores a visible PAGE header
+    // under a different name: "Events", matching the nav tab.
     fetchEvents.mockResolvedValue([])
 
     // act
     render(<Events />)
 
-    // assert — match every occurrence of "Watch log" in the DOM.
-    // jsdom returns the sr-only h1 here. If a future refactor
-    // re-introduces a visible decorative span, the count flips
-    // from 1 → 2 and the test fails.
-    const matches = await screen.findAllByText(/^Watch log$/)
-    expect(matches.length).toBe(1)
-    // The single match is the sr-only h1 — pin both the role
-    // AND the sr-only class so a regression that drops the
-    // sr-only treatment also fails.
-    const heading = matches[0]
-    expect(heading.tagName.toLowerCase()).toBe('h1')
-    expect(heading.className).toMatch(/\bsr-only\b/)
+    // assert — subtitle present, old label fully retired (zero
+    // occurrences: neither visible span nor sr-only h1).
+    expect(
+      await screen.findByText(/^Recent motion and clips$/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/^Watch log$/)).not.toBeInTheDocument()
+  })
+
+  it('Given the TYPE and WHO filter groups render, When at landscape-phone, Then they compact onto one wrapping row instead of stacking four full-width rows (UI/UX overhaul 2026-07-07, device run-through #7: filters ate the whole landscape viewport, zero events above the fold)', async () => {
+    // arrange — a configured class list makes both chip rows render.
+    fetchEvents.mockResolvedValue([])
+    getDetectionConfigM.mockResolvedValue({ classes: ['person', 'cat'] })
+
+    // act
+    render(<Events />)
+
+    // assert — jsdom applies no stylesheet; pin the class tokens.
+    // Each caption sits inline with its chips in a landscape flex
+    // group; the two groups live in a wrapping flex row.
+    const who = await screen.findByText('Who')
+    const type = await screen.findByText('Type')
+    const whoGroup = who.parentElement as HTMLElement
+    const typeGroup = type.parentElement as HTMLElement
+    expect(whoGroup.className).toMatch(/landscape-phone:flex\b/)
+    expect(typeGroup.className).toMatch(/landscape-phone:flex\b/)
+    const row = whoGroup.parentElement as HTMLElement
+    expect(row.className).toMatch(/landscape-phone:flex-wrap/)
+    // Captions drop their stacked top margin in the compact row.
+    expect(who.className).toMatch(/landscape-phone:mt-0/)
+    expect(type.className).toMatch(/landscape-phone:mt-0/)
+
+    // cleanup — restore the never-resolving default; the shared
+    // afterEach clearAllMocks() does NOT reset implementations, and
+    // later tests assume the config chip-sync stays pending.
+    getDetectionConfigM.mockReturnValue(new Promise(() => {}))
   })
 
   it('given the calendar overlay opens, when the user closes it via the X button, then focus returns to the calendar trigger (iter-356.63: Slice D a11y — focus restore)', async () => {

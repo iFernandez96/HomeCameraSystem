@@ -276,7 +276,9 @@ export function EventHeatmap({
             >
               <span className="text-sm leading-none">{dayNum}</span>
               {count > 0 ? (
-                <span className="text-[9px] leading-none mt-0.5 tabular-nums opacity-90">
+                // UI/UX overhaul 2026-07-07 (frank B4): 9px count was
+                // below the readable floor; 11px still fits the cell.
+                <span className="text-[11px] leading-none mt-0.5 tabular-nums opacity-90">
                   {count}
                 </span>
               ) : null}
