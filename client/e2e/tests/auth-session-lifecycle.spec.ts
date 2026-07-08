@@ -123,4 +123,46 @@ test.describe('Auth session lifecycle harness', () => {
       original.refreshCookie.expires,
     )
   })
+
+  test('given a logged-in session, when both tokens expire and the next app interaction runs, then session-expired UX is reached', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    const refreshResponses: number[] = []
+    page.on('response', (response) => {
+      const request = response.request()
+      if (
+        request.method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/auth/refresh'
+      ) {
+        refreshResponses.push(response.status())
+      }
+    })
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await page.waitForTimeout((REFRESH_TOKEN_TTL_S + 1) * 1_000)
+    await page.getByRole('link', { name: /events/i }).click()
+
+    // Each independent 401'd request retries refresh once (api.ts contract),
+    // so the status poll and the navigation fetch can each contribute one
+    // attempt. The invariant: every attempt 401s (never a late 200) and the
+    // count stays bounded — not exactly one.
+    await expect
+      .poll(() => refreshResponses.length, { timeout: 10_000 })
+      .toBeGreaterThan(0)
+    expect(refreshResponses.every((status) => status === 401)).toBe(true)
+    expect(refreshResponses.length).toBeLessThanOrEqual(3)
+    await expect(page).toHaveURL(/\/login\?expired=1$/)
+    await expect(
+      page.getByText("You've been signed out for security."),
+    ).toBeVisible()
+  })
 })
