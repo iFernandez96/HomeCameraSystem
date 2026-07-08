@@ -280,11 +280,12 @@ events (F16 ledger separates worker-lost attempts).
 - [x] F9 slow subscriber never blocks publish
 - [x] F10 queue overflow drops only the stuck subscriber
 - [x] F11 overflow warning rate-limited + resets
-- [ ] F12 WS closed-transport unsubscribes cleanly
-- [ ] F13 SQLite lock contention fail-open pinned (may expose busy_timeout gap)
-- [ ] F14 concurrent readers during ingest
-- [ ] F15 PARITY: full night replay diffs vs events_tonight.json AND events.sqlite
-- [ ] F16 app-log acceptance ledger (accepted vs worker-lost)
+- [x] F12 WS closed-transport unsubscribes cleanly
+- [x] F13 SQLite lock contention fail-open pinned (may expose busy_timeout gap)
+- [x] F14 concurrent readers during ingest
+- [x] F15 PARITY: full night replay diffs vs events_tonight.json AND events.sqlite
+- [x] F16 app-log acceptance ledger (accepted vs worker-lost)
+HARNESS #7 COMPLETE 2026-07-08 — 16/16 incl. full-night parity replay.
 
 ## Harness #5 — WebRTC/WHEP browser resilience: atomic steps (spec: codex r9, 2026-07-08)
 Two honest legs: LIVE vs the real Jetson (env HOMECAM_LIVE_WHEP=1; real
@@ -335,9 +336,9 @@ setuptools>=81 removes pkg_resources which the models package needs).
 ## Harness #6 — SW cache/update: atomic steps (spec: codex r11, 2026-07-08)
 A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [x] H6.1-H6.4 rig: two real builds with markers, scratch serve, SW active
-- [ ] H6.5 first-load-after-deploy truth pinned (A or B — observed reality)
-- [ ] H6.6 takeover timing (controllerchange -> B)
-- [ ] H6.7 fetch ledger explains 6.5/6.6
+- [x] H6.5 first-load-after-deploy truth pinned (A or B — observed reality)
+- [x] H6.6 takeover timing (controllerchange -> B)
+- [x] H6.7 fetch ledger explains 6.5/6.6
 - [ ] H6.8 precache completeness (no excluded cat PNGs)
 - [ ] H6.9 offline shell renders from cache
 - [ ] H6.10 events NetworkFirst: cached 200 offline; 401 never cached
