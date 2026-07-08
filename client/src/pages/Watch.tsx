@@ -891,6 +891,12 @@ export function Watch() {
             // Fullscreen API button would be a second, competing one).
             showFullscreenButton={false}
             safeAreaBottom={full}
+            // Fullscreen: the scrubber now OVERLAYS the bottom of the
+            // full-bleed video, so the tile's own control row must sit
+            // above it (scrubber ≈ 5.75rem + safe-area tall).
+            controlsBottom={
+              full ? 'calc(6.5rem + env(safe-area-inset-bottom))' : undefined
+            }
             dimControls={chromeHidden}
             actions={
               full ? undefined : (
@@ -1009,9 +1015,18 @@ export function Watch() {
           )}
         </div>
 
-        {/* Full-mode bottom: hour scrubber with event markers */}
+        {/* Full-mode bottom: hour scrubber with event markers.
+            OVERLAY, not a flex sibling (user report 2026-07-07: "black
+            bar at the bottom") — as a flex row it reserved a black
+            strip the video never filled, visible even after the chrome
+            faded. It already paints its own gradient scrim, so it sits
+            ON the (now full-bleed) video like every other piece of
+            fullscreen chrome and vanishes with the fade. */}
         {full && (
-          <div style={chromeFade(chromeHidden)}>
+          <div
+            className="absolute inset-x-0 bottom-0"
+            style={chromeFade(chromeHidden)}
+          >
           <HourScrubber
             onJumpHistory={() => {
               // Replace the fullscreen history marker with the events

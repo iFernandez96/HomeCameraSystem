@@ -34,6 +34,7 @@ export function VideoTile({
   actions,
   showFullscreenButton = true,
   safeAreaBottom = false,
+  controlsBottom,
   dimControls = false,
   streamPath = DEFAULT_CAMERA_PATH,
 }: {
@@ -148,6 +149,12 @@ export function VideoTile({
    * the inset on toolbar collapse / app resume.
    */
   safeAreaBottom?: boolean
+  /**
+   * Full override for the control row's bottom offset (CSS length).
+   * Watch's fullscreen mode passes a value that clears its hour
+   * scrubber overlay; when set it wins over `safeAreaBottom`.
+   */
+  controlsBottom?: string
   /**
    * Fade out the control row (quality pill + toggles) — the page's
    * fullscreen chrome auto-hide drives this so the tile's own
@@ -778,9 +785,11 @@ export function VideoTile({
       <div
         className="absolute inset-x-3 flex items-center justify-between gap-2 pointer-events-none"
         style={{
-          bottom: safeAreaBottom
-            ? 'calc(0.75rem + env(safe-area-inset-bottom))'
-            : '0.75rem',
+          bottom:
+            controlsBottom ??
+            (safeAreaBottom
+              ? 'calc(0.75rem + env(safe-area-inset-bottom))'
+              : '0.75rem'),
           ...(dimControls
             ? {
                 opacity: 0,
