@@ -109,6 +109,31 @@ Every harness and every feature is built as SMALL ATOMIC STEPS:
 - Rebuild list (de-stub/redo first, then prove): OTA update flow,
   backup/restore.
 
+## STANDING RULE — ground-truth parity (Israel, 2026-07-08)
+THE goal of every standalone: given the raw outputs captured from the
+Jetson, the harness driving the REAL modules must produce results
+IDENTICAL to what the live Jetson actually produced. Not "the contract
+holds" — "the same bytes/rows/decisions the production system emitted."
+- Every harness ends with a PARITY leg: replay real captured inputs
+  (events.sqlite rows, journald traces, real clips/segments, real
+  registries) through the real code and diff against the Jetson's own
+  recorded results for the same inputs. Contract pins (P1-P9 style) are
+  scaffolding; the parity leg is what closes a harness. No harness is
+  "done" without one.
+- Fixtures are always REAL captures, never hand-invented (unchanged).
+- If the Jetson-side ground truth needed for a diff was never recorded
+  (e.g. push send outcomes only log at debug), the harness gains a step
+  that makes production record it (log-level promotion, sidecar, etc.)
+  + a fresh fetch-jetson-data.sh capture — observability gaps are
+  harness work, not an excuse to skip parity.
+- Every codex step prompt carries this criterion; every gate checks it;
+  drift from this goal is a gate-reject even if tests are green.
+- Ground truth inventory: .jetson-snapshot/db/events.sqlite (+ .dump.sql),
+  logs/homecam-detect.log, continuous_capture_fixtures/ (journal +
+  events + 118 real segments — the model parity leg, proven 2026-07-07),
+  proof_fixtures/{push,snapshots,persons,clips,recordings_manifest.txt}.
+  Refresh opportunistically whenever the Jetson is reachable.
+
 ## Harness #1 — retention/evictor: atomic steps (spec: proof-program-codex-r2.md)
 - [x] A1 manifest parser (manifest_fixture.py) + parser-integrity test
 - [x] A2 sparse scratch builder + size/mtime round-trip test
@@ -125,26 +150,34 @@ Claude redirects: live steps target ONE known-current sub (single buzz,
 not 8); prune test mutates the DISPOSABLE fixture copy over real
 network, never the prod registry.
 - [x] P1 fixture parser + secret-hygiene pin
-- [ ] P2 real VAPID PEMs load through real PushService
-- [ ] P3 log redaction: failure paths never emit endpoint/key bytes
-- [ ] P4 payload contract (title/body/tag/url/event_id/unread_count/image)
-- [ ] P5 payload without thumb: image key absent, not null
-- [ ] P6 camera filter gates before fanout
+- [x] P2 real VAPID PEMs load through real PushService
+- [x] P3 log redaction: failure paths never emit endpoint/key bytes
+- [x] P4 payload contract (title/body/tag/url/event_id/unread_count/image)
+- [x] P5 payload without thumb: image key absent, not null
+- [x] P6 camera filter gates before fanout
 - [ ] P7 person filter gates before fanout
 - [ ] P8 quiet-hours filter gates before fanout
 - [ ] P9 webpush call-boundary kwargs (TTL/urgency) — may add prod kwargs
 - [ ] P10 LIVE: single-sub test push accepted by real gateway (gated)
 - [ ] P11 LIVE: event-shaped payload accepted, image+badge intact (gated)
 - [ ] P12 LIVE: 404/410 prune on disposable copy over real network (gated)
+- [ ] P13 PARITY prep (product): promote per-send outcome logging from
+      debug to info (send successes are currently invisible in journald —
+      0 push lines in 48h — so no Jetson-side ground truth exists yet);
+      deploy, let real events flow, re-fetch snapshot
+- [ ] P14 PARITY: replay real person events from .jetson-snapshot/db/
+      events.sqlite through the real route + real registry copy; diff
+      selected subs, payload fields, and send outcomes against the
+      Jetson's own journald send lines for the same events
 
 ## Harness #3 — auth/session lifecycle: atomic steps (spec: proof-program-codex-r4-auth.md)
 Motivating symptom: double silent sign-out 2026-07-07 evening. Top
 hypotheses: WS-1008 path never attempts refresh before anon (#1); no
 proactive refresh across backgrounding (#2). A7 is the reproducer; A8
 is the product fix contract if A7 confirms.
-- [ ] A1 login cookie contract (names/path/secure) on scratch server
-- [ ] A2 token kind/sub/role/exp claims pin
-- [ ] A3 wrong-kind boundary 401s both directions
+- [x] A1 login cookie contract (names/path/secure) on scratch server
+- [x] A2 token kind/sub/role/exp claims pin
+- [x] A3 wrong-kind boundary 401s both directions
 - [ ] A4 access-expired + refresh-valid REST path rotates and retries
 - [ ] A5 refresh single-flight under concurrent 401s
 - [ ] A6 refresh-expired emits ONE session-expired
@@ -154,3 +187,8 @@ is the product fix contract if A7 confirms.
 - [ ] A10 real-browser cookie expiry/rotation (Playwright, scratch uvicorn)
 - [ ] A11 background/resume past access TTL stays signed in
 - [ ] A12 secret rotation kills sessions into session-expired
+- [ ] A13 PARITY: replay the real auth_rejected sequences from Jetson
+      journald (homecam-server) against the scratch server — same
+      request shapes must produce the same rejection reasons and codes
+      the live server logged; diff harness WARN lines against the
+      captured ones
