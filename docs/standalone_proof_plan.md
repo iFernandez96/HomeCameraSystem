@@ -340,9 +340,9 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [x] H6.5 first-load-after-deploy truth pinned (A or B — observed reality)
 - [x] H6.6 takeover timing (controllerchange -> B)
 - [x] H6.7 fetch ledger explains 6.5/6.6
-- [ ] H6.8 precache completeness (no excluded cat PNGs)
-- [ ] H6.9 offline shell renders from cache
-- [ ] H6.10 events NetworkFirst: cached 200 offline; 401 never cached
+- [x] H6.8 precache completeness (no excluded cat PNGs)
+- [x] H6.9 offline shell renders from cache
+- [x] H6.10 events NetworkFirst: cached 200 offline; 401 never cached
 - [ ] H6.11 notificationclick: dismiss/view/tap contracts
 - [ ] H6.12 stale-handler risk pinned across A->B
 - [ ] H6.13 observability prep (build-id visibility) if needed for parity
