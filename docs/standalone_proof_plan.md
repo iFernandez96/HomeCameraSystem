@@ -285,3 +285,46 @@ events (F16 ledger separates worker-lost attempts).
 - [ ] F14 concurrent readers during ingest
 - [ ] F15 PARITY: full night replay diffs vs events_tonight.json AND events.sqlite
 - [ ] F16 app-log acceptance ledger (accepted vs worker-lost)
+
+## Harness #5 — WebRTC/WHEP browser resilience: atomic steps (spec: codex r9, 2026-07-08)
+Two honest legs: LIVE vs the real Jetson (env HOMECAM_LIVE_WHEP=1; real
+first frames per rung) + LOCAL whep-error-harness (real Chromium
+RTCPeerConnection, error paths only — a canned SDP cannot make frames).
+Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
+- [ ] W1 live config reusing auth-harness runner shape
+- [ ] W2 live fixture: console/event capture + JSON attempt ledger
+- [ ] W3 LIVE smoke: real frame -> Live pill only after frame evidence
+- [ ] W4 LIVE rung hq (/whep/cam/whep, first frame <8s)
+- [ ] W5 LIVE rung sd (/whep/cam_lq/whep)
+- [ ] W6 LIVE rung xs (/whep/cam_uq/whep)
+- [ ] W7 LIVE quality switch: old attempt closes, no stale-blank
+- [ ] W8 LIVE resume/error coalescing: at most one reconnect
+- [ ] W9 local error-harness fixture (404/503/hang/net-close/invalid-sdp)
+- [ ] W10 local: non-2xx -> error UI, manual Retry = exactly one POST
+- [ ] W11 local: hung POST aborted on unmount/switch, no leak
+- [ ] W12 local: invalid SDP -> set-remote-failed, never Live
+- [ ] W13 observability: attempt ledger (id, rung, timings, no SDP/IPs)
+- [ ] W14 parity prep: settled-attempt client logging
+- [ ] W15 parity capture: live run + fresh Jetson log fetch
+- [ ] W16 PARITY diff: ledger vs mediamtx/client_log by rung/outcome/window
+- [ ] W17 completion gate: live frames + local errors + parity all green
+
+## Harness #8 — face recognition: atomic steps (spec: codex r10, 2026-07-08)
+FINDING: production has ZERO named person rows — recognition has never
+fired live (capture-only). Named parity gated on a future refreshed
+snapshot (R14 sentinel). Deps: face_recognition/dlib in dev venv (installing).
+- [ ] R1 fixtures.py: persons/ inventory + sidecar schema + DB overlap
+- [ ] R2 sidecar integrity vs DB rows
+- [ ] R3 DB ground truth: pin zero-named-rows state explicitly
+- [ ] R4 lazy-import boundary: no face_recognition import w/o encodings.pkl
+- [ ] R5 load-mode: missing/corrupt encodings => capture-only
+- [ ] R6 gated: real encode_known_faces build into temp encodings.pkl
+- [ ] R7 gated: threshold ledger on real same-person/stranger crops
+- [ ] R8 gated: replay all real person crops, record outcomes
+- [ ] R9 PARITY: replay decisions vs production person_name (all-null now)
+- [ ] R10 null-name propagation through ingest + face_unrecognized search
+- [ ] R11 named propagation contract (person_names -> legacy person_name)
+- [ ] R12 training/review routes against copied real fixture tree
+- [ ] R13 name-them flow contract (review link + sidecar move)
+- [ ] R14 refresh-required sentinel for named parity
+- [ ] R15 close only after fresh named snapshot passes parity
