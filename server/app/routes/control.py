@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import asdict
+from uuid import uuid4
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from pathlib import Path
@@ -36,6 +38,11 @@ from ..services.detection_config import (
     ZONES_MAX,
     detection_config,
 )
+from ..services import ota_orchestrator as ota_orchestrator_module
+from ..services import ota_rollback as ota_rollback_module
+from ..services.ota_ledger import append_event
+from ..services.ota_manifest import read_local_manifest
+from ..services.ota_orchestrator import OtaApplyRequest, orchestrate_ota_apply
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -465,31 +472,152 @@ async def system_timelapse_status(
     }
 
 
-# iter-230 (Feature #12 OTA slice 1): operator-triggered software
-# update. Owner-only, mirrors the iter-197/iter-210/iter-213 stub-
-# with-note pattern (`{ok, note}` shape; client surfaces honestly
-# when stubbed via the iter-211 `r.note` truthy-check). The eventual
-# host-helper has multiple plausible designs (per iter-225 synthesis
-# Section 7):
-#   1. `git pull && docker compose up -d --build` — fragile under
-#      partial-fetch network failures; requires git origin reachable
-#      from the Jetson; commit-tip-checkout means uncommitted local
-#      patches get clobbered.
-#   2. `rsync` from a known-good build artifact + restart — needs
-#      a CI/CD pipeline producing the artifact; cleaner update story
-#      but more infra moving parts.
-#   3. `docker pull <image-tag> && docker compose up -d` — cleanest
-#      atomic swap; requires a registry the Jetson can reach.
-# Choice deferred to slice 4 (operator-side) when the operator
-# defines the deploy story. Slice 1 just nails down the wire shape
-# so the iter-231 client UI can be built.
+class SystemUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: str | None = Field(default=None, min_length=1)
+
+
+def _ota_manifest_id() -> str | None:
+    try:
+        return hashlib.sha256(settings.ota_manifest_path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _ota_enriched_append_event(base_metadata: dict[str, object]):
+    def _append(*args, metadata=None, status=None, reason=None, **kwargs):
+        enriched = {**base_metadata, **(dict(metadata) if metadata else {})}
+        if status == "applied":
+            enriched["health_result"] = "restart_deferred"
+        elif status == "rolled_back":
+            enriched.setdefault("health_result", reason or "rollback")
+        else:
+            enriched.setdefault("health_result", "not_run")
+        return append_event(
+            *args,
+            metadata=enriched,
+            status=status,
+            reason=reason,
+            **kwargs,
+        )
+
+    return _append
+
+
+def _ota_reject_version_mismatch(
+    *,
+    attempt_id: str,
+    requested_version: str,
+    manifest_version: str,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    append_event(
+        settings.ota_ledger_path,
+        attempt_id=attempt_id,
+        status="requested",
+        metadata={**metadata, "requested_version": requested_version},
+    )
+    append_event(
+        settings.ota_ledger_path,
+        attempt_id=attempt_id,
+        status="rejected",
+        reason="requested_version_mismatch",
+        metadata={
+            **metadata,
+            "requested_version": requested_version,
+            "phase": "version_select",
+            "version": manifest_version,
+        },
+    )
+    return {
+        "status": "rejected",
+        "applied": False,
+        "version": None,
+        "ledger_id": None,
+        "reason": "requested_version_mismatch",
+        "phase": "version_select",
+        "restart_required": False,
+    }
+
+
+# OTA artifact-bundle apply. Owner-only. Operators rsync the bundle into
+# settings.ota_artifacts_dir and the manifest to settings.ota_manifest_path
+# (defaults under /app/secrets/dist-ota in the existing persistent volume).
+# The default restart runner only records the configured command; the actual
+# service restart remains operator-side, so successful responses include
+# restart_required=true.
 @router.post(
     "/system/update",
     dependencies=[Depends(require_role("owner"))],
 )
-async def system_update() -> dict[str, object]:
-    log.warning("update requested (stubbed)")
-    return {"ok": True, "note": "scaffold: update is stubbed"}
+async def system_update(
+    body: Annotated[SystemUpdateRequest | None, Body()] = None,
+) -> dict[str, object]:
+    attempt_id = f"route-{uuid4()}"
+    manifest_result = read_local_manifest(settings.ota_manifest_path)
+    manifest = manifest_result.manifest
+    artifact_path = (
+        settings.ota_artifacts_dir / manifest.artifact.name if manifest else None
+    )
+    artifact_size = (
+        artifact_path.stat().st_size
+        if artifact_path and artifact_path.exists()
+        else 0
+    )
+    requested_version = body.version.strip() if body and body.version else None
+    metadata: dict[str, object] = {
+        "current_version": settings.version,
+        "target_version": manifest.version if manifest else requested_version,
+        "manifest_id": _ota_manifest_id(),
+        "artifact_digest": manifest.artifact.sha256 if manifest else None,
+        "strategy": "rsync-artifact",
+    }
+
+    if (
+        manifest is not None
+        and requested_version
+        and requested_version != manifest.version
+    ):
+        return _ota_reject_version_mismatch(
+            attempt_id=attempt_id,
+            requested_version=requested_version,
+            manifest_version=manifest.version,
+            metadata=metadata,
+        )
+
+    request = OtaApplyRequest(
+        attempt_id=attempt_id,
+        manifest_path=settings.ota_manifest_path,
+        artifacts_dir=settings.ota_artifacts_dir,
+        staging_root=settings.ota_staging_root,
+        persisted_data_dir=settings.ota_root.parent,
+        active_pointer=settings.ota_active_pointer,
+        ledger_path=settings.ota_ledger_path,
+        current_version=settings.version,
+        expected_artifact_size=artifact_size,
+        restart_command=settings.ota_restart_command,
+        env=None,
+    )
+
+    enriched_append = _ota_enriched_append_event(metadata)
+    original_orchestrator_append = ota_orchestrator_module.append_event
+    original_rollback_append = ota_rollback_module.append_event
+    ota_orchestrator_module.append_event = enriched_append
+    ota_rollback_module.append_event = enriched_append
+    try:
+        result = orchestrate_ota_apply(
+            request,
+            health_poller=lambda: {"ok": True, "status": "restart_deferred"},
+        )
+    finally:
+        ota_orchestrator_module.append_event = original_orchestrator_append
+        ota_rollback_module.append_event = original_rollback_append
+
+    response = asdict(result)
+    response["restart_required"] = bool(result.applied)
+    if result.phase == "manifest_gate" and result.reason == "missing":
+        response["note"] = "scaffold: update manifest is not present"
+    return response
 
 
 # iter-238 (Feature #10/12 follow-up): list available backup files

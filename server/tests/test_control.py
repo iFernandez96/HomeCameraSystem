@@ -1,3 +1,8 @@
+import asyncio
+import hashlib
+import json
+import tarfile
+
 from fastapi.testclient import TestClient
 
 
@@ -491,16 +496,108 @@ def test_given_missing_sidecar_when_fetched_then_404(
     assert r.status_code == 404
 
 
-def test_system_update_returns_ok_with_scaffold_note(client: TestClient):
-    """iter-230 (Feature #12 OTA slice 1): mirrors the iter-197/iter-
-    210/iter-213 stub-with-note pattern. Returns `note` until the
-    host-helper is wired up; client (iter-231) surfaces honestly."""
-    r = client.post("/api/system/update")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert "note" in body
-    assert "stub" in body["note"].lower()
+def _patch_ota_paths(tmp_path, monkeypatch):
+    from app.config import settings
+
+    ota_root = tmp_path / "dist-ota"
+    artifacts = ota_root / "artifacts"
+    artifacts.mkdir(parents=True)
+    staging = ota_root / "staging"
+    active_pointer = ota_root / "active-version"
+    active_pointer.write_text("1.2.3\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "version", "1.2.3")
+    monkeypatch.setattr(settings, "ota_root", ota_root)
+    monkeypatch.setattr(
+        settings, "ota_manifest_path", ota_root / "update-manifest.json"
+    )
+    monkeypatch.setattr(settings, "ota_artifacts_dir", artifacts)
+    monkeypatch.setattr(settings, "ota_staging_root", staging)
+    monkeypatch.setattr(settings, "ota_active_pointer", active_pointer)
+    monkeypatch.setattr(settings, "ota_ledger_path", ota_root / "ota-ledger.jsonl")
+    monkeypatch.setattr(
+        settings,
+        "ota_restart_command",
+        ("systemctl", "restart", "homecam.service"),
+    )
+    return ota_root
+
+
+def _write_ota_artifact_bundle(ota_root):
+    source = ota_root / "source"
+    source.mkdir()
+    (source / "compose.yaml").write_text(
+        "services:\n  homecam:\n    volumes:\n      - ${HOMECAM_DATA_DIR}:/data\n",
+        encoding="utf-8",
+    )
+    (source / ".env").write_text(
+        f"HOMECAM_DATA_DIR={ota_root.parent}\n",
+        encoding="utf-8",
+    )
+    (source / "data").mkdir()
+    artifact = ota_root / "artifacts" / "homecam-1.2.4.tar"
+    with tarfile.open(artifact, "w") as archive:
+        for child in sorted(source.rglob("*")):
+            archive.add(child, arcname=child.relative_to(source))
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    manifest = ota_root / "update-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": "1.2.4",
+                "artifact": {"name": artifact.name, "sha256": digest},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return digest, hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+
+def test_system_update_returns_unavailable_scaffold_note_only_without_manifest(
+    tmp_path, monkeypatch
+):
+    from app.services.ota_ledger import read_events
+    from app.routes.control import system_update
+
+    ota_root = _patch_ota_paths(tmp_path, monkeypatch)
+    body = asyncio.run(system_update(None))
+    assert body["status"] == "rejected"
+    assert body["applied"] is False
+    assert body["reason"] == "missing"
+    assert body["restart_required"] is False
+    assert "manifest" in body["note"].lower()
+    rows = read_events(ota_root / "ota-ledger.jsonl")
+    assert [row["status"] for row in rows] == ["requested", "rejected"]
+
+
+def test_system_update_wires_real_orchestrator_and_records_parity_ledger(
+    tmp_path, monkeypatch
+):
+    from app.config import settings
+    from app.routes.control import SystemUpdateRequest, system_update
+    from app.services.ota_ledger import read_events
+
+    ota_root = _patch_ota_paths(tmp_path, monkeypatch)
+    artifact_digest, manifest_id = _write_ota_artifact_bundle(ota_root)
+
+    body = asyncio.run(system_update(SystemUpdateRequest(version="1.2.4")))
+    assert body["status"] == "applied"
+    assert body["applied"] is True
+    assert body["version"] == "1.2.4"
+    assert body["ledger_id"].startswith("route-")
+    assert body["restart_required"] is True
+    assert "note" not in body
+    assert settings.ota_active_pointer.read_text(encoding="utf-8") == "1.2.4\n"
+
+    rows = read_events(settings.ota_ledger_path)
+    assert [row["status"] for row in rows] == ["requested", "started", "applied"]
+    for row in rows:
+        metadata = row["metadata"]
+        assert metadata["current_version"] == "1.2.3"
+        assert metadata["target_version"] == "1.2.4"
+        assert metadata["manifest_id"] == manifest_id
+        assert metadata["artifact_digest"] == artifact_digest
+        assert metadata["strategy"] == "rsync-artifact"
+    assert rows[-1]["metadata"]["health_result"] == "restart_deferred"
 
 
 # iter-238 (Feature #10/12 follow-up): /api/system/backups listing.

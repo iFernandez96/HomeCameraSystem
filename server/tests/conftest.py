@@ -41,6 +41,19 @@ def _auth_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "jwt_secret_path", tmp_path / "jwt.bin")
     # TestClient runs over HTTP; Secure cookies wouldn't propagate.
     monkeypatch.setattr(settings, "cookie_secure", False)
+    # OTA paths default to container-only /app/secrets — the update route
+    # ALWAYS appends a ledger line (U18 invariant), so any test touching it
+    # on a dev box needs scratch paths.
+    ota_root = tmp_path / "dist-ota"
+    monkeypatch.setattr(settings, "ota_root", ota_root)
+    monkeypatch.setattr(settings, "ota_manifest_path", ota_root / "update-manifest.json")
+    monkeypatch.setattr(settings, "ota_artifacts_dir", ota_root / "artifacts")
+    monkeypatch.setattr(settings, "ota_staging_root", ota_root / "staging")
+    for _name in ("ota_active_pointer", "ota_ledger_path"):
+        if hasattr(settings, _name):
+            monkeypatch.setattr(
+                settings, _name, ota_root / getattr(settings, _name).name
+            )
 
     users_db.init_db(tmp_path / "users.db")
     # Idempotent: a second test under a fresh tmp_path makes a new

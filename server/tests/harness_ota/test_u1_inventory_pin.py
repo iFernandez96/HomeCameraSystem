@@ -1,22 +1,29 @@
 import pytest
 
 from app.routes.control import router
-from app.services import ota_ledger, ota_manifest, ota_version
+from app.config import settings
+from app.services.ota_ledger import read_events
 
 
 @pytest.mark.asyncio
-async def test_given_update_scaffold_when_post_route_endpoint_runs_then_note_means_non_applied_and_no_ota_service_call(
-    monkeypatch,
+async def test_given_no_update_manifest_when_post_route_endpoint_runs_then_unavailable_note_is_non_applied(
+    tmp_path, monkeypatch
 ):
-    called: list[str] = []
-
-    def explode(*_args, **_kwargs):
-        called.append("called")
-        raise AssertionError("OTA service helper must not be wired in U1")
-
-    monkeypatch.setattr(ota_ledger, "append_event", explode)
-    monkeypatch.setattr(ota_manifest, "read_local_manifest", explode)
-    monkeypatch.setattr(ota_version, "current_version_from_env", explode)
+    ota_root = tmp_path / "dist-ota"
+    monkeypatch.setattr(settings, "version", "1.2.3")
+    monkeypatch.setattr(settings, "ota_root", ota_root)
+    monkeypatch.setattr(
+        settings, "ota_manifest_path", ota_root / "update-manifest.json"
+    )
+    monkeypatch.setattr(settings, "ota_artifacts_dir", ota_root / "artifacts")
+    monkeypatch.setattr(settings, "ota_staging_root", ota_root / "staging")
+    monkeypatch.setattr(settings, "ota_active_pointer", ota_root / "active-version")
+    monkeypatch.setattr(settings, "ota_ledger_path", ota_root / "ota-ledger.jsonl")
+    monkeypatch.setattr(
+        settings,
+        "ota_restart_command",
+        ("systemctl", "restart", "homecam.service"),
+    )
 
     route = next(
         route
@@ -24,11 +31,14 @@ async def test_given_update_scaffold_when_post_route_endpoint_runs_then_note_mea
         if getattr(route, "path", None) == "/system/update"
         and "POST" in getattr(route, "methods", set())
     )
-    body = await route.endpoint()
+    body = await route.endpoint(None)
 
-    assert body["ok"] is True
+    assert body["status"] == "rejected"
+    assert body["applied"] is False
     assert body["note"] is not None
-    assert "stub" in body["note"].lower()
-    assert body.get("applied") in (None, False)
-    assert "ledger_id" not in body
-    assert called == []
+    assert "manifest" in body["note"].lower()
+    assert body["restart_required"] is False
+    assert body["ledger_id"] is None
+    rows = read_events(settings.ota_ledger_path)
+    assert [row["status"] for row in rows] == ["requested", "rejected"]
+    assert rows[0]["metadata"]["strategy"] == "rsync-artifact"

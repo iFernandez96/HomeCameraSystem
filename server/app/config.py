@@ -146,5 +146,32 @@ class Settings:
         os.getenv("EVENTS_DB_PATH", "./events.db")
     )
 
+    # OTA artifact-bundle apply paths. Defaults live under the existing
+    # persistent server data volume (`homecam-secrets` mounts at /app/secrets
+    # in deploy/docker-compose.yml) so no compose change is required.
+    ota_root: Path = Path(os.getenv("OTA_ROOT", "/app/secrets/dist-ota"))
+    ota_manifest_path: Path = Path(
+        os.getenv("OTA_MANIFEST_PATH", "/app/secrets/dist-ota/update-manifest.json")
+    )
+    ota_artifacts_dir: Path = Path(
+        os.getenv("OTA_ARTIFACTS_DIR", "/app/secrets/dist-ota/artifacts")
+    )
+    ota_staging_root: Path = Path(
+        os.getenv("OTA_STAGING_ROOT", "/app/secrets/dist-ota/staging")
+    )
+    ota_active_pointer: Path = Path(
+        os.getenv("OTA_ACTIVE_POINTER", "/app/secrets/dist-ota/active-version")
+    )
+    ota_ledger_path: Path = Path(
+        os.getenv("OTA_LEDGER_PATH", "/app/secrets/dist-ota/ota-ledger.jsonl")
+    )
+    ota_restart_command: tuple[str, ...] = tuple(
+        part
+        for part in os.getenv(
+            "OTA_RESTART_COMMAND", "systemctl restart homecam.service"
+        ).split()
+        if part
+    )
+
 
 settings = Settings()
