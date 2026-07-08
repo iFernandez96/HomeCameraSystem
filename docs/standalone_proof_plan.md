@@ -136,3 +136,21 @@ network, never the prod registry.
 - [ ] P10 LIVE: single-sub test push accepted by real gateway (gated)
 - [ ] P11 LIVE: event-shaped payload accepted, image+badge intact (gated)
 - [ ] P12 LIVE: 404/410 prune on disposable copy over real network (gated)
+
+## Harness #3 — auth/session lifecycle: atomic steps (spec: proof-program-codex-r4-auth.md)
+Motivating symptom: double silent sign-out 2026-07-07 evening. Top
+hypotheses: WS-1008 path never attempts refresh before anon (#1); no
+proactive refresh across backgrounding (#2). A7 is the reproducer; A8
+is the product fix contract if A7 confirms.
+- [ ] A1 login cookie contract (names/path/secure) on scratch server
+- [ ] A2 token kind/sub/role/exp claims pin
+- [ ] A3 wrong-kind boundary 401s both directions
+- [ ] A4 access-expired + refresh-valid REST path rotates and retries
+- [ ] A5 refresh single-flight under concurrent 401s
+- [ ] A6 refresh-expired emits ONE session-expired
+- [ ] A7 REPRODUCER: WS 1008 + /me 401 signs out despite valid refresh
+- [ ] A8 fix contract: 1008 attempts refresh before anon
+- [ ] A9 1008 + failed refresh -> session-expired
+- [ ] A10 real-browser cookie expiry/rotation (Playwright, scratch uvicorn)
+- [ ] A11 background/resume past access TTL stays signed in
+- [ ] A12 secret rotation kills sessions into session-expired
