@@ -259,11 +259,12 @@ IDs match events.sqlite rows).
 - [x] H9.7 tempfile called with dir=recordings_dir, delete=False
 - [x] H9.8 measured RSS flat vs 289MB input (bounded delta)
 - [x] H9.9 Semaphore(1) serializes concurrent builds
-- [ ] H9.10 missing clip -> 200 + clip_included=false, no 500
-- [ ] H9.11 unlink after serve (no homecam_export_*.zip left)
-- [ ] H9.12 failure mid-zip -> 500 + partial cleaned
-- [ ] H9.13 PARITY: manifest rows vs captured DB; members vs captured bytes;
+- [x] H9.10 missing clip -> 200 + clip_included=false, no 500
+- [x] H9.11 unlink after serve (no homecam_export_*.zip left)
+- [x] H9.12 failure mid-zip -> 500 + partial cleaned
+- [x] H9.13 PARITY: manifest rows vs captured DB; members vs captured bytes;
       note absent Jetson export-log ground truth as observability gap
+HARNESS #9 COMPLETE 2026-07-08 — 13/13 incl. measured-RSS OOM guard + parity close.
 
 ## Harness #7 — event bus + SQLite under real cadence: atomic steps (spec: codex r8, 2026-07-08)
 Fixtures: continuous_capture_fixtures/events_tonight.json + journal cadence,
