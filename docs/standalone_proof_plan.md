@@ -238,9 +238,9 @@ push-daemon fetches).
 - [ ] H4.9 push image == thumb_url exactly (spied send_matching)
 - [x] H4.10 unauth thumb serve: 200, image/jpeg, exact bytes, no Set-Cookie
 - [x] H4.11 latest/snap 308 to auth-gated path; arbitrary names 404
-- [ ] H4.12 EventList thumb consumption (img src, selectability)
-- [ ] H4.13 ClipModal poster + still fallback
-- [ ] H4.14 SW: payload image -> notification options image, unrewritten
+- [x] H4.12 EventList thumb consumption (img src, selectability)
+- [x] H4.13 ClipModal poster + still fallback
+- [x] H4.14 SW: payload image -> notification options image, unrewritten
 - [x] H4.15 PARITY: every production-logged thumb 200 replays 200 with
       matching bytes AND appears in events.sqlite thumb_url (green 2026-07-08)
 
