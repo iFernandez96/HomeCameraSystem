@@ -36,7 +36,8 @@
   "8_face_recognition": {
    "status": "DONE for current ground truth (14/15)",
    "remaining": "R15 named parity \u2014 armed by the R14 inverted sentinel; fires when a refreshed snapshot has named person rows",
-   "note": "R3 count pin converted to floor >= 2454 (snapshot refreshes while production detects)"
+   "note": "R3 count pin converted to floor >= 2454 (snapshot refreshes while production detects)",
+   "in_flight": "R9 null-name parity (codex bks6kadj6)"
   },
   "9_export_zip": {
    "status": "DONE 13/13 incl. measured-RSS OOM guard"
@@ -47,8 +48,9 @@
   },
   "11_rebuild_list": {
    "status": "in_progress",
-   "done": "spec (001d38e) + U1-4 OTA modules + B1-4 backup modules (a00a83d, 32 tests)",
-   "remaining": "U5-U19, B5-B19ish per plan doc; operator decision needed: deploy strategy for OTA apply (git-pull vs rsync artifact vs docker pull)"
+   "done": "spec + U1-17 complete (offline e2e green) + B1-17,B19 + artifact builder (1b37a20); OTA strategy decided: rsync artifact bundle; real 0.1.1 artifact pre-staged at jetson:~/HomeCameraSystem/dist-ota/0.1.1/",
+   "remaining": "B21 backup route wiring (AFTER U18 lands \u2014 both touch control.py), U19/B22 real-Jetson parity legs",
+   "in_flight": "U18 route wiring (bwetgx907), B18+B20 restore orchestrator + round-trip (bjwldn4d0)"
   }
  },
  "production": {
@@ -56,6 +58,6 @@
   "all_verified": "healthz + bundle hash + live suite 6/6"
  },
  "blocked": [],
- "last_update": "2026-07-08T13:50 harnesses 1-10 ALL DONE (R15 armed); #11 U1-4/B1-4 landed",
+ "last_update": "2026-07-08T14:20 four lanes: U18, B18+B20, R9, detection regression",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom on the LIVE FEED user-confirmed working (2026-07-08 ~13:15); clips-modal pinch not explicitly confirmed."
 }
