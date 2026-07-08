@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.auth.dependencies import get_current_user
 from app.routes import auth as auth_routes
 
 
@@ -52,6 +53,10 @@ def scratch_auth_server(tmp_path, monkeypatch) -> ScratchAuthServer:
     from app.config import settings
     app = FastAPI()
     app.include_router(auth_routes.router, prefix="/api")
+
+    @app.get("/api/harness/protected")
+    def protected_route(user: str = Depends(get_current_user)) -> dict:
+        return {"user": user}
 
     access_ttl_s = 11
     refresh_ttl_s = 29
