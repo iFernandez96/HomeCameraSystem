@@ -726,6 +726,13 @@ html {
   border: 2px solid var(--color-bg);
   transition: transform 80ms ease;
 }
+/* UI/UX overhaul 2026-07-07 (landscape B2): hover affordance for
+ * pointer devices — the thumb grows slightly on hover so a mouse user
+ * gets grab feedback before pressing. Declared BEFORE :active so the
+ * bigger press scale wins while both apply. */
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.08);
+}
 .slider::-webkit-slider-thumb:active {
   transform: scale(1.15);
 }
@@ -736,6 +743,9 @@ html {
   background: var(--color-accent-default);
   cursor: pointer;
   border: 2px solid var(--color-bg);
+}
+.slider::-moz-range-thumb:hover {
+  transform: scale(1.08);
 }
 .slider:disabled {
   opacity: 0.4;

@@ -70,6 +70,21 @@ export default defineConfig({
   define: {
     __BUILD_ID__: JSON.stringify(__BUILD_ID),
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // UI/UX overhaul 2026-07-07 (perf A1): split the framework
+        // trio into a stable `vendor` chunk. React/ReactDOM/router
+        // change only on dependency bumps, so returning users keep a
+        // cached vendor chunk across app deploys instead of
+        // re-downloading it inside a monolithic index chunk on every
+        // client release.
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

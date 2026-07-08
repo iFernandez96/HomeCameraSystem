@@ -121,7 +121,7 @@ describe('ErrorState', () => {
   })
 
   it('Given the warning glyph circle, When rendered, Then it uses the --color-warning-bg token (no rgba fallback — the token is defined in src/index.css)', () => {
-    // arrange — Mira #8: the rgba fallback inside the bg-[var(...)]
+    // arrange — Mira #8: the rgba fallback inside the background var() utility
     // expression was dead code that would silently disable theming
     // if the token were ever renamed. The assertion pins that we
     // committed to the token.

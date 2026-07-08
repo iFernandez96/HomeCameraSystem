@@ -9,10 +9,12 @@ import type { DetectionBox } from './types'
 // and a recurrence after recovery logs again.
 let _degenerateWarned = false
 
-// Playroom Modern (identity-colored boxes): canvas can't resolve `var(...)`
-// tokens, so callers resolve the event's identity color ONCE (per event, not
-// per frame — see `resolveIdColor` below) and pass the concrete rgb/hex
-// string through `opts.color`. jsdom's `getComputedStyle` returns an empty
+// Playroom Modern (identity-colored boxes): canvas cannot resolve CSS
+// custom-property tokens, so callers resolve the event's identity color ONCE
+// (per event, not per frame — see `resolveIdColor` below) and pass the
+// concrete rgb/hex string through `opts.color`. (Comment deliberately avoids
+// spelling the bracketed token form: Tailwind v4's scanner reads comments too
+// and was emitting a junk utility rule + build warning from it — perf A5.) jsdom's `getComputedStyle` returns an empty
 // string for unset custom properties, so this always has a real fallback.
 const FALLBACK_ID_COLOR = '#2f5fe0'
 

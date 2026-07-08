@@ -84,7 +84,14 @@
          crypto.hash polyfill in vite.config.ts let CSS url() refs
          flow through Vite's normal asset pipeline). -->
     <link rel="preload" href="/fonts/inter-variable-latin.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
-    <link rel="preload" href="/fonts/bricolage-variable-latin.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <!-- UI/UX overhaul 2026-07-07 (perf F1): the Bricolage preload was
+         dropped — it's a display face used only for headings, and
+         preloading it competed with the JS bundle + Inter (the body
+         face every visible glyph needs) for first-paint bandwidth on
+         cold cellular. Bricolage still loads via its @font-face in
+         src/index.css with font-display: swap, so headings render in
+         the fallback face for a beat and then upgrade. -->
+
     <!-- iter-356.65 (mobile slice A) TODO: Vite emits hash-based
          per-route chunk filenames (e.g. `Live-DEADBEEF.js`), so
          a static `<link rel="modulepreload" href="/assets/Live-*.js">`
