@@ -355,9 +355,9 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [x] M10.4 two-camera registry route
 - [ ] M10.5 browser switcher -> /whep/synth/whep
 - [ ] M10.6 quality rung URL composition per camera
-- [ ] M10.7 worker DETECT_CAMERA_ID -> payload camera_id
+- [x] M10.7 worker DETECT_CAMERA_ID -> payload camera_id
 - [ ] M10.8 per-camera persistence + search filter
-- [ ] M10.9 client Events camera chip narrows
+- [x] M10.9 client Events camera chip narrows (already pinned: Events.test.tsx "camera chip is selected...list narrows" + "Load more...camera= forwarded"; codex skip-pin of a search-on-chip-activation contract REJECTED as aspirational, not current product behavior)
 - [ ] M10.10 LIVE dynamic publish probe (gated)
 - [x] M10.11 PARITY: cam1->front_door migration on scratch copy
 - [x] M10.12 PARITY: production DB single-camera invariants

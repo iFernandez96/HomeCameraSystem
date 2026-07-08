@@ -23,10 +23,11 @@
   },
   "5_webrtc_whep": {
    "status": "in_progress",
-   "done": "W1-W8 live vs real Jetson + W9-W12 error harness + W13-14 attempt ledger (committed, NOT yet deployed)",
+   "done": "W1-W8 live + W9-W14; W15 DONE: ledger client deployed (index-BBfT9rx7), live suite 6/6, real settled-attempt lines confirmed in journald (privacy-safe)",
    "in_flight": null,
-   "remaining": "W15-16 BLOCKED on user OK to deploy client (classifier denied rsync); then live run + log fetch + parity diff; W17 gate",
-   "findings": "Live-pill playing-vs-rVFC fixed+deployed (57b251b); abort-on-supersede fixed+deployed (8fadee0); starlette BaseHTTPMiddleware swallows http.disconnect (documented in whepErrorHarness stub)"
+   "remaining": "W16 diff tooling in flight (codex byx1ia8vv); then run diff, W17 gate",
+   "findings": "Live-pill playing-vs-rVFC fixed+deployed (57b251b); abort-on-supersede fixed+deployed (8fadee0); starlette BaseHTTPMiddleware swallows http.disconnect (documented in whepErrorHarness stub)",
+   "note": "client_log ships warn/error only \u2014 connected settles are e2e-ledger-side; parity diff = in-page ledger vs mediamtx session log"
   },
   "6_sw_cache_update": {
    "status": "in_progress",
@@ -47,8 +48,8 @@
   },
   "10_multicam": {
    "status": "in_progress",
-   "done": "M10.2-4 (bfc4246, mediamtx v1.18.0 amd64 version-matched to production) + M10.11-12",
-   "in_flight": "M10.7 (task bue16sqrz, detection/tests), M10.8 (b8u639fd4, server/tests/harness_multicam), M10.9 (bq257vd2e, client/src Events tests)",
+   "done": "M10.2-4, M10.7, M10.9 (existing pins; aspirational skip rejected), M10.11-12",
+   "in_flight": "M10.8 (task b8u639fd4)",
    "remaining": "M10.5-6 browser switcher/rung e2e, M10.10 live publish probe",
    "note": "mediamtx v1.18.0 binary in session scratchpad (HOMECAM_MEDIAMTX_BIN); 1.15.1 rejects webrtcAllowOrigins plural key"
   },
@@ -58,12 +59,10 @@
   }
  },
  "production": {
-  "deploys_today": "server x2 (TTL fix, fanout INFO logging, WS accept-then-close), client x4 (A8 refresh-before-anon, rVFC pill, abort-on-supersede, SW navigation fallback)",
-  "all_verified": "healthz + in-container grep + live browser suites"
+  "deploys_today": "server x2, client x5 (latest: W13-14 attempt ledger, user-approved, verified hash match)",
+  "all_verified": "healthz + bundle hash + live suite 6/6"
  },
- "blocked": [
-  "W15 client deploy to Jetson denied by permission classifier \u2014 ask Israel to approve deploying the W13-14 ledger-logging client build"
- ],
- "last_update": "2026-07-08T13:15 lanes: M10.7/8/9 in flight; P14+W13-14 committed",
+ "blocked": [],
+ "last_update": "2026-07-08T13:12 W15 done; W16+M10.8 lanes running",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom left for manual thumb test."
 }
