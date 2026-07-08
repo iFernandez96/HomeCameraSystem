@@ -364,6 +364,11 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 
 ## Harness #11 — OTA + backup/restore de-stub audit/spec (codex r13, 2026-07-08)
 
+OPERATOR DECISION (Israel, 2026-07-08): OTA apply strategy = ARTIFACT BUNDLE
+VIA RSYNC. Laptop cross-builds a versioned artifact (client dist + detection
+tree + server image tar + manifest w/ sha256s); pushed to Jetson storage; the
+OTA route verifies + stages + applies locally. Never build on the Nano.
+
 Scope note: this is a rebuild-list harness. Current code has UI + route
 shapes, but the dangerous parts intentionally return scaffold notes. De-stub
 must happen before any "proof" can claim the features work.
@@ -439,13 +444,13 @@ must happen before any "proof" can claim the features work.
 - [x] U12 restart handoff seam: implement command runner injection, defaulting
       to no real host restart in tests; invariant: apply records the exact
       command that would run and never shells through unvalidated strings.
-- [ ] U13 post-apply health gate: after injected restart, poll real health
+- [x] U13 post-apply health gate: after injected restart, poll real health
       route against scratch server; invariant: unhealthy new version triggers
       rollback path.
-- [ ] U14 rollback: restore previous active pointer and record reason;
+- [x] U14 rollback: restore previous active pointer and record reason;
       invariant: failed apply returns to the previous version and leaves
       persisted files unchanged.
-- [ ] U15 API response honesty: route returns applied/version/ledger id only
+- [x] U15 API response honesty: route returns applied/version/ledger id only
       when U11-U13 pass; invariant: no `ok:true` success for skipped/stubbed
       apply.
 - [ ] U16 client status copy: UI distinguishes update unavailable, blocked,
