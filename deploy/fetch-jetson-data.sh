@@ -67,6 +67,8 @@ for unit in homecam-detect mediamtx homecam-server nvargus-daemon; do
   ssh "$HOST" "sudo journalctl -u ${unit} --since '-${LOG_DAYS} days' --no-pager 2>/dev/null" \
     > "$OUT/logs/${unit}.log" 2>/dev/null || true
 done
+ssh "$HOST" "sudo docker logs homecam-server --since ${LOG_DAYS}d 2>&1" \
+  > "$OUT/logs/homecam-server-app.log" 2>/dev/null || true
 
 echo "==> config (no secrets)"
 ssh "$HOST" "sudo docker exec homecam-server cat ${DB_IN_CONTAINER%/*}/detection_config.json 2>/dev/null" \
