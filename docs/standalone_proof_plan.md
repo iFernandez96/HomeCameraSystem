@@ -110,7 +110,7 @@ Every harness and every feature is built as SMALL ATOMIC STEPS:
   backup/restore.
 
 ## Harness #1 — retention/evictor: atomic steps (spec: proof-program-codex-r2.md)
-- [ ] A1 manifest parser (manifest_fixture.py) + parser-integrity test
+- [x] A1 manifest parser (manifest_fixture.py) + parser-integrity test
 - [ ] A2 sparse scratch builder + size/mtime round-trip test
 - [ ] A3 sweep_and_evict injection seam (disk_usage/list_clips kwargs), default path byte-identical
 - [ ] A4 invariant: expiry sweeps before byte eviction
