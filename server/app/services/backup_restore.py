@@ -3,11 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import shutil
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from tempfile import mkdtemp
+from threading import Lock
+from typing import Any, Callable, Iterable, Mapping
 
 from app.services.backup_manifest import MANIFEST_VERSION, validate_manifest
 
@@ -26,6 +30,17 @@ class RestoreBlocked(RuntimeError):
         self.role = role
 
 
+class MaintenanceConflict(RuntimeError):
+    """Typed conflict for concurrent maintenance or restore-blocked writes."""
+
+    def __init__(self, active_operation: str, requested_operation: str):
+        super().__init__(
+            f"{requested_operation} conflicts with active {active_operation}"
+        )
+        self.active_operation = active_operation
+        self.requested_operation = requested_operation
+
+
 @dataclass(frozen=True)
 class RestoreBackup:
     archive_path: Path
@@ -38,6 +53,54 @@ class RestoreCompatibilityResult:
     compatible: bool
     reason: str | None = None
     detail: str | None = None
+
+
+@dataclass(frozen=True)
+class RestoreStaging:
+    staging_root: Path
+    actions: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
+class RestoreApplyResult:
+    changed_count: int
+    target_sha256: dict[str, str]
+
+
+class MaintenanceLock:
+    """Small in-process lock seam for backup/restore/update harness tests."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._active_operation: str | None = None
+
+    @property
+    def active_operation(self) -> str | None:
+        return self._active_operation
+
+    def acquire(self, operation: str) -> "_MaintenanceLease":
+        with self._lock:
+            if self._active_operation is not None:
+                raise MaintenanceConflict(self._active_operation, operation)
+            self._active_operation = operation
+        return _MaintenanceLease(self, operation)
+
+    def _release(self, operation: str) -> None:
+        with self._lock:
+            if self._active_operation == operation:
+                self._active_operation = None
+
+
+@dataclass(frozen=True)
+class _MaintenanceLease:
+    lock: MaintenanceLock
+    operation: str
+
+    def __enter__(self) -> "_MaintenanceLease":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        self.lock._release(self.operation)
 
 
 def open_restore_backup(*, backup_target_dir: Path, filename: str) -> RestoreBackup:
@@ -176,6 +239,158 @@ def dry_run_restore(
     }
 
 
+def stage_restore_archive(
+    restore: RestoreBackup,
+    *,
+    restore_roots: Mapping[str, Path],
+    required_roles: Iterable[str],
+    staging_parent: Path,
+) -> RestoreStaging:
+    """Extract verified archive members under a temp staging root."""
+    plan = dry_run_restore(
+        restore,
+        restore_roots=restore_roots,
+        required_roles=required_roles,
+    )
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(mkdtemp(prefix="homecam-restore-", dir=staging_parent))
+    staged_actions: list[dict[str, object]] = []
+
+    try:
+        with tarfile.open(restore.archive_path, "r:gz") as archive:
+            members_by_name = {member.name: member for member in archive.getmembers()}
+            for action in plan["actions"]:
+                source = str(action["source"])
+                _reject_unsafe_archive_name(source)
+                member = members_by_name[source]
+                staged_path = (staging_root / source).resolve()
+                try:
+                    staged_path.relative_to(staging_root)
+                except ValueError as exc:
+                    raise RestoreBlocked("staged path escapes staging root") from exc
+                staged_path.parent.mkdir(parents=True, exist_ok=True)
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise RestoreBlocked("backup archive member cannot be read")
+                with staged_path.open("wb") as out:
+                    shutil.copyfileobj(extracted, out)
+                os.chmod(staged_path, int(action["mode"]))
+                digest = _sha256_file(staged_path)
+                if digest != action["sha256"]:
+                    raise RestoreBlocked("staged file checksum mismatch")
+                enriched = dict(action)
+                enriched["staged_path"] = str(staged_path)
+                staged_actions.append(enriched)
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+    return RestoreStaging(
+        staging_root=staging_root,
+        actions=tuple(staged_actions),
+    )
+
+
+def apply_staged_restore(
+    staging: RestoreStaging,
+    *,
+    backup_parent: Path,
+    validators: Iterable[Callable[[RestoreStaging], None]] = (),
+    replace: Callable[[str, str], None] = os.replace,
+) -> RestoreApplyResult:
+    """Replace live files from staging; rollback restores pre-restore bytes."""
+    backup_root = Path(mkdtemp(prefix="homecam-pre-restore-", dir=backup_parent))
+    applied: list[tuple[Path, Path | None]] = []
+
+    try:
+        for index, action in enumerate(staging.actions):
+            target_path = Path(str(action["target_path"]))
+            staged_path = Path(str(action["staged_path"]))
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            backup_path: Path | None = None
+            if target_path.exists():
+                backup_path = backup_root / str(index)
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target_path, backup_path)
+            replace(str(staged_path), str(target_path))
+            os.chmod(target_path, int(action["mode"]))
+            applied.append((target_path, backup_path))
+
+        for validator in validators:
+            validator(staging)
+
+        return RestoreApplyResult(
+            changed_count=len(applied),
+            target_sha256={
+                str(target): _sha256_file(target)
+                for target, _backup in applied
+                if target.exists()
+            },
+        )
+    except Exception:
+        _rollback_applied(applied)
+        raise
+    finally:
+        shutil.rmtree(backup_root, ignore_errors=True)
+
+
+def validate_restored_state(staging: RestoreStaging) -> None:
+    """Validate restored persisted files with offline real loaders where possible."""
+    role_paths = {
+        str(action["role"]): Path(str(action["target_path"]))
+        for action in staging.actions
+    }
+
+    users_db_path = role_paths.get("users_db")
+    if users_db_path is not None:
+        from app.auth import users_db
+
+        users_db.init_db(users_db_path)
+        users_db.count_users(users_db_path)
+
+    detection_config_path = role_paths.get("detection_config")
+    if detection_config_path is not None:
+        _require_json_type(detection_config_path, dict)
+        from app.services.detection_config import DetectionConfigStore
+
+        DetectionConfigStore(path=detection_config_path).get()
+
+    push_subs_path = role_paths.get("push_subs")
+    if push_subs_path is not None:
+        _require_json_type(push_subs_path, list)
+        from app.services.push_service import PushService
+
+        PushService(persist_path=push_subs_path)
+
+    jwt_secret_path = role_paths.get("jwt_secret")
+    if jwt_secret_path is not None:
+        from app.auth import jwt_secret
+
+        if not jwt_secret_path.exists() or len(jwt_secret_path.read_bytes()) != 32:
+            raise RestoreBlocked("invalid restored jwt secret", path=jwt_secret_path)
+        if jwt_secret.load_or_generate(jwt_secret_path) != jwt_secret_path.read_bytes():
+            raise RestoreBlocked("invalid restored jwt secret", path=jwt_secret_path)
+
+    _validate_vapid_keys(
+        role_paths.get("vapid_private_key"),
+        role_paths.get("vapid_public_key"),
+    )
+
+
+def run_restart_handoff(
+    argv: Iterable[str],
+    *,
+    runner: Callable[[list[str]], object],
+) -> object:
+    """Invoke an injected restart runner with argv only, never a shell string."""
+    if isinstance(argv, str):
+        raise ValueError("restart command must be an argv list, not a shell string")
+    command = list(argv)
+    if not command or not all(isinstance(part, str) and part for part in command):
+        raise ValueError("restart command must be a non-empty argv list")
+    return runner(command)
+
+
 def _is_list_backups_safe_name(filename: str) -> bool:
     return bool(re.fullmatch(LIST_BACKUPS_FILENAME_PATTERN, filename))
 
@@ -212,3 +427,41 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _rollback_applied(applied: list[tuple[Path, Path | None]]) -> None:
+    for target_path, backup_path in reversed(applied):
+        if backup_path is None:
+            try:
+                target_path.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        os.replace(str(backup_path), str(target_path))
+
+
+def _require_json_type(path: Path, expected_type: type) -> object:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RestoreBlocked("invalid restored json", path=path) from exc
+    if not isinstance(payload, expected_type):
+        raise RestoreBlocked("invalid restored json shape", path=path)
+    return payload
+
+
+def _validate_vapid_keys(private_path: Path | None, public_path: Path | None) -> None:
+    if private_path is None and public_path is None:
+        return
+    if private_path is None or public_path is None:
+        raise RestoreBlocked("incomplete restored VAPID keypair")
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from py_vapid import Vapid
+
+        private_pem = private_path.read_bytes()
+        public_pem = public_path.read_bytes()
+        Vapid.from_pem(private_pem)
+        serialization.load_pem_public_key(public_pem)
+    except Exception as exc:
+        raise RestoreBlocked("invalid restored VAPID keypair") from exc
