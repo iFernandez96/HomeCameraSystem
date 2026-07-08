@@ -189,16 +189,58 @@ def test_system_reboot_returns_ok_with_scaffold_note(client: TestClient):
     assert "note" in body
 
 
-def test_system_backup_returns_ok_with_scaffold_note(client: TestClient):
-    """iter-210 (Feature #10 slice 1): /api/system/backup mirrors
-    the reboot scaffold pattern. Returns a `note` field flagging the
-    stub; remove this assertion once the host-helper is wired up."""
+def _write_backup_route_state():
+    from app.auth import jwt_secret
+    from app.config import settings
+    from app.scripts import gen_vapid
+    from app.services.detection_config import DetectionConfigStore
+
+    jwt_secret.load_or_generate(settings.jwt_secret_path)
+    gen_vapid.main()
+    settings.push_subs_path.write_text("[]", encoding="utf-8")
+    DetectionConfigStore(path=settings.detection_config_path).get()
+
+
+def _assert_backup_ledger_metadata(metadata: dict):
+    assert metadata["archive_digest"]
+    assert metadata["included_paths"]
+    assert metadata["compatibility_decision"]
+    assert isinstance(metadata["changed_files_count"], int)
+    assert metadata["restart_health_result"]
+    assert metadata["rollback_status"]
+    summary = metadata["source_file_manifest_summary"]
+    assert summary["file_count"] >= 4
+    assert summary["included_count"] >= 4
+
+
+def test_system_backup_wires_real_chain_and_records_parity_ledger(
+    client: TestClient,
+):
+    from app.config import settings
+    from app.services.backup_ledger import read_attempts
+
+    _write_backup_route_state()
+
     r = client.post("/api/system/backup")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert "note" in body
-    assert "stub" in body["note"].lower()
+    assert "note" not in body
+    assert body["filename"].startswith("homecam-backup-")
+    assert body["filename"].endswith(".tar.gz")
+    assert body["size"] > 0
+    assert len(body["manifest_id"]) == 64
+    assert len(body["archive_digest"]) == 64
+    assert body["ledger_id"].startswith("route-")
+    assert (settings.backup_target_dir / body["filename"]).is_file()
+    assert (settings.backup_target_dir / f"{body['filename']}.manifest.json").is_file()
+
+    rows = read_attempts(settings.backup_ledger_path)
+    assert len(rows) == 1
+    assert rows[0]["attempt_id"] == body["ledger_id"]
+    assert rows[0]["operation"] == "backup"
+    assert rows[0]["ok"] is True
+    _assert_backup_ledger_metadata(rows[0]["metadata"])
 
 
 # iter-212 (Feature #10 slice 3): /api/system/restore. Stub-with-note
@@ -217,20 +259,38 @@ def _patch_backup_target(tmp_path, monkeypatch):
     return target
 
 
-def test_system_restore_happy_path_returns_note(
+def test_system_restore_wires_real_chain_and_records_parity_ledger(
     client: TestClient, tmp_path, monkeypatch
 ):
-    _patch_backup_target(tmp_path, monkeypatch)
+    from app.config import settings
+    from app.services.backup_ledger import read_attempts
+
+    _write_backup_route_state()
+    backup_response = client.post("/api/system/backup")
+    assert backup_response.status_code == 200
+    filename = backup_response.json()["filename"]
+
     r = client.post(
         "/api/system/restore",
-        json={"backup_path": "homecam-2026-04-30.tar.gz"},
+        json={"backup_path": filename},
     )
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert "note" in body
-    assert "stub" in body["note"].lower()
-    assert body["backup_path"] == "homecam-2026-04-30.tar.gz"
+    assert body["restored"] is True
+    assert body["filename"] == filename
+    assert body["changed_file_count"] >= 4
+    assert body["restart_required"] is False
+    assert body["ledger_id"].startswith("route-")
+
+    rows = read_attempts(settings.backup_ledger_path)
+    assert [row["operation"] for row in rows] == ["backup", "restore"]
+    assert rows[-1]["attempt_id"] == body["ledger_id"]
+    assert rows[-1]["ok"] is True
+    metadata = rows[-1]["metadata"]
+    _assert_backup_ledger_metadata(metadata)
+    assert metadata["compatibility_decision"] == "compatible"
+    assert metadata["changed_files_count"] == body["changed_file_count"]
 
 
 def test_system_restore_accepts_subdir_paths(

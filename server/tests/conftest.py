@@ -39,6 +39,13 @@ def _auth_setup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "users_db_path", tmp_path / "users.db")
     monkeypatch.setattr(settings, "jwt_secret_path", tmp_path / "jwt.bin")
+    monkeypatch.setattr(settings, "vapid_private_key_path", tmp_path / "vapid_private.pem")
+    monkeypatch.setattr(settings, "vapid_public_key_path", tmp_path / "vapid_public.pem")
+    monkeypatch.setattr(settings, "push_subs_path", tmp_path / "push_subs.json")
+    monkeypatch.setattr(settings, "detection_config_path", tmp_path / "detection_config.json")
+    monkeypatch.setattr(settings, "events_db_path", tmp_path / "events.db")
+    monkeypatch.setattr(settings, "backup_target_dir", tmp_path / "backups")
+    monkeypatch.setattr(settings, "backup_ledger_path", tmp_path / "backup-ledger.jsonl")
     # TestClient runs over HTTP; Secure cookies wouldn't propagate.
     monkeypatch.setattr(settings, "cookie_secure", False)
     # OTA paths default to container-only /app/secrets — the update route

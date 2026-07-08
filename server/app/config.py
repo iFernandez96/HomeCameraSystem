@@ -125,6 +125,9 @@ class Settings:
     backup_target_dir: Path = Path(
         os.getenv("BACKUP_TARGET_DIR", "./backups")
     )
+    backup_ledger_path: Path = Path(
+        os.getenv("BACKUP_LEDGER_PATH", "/app/secrets/backup-ledger.jsonl")
+    )
 
     # iter-213 (Feature #8 slice 1): the dir that daily-timelapse
     # MP4s land in. iter-213 ships the route + listing + stub; the

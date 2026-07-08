@@ -40,12 +40,22 @@ from ..services.detection_config import (
 )
 from ..services import ota_orchestrator as ota_orchestrator_module
 from ..services import ota_rollback as ota_rollback_module
+from ..services.backup_orchestrator import (
+    BackupOrchestratorRequest,
+    orchestrate_backup,
+)
+from ..services.backup_restore import (
+    MaintenanceLock,
+    RestoreOrchestratorRequest,
+    restore_api_response_from_orchestrator,
+)
 from ..services.ota_ledger import append_event
 from ..services.ota_manifest import read_local_manifest
 from ..services.ota_orchestrator import OtaApplyRequest, orchestrate_ota_apply
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+_BACKUP_RESTORE_LOCK = MaintenanceLock()
 
 
 _ClassName = Annotated[str, Field(min_length=1, max_length=CLASS_NAME_MAX)]
@@ -212,15 +222,17 @@ async def system_reboot() -> dict[str, object]:
     dependencies=[Depends(require_role("owner"))],
 )
 async def system_backup() -> dict[str, object]:
-    # The same NOPASSWD sudo + host-helper script pattern needed for
-    # /api/system/reboot will satisfy this too. Concrete shape of
-    # the helper (rsync target, retention, encryption-at-rest) is
-    # an operator policy decision; the route exists so the client
-    # UI can be built against a real shape now and the helper
-    # plugs in later. iter-200 audit Risk #1 (deploy queue) covers
-    # both this and reboot.
-    log.warning("backup requested (stubbed)")
-    return {"ok": True, "note": "scaffold: backup is stubbed"}
+    attempt_id = f"route-{uuid4()}"
+    return orchestrate_backup(
+        BackupOrchestratorRequest(
+            attempt_id=attempt_id,
+            target_dir=settings.backup_target_dir,
+            ledger_path=settings.backup_ledger_path,
+            app_version=settings.version,
+            settings_obj=settings,
+        ),
+        maintenance_lock=_BACKUP_RESTORE_LOCK,
+    )
 
 
 # iter-212 (Feature #10 slice 3): restore from a backup archive.
@@ -287,12 +299,36 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
             status_code=400,
             detail="backup_path must resolve under the configured backup target",
         )
-    log.warning("restore requested (stubbed) for %s", candidate)
-    return {
-        "ok": True,
-        "note": "scaffold: restore is stubbed",
-        "backup_path": str(Path(body.backup_path)),
-    }
+    log.warning("restore requested for %s", candidate)
+    attempt_id = f"route-{uuid4()}"
+    return restore_api_response_from_orchestrator(
+        RestoreOrchestratorRequest(
+            filename=str(Path(body.backup_path)),
+            backup_target_dir=settings.backup_target_dir,
+            current_app_version=settings.version,
+            current_schema_version=None,
+            restore_roots={
+                "users_db": settings.users_db_path.parent,
+                "jwt_secret": settings.jwt_secret_path.parent,
+                "vapid_private_key": settings.vapid_private_key_path.parent,
+                "vapid_public_key": settings.vapid_public_key_path.parent,
+                "push_subs": settings.push_subs_path.parent,
+                "detection_config": settings.detection_config_path.parent,
+            },
+            required_roles=[
+                "users_db",
+                "jwt_secret",
+                "vapid_private_key",
+                "vapid_public_key",
+            ],
+            staging_parent=settings.backup_target_dir / ".restore-staging",
+            backup_parent=settings.backup_target_dir / ".pre-restore",
+            ledger_id=attempt_id,
+            restart_command=None,
+            ledger_path=settings.backup_ledger_path,
+        ),
+        maintenance_lock=_BACKUP_RESTORE_LOCK,
+    )
 
 
 # iter-213 (Feature #8 slice 1): daily-timelapse trigger + listing.

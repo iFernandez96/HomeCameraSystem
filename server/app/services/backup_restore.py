@@ -14,6 +14,7 @@ from threading import Lock
 from typing import Any, Callable, Iterable, Mapping
 
 from app.services.backup_archive import sha256_file
+from app.services.backup_ledger import append_attempt, attempt_metadata
 from app.services.backup_manifest import MANIFEST_VERSION, validate_manifest
 
 log = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ class RestoreOrchestratorRequest:
     backup_parent: Path
     ledger_id: str
     restart_command: Iterable[str] | None = None
+    ledger_path: Path | None = None
 
 
 class MaintenanceLock:
@@ -163,6 +165,12 @@ def restore_api_response_from_orchestrator(
     restart_runner: Callable[[list[str]], object] | None = None,
 ) -> dict[str, object]:
     """Compose B10-B16 restore steps into a route-ready response body."""
+    restore: RestoreBackup | None = None
+    compatibility = RestoreCompatibilityResult(False, "not_run")
+    response: dict[str, object] | None = None
+    apply_started = False
+    status = "not_restored"
+    reason: str | None = None
 
     try:
         lease = (
@@ -181,11 +189,13 @@ def restore_api_response_from_orchestrator(
                 current_schema_version=request.current_schema_version,
             )
             if not compatibility.compatible:
-                return _restore_not_restored(
+                reason = compatibility.reason or "incompatible_backup"
+                response = _restore_not_restored(
                     reason=compatibility.reason or "incompatible_backup",
                     phase="compatibility",
                     detail=compatibility.detail,
                 )
+                return response
 
             staging = stage_restore_archive(
                 restore,
@@ -193,6 +203,7 @@ def restore_api_response_from_orchestrator(
                 required_roles=request.required_roles,
                 staging_parent=request.staging_parent,
             )
+            apply_started = True
             apply_result = apply_staged_restore(
                 staging,
                 backup_parent=request.backup_parent,
@@ -205,7 +216,7 @@ def restore_api_response_from_orchestrator(
                 run_restart_handoff(request.restart_command, runner=restart_runner)
                 restart_applied = True
 
-            return {
+            response = {
                 "ok": True,
                 "restored": True,
                 "status": "restored",
@@ -216,24 +227,72 @@ def restore_api_response_from_orchestrator(
                 "restart_applied": restart_applied,
                 "ledger_id": request.ledger_id,
             }
+            status = "restored"
+            return response
     except MaintenanceConflict as exc:
-        return _restore_not_restored(
+        reason = "maintenance_conflict"
+        response = _restore_not_restored(
             reason="maintenance_conflict",
             phase="maintenance_lock",
             detail=str(exc),
         )
+        return response
     except RestoreBlocked as exc:
-        return _restore_not_restored(
+        reason = exc.reason
+        response = _restore_not_restored(
             reason=exc.reason,
             phase="restore",
             detail=str(exc.path) if exc.path is not None else exc.role,
         )
+        return response
     except (OSError, tarfile.TarError, ValueError) as exc:
-        return _restore_not_restored(
+        reason = exc.__class__.__name__
+        response = _restore_not_restored(
             reason=exc.__class__.__name__,
             phase="restore",
             detail=str(exc),
         )
+        return response
+    finally:
+        if request.ledger_path is not None:
+            manifest = restore.manifest if restore is not None else None
+            archive_digest = None
+            if restore is not None and restore.archive_path.exists():
+                try:
+                    archive_digest = sha256_file(restore.archive_path)
+                except OSError:
+                    archive_digest = None
+            changed_count = 0
+            if response is not None:
+                changed_count = int(response.get("changed_file_count", 0) or 0)
+            restart_health = "not_run"
+            if response is not None and response.get("restart_applied"):
+                restart_health = "restart_handoff_applied"
+            elif response is not None and response.get("restart_required"):
+                restart_health = "restart_deferred"
+            rollback_status = "not_needed"
+            if not (response and response.get("ok")):
+                rollback_status = "rolled_back" if apply_started else "not_run"
+            append_attempt(
+                request.ledger_path,
+                attempt_id=request.ledger_id,
+                operation="restore",
+                ok=bool(response and response.get("ok")),
+                status=status,
+                reason=reason,
+                metadata=attempt_metadata(
+                    manifest,
+                    archive_digest=archive_digest,
+                    compatibility_decision=(
+                        "compatible" if compatibility.compatible else (
+                            compatibility.reason or "not_run"
+                        )
+                    ),
+                    changed_files_count=changed_count,
+                    restart_health_result=restart_health,
+                    rollback_status=rollback_status,
+                ),
+            )
 
 
 def check_restore_compatibility(
