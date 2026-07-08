@@ -111,7 +111,10 @@ if ((WITH_SERVER_IMAGE)); then
 fi
 
 echo "==> creating $ARTIFACT_PATH"
-tar --dereference -C "$OUT_DIR" -czf "$ARTIFACT_PATH" "$PAYLOAD_NAME"
+# Payload contents at the tar ROOT (client/, detection/) — the server-side
+# stage/preflight contract (ota_stage + ota_layout, pinned by U17) expects
+# them there, not under a version-named wrapper dir.
+tar --dereference -C "$PAYLOAD_DIR" -czf "$ARTIFACT_PATH" client detection
 
 SHA256="$(sha256sum "$ARTIFACT_PATH" | awk '{print $1}')"
 ESCAPED_VERSION="$(json_escape "$VERSION")"

@@ -69,7 +69,10 @@ services:
       # _person subtree as a name bucket. Read by /api/training/export
       # (kind=person) and swept by face_capture_sweeper.
       - ../person_captures:/app/person_captures
-      - ../client/dist:/app/client_dist:ro
+      # rw since OTA (harness #11, 2026-07-08): the owner-only update route
+      # applies the client tier by atomic swap into this mount (checksummed
+      # artifact, byte backups, rollback). Was :ro pre-OTA.
+      - ../client/dist:/app/client_dist
     environment:
       - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
       # iter-256: 1-month clip retention. Sweep runs daily and
