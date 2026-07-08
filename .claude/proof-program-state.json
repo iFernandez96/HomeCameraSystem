@@ -11,7 +11,7 @@
   },
   "2_push_gateway": {
    "status": "DONE except P14",
-   "remaining": "P14 parity diff \u2014 needs accumulated production \"push fanout event=\" INFO lines (deployed; real events flowing since ~08:15 + device-validation runs); re-fetch snapshot (deploy/fetch-jetson-data.sh grabs docker app log now) then diff harness fanout decisions vs logged sent/filtered counts",
+   "remaining": "P14 in flight (codex); fresh snapshot HAS 22 push-fanout lines (fetch script --since bug fixed: docker needs hours not days)",
    "tests": "server/tests/harness_push_gateway (9 local + 3 live env-gated HOMECAM_LIVE_PUSH=1)"
   },
   "3_auth": {
@@ -24,9 +24,9 @@
   },
   "5_webrtc_whep": {
    "status": "in_progress",
-   "done": "W1-W6 live-verified (all 3 rungs real frames) + W9-W12 error harness (raw-ASGI stub; abort-on-supersede proven with+without SW)",
-   "in_flight": null,
-   "remaining": "W7 quality-switch live, W8 resume-coalescing live, W13-W16 attempt-ledger parity vs mediamtx logs, W17 gate",
+   "done": "W1-W8 live-verified vs real Jetson (incl. W7 quality-switch, W8 resume coalescing) + W9-W12 error harness",
+   "in_flight": "W13-14 attempt-ledger observability (codex task by3w1kzpq, client/src lane)",
+   "remaining": "W15 live capture + fresh log fetch, W16 parity diff vs mediamtx/client_log, W17 gate",
    "findings": "Live-pill playing-vs-rVFC fixed+deployed (57b251b); abort-on-supersede fixed+deployed (8fadee0); starlette BaseHTTPMiddleware swallows http.disconnect (documented in whepErrorHarness stub)"
   },
   "6_sw_cache_update": {
@@ -48,9 +48,10 @@
   },
   "10_multicam": {
    "status": "in_progress",
-   "done": "M10.11-12 parity (fa66692)",
-   "in_flight": "M10.2-4 local mediamtx + testsrc publish + registry (task bd49lchrf; needs a mediamtx binary \u2014 env HOMECAM_MEDIAMTX_BIN or PATH, skip otherwise)",
-   "remaining": "M10.5-10 browser switcher/rungs/worker-id/persistence/filter/live-probe"
+   "done": "M10.2-4 (bfc4246, mediamtx v1.18.0 amd64 version-matched to production) + M10.11-12",
+   "in_flight": null,
+   "remaining": "M10.5-10 browser switcher/rungs/worker-id/persistence/filter/live-probe",
+   "note": "mediamtx v1.18.0 binary in session scratchpad (HOMECAM_MEDIAMTX_BIN); 1.15.1 rejects webrtcAllowOrigins plural key"
   },
   "11_rebuild_list": {
    "status": "pending",
@@ -62,6 +63,6 @@
   "all_verified": "healthz + in-container grep + live browser suites"
  },
  "blocked": [],
- "last_update": "2026-07-08T13:00 local, ready-to-compact checkpoint; M10.2-4 (task bd49lchrf) still in flight",
+ "last_update": "2026-07-08T13:05 post-compaction resume; snapshot refetched (fanout lines + no named rows so R15 stays armed)",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom left for manual thumb test."
 }

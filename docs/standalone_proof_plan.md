@@ -299,8 +299,8 @@ Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 - [x] W4 LIVE rung hq (/whep/cam/whep, first frame <8s)
 - [x] W5 LIVE rung sd (/whep/cam_lq/whep)
 - [x] W6 LIVE rung xs (/whep/cam_uq/whep)
-- [ ] W7 LIVE quality switch: old attempt closes, no stale-blank
-- [ ] W8 LIVE resume/error coalescing: at most one reconnect
+- [x] W7 LIVE quality switch: old attempt closes, no stale-blank
+- [x] W8 LIVE resume/error coalescing: at most one reconnect
 - [x] W9 local error-harness fixture (404/503/hang/net-close/invalid-sdp)
 - [x] W10 local: non-2xx -> error UI, manual Retry = exactly one POST
 - [x] W11 local: hung POST aborted on unmount/switch, no leak
@@ -350,9 +350,9 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 
 ## Harness #10 — multicam synthetic: atomic steps (spec: codex r12, 2026-07-08)
 - [ ] M10.1 contract doc vs code audit
-- [ ] M10.2 local mediamtx fixture (env-gated download/boot)
-- [ ] M10.3 ffmpeg testsrc RTSP publish -> /synth/whep
-- [ ] M10.4 two-camera registry route
+- [x] M10.2 local mediamtx fixture (env-gated download/boot)
+- [x] M10.3 ffmpeg testsrc RTSP publish -> /synth/whep
+- [x] M10.4 two-camera registry route
 - [ ] M10.5 browser switcher -> /whep/synth/whep
 - [ ] M10.6 quality rung URL composition per camera
 - [ ] M10.7 worker DETECT_CAMERA_ID -> payload camera_id
