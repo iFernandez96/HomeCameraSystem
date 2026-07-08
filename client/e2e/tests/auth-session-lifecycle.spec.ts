@@ -1,7 +1,8 @@
 import { test, expect } from '../authHarness'
+import type { AuthHarnessLedger } from '../authHarness'
 import type { Cookie, Page } from '@playwright/test'
 import { randomBytes } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 const ACCESS_COOKIE = 'homecam_access'
 const REFRESH_COOKIE = 'homecam_refresh'
@@ -9,6 +10,8 @@ const ACCESS_TOKEN_TTL_S = 3
 const REFRESH_TOKEN_TTL_S = 20
 const COOKIE_EXPIRY_TOLERANCE_S = 3
 const EVENTS_WS_PATH = '/api/events/ws'
+const AUTH_REJECTED_RE =
+  /auth rejected on (?<method>\S+) (?<route>\S+): (?<reason>.*?) \(sub=.*? cookie_present=(?<cookie_present>True|False)\)/
 
 async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto('/')
@@ -43,55 +46,6 @@ async function authCookies(
   }
 }
 
-async function installWebSocketProbe(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const NativeWebSocket = window.WebSocket
-    type WsProbeRecord = {
-      url: string
-      opens: number
-      closes: Array<{ code: number; reason: string }>
-    }
-    const records: WsProbeRecord[] = []
-    const sockets: WebSocket[] = []
-
-    Object.defineProperty(window, '__homecamWsProbe', {
-      configurable: true,
-      value: {
-        records,
-        closeLast() {
-          const ws = sockets[sockets.length - 1]
-          if (
-            ws &&
-            ws.readyState !== NativeWebSocket.CLOSED &&
-            ws.readyState !== NativeWebSocket.CLOSING
-          ) {
-            ws.close(4000, 'e2e stale reconnect')
-          }
-        },
-      },
-    })
-
-    window.WebSocket = class HomecamE2EWebSocket extends NativeWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        if (protocols === undefined) {
-          super(url)
-        } else {
-          super(url, protocols)
-        }
-        const record: WsProbeRecord = { url: String(url), opens: 0, closes: [] }
-        records.push(record)
-        sockets.push(this)
-        this.addEventListener('open', () => {
-          record.opens += 1
-        })
-        this.addEventListener('close', (event) => {
-          record.closes.push({ code: event.code, reason: event.reason })
-        })
-      }
-    } as typeof WebSocket
-  })
-}
-
 async function expectSessionExpiredViaBoundedRefresh401(
   page: Page,
   refreshResponses: number[],
@@ -115,6 +69,70 @@ async function expectSessionExpiredViaBoundedRefresh401(
   const settled = refreshResponses.length
   await page.waitForTimeout(3_000)
   expect(refreshResponses.length).toBe(settled)
+}
+
+async function readScratchAuthRejections(
+  logPath: string,
+): Promise<Array<{ method: string; route: string; cookie_present: boolean }>> {
+  const logText = await readFile(logPath, 'utf8')
+  return logText
+    .split('\n')
+    .map((line) => AUTH_REJECTED_RE.exec(line))
+    .filter((match): match is RegExpExecArray & {
+      groups: {
+        method: string
+        route: string
+        reason: string
+        cookie_present: 'True' | 'False'
+      }
+    } => Boolean(match?.groups))
+    .map((match) => ({
+      method: match.groups.method,
+      route: match.groups.route,
+      cookie_present: match.groups.cookie_present === 'True',
+    }))
+}
+
+async function expectBrowser401sMatchScratchAuthRejected(
+  ledger: AuthHarnessLedger,
+  logPath: string,
+): Promise<void> {
+  // Parity plane is method+path counts only. The browser cannot observe
+  // cookie_present (the cookies are HttpOnly), and it would guess wrong
+  // anyway: Chromium DELETES the access cookie once its Max-Age passes, so
+  // an expired-session 401 reaches the server as "no cookie"
+  // (cookie_present=False), not "Signature has expired". The flag stays a
+  // server-side detail (pinned by test_a13_parity_auth_rejected.py).
+  const expectedCounts = new Map<string, number>()
+  for (const rejection of ledger.rest_rejections) {
+    const key = `${rejection.method} ${rejection.path}`
+    expectedCounts.set(key, (expectedCounts.get(key) ?? 0) + 1)
+  }
+
+  await expect
+    .poll(async () => {
+      const actualCounts = new Map<string, number>()
+      for (const rejection of await readScratchAuthRejections(logPath)) {
+        const key = `${rejection.method} ${rejection.route}`
+        actualCounts.set(key, (actualCounts.get(key) ?? 0) + 1)
+      }
+      return [...expectedCounts].map(([key, count]) => ({
+        key,
+        browser: count,
+        server: actualCounts.get(key) ?? 0,
+        ok: (actualCounts.get(key) ?? 0) >= count,
+      }))
+    }, {
+      timeout: 10_000,
+    })
+    .toEqual(
+      [...expectedCounts].map(([key, count]) => ({
+        key,
+        browser: count,
+        server: expect.any(Number),
+        ok: true,
+      })),
+    )
 }
 
 test.describe('Auth session lifecycle harness', () => {
@@ -251,6 +269,51 @@ test.describe('Auth session lifecycle harness', () => {
     await expect(page.getByRole('link', { name: /settings/i })).toBeVisible()
   })
 
+  test('given mobile resume self-heals through real 401s, when the ledger is compared to scratch logs, then browser and server auth rejection planes agree', async ({
+    authLedger,
+    authServer,
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    // Scope the ledger to this scenario: the anon boot phase legitimately
+    // 401s (unread_count, initial /me, one boot refresh attempt) before
+    // login and would pollute the parity plane.
+    authLedger.reset()
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await page.waitForTimeout((ACCESS_TOKEN_TTL_S + 3) * 1_000)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await expect
+      .poll(() => authLedger.refresh_attempts.includes(200), { timeout: 10_000 })
+      .toBe(true)
+    expect(authLedger.rest_rejections.length).toBeGreaterThan(0)
+    expect(authLedger.rest_rejections).not.toContainEqual(
+      expect.objectContaining({ method: 'POST', path: '/api/auth/refresh' }),
+    )
+    await expect(page).not.toHaveURL(/\/login(?:$|[/?#])/)
+    await expect(page.getByRole('link', { name: /home/i })).toBeVisible()
+
+    await expectBrowser401sMatchScratchAuthRejected(
+      authLedger,
+      authServer.logPath,
+    )
+  })
+
   test('given events WS is connected, when access expires and a stale reconnect gets 1008, then auth self-heals without sign-out', async ({
     page,
   }) => {
@@ -274,7 +337,6 @@ test.describe('Auth session lifecycle harness', () => {
       consoleMessages.push(message.text())
     })
 
-    await installWebSocketProbe(page)
     await loginAsAdmin(page)
     await page.getByRole('link', { name: /events/i }).click()
 
@@ -454,7 +516,6 @@ test.describe('Auth session lifecycle harness', () => {
       }
     })
 
-    await installWebSocketProbe(page)
     await loginAsAdmin(page)
     await page.getByRole('link', { name: /events/i }).click()
 
