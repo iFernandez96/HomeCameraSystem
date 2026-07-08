@@ -580,7 +580,7 @@ must happen before any "proof" can claim the features work.
 - [x] B21 PARITY prep: production backup/restore records ledger lines with
       source file manifest, archive digest, included paths, compatibility
       decision, changed files, restart/health result, and rollback status.
-- [ ] B22 PARITY: use a real Jetson backup archive + manifest + production
+- [x] B22 PARITY: use a real Jetson backup archive + manifest + production
       ledger, restore into scratch, and diff restored bytes/SQLite rows/config
       against the Jetson source snapshot and ledger decisions exactly.
 
