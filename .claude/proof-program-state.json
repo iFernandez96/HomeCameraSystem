@@ -31,8 +31,8 @@
   },
   "6_sw_cache_update": {
    "status": "in_progress",
-   "done": "H6.1-6.10 (7/7 green; navigation-fallback product fix 81b7944 DEPLOYED \u2014 offline deep routes now serve shell; deploy semantics now stale-first-load, pinned)",
-   "in_flight": "H6.11-6.12 notificationclick contracts (task b4pqvy02k; honest-trigger-or-skip instructions given; OS-level click was device-validated on the real phone 2026-07-08)",
+   "done": "H6.1-6.12 (nav-fallback fix 81b7944 deployed; H6.11-12 pinned as honest skips \u2014 no Playwright OS-click trigger, device-validated on real phone)",
+   "in_flight": null,
    "remaining": "H6.13-6.14 parity vs production log window"
   },
   "7_eventbus_sqlite": {
@@ -62,6 +62,6 @@
   "all_verified": "healthz + in-container grep + live browser suites"
  },
  "blocked": [],
- "last_update": "2026-07-08T12:45 local, pre-compaction checkpoint",
+ "last_update": "2026-07-08T13:00 local, ready-to-compact checkpoint; M10.2-4 (task bd49lchrf) still in flight",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom left for manual thumb test."
 }
