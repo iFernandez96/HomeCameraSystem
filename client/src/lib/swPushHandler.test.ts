@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   applyBadge,
   buildNotification,
   parsePushData,
+  reportPushReceived,
   type PushPayload,
 } from './swPushHandler'
 
@@ -10,6 +11,10 @@ import {
 // behavior. Pre-iter-282 sw.ts was 100% untested even though the
 // iter-275 per-event tag + iter-276 setAppBadge logic shipped to
 // production. BDD-lite naming + AAA structure.
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('parsePushData', () => {
   it('given an event with valid JSON data, when parsed, then returns the parsed object', () => {
@@ -234,6 +239,67 @@ describe('applyBadge', () => {
     // assert
     expect(reg.setAppBadge).not.toHaveBeenCalled()
     expect(reg.clearAppBadge).not.toHaveBeenCalled()
+  })
+})
+
+describe('reportPushReceived', () => {
+  it('given a push payload with image and event id, when reported as shown, then client_log receives only receipt booleans', () => {
+    // arrange
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // act
+    reportPushReceived(
+      {
+        title: 'Private title must not be logged',
+        body: 'Private body must not be logged',
+        url: '/events/private',
+        image: '/snapshots/thumb_42.jpg',
+        event_id: 'evt-42',
+      },
+      true,
+    )
+
+    // assert
+    expect(fetchMock).toHaveBeenCalledWith('/api/_internal/client_log', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: expect.any(String),
+    })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.event).toBe('sw:push-received')
+    expect(body.fields).toEqual({
+      hasImage: true,
+      imageIsString: true,
+      hasEventId: true,
+      shown: true,
+    })
+    expect(JSON.stringify(body)).not.toContain('Private title')
+    expect(JSON.stringify(body)).not.toContain('Private body')
+    expect(JSON.stringify(body)).not.toContain('/events/private')
+    expect(JSON.stringify(body)).not.toContain('/snapshots/thumb_42.jpg')
+  })
+
+  it('given showNotification fails, when reported, then err is the error name only', () => {
+    // arrange
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // act
+    reportPushReceived({ image: 123, id: 'evt-fallback' }, false, new TypeError('bad image'))
+
+    // assert
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.fields).toEqual({
+      hasImage: true,
+      imageIsString: false,
+      hasEventId: true,
+      shown: false,
+      err: 'TypeError',
+    })
+    expect(JSON.stringify(body)).not.toContain('bad image')
   })
 })
 

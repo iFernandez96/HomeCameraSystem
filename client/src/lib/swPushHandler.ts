@@ -28,6 +28,126 @@ export type PushPayload = {
   unread_count?: unknown
 }
 
+type PushReceiptFields = {
+  hasImage: boolean
+  imageIsString: boolean
+  hasEventId: boolean
+  shown: boolean
+  err?: string
+}
+
+type PushReceiptBaseFields = Omit<PushReceiptFields, 'shown' | 'err'>
+
+const pendingPushReceipts: PushReceiptBaseFields[] = []
+let showNotificationHookInstalled = false
+
+function pushReceiptBaseFields(data: PushPayload): PushReceiptBaseFields {
+  return {
+    hasImage: Object.prototype.hasOwnProperty.call(data, 'image'),
+    imageIsString: typeof data.image === 'string',
+    hasEventId:
+      (typeof data.event_id === 'string' && data.event_id.length > 0) ||
+      (typeof data.id === 'string' && data.id.length > 0),
+  }
+}
+
+function errorName(err: unknown): string {
+  return err instanceof Error && err.name ? err.name : 'Error'
+}
+
+export function reportPushReceived(
+  data: PushPayload,
+  shown: boolean,
+  err?: unknown,
+): void {
+  sendPushReceivedLog({
+    ...pushReceiptBaseFields(data),
+    shown,
+    ...(err ? { err: errorName(err) } : {}),
+  })
+}
+
+function sendPushReceivedLog(fields: PushReceiptFields): void {
+  try {
+    const sw = globalThis as unknown as {
+      fetch?: typeof fetch
+      navigator?: { onLine?: boolean; userAgent?: string }
+    }
+    if (!sw.fetch) return
+    void sw.fetch('/api/_internal/client_log', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({
+        level: 'info',
+        event: 'sw:push-received',
+        fields,
+        online: sw.navigator?.onLine ?? false,
+        ua: sw.navigator?.userAgent?.slice(0, 240) ?? '',
+      }),
+    }).catch(() => {
+      // best-effort: a failed client_log POST must be silent
+    })
+  } catch {
+    // fetch can throw synchronously in constrained SW contexts; ignore.
+  }
+}
+
+function installShowNotificationReceiptHook(): void {
+  if (showNotificationHookInstalled) return
+  showNotificationHookInstalled = true
+
+  try {
+    const sw = globalThis as unknown as {
+      registration?: {
+        showNotification?: (
+          title: string,
+          options?: NotificationOptions,
+        ) => Promise<void>
+      }
+    }
+    const registration = sw.registration
+    const showNotification = registration?.showNotification
+    if (!registration || typeof showNotification !== 'function') return
+
+    registration.showNotification = ((
+      title: string,
+      options?: NotificationOptions,
+    ) => {
+      const receipt = pendingPushReceipts.shift()
+      try {
+        const op = showNotification.call(registration, title, options)
+        if (receipt) {
+          op.then(
+            () => sendPushReceivedLog({ ...receipt, shown: true }),
+            (error: unknown) =>
+              sendPushReceivedLog({
+                ...receipt,
+                shown: false,
+                err: errorName(error),
+              }),
+          )
+        }
+        return op
+      } catch (error) {
+        if (receipt) {
+          sendPushReceivedLog({
+            ...receipt,
+            shown: false,
+            err: errorName(error),
+          })
+        }
+        throw error
+      }
+    }) as typeof showNotification
+  } catch {
+    // Observability hook installation must never affect notification display.
+  }
+}
+
+installShowNotificationReceiptHook()
+
 /** Build the `(title, NotificationOptions)` arg pair for
  *  `self.registration.showNotification`. The returned options carry
  *  the iter-275 per-event `tag` + iter-280 `renotify: true` so
@@ -135,15 +255,26 @@ export function applyBadge(
 export function parsePushData(
   event: { data?: { json: () => unknown; text: () => string } | null },
 ): PushPayload {
-  if (!event.data) return {}
+  if (!event.data) {
+    pendingPushReceipts.push(pushReceiptBaseFields({}))
+    return {}
+  }
   try {
     const parsed = event.data.json()
-    if (parsed && typeof parsed === 'object') return parsed as PushPayload
+    if (parsed && typeof parsed === 'object') {
+      const data = parsed as PushPayload
+      pendingPushReceipts.push(pushReceiptBaseFields(data))
+      return data
+    }
+    pendingPushReceipts.push(pushReceiptBaseFields({}))
     return {}
   } catch {
     try {
-      return { body: event.data.text() }
+      const data = { body: event.data.text() }
+      pendingPushReceipts.push(pushReceiptBaseFields(data))
+      return data
     } catch {
+      pendingPushReceipts.push(pushReceiptBaseFields({}))
       return {}
     }
   }
