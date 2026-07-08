@@ -80,6 +80,8 @@ async function _attemptRefresh(): Promise<boolean> {
   }
 }
 
+export const refreshSession = () => _attemptRefresh()
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   // `credentials: 'include'` so the HttpOnly cookies set by /api/auth/login
   // (Phase 3) actually flow on subsequent requests. Phase 5 (iter-183) is

@@ -4,6 +4,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 const getMe = vi.fn()
 const apiLogin = vi.fn()
 const apiLogout = vi.fn()
+const refreshSession = vi.fn()
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
@@ -12,6 +13,7 @@ vi.mock('./api', async () => {
     getMe: () => getMe(),
     login: (...args: Parameters<typeof actual.login>) => apiLogin(...args),
     logout: () => apiLogout(),
+    refreshSession: () => refreshSession(),
   }
 })
 
@@ -67,6 +69,7 @@ describe('AuthProvider', () => {
     getMe.mockReset()
     apiLogin.mockReset()
     apiLogout.mockReset()
+    refreshSession.mockReset()
     showToast.mockReset()
     warmWhepConnection.mockReset().mockResolvedValue(undefined)
     logWarn.mockReset()
@@ -190,11 +193,12 @@ describe('AuthProvider', () => {
     errSpy.mockRestore()
   })
 
-  it('homecam:auth-failed event re-checks /me and flips to anon on 401 (iter-185)', async () => {
-    // Initial /me 200 → authed.
+  it('Given homecam:auth-failed and /me 401, When refresh fails, Then it flips to anon (iter-185)', async () => {
+    // Initial /me 200 -> authed.
     getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
-    // Re-check after auth-failed event → 401 → anon.
+    // Re-check after auth-failed event -> 401; refresh cannot recover.
     getMe.mockRejectedValueOnce(new HttpError('/api/auth/me', 401, ''))
+    refreshSession.mockResolvedValueOnce(false)
     render(
       <AuthProvider>
         <Probe />
@@ -209,10 +213,35 @@ describe('AuthProvider', () => {
     await waitFor(() =>
       expect(screen.getByTestId('state')).toHaveTextContent('anon'),
     )
+    expect(refreshSession).toHaveBeenCalledTimes(1)
   })
 
-  it('homecam:auth-failed event keeps authed if /me still 200s (iter-185)', async () => {
-    // Initial /me 200 → authed. WS 1008 was probably an origin
+  it('Given homecam:auth-failed and /me 401, When refresh succeeds, Then it re-checks /me and stays authed (iter-185)', async () => {
+    getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
+    getMe.mockRejectedValueOnce(new HttpError('/api/auth/me', 401, ''))
+    refreshSession.mockResolvedValueOnce(true)
+    getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('state')).toHaveTextContent('authed'),
+    )
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('homecam:auth-failed'))
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('user')).toHaveTextContent('alice'),
+    )
+    expect(screen.getByTestId('state')).toHaveTextContent('authed')
+    expect(refreshSession).toHaveBeenCalledTimes(1)
+    expect(getMe).toHaveBeenCalledTimes(3)
+  })
+
+  it('Given homecam:auth-failed and /me still 200s, When it re-checks, Then it keeps authed (iter-185)', async () => {
+    // Initial /me 200 -> authed. WS 1008 was probably an origin
     // mismatch, not auth — /me re-check still 200, stay authed.
     getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
     getMe.mockResolvedValueOnce({ user: { username: 'alice', role: 'admin' } })
@@ -231,6 +260,7 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('state')).toHaveTextContent('authed')
     // /me was called twice: initial mount + re-check.
     expect(getMe).toHaveBeenCalledTimes(2)
+    expect(refreshSession).not.toHaveBeenCalled()
   })
 
   it('homecam:session-expired event toasts and flips to anon (iter-186)', async () => {

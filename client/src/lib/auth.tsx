@@ -6,7 +6,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getMe, HttpError, login as apiLogin, logout as apiLogout } from './api'
+import {
+  getMe,
+  HttpError,
+  login as apiLogin,
+  logout as apiLogout,
+  refreshSession,
+} from './api'
 import { log, errFields } from './log'
 import { useToast } from './toast'
 import type { User } from './types'
@@ -133,8 +139,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 1008 (auth/origin gate), `lib/ws.ts` dispatches a window-level
   // `homecam:auth-failed` event. Re-check /api/auth/me — if the
   // cookie is still valid (e.g., the WS 1008 was an origin issue)
-  // we stay authed; if it 401s we flip to anon, RequireAuth
-  // redirects to /login on the next render. Self-healing.
+  // we stay authed. If /me 401s, try one refresh because a WS 1008
+  // can mean the access cookie expired while the refresh cookie is
+  // still valid; only flip anon when that refresh path fails.
   useEffect(() => {
     function onAuthFailed() {
       // docs/logging_plan.md §2 (Auth): self-heal result INFO. The WS
@@ -142,6 +149,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // the outcome distinguishes "origin gate, cookie still good"
       // (healed) from "cookie actually expired" (flipped to anon).
       getMe()
+        .catch(async (e) => {
+          if (!(e instanceof HttpError && e.status === 401)) throw e
+          if (!(await refreshSession())) throw e
+          return getMe()
+        })
         .then((res) => {
           log.info('auth:self-heal-ok', {})
           setUser(res.user)

@@ -16,6 +16,7 @@ import {
   patchDetectionConfig,
   rebootJetson,
   refresh,
+  refreshSession,
   searchEvents,
   sendTestPushReq,
   subscribePush,
@@ -792,11 +793,20 @@ describe('lib/api', () => {
     expect(asMock().mock.calls[2][0]).toBe('/api/status')
   })
 
-  it('a 401 on /api/auth/me does NOT attempt refresh (would loop)', async () => {
+  it('Given /api/auth/me returns 401, When getMe is called, Then req does not auto-refresh auth routes', async () => {
     asMock().mockResolvedValueOnce(new Response('', { status: 401 }))
     await expect(getMe()).rejects.toThrow()
     // Exactly one fetch — no silent refresh.
     expect(asMock()).toHaveBeenCalledTimes(1)
+  })
+
+  it('Given an explicit refreshSession call, When refresh succeeds, Then it POSTs refresh once and returns true', async () => {
+    asMock().mockResolvedValueOnce(new Response('', { status: 200 }))
+    await expect(refreshSession()).resolves.toBe(true)
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/auth/refresh',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('a 401 with a failing refresh surfaces the original 401', async () => {
