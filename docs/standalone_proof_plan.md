@@ -256,9 +256,9 @@ IDs match events.sqlite rows).
 - [x] H9.4 get_by_ids order + row parity vs captured DB
 - [x] H9.5 single-clip ZIP: manifest + exact MP4 bytes
 - [x] H9.6 six-clip ZIP: all bytes match, manifest rows match DB
-- [ ] H9.7 tempfile called with dir=recordings_dir, delete=False
-- [ ] H9.8 measured RSS flat vs 289MB input (bounded delta)
-- [ ] H9.9 Semaphore(1) serializes concurrent builds
+- [x] H9.7 tempfile called with dir=recordings_dir, delete=False
+- [x] H9.8 measured RSS flat vs 289MB input (bounded delta)
+- [x] H9.9 Semaphore(1) serializes concurrent builds
 - [ ] H9.10 missing clip -> 200 + clip_included=false, no 500
 - [ ] H9.11 unlink after serve (no homecam_export_*.zip left)
 - [ ] H9.12 failure mid-zip -> 500 + partial cleaned
@@ -323,11 +323,11 @@ setuptools>=81 removes pkg_resources which the models package needs).
 - [x] R5 load-mode: missing/corrupt encodings => capture-only
 - [x] R6 gated: real encode_known_faces build into temp encodings.pkl
 - [x] R7 gated: threshold ledger on real same-person/stranger crops
-- [ ] R8 gated: replay all real person crops, record outcomes
+- [x] R8 gated: replay all real person crops, record outcomes
 - [ ] R9 PARITY: replay decisions vs production person_name (all-null now)
-- [ ] R10 null-name propagation through ingest + face_unrecognized search
-- [ ] R11 named propagation contract (person_names -> legacy person_name)
-- [ ] R12 training/review routes against copied real fixture tree
+- [x] R10 null-name propagation through ingest + face_unrecognized search
+- [x] R11 named propagation contract (person_names -> legacy person_name)
+- [x] R12 training/review routes against copied real fixture tree
 - [ ] R13 name-them flow contract (review link + sidecar move)
 - [ ] R14 refresh-required sentinel for named parity
 - [ ] R15 close only after fresh named snapshot passes parity
