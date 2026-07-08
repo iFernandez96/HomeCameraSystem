@@ -95,16 +95,26 @@ async function installWebSocketProbe(page: Page): Promise<void> {
 async function expectSessionExpiredViaBoundedRefresh401(
   page: Page,
   refreshResponses: number[],
+  // Pre-redirect attempts scale with how many independent consumers 401
+  // while the redirect is in flight (each retries once); the WS variant
+  // adds the auth-failed /me path on top of the status polls.
+  maxAttempts = 3,
 ): Promise<void> {
   await expect
     .poll(() => refreshResponses.length, { timeout: 10_000 })
     .toBeGreaterThan(0)
   expect(refreshResponses.every((status) => status === 401)).toBe(true)
-  expect(refreshResponses.length).toBeLessThanOrEqual(3)
+  expect(refreshResponses.length).toBeLessThanOrEqual(maxAttempts)
   await expect(page).toHaveURL(/\/login\?expired=1$/)
   await expect(
     page.getByText("You've been signed out for security."),
   ).toBeVisible()
+
+  // The true no-storm invariant: once the app has landed on the login
+  // page, refresh attempts stop growing entirely.
+  const settled = refreshResponses.length
+  await page.waitForTimeout(3_000)
+  expect(refreshResponses.length).toBe(settled)
 }
 
 test.describe('Auth session lifecycle harness', () => {
@@ -427,5 +437,113 @@ test.describe('Auth session lifecycle harness', () => {
     })
 
     await expectSessionExpiredViaBoundedRefresh401(page, refreshResponses)
+  })
+
+  test('given events WS is connected, when the JWT secret rotates and the socket reconnects, then session-expired UX is reached without a reconnect storm', async ({
+    authServer,
+    page,
+  }) => {
+    const refreshResponses: number[] = []
+    page.on('response', (response) => {
+      const request = response.request()
+      if (
+        request.method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/auth/refresh'
+      ) {
+        refreshResponses.push(response.status())
+      }
+    })
+
+    await installWebSocketProbe(page)
+    await loginAsAdmin(page)
+    await page.getByRole('link', { name: /events/i }).click()
+
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            (eventsWsPath) =>
+              (
+                window as unknown as {
+                  __homecamWsProbe?: {
+                    records: Array<{ url: string; opens: number }>
+                  }
+                }
+              ).__homecamWsProbe?.records.some(
+                (record) =>
+                  new URL(record.url).pathname === eventsWsPath &&
+                  record.opens > 0,
+              ) ?? false,
+            EVENTS_WS_PATH,
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await writeFile(authServer.jwtSecretPath, randomBytes(32), { mode: 0o600 })
+    await page.waitForTimeout((ACCESS_TOKEN_TTL_S + 0.5) * 1_000)
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __homecamWsProbe?: { closeLast: () => void }
+        }
+      ).__homecamWsProbe?.closeLast()
+    })
+
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate((eventsWsPath) => {
+            const records =
+              (
+                window as unknown as {
+                  __homecamWsProbe?: {
+                    records: Array<{
+                      url: string
+                      closes: Array<{ code: number; reason: string }>
+                    }>
+                  }
+                }
+              ).__homecamWsProbe?.records.filter(
+                (record) => new URL(record.url).pathname === eventsWsPath,
+              ) ?? []
+            return records.findIndex((record) =>
+              record.closes.some((close) => close.code === 1008),
+            )
+          }, EVENTS_WS_PATH),
+        { timeout: 10_000 },
+      )
+      .toBeGreaterThanOrEqual(0)
+
+    await expectSessionExpiredViaBoundedRefresh401(page, refreshResponses, 6)
+
+    const wsAttemptsAfter1008 = await page.evaluate((eventsWsPath) => {
+      const records =
+        (
+          window as unknown as {
+            __homecamWsProbe?: {
+              records: Array<{
+                url: string
+                closes: Array<{ code: number; reason: string }>
+              }>
+            }
+          }
+        ).__homecamWsProbe?.records.filter(
+          (record) => new URL(record.url).pathname === eventsWsPath,
+        ) ?? []
+      const first1008Index = records.findIndex((record) =>
+        record.closes.some((close) => close.code === 1008),
+      )
+      return first1008Index < 0 ? Number.POSITIVE_INFINITY : records.length - first1008Index - 1
+    }, EVENTS_WS_PATH)
+    expect(wsAttemptsAfter1008).toBeLessThanOrEqual(3)
   })
 })
