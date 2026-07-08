@@ -577,7 +577,7 @@ must happen before any "proof" can claim the features work.
       state, restore archive, and diff exact bytes/rows; invariant: users,
       detection config/zones, push subscriptions, keys/secrets policy, and
       selected capture/consent state match the pre-backup source.
-- [ ] B21 PARITY prep: production backup/restore records ledger lines with
+- [x] B21 PARITY prep: production backup/restore records ledger lines with
       source file manifest, archive digest, included paths, compatibility
       decision, changed files, restart/health result, and rollback status.
 - [ ] B22 PARITY: use a real Jetson backup archive + manifest + production
