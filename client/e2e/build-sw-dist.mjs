@@ -68,6 +68,21 @@ async function runBuild() {
       .replace('<body>', `<body>\n    ${markerNode}`),
     'utf8',
   )
+
+  const swPath = path.join(dist, 'sw.js')
+  const sw = await readFile(swPath, 'utf8')
+  const swMarkerProbe = `
+;self.__HOMECAM_SW_BUILD_MARKER__=${JSON.stringify(marker)};
+self.addEventListener('message',(event)=>{
+  if(event.data&&event.data.type==='HOMECAM_SW_MARKER'&&event.source){
+    event.source.postMessage({
+      type:'HOMECAM_SW_MARKER',
+      marker:self.__HOMECAM_SW_BUILD_MARKER__
+    });
+  }
+});
+`
+  await writeFile(swPath, `${sw}\n${swMarkerProbe}`, 'utf8')
   await writeFile(
     stampPath,
     `${JSON.stringify({ marker, dist, builtAt: new Date().toISOString() }, null, 2)}\n`,
@@ -82,7 +97,12 @@ async function cached() {
       readFile(path.join(dist, 'index.html'), 'utf8'),
     ])
     const parsed = JSON.parse(stamp)
-    return parsed.marker === marker && index.includes(`data-homecam-build-marker="${marker}"`)
+    const sw = await readFile(path.join(dist, 'sw.js'), 'utf8')
+    return (
+      parsed.marker === marker &&
+      index.includes(`data-homecam-build-marker="${marker}"`) &&
+      sw.includes(`__HOMECAM_SW_BUILD_MARKER__=${JSON.stringify(marker)}`)
+    )
   } catch {
     return false
   }

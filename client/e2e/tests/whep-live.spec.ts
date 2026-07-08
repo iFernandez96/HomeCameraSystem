@@ -1,6 +1,15 @@
 import { expect, loginOnRealOrigin, test } from '../whepLive'
+import type { Page, WhepLiveLedger } from '../whepLive'
 
 const HAVE_CURRENT_DATA = 2
+const QUALITY_STORAGE_KEY = 'homecam:streamQuality'
+
+type LiveRung = {
+  title: string
+  optionName: RegExp
+  expectedPath: string
+  preseedQuality?: string
+}
 
 test.skip(
   process.env.HOMECAM_LIVE_WHEP !== '1',
@@ -8,6 +17,85 @@ test.skip(
 )
 
 test.describe('WHEP live smoke', () => {
+  async function selectQuality(page: Page, name: RegExp) {
+    await page.getByRole('button', { name: 'Stream quality' }).click()
+    await page.getByRole('option', { name }).click()
+  }
+
+  async function expectNextPresentedFrame(
+    page: Page,
+  ): Promise<void> {
+    await expect
+      .poll(
+        async () =>
+          await page.getByLabel('Live camera feed').evaluate((node) => {
+            const video = node as HTMLVideoElement & {
+              requestVideoFrameCallback?: (callback: () => void) => number
+            }
+
+            if (typeof video.requestVideoFrameCallback !== 'function') {
+              return (
+                video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+                video.videoWidth > 0
+              )
+            }
+
+            return new Promise<boolean>((resolve) => {
+              const timer = window.setTimeout(() => resolve(false), 7_500)
+              video.requestVideoFrameCallback(() => {
+                window.clearTimeout(timer)
+                resolve(video.videoWidth > 0)
+              })
+            })
+          }),
+        {
+          message: 'wait for first presented frame after selected rung POST',
+          timeout: 8_000,
+        },
+      )
+      .toBe(true)
+  }
+
+  async function runLiveRung({
+    page,
+    whepLedger,
+    rung,
+  }: {
+    page: Page
+    whepLedger: WhepLiveLedger
+    rung: LiveRung
+  }) {
+    if (rung.preseedQuality) {
+      await page.addInitScript(
+        ({ key, value }) => {
+          window.localStorage.setItem(key, value)
+        },
+        { key: QUALITY_STORAGE_KEY, value: rung.preseedQuality },
+      )
+    }
+
+    await loginOnRealOrigin(page)
+    await expect(page.getByRole('button', { name: 'Stream quality' })).toBeVisible()
+
+    const postsBefore = whepLedger.whepPosts.length
+    await selectQuality(page, rung.optionName)
+
+    await expect
+      .poll(
+        () =>
+          whepLedger.whepPosts
+            .slice(postsBefore)
+            .some((post) => post.path === rung.expectedPath),
+        {
+          message: `record WHEP POST to ${rung.expectedPath}`,
+          timeout: 8_000,
+        },
+      )
+      .toBe(true)
+
+    await expectNextPresentedFrame(page)
+  }
+
   test('given login on the real origin, when Watch loads, then a real first frame arrives before the LIVE pill is accepted', async ({
     page,
     whepLedger,
@@ -91,4 +179,29 @@ test.describe('WHEP live smoke', () => {
       })
       .toBeGreaterThan(0)
   })
+
+  const liveRungs: LiveRung[] = [
+    {
+      title: 'W4: rung hq posts /whep/cam/whep and presents a first frame within 8s',
+      optionName: /^HQ\b/,
+      expectedPath: '/whep/cam/whep',
+      preseedQuality: 'sd',
+    },
+    {
+      title: 'W5: rung sd posts /whep/cam_lq/whep and presents a first frame within 8s',
+      optionName: /^Data-saver\b/,
+      expectedPath: '/whep/cam_lq/whep',
+    },
+    {
+      title: 'W6: rung xs posts /whep/cam_uq/whep and presents a first frame within 8s',
+      optionName: /^Ultra-low\b/,
+      expectedPath: '/whep/cam_uq/whep',
+    },
+  ]
+
+  for (const rung of liveRungs) {
+    test(rung.title, async ({ page, whepLedger }) => {
+      await runLiveRung({ page, whepLedger, rung })
+    })
+  }
 })

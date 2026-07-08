@@ -1,7 +1,7 @@
 import { test as base, expect } from '@playwright/test'
 import { execFile, spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
@@ -19,6 +19,8 @@ type SwHarnessServer = {
   healthzStatus: number
   logPath: string
   root: string
+  servedDist: string
+  switchToBuildB: () => Promise<void>
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -149,6 +151,12 @@ async function buildDist(marker: string): Promise<SwBuild> {
   })
 }
 
+async function replaceServedDist(servedDist: string, build: SwBuild): Promise<void> {
+  await rm(servedDist, { recursive: true, force: true })
+  await mkdir(servedDist, { recursive: true })
+  await cp(build.dist, servedDist, { recursive: true })
+}
+
 export const test = base.extend<
   { swServer: SwHarnessServer },
   { swBuilds: { buildA: SwBuild; buildB: SwBuild } }
@@ -186,12 +194,14 @@ export const test = base.extend<
     try {
       const port = await getFreePort()
       const baseURL = `http://127.0.0.1:${port}`
+      const servedDist = path.join(root, 'served-dist')
+      await replaceServedDist(servedDist, swBuilds.buildA)
       const env = {
         ...process.env,
         HOMECAM_SIMULATOR: '1',
         HOMECAM_LOG_LEVEL: 'INFO',
         PORT: String(port),
-        CLIENT_DIST: swBuilds.buildA.dist,
+        CLIENT_DIST: servedDist,
         USERS_DB_PATH: path.join(root, 'users.db'),
         JWT_SECRET_PATH: path.join(root, 'jwt_secret.bin'),
         ACCESS_TOKEN_TTL_S: '30',
@@ -210,6 +220,20 @@ export const test = base.extend<
         VAPID_PUBLIC_KEY_PATH: path.join(root, 'vapid_public.pem'),
       }
       await execPython(['-m', 'app.scripts.gen_vapid'], env)
+      await execPython(
+        [
+          '-c',
+          [
+            'from pathlib import Path',
+            'import os',
+            'from app.auth import passwords, users_db',
+            'db = Path(os.environ["USERS_DB_PATH"])',
+            'users_db.init_db(db)',
+            'users_db.create_user(db, "admin", passwords.hash_password("admin"), role="owner")',
+          ].join('; '),
+        ],
+        env,
+      )
       proc = spawn(
         pythonBin,
         [
@@ -236,6 +260,8 @@ export const test = base.extend<
         healthzStatus,
         logPath,
         root,
+        servedDist,
+        switchToBuildB: () => replaceServedDist(servedDist, swBuilds.buildB),
       })
     } catch (error) {
       console.error(`SANDBOX-HANG ${String(error)}`)

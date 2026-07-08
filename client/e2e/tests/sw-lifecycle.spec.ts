@@ -96,6 +96,92 @@ async function waitForActivatedSw(page: Page) {
     .toBe('activated')
 }
 
+async function loginAsAdmin(page: Page): Promise<void> {
+  await page.goto('/')
+
+  await page.getByLabel(/username/i).fill('admin')
+  await page.getByRole('textbox', { name: /password/i }).fill('admin')
+  await page.getByRole('button', { name: /sign in|log in|login/i }).click()
+
+  await expect(page).toHaveURL(/\/$/)
+  await expect(page.getByRole('link', { name: /home/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /events/i })).toBeVisible()
+}
+
+async function precacheAudit(page: Page) {
+  return await page.evaluate(async () => {
+    const keys = await caches.keys()
+    const precacheNames = keys.filter((key) => key.includes('workbox-precache'))
+    const entries: Array<{
+      cacheName: string
+      ok: boolean
+      status: number
+      url: string
+    }> = []
+
+    for (const cacheName of precacheNames) {
+      const cache = await caches.open(cacheName)
+      for (const request of await cache.keys()) {
+        const response = await cache.match(request)
+        entries.push({
+          cacheName,
+          ok: Boolean(response?.ok),
+          status: response?.status ?? 0,
+          url: request.url,
+        })
+      }
+    }
+
+    return { entries, keys, precacheNames }
+  })
+}
+
+async function fetchEventsFromPage(page: Page) {
+  return await page.evaluate(async () => {
+    try {
+      const response = await fetch('/api/events?limit=1', {
+        credentials: 'include',
+      })
+      let body: unknown = null
+      try {
+        body = await response.clone().json()
+      } catch {
+        body = await response.text().catch(() => null)
+      }
+      return {
+        body,
+        ok: response.ok,
+        rejected: false,
+        status: response.status,
+      }
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : String(error),
+        ok: false,
+        rejected: true,
+        status: null,
+      }
+    }
+  })
+}
+
+async function eventsRuntimeCacheAudit(page: Page) {
+  return await page.evaluate(async () => {
+    const cache = await caches.open('homecam-events-v1')
+    const entries = await Promise.all(
+      (await cache.keys()).map(async (request) => {
+        const response = await cache.match(request)
+        return {
+          ok: Boolean(response?.ok),
+          status: response?.status ?? 0,
+          url: request.url,
+        }
+      }),
+    )
+    return entries
+  })
+}
+
 async function activeSwMarker(page: Page): Promise<string | null> {
   return await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready
@@ -318,5 +404,118 @@ test.describe('SW lifecycle two-build harness', () => {
         entry.label === 'rendered-marker-after-second-reload',
     )
     expect(secondReloadRendered).toMatchObject({ marker: 'h6-b' })
+  })
+
+  test('H6.8 precache completeness: given build A is active, then every precached URL resolves from Cache Storage and cat PNG sprites are excluded', async ({
+    page,
+  }) => {
+    await loadBuildAAndActivate(page)
+
+    const audit = await precacheAudit(page)
+
+    expect(audit.precacheNames.length).toBeGreaterThan(0)
+    expect(audit.entries.length).toBeGreaterThan(0)
+    expect(audit.entries.filter((entry) => !entry.ok)).toEqual([])
+    expect(
+      audit.entries.filter((entry) => {
+        const url = new URL(entry.url)
+        return url.pathname.includes('/cats/') && /\.png$/i.test(url.pathname)
+      }),
+    ).toEqual([])
+  })
+
+  test('H6.9 offline shell: given the app shell is precached and the app is authed, when Chromium goes offline, then / and /events still render shell markers and nav', async ({
+    context,
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await waitForActivatedSw(page)
+    expect(await activeSwMarker(page)).toBe('h6-a')
+
+    await context.setOffline(true)
+    try {
+      // Playwright emits no request/response events for SW-precache-served
+      // navigations; rendered markers and app chrome are the observable truth.
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('[data-homecam-build-marker="h6-a"]')).toBeVisible()
+      await expect(
+        page.getByRole('navigation', { name: /bottom navigation/i }),
+      ).toBeVisible()
+      await expect(page.getByRole('link', { name: /events/i })).toBeVisible()
+
+      await page.goto('/events', { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('[data-homecam-build-marker="h6-a"]')).toBeVisible()
+      await expect(
+        page.getByRole('navigation', { name: /bottom navigation/i }),
+      ).toBeVisible()
+      await expect(page.getByRole('heading', { name: /^events$/i })).toBeVisible()
+    } finally {
+      await context.setOffline(false)
+    }
+  })
+
+  test('H6.10 events NetworkFirst: given /api/events 200 is cached online, then it serves offline, but an anon 401 is never cached', async ({
+    browser,
+    context,
+    page,
+    swServer,
+  }) => {
+    // client/src/sw.ts declares GET /api/events* as NetworkFirst in
+    // homecam-events-v1, with networkTimeoutSeconds=5 and a
+    // CacheableResponsePlugin that allows statuses: [200] only.
+    await loginAsAdmin(page)
+    await waitForActivatedSw(page)
+
+    const onlineAuthed = await fetchEventsFromPage(page)
+    expect(onlineAuthed).toMatchObject({ ok: true, rejected: false, status: 200 })
+    await expect
+      .poll(() => eventsRuntimeCacheAudit(page), { timeout: 10_000 })
+      .toContainEqual(
+        expect.objectContaining({
+          ok: true,
+          status: 200,
+          url: expect.stringContaining('/api/events?limit=1'),
+        }),
+      )
+
+    await context.setOffline(true)
+    try {
+      const offlineAuthed = await fetchEventsFromPage(page)
+      expect(offlineAuthed).toMatchObject({
+        body: onlineAuthed.body,
+        ok: true,
+        rejected: false,
+        status: 200,
+      })
+    } finally {
+      await context.setOffline(false)
+    }
+
+    const anonContext = await browser.newContext({ baseURL: swServer.baseURL })
+    const anonPage = await anonContext.newPage()
+    try {
+      await anonPage.goto('/', { waitUntil: 'domcontentloaded' })
+      await waitForActivatedSw(anonPage)
+
+      const onlineAnon = await fetchEventsFromPage(anonPage)
+      expect(onlineAnon).toMatchObject({
+        ok: false,
+        rejected: false,
+        status: 401,
+      })
+      expect(await eventsRuntimeCacheAudit(anonPage)).toEqual([])
+
+      await anonContext.setOffline(true)
+      const offlineAnon = await fetchEventsFromPage(anonPage)
+      expect(offlineAnon).toMatchObject({
+        ok: false,
+        rejected: true,
+        status: null,
+      })
+      expect(await eventsRuntimeCacheAudit(anonPage)).toEqual([])
+    } finally {
+      await anonContext.setOffline(false).catch(() => {})
+      await anonContext.close()
+    }
   })
 })
