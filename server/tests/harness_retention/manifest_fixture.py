@@ -1,4 +1,16 @@
+import os
 from pathlib import Path
+
+
+def build_scratch_recordings(clips, dest_dir):
+    dest = Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for name, size_bytes, mtime_epoch in clips:
+        path = dest / name
+        path.touch()
+        os.truncate(path, size_bytes)
+        os.utime(path, (mtime_epoch, mtime_epoch))
 
 
 def parse_recordings_manifest(path):
