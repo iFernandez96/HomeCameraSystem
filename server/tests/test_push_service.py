@@ -891,6 +891,45 @@ async def test_send_matching_skips_non_matching_subs(service):
 
 
 @pytest.mark.asyncio
+async def test_send_matching_logs_one_info_fanout_summary(service, caplog):
+    import logging as _logging
+
+    service.private_pem = b"fake"
+    service.add({
+        "endpoint": "match-this",
+        "keys": {"p256dh": "p", "auth": "a"},
+        "filters": {"cameras": ["cam1"]},
+    })
+    service.add({
+        "endpoint": "skip-this",
+        "keys": {"p256dh": "p", "auth": "a"},
+        "filters": {"cameras": ["cam-other"]},
+    })
+
+    async def fake_fanout(subs, payload):
+        return len(subs)
+
+    with (
+        patch.object(service, "_fanout_to", side_effect=fake_fanout),
+        caplog.at_level(_logging.INFO, logger="app.services.push_service"),
+    ):
+        sent = await service.send_matching(
+            _evt(id="evt-log-1", camera_id="cam1"),
+            {"title": "x"},
+        )
+
+    assert sent == 1
+    summaries = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("push fanout event=")
+    ]
+    assert summaries == [
+        "push fanout event=evt-log-1 sent=1 filtered=1 failed=0 pruned=0"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_send_matching_with_no_matches_returns_zero(service):
     service.private_pem = b"fake"
     service.add({

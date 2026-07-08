@@ -631,10 +631,23 @@ class PushService:
         `filters` evaluate per-field (cameras AND person_names);
         empty list `[]` matches nothing in that field, distinct
         from `null` (match all)."""
+        total = len(self.subs)
         matching = [
             s for s in self.subs if _sub_matches_event(s, event)
         ]
-        return await self._fanout_to(matching, payload)
+        sent = await self._fanout_to(matching, payload)
+        pruned = max(0, total - len(self.subs))
+        filtered = total - len(matching)
+        failed = max(0, len(matching) - sent - pruned)
+        log.info(
+            "push fanout event=%s sent=%s filtered=%s failed=%s pruned=%s",
+            event.get("id", "?"),
+            sent,
+            filtered,
+            failed,
+            pruned,
+        )
+        return sent
 
     async def send_to_user(self, user_id: str, payload: dict[str, Any]) -> int:
         """Fan out `payload` to every subscription owned by `user_id` (the
