@@ -56,10 +56,11 @@
   "all_verified": "healthz + bundle hash + live suite 6/6"
  },
  "blocked": [],
- "last_update": "2026-07-08T15:55 Phase O: O1-4 applied live; O6-9 lane running; two real regressions found",
+ "last_update": "2026-07-08T16:30 creds rotated; O11-12 gate in flight",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom on the LIVE FEED user-confirmed working (2026-07-08 ~13:15); clips-modal pinch not explicitly confirmed.",
  "open_product_bugs": [
   "REGRESSION 1 (worker): events carry NO thumb_url since continuous-capture cutover 2026-07-07 ~21:00 \u2014 visit runner _post_event omits it though save_thumb still writes files; fix in detection/ after O6-9 lane frees the dir",
   "REGRESSION 2 (push images): notification hero images are never fetched by ANY device (phone Chrome shows notification w/o image, desktop Chrome running also 0 GETs; server unauth path verified 200) \u2014 needs dedicated debug; blocks H4 thumb-fetch ground-truth regeneration"
- ]
+ ],
+ "live_creds_note": "Live-run creds + JWT secret rotated 2026-07-08 ~16:30; all pre-rotation sessions dead. Current creds are NOT stored here: source .jetson-snapshot/proof_fixtures/live-creds.env (gitignored, 0600) for live gates."
 }
