@@ -17,13 +17,15 @@ import {
   deleteEventsByDay,
   exportEvents,
   fetchEvents,
+  getCameras,
   getDetectionConfig,
   markAllEventsSeen,
   markEventSeen,
   searchEvents,
+  type Camera,
 } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
-import { clockTime } from '../lib/eventLabel'
+import { clockTime, registerCameraNames } from '../lib/eventLabel'
 import { identityForName } from '../lib/identity'
 import { log, errFields } from '../lib/log'
 import { useAuth } from '../lib/auth'
@@ -111,6 +113,14 @@ export function Events() {
   // distinct labels are present in the visible events — single-
   // class deploys see no UI noise.
   const [labelFilter, setLabelFilter] = useState<string | null>(null)
+  // Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+  // camera filter axis. null = all cameras. The chip row only
+  // renders when the registry has MORE THAN ONE camera — single-
+  // camera deploys see zero new UI (the acceptance bar). Wired to
+  // the server's `camera=` search param on the paginated / day-
+  // filtered paths, and applied client-side to the loaded pool for
+  // instant narrowing (same split as labelFilter).
+  const [cameraFilter, setCameraFilter] = useState<string | null>(null)
   // iter-220 (Feature #6 slice 6): pagination state. `hasMore`
   // starts true so the Load more button is shown when initial
   // fetchEvents fills the default page (100 events). Set to
@@ -255,6 +265,11 @@ export function Events() {
       // queries return only matching-class events.
       if (labelFilter !== null) {
         filters.label = labelFilter
+      }
+      // Multicam contract: forward the active camera chip via the
+      // blessed `camera=` param.
+      if (cameraFilter !== null) {
+        filters.camera = cameraFilter
       }
       const r = await searchEvents(filters)
       setEvents(r.items)
@@ -404,6 +419,48 @@ export function Events() {
     }
   }, [])
 
+  // notif-deeplink (UI/UX overhaul 2026-07-07): a push-notification
+  // tap lands here as /events?event=<id> (sw.ts notificationclick
+  // appends the payload's event_id). Snapshot the id ONCE into a ref
+  // (same lazy pattern as _seededFilterRef) so chip toggles and WS
+  // arrivals can't re-trigger the open. Once the initial fetch
+  // settles, auto-open the ClipModal for that event if it's in the
+  // loaded list; a pruned/ancient event gets a plain-English toast
+  // (there is no fetch-by-id route — /api/events/search has no id
+  // filter — so the loaded list is the only lookup surface). The
+  // param is stripped via history.replaceState BEFORE the open so
+  // back / refresh do not re-trigger the modal.
+  const _deepLinkEventIdRef = useRef<string | null>(searchParams.get('event'))
+  useEffect(() => {
+    const pending = _deepLinkEventIdRef.current
+    if (!pending || loading || error) return
+    _deepLinkEventIdRef.current = null
+    const u = new URL(window.location.href)
+    u.searchParams.delete('event')
+    const qs = u.searchParams.toString()
+    window.history.replaceState(null, '', u.pathname + (qs ? `?${qs}` : '') + u.hash)
+    const found = events.find((e) => e.id === pending) ?? null
+    // React 19 set-state-in-effect discipline: defer the state update
+    // out of the synchronous effect body (same convention as the
+    // inline-fetch .then pattern). The cancelled flag covers an
+    // unmount racing the microtask.
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (cancelled) return
+      if (found) {
+        setSelectedEvent(found)
+      } else {
+        showToast(
+          'That event is not in the recent list. It may have been removed.',
+          'info',
+        )
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [loading, error, events, showToast])
+
   // Derive the filter chips from observed events. Sort alphabetically so the
   // chip order is stable as new events stream in (no jitter when a name's
   // count changes).
@@ -442,6 +499,32 @@ export function Events() {
     }
   }, [])
 
+  // Multicam contract: fetch the camera registry once (inline fetch +
+  // cancelled flag — React 19 set-state-in-effect discipline). null
+  // until it arrives / on failure, which renders the single-camera
+  // layout. Display names are registered with eventLabel so rows and
+  // the ClipModal header say the camera's name — registerCameraNames
+  // self-gates to the >1-camera case, so single-camera copy stays
+  // byte-identical.
+  const [cameras, setCameras] = useState<Camera[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getCameras()
+      .then((r) => {
+        if (cancelled) return
+        registerCameraNames(r.cameras)
+        setCameras(r.cameras)
+      })
+      .catch((e) => {
+        // Single-camera fallback (no chip row, raw-id labels) keeps
+        // the page fully functional; log WHY for multi-cam deploys.
+        log.warn('events:cameras-load-failed', errFields(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // iter-329: derive distinct event labels (person/dog/car/...) for
   // the per-class chip row. Sort alphabetically for stable order
   // as new events stream in.
@@ -461,6 +544,11 @@ export function Events() {
 
   const filtered = useMemo(() => {
     let pool = events
+    // Multicam contract: camera filter narrows the pool first — it's
+    // the coarsest axis (WHERE), before type (WHAT) and person (WHO).
+    if (cameraFilter !== null) {
+      pool = pool.filter((e) => e.camera_id === cameraFilter)
+    }
     // iter-329: client-side label filter is the same shape as the
     // server-side filter (used by /api/events/search?label=). Apply
     // FIRST so the person-chip filter operates on the label-narrowed
@@ -472,7 +560,7 @@ export function Events() {
     if (filter === 'all') return pool
     if (filter === '__unknown__') return pool.filter((e) => !e.person_name)
     return pool.filter((e) => e.person_name === filter)
-  }, [events, filter, labelFilter])
+  }, [events, filter, labelFilter, cameraFilter])
 
   // Painfix #4 (audited on-device): when BOTH the type chip row and
   // the person chip row are active at once, their intersection can
@@ -558,6 +646,12 @@ export function Events() {
       if (labelFilter !== null) {
         filters.label = labelFilter
       }
+      // Multicam contract: forward the active camera chip so older
+      // pages hit the same `camera=` filter — mirrors the label-chip
+      // rationale above.
+      if (cameraFilter !== null) {
+        filters.camera = cameraFilter
+      }
       const r = await searchEvents(filters)
       // Append older events. The server returns newest-first within
       // the slice; since they're all older than `oldest`, the
@@ -604,10 +698,14 @@ export function Events() {
   // from Settings) we ALWAYS show the chip row so the user can see
   // the configured class set even with only one class — that's the
   // user's "what am I detecting today" answer.
+  // Multicam contract: >1 registered camera always earns the filter
+  // band (the camera axis is useful even with no faces / one class).
+  const multiCam = cameras !== null && cameras.length > 1
   const showFilters =
     !loading &&
     !error &&
-    (personNames.length > 0 ||
+    (multiCam ||
+      personNames.length > 0 ||
       labels.length > 1 ||
       (configClasses !== null && configClasses.length >= 1))
 
@@ -1046,6 +1144,30 @@ export function Events() {
           // instead of overflowing the row. Portrait and lg: keep the
           // stacked layout (the wrappers are plain blocks there).
           <div className="landscape-phone:flex landscape-phone:flex-wrap landscape-phone:items-center landscape-phone:gap-x-5 landscape-phone:max-w-2xl landscape-phone:mx-auto">
+            {/* Multicam contract (2026-07-07): CAMERA axis — the
+                coarsest filter (WHERE), above TYPE (what) and WHO.
+                Renders ONLY when the registry has a second camera;
+                single-camera deploys see the band exactly as before.
+                Same ChipRadiogroup grammar as its siblings. */}
+            {multiCam && cameras && (
+              <div className="landscape-phone:flex landscape-phone:items-center landscape-phone:gap-2 landscape-phone:min-w-0">
+                <p className="lg:max-w-6xl lg:mx-auto mt-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)] font-semibold landscape-phone:mt-0 landscape-phone:shrink-0">
+                  Camera
+                </p>
+                <ChipRadiogroup
+                  ariaLabel="Filter events by camera"
+                  values={[null as string | null, ...cameras.map((c) => c.id)]}
+                  current={cameraFilter}
+                  onSelect={setCameraFilter}
+                  renderLabel={(v) =>
+                    v === null
+                      ? 'All cameras'
+                      : cameras.find((c) => c.id === v)?.name ?? v
+                  }
+                  marginTopClass="mt-1 landscape-phone:mt-0"
+                />
+              </div>
+            )}
             {/* iter-330 (ux-grandpa Frank #3 + mobile A1): class
                 chip row sits ABOVE the person row — Frank reads the
                 broader "what was seen" filter first, then refines by

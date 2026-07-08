@@ -111,6 +111,27 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options))
 })
 
+// notif-deeplink (UI/UX overhaul 2026-07-07): compose the click-through
+// target from the notification's data. A REAL detection event carries
+// event_id (buildNotification leaves it null for timelapse / test
+// pushes), and the server payload's url is the plain '/events' list —
+// so a body tap used to land the user on the list and make them hunt
+// for the clip. Now the target is '/events?event=<id>' and Events.tsx
+// auto-opens the ClipModal for that id on mount. Non-event
+// notifications keep their payload url untouched. Exported as a pure
+// helper so sw.test.ts can pin the mapping without a real SW global.
+export function notificationClickTarget(
+  data: { url?: string; event_id?: string | null } | null | undefined,
+): string {
+  const base = typeof data?.url === 'string' && data.url ? data.url : '/'
+  const eventId =
+    typeof data?.event_id === 'string' && data.event_id ? data.event_id : null
+  // Same 'event' literal guard as the dismiss branch below — the
+  // generic test-push tag must never masquerade as a real event id.
+  if (!eventId || eventId === 'event') return base
+  return `${base}${base.includes('?') ? '&' : '?'}event=${encodeURIComponent(eventId)}`
+}
+
 self.addEventListener('notificationclick', (event) => {
   // iter-332: branch on event.action. Empty string = body tap (the
   // default "open the app" flow); 'view' = explicit View action
@@ -121,7 +142,7 @@ self.addEventListener('notificationclick', (event) => {
   const data = event.notification.data as
     | { url?: string; event_id?: string }
     | null
-  const target = data?.url ?? '/'
+  const target = notificationClickTarget(data)
   const eventId = data?.event_id
 
   if (action === 'dismiss' && eventId && eventId !== 'event') {
@@ -164,8 +185,13 @@ self.addEventListener('notificationclick', (event) => {
           // (`https://homecam.tail4a6525.ts.net/events`).
           const win = c as WindowClient
           try {
+            // notif-deeplink: target may now carry a query string
+            // (?event=<id>), so compare pathname + search, not just
+            // pathname — otherwise an /events window would skip the
+            // navigate and the deep-linked clip would never open.
             const url = new URL(win.url)
-            if (url.pathname !== target) {
+            const wanted = new URL(target, url.origin)
+            if (url.pathname + url.search !== wanted.pathname + wanted.search) {
               await win.navigate(target)
             }
           } catch {

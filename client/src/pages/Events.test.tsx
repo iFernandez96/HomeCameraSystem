@@ -40,6 +40,12 @@ const getStatusM = vi.fn().mockResolvedValue({
 // behaviour aren't disturbed; the iter-356.62 BDD test below
 // overrides via getDetectionConfigM.mockResolvedValue.
 const getDetectionConfigM = vi.fn().mockReturnValue(new Promise(() => {}))
+// Multicam contract (2026-07-07): Events now fetches the camera
+// registry once to gate the camera filter chip row. Default to a
+// never-resolving Promise (same idiom as getDetectionConfigM) so
+// tests that don't care render the single-camera layout unchanged;
+// the multicam tests override.
+const getCamerasM = vi.fn().mockReturnValue(new Promise(() => {}))
 vi.mock('../lib/api', () => ({
   fetchEvents: (...a: unknown[]) => fetchEvents(...a),
   searchEvents: (...a: unknown[]) => searchEvents(...a),
@@ -50,6 +56,7 @@ vi.mock('../lib/api', () => ({
   deleteEventsByDay: (...a: unknown[]) => deleteEventsByDay(...a),
   exportEvents: (...a: unknown[]) => exportEventsM(...a),
   getDetectionConfig: (...a: unknown[]) => getDetectionConfigM(...a),
+  getCameras: (...a: unknown[]) => getCamerasM(...a),
   fetchEventTracks: () => Promise.resolve(null),
   getStatus: (...a: unknown[]) => getStatusM(...a),
 }))
@@ -118,10 +125,16 @@ vi.mock('../lib/log', () => ({
 }))
 
 import { Events } from './Events'
+import { registerCameraNames } from '../lib/eventLabel'
 
 describe('Events page', () => {
   beforeEach(() => {
     _searchSeed = ''
+    // Multicam: default to the never-settling registry fetch
+    // (single-camera layout) and clear the module-level camera-name
+    // registry so tests stay order-independent.
+    getCamerasM.mockReset().mockReturnValue(new Promise(() => {}))
+    registerCameraNames([])
     logError.mockReset()
     logWarn.mockReset()
     fetchEvents.mockReset()
@@ -1793,3 +1806,227 @@ function _personEvent(over: Partial<ServerEvent> & { id: string; ts: number }): 
     clip_url: over.clip_url ?? null,
   } as ServerEvent
 }
+
+// notif-deeplink (UI/UX overhaul 2026-07-07): a push-notification tap
+// lands on /events?event=<id> (sw.ts notificationclick appends the
+// payload's event_id). This suite pins the Events-side half of the
+// chain: auto-open the ClipModal for the deep-linked event, strip the
+// param so back/refresh don't re-trigger, and explain plainly when the
+// event is no longer in the loaded list.
+describe('Events page — notification deep-link (?event=)', () => {
+  beforeEach(() => {
+    _restoreVisible()
+    _searchSeed = 'event=evt-1'
+    fetchEvents.mockReset()
+    searchEvents.mockReset().mockResolvedValue({ items: [], next_cursor: null })
+    getEventCountsByDay.mockReset().mockResolvedValue({ counts: {} })
+    markAllEventsSeen.mockReset().mockResolvedValue({ flipped: 0 })
+    markEventSeen.mockReset().mockResolvedValue({ flipped: true })
+    subscribeEvents.mockReset().mockReturnValue(() => {})
+    showToast.mockReset()
+    window.history.replaceState(null, '', '/events?event=evt-1')
+  })
+  afterEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('given /events?event=<id> for an event in the fetched list, when the list loads, then the ClipModal auto-opens on that event', async () => {
+    // arrange
+    fetchEvents.mockResolvedValue([
+      _personEvent({
+        id: 'evt-1',
+        ts: Date.now() / 1000,
+        thumb_url: '/snapshots/thumb_1.jpg',
+      }),
+    ])
+
+    // act
+    render(<Events />)
+
+    // assert — modal opened without any row click, on the right clip.
+    const dialog = await screen.findByRole('dialog', {
+      name: /at the front door/i,
+    })
+    expect(dialog).toBeInTheDocument()
+    expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+      'src',
+      '/api/events/evt-1/clip',
+    )
+  })
+
+  it('given the deep-link handled, when the modal opens, then the ?event= param is stripped via replaceState (refresh/back cannot re-trigger)', async () => {
+    // arrange
+    fetchEvents.mockResolvedValue([
+      _personEvent({ id: 'evt-1', ts: Date.now() / 1000 }),
+    ])
+
+    // act
+    render(<Events />)
+    await screen.findByRole('dialog', { name: /at the front door/i })
+
+    // assert
+    expect(window.location.search).not.toMatch(/event=/)
+    expect(window.location.pathname).toBe('/events')
+  })
+
+  it('given ?event= names an id NOT in the fetched list, when the list loads, then a plain-English toast fires and no dialog opens', async () => {
+    // arrange
+    _searchSeed = 'event=gone-1'
+    window.history.replaceState(null, '', '/events?event=gone-1')
+    fetchEvents.mockResolvedValue([
+      _personEvent({ id: 'other-1', ts: Date.now() / 1000 }),
+    ])
+
+    // act
+    render(<Events />)
+
+    // assert
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        'That event is not in the recent list. It may have been removed.',
+        'info',
+      ),
+    )
+    expect(
+      screen.queryByRole('dialog', { name: /at the front door/i }),
+    ).not.toBeInTheDocument()
+    expect(window.location.search).not.toMatch(/event=/)
+  })
+
+  it('given no ?event= param, when the page mounts, then no modal auto-opens and no toast fires', async () => {
+    // arrange
+    _searchSeed = ''
+    window.history.replaceState(null, '', '/events')
+    fetchEvents.mockResolvedValue([
+      _personEvent({
+        id: 'evt-1',
+        ts: Date.now() / 1000,
+        thumb_url: '/snapshots/thumb_1.jpg',
+      }),
+    ])
+
+    // act
+    render(<Events />)
+    await screen.findByRole('button', { name: /play clip:|open: person at/i })
+
+    // assert
+    expect(
+      screen.queryByRole('dialog', { name: /at the front door/i }),
+    ).not.toBeInTheDocument()
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  // Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+  // camera filter axis + per-row camera display names exist ONLY when
+  // the registry has more than one camera. Single-camera deploys must
+  // render exactly as before (the acceptance bar — covered implicitly
+  // by every test above, whose registry fetch never settles, and
+  // explicitly by the single-camera test below).
+
+  it('given a single-camera registry, when the page loads, then no Camera filter row renders and row copy is unchanged (multicam contract)', async () => {
+    // arrange
+    getCamerasM.mockResolvedValue({
+      cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
+    })
+    fetchEvents.mockResolvedValue([
+      _personEvent({ id: 'e1', ts: Date.now() / 1000 - 60 }),
+    ])
+
+    // act
+    render(<Events />)
+    await waitFor(() =>
+      expect(screen.getByText(/person at the front door/i)).toBeInTheDocument(),
+    )
+
+    // assert — no camera axis, pre-multicam copy intact.
+    expect(
+      screen.queryByRole('radiogroup', { name: /filter events by camera/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('given two registered cameras, when a camera chip is selected, then the row shows the camera display name and the list narrows to that camera (multicam contract)', async () => {
+    // arrange — one event per camera; the registry names both.
+    getCamerasM.mockResolvedValue({
+      cameras: [
+        { id: 'front_door', name: 'Front Door', path: 'cam' },
+        { id: 'back_yard', name: 'Back Yard', path: 'garage' },
+      ],
+    })
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1, type: 'detection', id: 'f1', ts: Date.now() / 1000 - 60,
+        camera_id: 'front_door', label: 'person', score: 0.9, boxes: [],
+      },
+      {
+        v: 1, type: 'detection', id: 'b1', ts: Date.now() / 1000 - 120,
+        camera_id: 'back_yard', label: 'cat', score: 0.9, boxes: [],
+      },
+    ])
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    try {
+      // act
+      render(<Events />)
+
+      // assert — camera axis renders with the registry names, and the
+      // rows say the camera DISPLAY name (registry-driven eventTitle).
+      const group = await screen.findByRole('radiogroup', {
+        name: /filter events by camera/i,
+      })
+      expect(group).toBeInTheDocument()
+      expect(screen.getByRole('radio', { name: 'All cameras' })).toBeChecked()
+      await waitFor(() =>
+        expect(screen.getByText('Person at Front Door')).toBeInTheDocument(),
+      )
+      expect(screen.getByText('Cat at Back Yard')).toBeInTheDocument()
+
+      // act — narrow to the second camera.
+      await user.click(screen.getByRole('radio', { name: 'Back Yard' }))
+
+      // assert — only that camera's events remain visible.
+      await waitFor(() =>
+        expect(screen.queryByText('Person at Front Door')).not.toBeInTheDocument(),
+      )
+      expect(screen.getByText('Cat at Back Yard')).toBeInTheDocument()
+    } finally {
+      registerCameraNames([])
+    }
+  })
+
+  it('given an active camera chip, when Load more is clicked, then the blessed camera= filter is forwarded to the search route (multicam contract)', async () => {
+    // arrange
+    getCamerasM.mockResolvedValue({
+      cameras: [
+        { id: 'front_door', name: 'Front Door', path: 'cam' },
+        { id: 'back_yard', name: 'Back Yard', path: 'garage' },
+      ],
+    })
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1, type: 'detection', id: 'b1', ts: Date.now() / 1000 - 120,
+        camera_id: 'back_yard', label: 'cat', score: 0.9, boxes: [],
+      },
+    ])
+    searchEvents.mockResolvedValue({ items: [], next_cursor: null })
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    try {
+      // act
+      render(<Events />)
+      await user.click(
+        await screen.findByRole('radio', { name: 'Back Yard' }),
+      )
+      await user.click(screen.getByRole('button', { name: /load older events/i }))
+
+      // assert — the pagination request carries camera=back_yard.
+      await waitFor(() =>
+        expect(searchEvents).toHaveBeenCalledWith(
+          expect.objectContaining({ camera: 'back_yard' }),
+        ),
+      )
+    } finally {
+      registerCameraNames([])
+    }
+  })
+})
