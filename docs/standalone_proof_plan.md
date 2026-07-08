@@ -361,3 +361,232 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [ ] M10.10 LIVE dynamic publish probe (gated)
 - [x] M10.11 PARITY: cam1->front_door migration on scratch copy
 - [x] M10.12 PARITY: production DB single-camera invariants
+
+## Harness #11 — OTA + backup/restore de-stub audit/spec (codex r13, 2026-07-08)
+
+Scope note: this is a rebuild-list harness. Current code has UI + route
+shapes, but the dangerous parts intentionally return scaffold notes. De-stub
+must happen before any "proof" can claim the features work.
+
+### OTA update flow — honest inventory
+- REAL: route is mounted through the normal API router graph
+  (`server/app/main.py:15`, `server/app/main.py:499-503`).
+- REAL: POST `/api/system/update` exists and is owner-only via
+  `require_role("owner")` (`server/app/routes/control.py:486-490`).
+- REAL: RBAC shape is pinned: owner/admin pass, family/viewer/anon fail
+  (`server/tests/test_auth_gating.py:407-451`).
+- REAL: client API wrapper POSTs `/api/system/update` and preserves optional
+  `note` (`client/src/lib/api.ts:327-332`,
+  `client/src/lib/api.test.ts:156-165`).
+- REAL: Settings owner UI confirm-gates update, warns about restart/lost
+  in-flight clips/open Live tabs/persisted logins+push, calls
+  `triggerUpdate`, and surfaces `note` as "isn't set up yet"
+  (`client/src/pages/settings/DangerZone.tsx:117-151`,
+  `client/src/pages/Settings.test.tsx:1340-1395`).
+- REAL: informational version endpoint exists, auth-gated to any logged-in
+  user, returns `settings.version` (`server/app/routes/control.py:557-566`,
+  `server/tests/test_control.py:559-588`).
+- REAL: version source is `HOMECAM_VERSION` with default `0.1.0`
+  (`server/app/config.py:15-22`), client displays it as App version
+  (`client/src/pages/settings/AccountSection.tsx:36-85`,
+  `client/src/pages/Settings.test.tsx:1423-1452`).
+- STUB: `/api/system/update` only logs "update requested (stubbed)" and
+  returns `{"ok": True, "note": "scaffold: update is stubbed"}`
+  (`server/app/routes/control.py:490-492`,
+  `server/tests/test_control.py:494-503`).
+- STUB/operator-blocked: route comments explicitly defer the host-helper
+  design to an operator deploy decision, listing git-pull/build, rsync
+  artifact, or docker image pull as unchosen options
+  (`server/app/routes/control.py:468-485`); client comments point to the same
+  deferred host-helper state (`client/src/lib/api.ts:327-330`).
+- MISSING: no OTA service module exists under `server/app/services/`; no
+  version-check endpoint exists beyond raw current-version read; no "available
+  version" source, channel, manifest, signature/digest verification, preflight,
+  maintenance lock, apply transaction, restart handoff, health confirmation,
+  rollback, kill-switch, or update ledger is implemented.
+
+### OTA update flow — atomic de-stub steps
+- [ ] U1 inventory pin: test proves only the current scaffold exists and no
+      service helper is wired; invariant: any successful update response with
+      `note` is treated as non-applied.
+- [ ] U2 update ledger schema/file: append-only local ledger records requested,
+      rejected, started, applied, rolled_back; invariant: every attempt gets
+      exactly one terminal status offline.
+- [ ] U3 current-version contract: normalize `HOMECAM_VERSION` to semver-ish
+      plus build id; invariant: malformed current version blocks apply before
+      touching deploy files.
+- [ ] U4 manifest reader: read a local update manifest file from a scratch
+      path, not network; invariant: missing/malformed manifest returns
+      unavailable, never apply.
+- [ ] U5 version comparison: available version is newer/equal/older; invariant:
+      equal/older versions are rejected without side effects.
+- [ ] U6 artifact integrity: verify size + sha256 for a local artifact;
+      invariant: digest mismatch leaves scratch deploy tree byte-identical.
+- [ ] U7 kill-switch: config/env can disable update apply; invariant:
+      kill-switch rejection happens after manifest read but before artifact
+      unpack.
+- [ ] U8 scratch deploy layout detector: identify required compose/env/data
+      paths in a temp clone; invariant: incomplete layout is rejected without
+      writes.
+- [ ] U9 stage artifact: unpack/copy to a versioned staging dir; invariant:
+      current live dir and persisted data dirs are untouched.
+- [ ] U10 preflight: validate staged compose/config references and required
+      persisted volumes; invariant: failed preflight deletes/inert-marks
+      staging and keeps current version active.
+- [ ] U11 apply transaction: atomically switch a scratch "current" pointer or
+      equivalent deploy marker; invariant: exactly one active version pointer
+      exists after success.
+- [ ] U12 restart handoff seam: implement command runner injection, defaulting
+      to no real host restart in tests; invariant: apply records the exact
+      command that would run and never shells through unvalidated strings.
+- [ ] U13 post-apply health gate: after injected restart, poll real health
+      route against scratch server; invariant: unhealthy new version triggers
+      rollback path.
+- [ ] U14 rollback: restore previous active pointer and record reason;
+      invariant: failed apply returns to the previous version and leaves
+      persisted files unchanged.
+- [ ] U15 API response honesty: route returns applied/version/ledger id only
+      when U11-U13 pass; invariant: no `ok:true` success for skipped/stubbed
+      apply.
+- [ ] U16 client status copy: UI distinguishes update unavailable, blocked,
+      staged, applied, rolled back; invariant: no success toast on any
+      terminal non-applied state.
+- [ ] U17 offline harness: drive U2-U16 against a scratch deploy clone and
+      local manifest/artifact; invariant: no network, no sudo, no production
+      path writes.
+- [ ] U18 PARITY prep: production records update-request/apply/rollback
+      ledger lines with current version, target version, manifest id, artifact
+      digest, chosen deploy strategy, and health result.
+- [ ] U19 PARITY: replay a real Jetson update ledger + real manifest/artifact
+      metadata through the harness against a scratch clone and diff target
+      decision, command plan, terminal status, and version outcome exactly.
+
+### Backup/restore — honest inventory
+- REAL: backup/restore/list routes are mounted through the normal API router
+  graph (`server/app/main.py:15`, `server/app/main.py:499-503`).
+- REAL: POST `/api/system/backup` exists and is owner-only
+  (`server/app/routes/control.py:203-207`); RBAC is pinned for owner/admin
+  pass and family/viewer/anon fail (`server/tests/test_auth_gating.py:202-251`).
+- REAL: POST `/api/system/restore` exists and is owner-only
+  (`server/app/routes/control.py:248-252`); RBAC is pinned similarly
+  (`server/tests/test_auth_gating.py:254-323`).
+- REAL: restore validates body shape with `extra="forbid"`, path length, and
+  regex (`server/app/routes/control.py:233-245`), rejects `..`, absolute escape,
+  shell metacharacters, empty body, missing body, and extra fields
+  (`server/app/routes/control.py:252-288`,
+  `server/tests/test_control.py:215-328`).
+- REAL: backup target directory is configurable as `BACKUP_TARGET_DIR`, default
+  `./backups` (`server/app/config.py:118-127`).
+- REAL: GET `/api/system/backups` lists flat files under
+  `settings.backup_target_dir`, filters unsafe names, returns size+mtime, and
+  sorts newest first (`server/app/routes/control.py:495-554`,
+  `server/tests/test_control.py:506-557`); RBAC is pinned
+  (`server/tests/test_auth_gating.py:454-496`).
+- REAL: client wrappers exist for backup, restore, and list
+  (`client/src/lib/api.ts:294-325`,
+  `client/src/lib/api.test.ts:110-154`).
+- REAL: Settings owner UI confirm-gates backup and restore, lazy-loads backup
+  list, preselects newest, disables restore when none exist, and surfaces
+  stub notes honestly (`client/src/pages/settings/DangerZone.tsx:88-115`,
+  `client/src/pages/settings/DangerZone.tsx:154-190`,
+  `client/src/pages/settings/DangerZone.tsx:270-367`,
+  `client/src/pages/Settings.test.tsx:1080-1140`,
+  `client/src/pages/Settings.test.tsx:1455-1625`).
+- STUB: `/api/system/backup` only logs "backup requested (stubbed)" and
+  returns `{"ok": True, "note": "scaffold: backup is stubbed"}`
+  (`server/app/routes/control.py:207-216`,
+  `server/tests/test_control.py:187-196`).
+- STUB: `/api/system/restore` validates the requested path but does not read,
+  verify, unpack, or apply any archive; it logs "restore requested (stubbed)"
+  and returns a scaffold note (`server/app/routes/control.py:283-288`,
+  `server/tests/test_control.py:215-228`).
+- STUB/operator-blocked: backup comments defer helper shape, rsync target,
+  retention, and encryption-at-rest to operator policy
+  (`server/app/routes/control.py:196-216`); restore comments defer the actual
+  maintenance-mode replace/restart helper (`server/app/routes/control.py:219-232`);
+  UI warns these options need one-time setup on the camera box
+  (`client/src/pages/settings/DangerZone.tsx:224-233`).
+- MISSING: no backup/restore service module exists under `server/app/services/`;
+  no archive format, manifest, checksums, encryption, retention, include/exclude
+  list, atomic export, atomic restore, compatibility check, dry-run, restore
+  ledger, maintenance lock, or post-restore health check is implemented.
+- NOT SYSTEM BACKUP: event ZIP export and training export are real separate
+  features, not restore-capable system backup (`client/src/lib/api.ts:537-552`,
+  `client/src/lib/api.ts:609-622`, `server/app/routes/clips.py:371`,
+  `server/app/services/training_export.py:128-174`).
+
+### Backup/restore — atomic de-stub steps
+- [ ] B1 inventory pin: test proves backup/restore are scaffold-only today;
+      invariant: `note` means no archive was written/read.
+- [ ] B2 backup manifest schema: define versioned manifest with created_at,
+      app version, include list, file size, sha256, mode, and logical role;
+      invariant: manifest validates without touching live files.
+- [ ] B3 include inventory: enumerate persisted state roots from settings
+      (users.db, jwt secret, VAPID keys, push_subs, detection_config, face
+      consent/capture state as policy decides, zones within config); invariant:
+      every included path is under an allowed root.
+- [ ] B4 missing-file policy: classify required vs optional persisted files;
+      invariant: missing required file blocks backup, missing optional file is
+      recorded.
+- [ ] B5 archive writer to temp file: create backup archive in target dir via
+      temp name; invariant: failed write leaves no final archive.
+- [ ] B6 checksum ledger: compute per-file sha256 and archive sha256;
+      invariant: manifest checksums match archive contents byte-for-byte.
+- [ ] B7 atomic publish: rename temp archive+manifest into final name;
+      invariant: listBackups never shows partial temp files.
+- [ ] B8 backup retention: keep newest N or age policy in scratch dir;
+      invariant: retention deletes only valid backup filenames and never the
+      just-created archive.
+- [ ] B9 backup API response: return filename, size, manifest id, archive
+      digest, and ledger id; invariant: no success response without a final
+      archive existing.
+- [ ] B10 restore reader: open selected archive+manifest from
+      backup_target_dir; invariant: path traversal and unsafe filenames remain
+      rejected before open.
+- [ ] B11 restore compatibility: compare manifest version/app version/schema
+      version; invariant: incompatible backup blocks before extracting bytes.
+- [ ] B12 restore dry-run: verify archive contents, checksums, required roles,
+      and target paths; invariant: dry-run produces a file action plan and no
+      writes.
+- [ ] B13 maintenance lock: block concurrent backup/restore/update and normal
+      writes during restore; invariant: second operation is rejected with a
+      typed conflict.
+- [ ] B14 atomic restore staging: extract into temp staging root; invariant:
+      live persisted files are untouched until all checks pass.
+- [ ] B15 atomic replace: swap staged files into the scratch persisted roots
+      with backups of overwritten files; invariant: partial failure rolls back
+      to pre-restore bytes.
+- [ ] B16 post-restore validation: init/read users_db, detection_config,
+      push_subs/VAPID, jwt secret, and any included state; invariant: invalid
+      restored state rolls back.
+- [ ] B17 restart handoff seam: injected command runner records the restart
+      command; invariant: tests never require sudo and never shell interpolate
+      archive names.
+- [ ] B18 restore API response: return restored filename, manifest id, changed
+      file count, restart-required/applied, and ledger id; invariant: no
+      `ok:true` restore unless B10-B16 passed.
+- [ ] B19 client restore status: UI distinguishes no backups, invalid backup,
+      dry-run failure, restored, and rolled back; invariant: no success toast
+      on stub/blocked/fail/rollback.
+- [ ] B20 offline round-trip harness: backup scratch state, mutate scratch
+      state, restore archive, and diff exact bytes/rows; invariant: users,
+      detection config/zones, push subscriptions, keys/secrets policy, and
+      selected capture/consent state match the pre-backup source.
+- [ ] B21 PARITY prep: production backup/restore records ledger lines with
+      source file manifest, archive digest, included paths, compatibility
+      decision, changed files, restart/health result, and rollback status.
+- [ ] B22 PARITY: use a real Jetson backup archive + manifest + production
+      ledger, restore into scratch, and diff restored bytes/SQLite rows/config
+      against the Jetson source snapshot and ledger decisions exactly.
+
+### Harness #11 PARITY leg
+No close without real Jetson ground truth. OTA parity needs the Jetson's real
+current deploy layout, real update manifest/artifact metadata, production
+update ledger lines, pre/post version reads, restart/health outcomes, and any
+rollback evidence for the same attempt. Backup/restore parity needs a real
+Jetson backup archive plus manifest, the source `.jetson-snapshot` persisted
+state used to create it, production backup/restore ledger lines, and a scratch
+restore diff proving users.db rows, auth secret/key files, push subscriptions,
+detection settings/zones, and all declared included files match the Jetson
+ground truth byte-for-byte or row-for-row. If those ledgers are absent, the
+observability steps above are mandatory harness work before parity can run.
