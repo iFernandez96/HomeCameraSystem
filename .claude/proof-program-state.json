@@ -1,23 +1,67 @@
 {
-  "goal": "Prove every feature standalone against real data per docs/standalone_proof_plan.md; Claude plans+gates+commits, codex gpt-5.5 codes one atomic step per invocation.",
-  "north_star": "GROUND-TRUTH PARITY (Israel, 2026-07-08): standalones must be IDENTICAL to live — given raw Jetson captures, the harness (real modules, real fixtures) must reproduce the exact results the Jetson produced, verified by diffing against Jetson logs/db/artifacts. Every harness ends with a PARITY leg (see plan doc STANDING RULE); contract pins alone never close a harness; missing Jetson-side ground truth means adding observability + refetching, not skipping. Every codex prompt carries this; every gate enforces it.",
-  "parallelism_rule": "STANDING (Israel, 2026-07-08): run at MAX parallelism constantly without losing quality — every disjoint-directory codex lane filled (server harness dirs, detection harness dirs, client e2e vs client src are all separate lanes; read-only spec rounds are free); the gate stays serial and strict (run suite, review diff, reject dishonest tests, atomic commits); convert every landed spec into an implementation lane immediately; prefetch long poles (deps, builds, fixtures) the moment they're foreseeable.",
-  "resume_contract": "On wake: 0) re-read north_star AND parallelism_rule — reject any drift from ground-truth parity even if tests are green; keep all lanes full; 1) read this file + docs/standalone_proof_plan.md checklists; 2) `git log --oneline -15` to see what landed; 3) run the harness suites to confirm green; 4) for any in_flight codex step: check the tree for its files — if present and green, gate+commit+tick checklist; if absent, re-issue that step verbatim; 5) issue the next unchecked step (one per codex invocation, workspace-write); 6) update this file; 7) do NOT ask the user anything — only write a blocked entry on a genuinely unrecoverable blocker. Parallel lanes allowed across DISJOINT harness dirs only. Fixtures live under .jetson-snapshot/proof_fixtures/ (gitignored; push/ contains SECRETS, never commit or log bytes). Capture new Jetson fixtures opportunistically when it is reachable.",
-  "codex_invocation": "ALWAYS via the stall guard (skill codex-stall-guard): .claude/scripts/codex-guard.sh <logfile> codex exec --sandbox workspace-write --model gpt-5.5 -C <repo> \"ATOMIC STEP <id> ONLY of harness #<n> (spec: <specdoc>; checklist: docs/standalone_proof_plan.md)... NOTHING ELSE... run pytest until green; print tail; no git commit.\" — never pipe codex stdout through tail (blinds liveness); read the logfile tail afterwards.",
-  "harnesses": {
-    "1_retention": {"status": "done", "commits": "daffa1b..29a7dc8 + A5-A9", "tests": "server/tests/harness_retention (9)"},
-    "2_push_gateway": {"status": "in_progress", "spec": "docs/audits/proof-program-codex-r3-push.md", "steps_done": ["P1-P9 all committed (83a68db..e1fc1e9)", "P9b product fix: explicit ttl+Urgency, TTL=0 was dropping notifications (6c04e2b)", "P13 fanout-outcome INFO logging (6583833) + fetch-script docker-log fix (b538c47)"], "in_flight": null, "remaining": "ONLY P14 parity diff — BLOCKED until production accumulates 'push fanout event=…' INFO lines (deployed 2026-07-08 ~08:15; let real events flow overnight, re-fetch snapshot, then diff). P10-P12 live trio ALL live-verified 2026-07-08 (df93268, ff82aaf, 0cbdf6e); registry has zero naturally-dead subs (all 8 accepted incl. Apple)", "live_steps_note": "live tests double-gated behind HOMECAM_LIVE_PUSH=1"},
-    "3_auth": {"status": "DONE 2026-07-08", "spec": "docs/audits/proof-program-codex-r4-auth.md", "summary": "13/13 incl. 9 real-Chromium browser legs (client/e2e/, gated HOMECAM_RUN_REAL_BROWSER_AUTH=1, run via node ./node_modules/@playwright/test/cli.js). Product fixes shipped+deployed: A8 refresh-before-anon (88fc13e), WS accept-then-close-1008 (23f2a50 — pre-accept close reached browsers as 1006; 1008 contract had NEVER worked live). Parity legs: A13 vs production docker traces (6914dc4), A12.3 per-run ledger vs scratch server log (9faa0e4). Parity findings recorded: browsers delete expired cookies (expiry 401s = no-cookie shape server-side); production's 15-min expired-signature-WITH-cookie loop implies a device clock skew or stale-cookie quirk — self-heals under the new fixes either way. JWT secret confirmed on persisted volume (deploys do NOT sign out).", "codex_env_note": "codex sandbox hangs on TestClient/vitest runs — SANDBOX-HANG protocol; gate verifies. httpx jar trap: cookies.set(domain=,path=) silently unsent — plain set() + clear() between phases."},
-    "4_snapshot_thumb": {"status": "in_progress", "spec": "15 steps in plan doc (codex r6)", "steps_done": ["H4.1-H4.4 fixtures/shapes (a71ba0b..c58d851)", "H4.10 unauth serve bytes (d285003)", "H4.11 carve-out edges (e2d8466)", "H4.15 PARITY four-way chain green (1b45bd0)"], "remaining": "H4.5-H4.6 worker save/retention, H4.7-H4.9 wire+push image, H4.12-H4.14 client legs", "note": "background codex tasks were being externally killed — running codex steps FOREGROUND under the guard now"},
-    "5_webrtc_live": {"status": "pending", "note": "Playwright vs live Jetson; spec round with codex first"},
-    "6_sw_cache_update": {"status": "pending"},
-    "7_eventbus_sqlite_load": {"status": "pending", "fixtures": "journal_tonight.log cadence"},
-    "8_face_recognition": {"status": "pending", "fixtures": ".jetson-snapshot/proof_fixtures/persons/ (400 real crops); real dlib on dev machine only"},
-    "9_export_zip": {"status": "pending", "fixtures": ".jetson-snapshot/proof_fixtures/clips/ (6 real clips)"},
-    "10_multicam_synthetic": {"status": "pending", "note": "ffmpeg test-pattern RTSP publish as camera 2"},
-    "11_rebuild_list": {"status": "pending", "note": "OTA + backup/restore: de-stub/implement honestly BEFORE proving"}
+ "goal": "Prove every feature standalone against real data per docs/standalone_proof_plan.md; Claude plans+gates+commits, codex gpt-5.5 codes one atomic step per invocation.",
+ "north_star": "GROUND-TRUTH PARITY (Israel, 2026-07-08): standalones must be IDENTICAL to live \u2014 given raw Jetson captures, the harness (real modules, real fixtures) must reproduce the exact results the Jetson produced, verified by diffing against Jetson logs/db/artifacts. Every harness ends with a PARITY leg (see plan doc STANDING RULE); contract pins alone never close a harness; missing Jetson-side ground truth means adding observability + refetching, not skipping. Every codex prompt carries this; every gate enforces it.",
+ "parallelism_rule": "STANDING (Israel, 2026-07-08): run at MAX parallelism constantly without losing quality \u2014 every disjoint-directory codex lane filled (server harness dirs, detection harness dirs, client e2e vs client src are all separate lanes; read-only spec rounds are free); the gate stays serial and strict (run suite, review diff, reject dishonest tests, atomic commits); convert every landed spec into an implementation lane immediately; prefetch long poles (deps, builds, fixtures) the moment they're foreseeable.",
+ "resume_contract": "On wake: 0) re-read north_star AND parallelism_rule \u2014 reject any drift from ground-truth parity even if tests are green; keep all lanes full; 1) read this file + docs/standalone_proof_plan.md checklists; 2) `git log --oneline -15` to see what landed; 3) run the harness suites to confirm green; 4) for any in_flight codex step: check the tree for its files \u2014 if present and green, gate+commit+tick checklist; if absent, re-issue that step verbatim; 5) issue the next unchecked step (one per codex invocation, workspace-write); 6) update this file; 7) do NOT ask the user anything \u2014 only write a blocked entry on a genuinely unrecoverable blocker. Parallel lanes allowed across DISJOINT harness dirs only. Fixtures live under .jetson-snapshot/proof_fixtures/ (gitignored; push/ contains SECRETS, never commit or log bytes). Capture new Jetson fixtures opportunistically when it is reachable.",
+ "codex_invocation": "ALWAYS via the stall guard (skill codex-stall-guard): .claude/scripts/codex-guard.sh <logfile> codex exec --sandbox workspace-write --model gpt-5.5 -C <repo> \"ATOMIC STEP <id> ONLY of harness #<n> (spec: <specdoc>; checklist: docs/standalone_proof_plan.md)... NOTHING ELSE... run pytest until green; print tail; no git commit.\" \u2014 never pipe codex stdout through tail (blinds liveness); read the logfile tail afterwards.",
+ "harnesses": {
+  "1_retention": {
+   "status": "DONE",
+   "tests": "server/tests/harness_retention (9)"
   },
-  "production": {"continuous_capture": "LIVE, 30s grace/150s cap, soak clean (9 events/2.5h, 0 noclip, 0 errors)", "unpushed_commits": "everything since 55b629e"},
-  "blocked": [],
-  "last_update": "2026-07-08T01:20 local"
+  "2_push_gateway": {
+   "status": "DONE except P14",
+   "remaining": "P14 parity diff \u2014 needs accumulated production \"push fanout event=\" INFO lines (deployed; real events flowing since ~08:15 + device-validation runs); re-fetch snapshot (deploy/fetch-jetson-data.sh grabs docker app log now) then diff harness fanout decisions vs logged sent/filtered counts",
+   "tests": "server/tests/harness_push_gateway (9 local + 3 live env-gated HOMECAM_LIVE_PUSH=1)"
+  },
+  "3_auth": {
+   "status": "DONE",
+   "tests": "server/tests/harness_auth (7) + client/e2e auth-session-lifecycle (9 browser, HOMECAM_RUN_REAL_BROWSER_AUTH=1)"
+  },
+  "4_snapshot_thumb": {
+   "status": "DONE 15/15",
+   "tests": "server/tests/harness_snapshots + detection/tests/harness_snapshots_worker + 3 client test files"
+  },
+  "5_webrtc_whep": {
+   "status": "in_progress",
+   "done": "W1-W6 live-verified (all 3 rungs real frames) + W9-W12 error harness (raw-ASGI stub; abort-on-supersede proven with+without SW)",
+   "in_flight": null,
+   "remaining": "W7 quality-switch live, W8 resume-coalescing live, W13-W16 attempt-ledger parity vs mediamtx logs, W17 gate",
+   "findings": "Live-pill playing-vs-rVFC fixed+deployed (57b251b); abort-on-supersede fixed+deployed (8fadee0); starlette BaseHTTPMiddleware swallows http.disconnect (documented in whepErrorHarness stub)"
+  },
+  "6_sw_cache_update": {
+   "status": "in_progress",
+   "done": "H6.1-6.10 (7/7 green; navigation-fallback product fix 81b7944 DEPLOYED \u2014 offline deep routes now serve shell; deploy semantics now stale-first-load, pinned)",
+   "in_flight": "H6.11-6.12 notificationclick contracts (task b4pqvy02k; honest-trigger-or-skip instructions given; OS-level click was device-validated on the real phone 2026-07-08)",
+   "remaining": "H6.13-6.14 parity vs production log window"
+  },
+  "7_eventbus_sqlite": {
+   "status": "DONE 16/16 incl. full-night parity replay"
+  },
+  "8_face_recognition": {
+   "status": "DONE for current ground truth (14/15)",
+   "remaining": "R15 named parity \u2014 armed by the R14 inverted sentinel; fires when a refreshed snapshot has named person rows",
+   "note": "venv recipe for face_recognition/dlib is in the plan doc (setuptools<81)"
+  },
+  "9_export_zip": {
+   "status": "DONE 13/13 incl. measured-RSS OOM guard"
+  },
+  "10_multicam": {
+   "status": "in_progress",
+   "done": "M10.11-12 parity (fa66692)",
+   "in_flight": "M10.2-4 local mediamtx + testsrc publish + registry (task bd49lchrf; needs a mediamtx binary \u2014 env HOMECAM_MEDIAMTX_BIN or PATH, skip otherwise)",
+   "remaining": "M10.5-10 browser switcher/rungs/worker-id/persistence/filter/live-probe"
+  },
+  "11_rebuild_list": {
+   "status": "pending",
+   "note": "OTA + backup/restore: de-stub honestly BEFORE proving"
+  }
+ },
+ "production": {
+  "deploys_today": "server x2 (TTL fix, fanout INFO logging, WS accept-then-close), client x4 (A8 refresh-before-anon, rVFC pill, abort-on-supersede, SW navigation fallback)",
+  "all_verified": "healthz + in-container grep + live browser suites"
+ },
+ "blocked": [],
+ "last_update": "2026-07-08T12:45 local, pre-compaction checkpoint",
+ "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom left for manual thumb test."
 }
