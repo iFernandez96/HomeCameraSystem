@@ -124,6 +124,56 @@ test.describe('Auth session lifecycle harness', () => {
     )
   })
 
+  test('given a logged-in session, when mobile resume happens after access expiry but before refresh expiry, then the app self-heals without sign-out', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    const refreshResponses: number[] = []
+    const unauthorizedResponses: string[] = []
+    page.on('response', (response) => {
+      const request = response.request()
+      const pathname = new URL(response.url()).pathname
+      if (request.method() === 'POST' && pathname === '/api/auth/refresh') {
+        refreshResponses.push(response.status())
+      }
+      if (response.status() === 401) {
+        unauthorizedResponses.push(`${request.method()} ${pathname}`)
+      }
+    })
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await page.waitForTimeout((ACCESS_TOKEN_TTL_S + 3) * 1_000)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await expect
+      .poll(() => refreshResponses.includes(200), { timeout: 10_000 })
+      .toBe(true)
+    // Reactive refresh means data requests legitimately 401 first — that 401
+    // IS the refresh trigger, and api.ts retries them after rotating. The
+    // sign-out invariant is that the refresh endpoint itself never 401s.
+    expect(unauthorizedResponses).not.toContain('POST /api/auth/refresh')
+    expect(refreshResponses.every((status) => status === 200)).toBe(true)
+    await expect(page).not.toHaveURL(/\/login(?:$|[/?#])/)
+    await expect(page.getByRole('link', { name: /home/i })).toBeVisible()
+    await expect(page.getByRole('link', { name: /events/i })).toBeVisible()
+    await expect(page.getByRole('link', { name: /settings/i })).toBeVisible()
+  })
+
   test('given a logged-in session, when both tokens expire and the next app interaction runs, then session-expired UX is reached', async ({
     page,
   }) => {
