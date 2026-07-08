@@ -524,4 +524,42 @@ test.describe('SW lifecycle two-build harness', () => {
       await anonContext.close()
     }
   })
+
+  test('H6.11 notificationclick contracts: dismiss/view/body-tap require a real browser notification click, not a synthetic SW event', async () => {
+    // Honest-trigger note (2026-07-08): client/src/sw.ts registers the
+    // production `notificationclick` listener directly. It has no
+    // postMessage test hook, and Chromium/Playwright cannot click OS
+    // notifications. A page can call registration.showNotification() with
+    // the production buildNotification data shape, but it cannot dispatch a
+    // trusted notificationclick event into the active ServiceWorkerGlobalScope.
+    //
+    // Do not fake this with a page-created Event or hand-built object: that
+    // would bypass the browser contract that supplies event.notification,
+    // event.action, waitUntil(), clients.matchAll(), focus(), navigate(), and
+    // openWindow(). The pure target mapping is already pinned by
+    // client/src/sw.test.ts; OS-level notification taps/action buttons were
+    // device-validated on the real phone on 2026-07-08.
+    test.skip(
+      true,
+      'H6.11 NOTE: OS notificationclick is not triggerable from Playwright; device-validated 2026-07-08 on the real phone',
+    )
+  })
+
+  test('H6.12 stale-handler risk across A to B: a notification shown by SW-A and clicked after B activates cannot be browser-triggered in harness', async () => {
+    // Honest-trigger note (2026-07-08): the risk to pin is which installed SW
+    // receives the browser-originated notificationclick after an A->B takeover.
+    // The only production signal is an OS notification click. There is no
+    // in-browser API to click the notification or ask Chromium to route that
+    // click through the currently active worker, so the two-build rig cannot
+    // honestly assert "B handled A's notification" without adding test-only SW
+    // product code or fabricating an event.
+    //
+    // Keep this as an explicit harness skip until the product exposes a pure
+    // notificationclick branch helper or a browser automation API can trigger
+    // real notification actions.
+    test.skip(
+      true,
+      'H6.12 NOTE: stale notificationclick routing is OS-level only; no honest in-browser trigger exists in this harness',
+    )
+  })
 })
