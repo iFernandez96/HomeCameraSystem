@@ -1,4 +1,5 @@
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,6 +8,10 @@ from server.tests.harness_face_recog.fixtures import (
     load_sidecar,
     load_sidecar_paths,
 )
+
+
+async def _inline_to_thread(func, /, *args, **kwargs):
+    return func(*args, **kwargs)
 
 
 pytestmark = pytest.mark.skipif(
@@ -33,8 +38,13 @@ async def test_given_unrecognized_capture_when_named_then_file_and_sidecar_move_
         pytest.skip("real person fixture tree has no __unknown__ jpg/json sidecar pair")
 
     root = tmp_path / "persons"
-    shutil.copytree(PERSONS_DIR, root)
+    source_jpg_fixture = source_sidecar.with_suffix(".jpg")
+    source_dir = root / source_sidecar.parent.relative_to(PERSONS_DIR)
+    source_dir.mkdir(parents=True)
+    shutil.copy2(source_jpg_fixture, source_dir / source_jpg_fixture.name)
+    shutil.copy2(source_sidecar, source_dir / source_sidecar.name)
     monkeypatch.setattr(settings, "face_captures_dir", root)
+    monkeypatch.setattr(face, "asyncio", SimpleNamespace(to_thread=_inline_to_thread))
 
     filename = source_sidecar.with_suffix(".jpg").name
     source_jpg = root / "__unknown__" / filename
