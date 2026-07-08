@@ -695,8 +695,24 @@ export function Watch() {
     }
     gestureRef.current = null
     if (g.mode === 'swipe') {
-      clearSwipeTransform()
-      if (g.dy > 110) exitFull()
+      if (g.dy > 110) {
+        clearSwipeTransform()
+        exitFull()
+      } else {
+        // Sub-threshold: EASE back home (final polish gate: ClipModal's
+        // swipe eases 160ms while this snapped instantly — one gesture
+        // grammar). Reduced motion keeps the instant snap.
+        const el = viewportRef.current
+        const reduce = window.matchMedia?.(
+          '(prefers-reduced-motion: reduce)',
+        )?.matches
+        if (el && !reduce) {
+          el.style.transition = 'transform 160ms ease'
+          el.style.transform = ''
+        } else {
+          clearSwipeTransform()
+        }
+      }
     } else if (g.mode === 'tap' && !g.onButton) {
       toggleChrome()
     } else if (g.mode === 'tap' && g.onButton) {
