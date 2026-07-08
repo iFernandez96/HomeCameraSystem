@@ -119,3 +119,20 @@ Every harness and every feature is built as SMALL ATOMIC STEPS:
 - [x] A7 invariant: sidecar policy pinned as-is
 - [x] A8 invariant: second pass idempotent
 - [x] A9 invariant: WORKER_MIN_FREE_BYTES > SERVER_MIN_FREE_BYTES
+
+## Harness #2 — push gateway leg: atomic steps (spec: proof-program-codex-r3-push.md)
+Claude redirects: live steps target ONE known-current sub (single buzz,
+not 8); prune test mutates the DISPOSABLE fixture copy over real
+network, never the prod registry.
+- [ ] P1 fixture parser + secret-hygiene pin
+- [ ] P2 real VAPID PEMs load through real PushService
+- [ ] P3 log redaction: failure paths never emit endpoint/key bytes
+- [ ] P4 payload contract (title/body/tag/url/event_id/unread_count/image)
+- [ ] P5 payload without thumb: image key absent, not null
+- [ ] P6 camera filter gates before fanout
+- [ ] P7 person filter gates before fanout
+- [ ] P8 quiet-hours filter gates before fanout
+- [ ] P9 webpush call-boundary kwargs (TTL/urgency) — may add prod kwargs
+- [ ] P10 LIVE: single-sub test push accepted by real gateway (gated)
+- [ ] P11 LIVE: event-shaped payload accepted, image+badge intact (gated)
+- [ ] P12 LIVE: 404/410 prune on disposable copy over real network (gated)
