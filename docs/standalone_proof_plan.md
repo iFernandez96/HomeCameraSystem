@@ -155,16 +155,20 @@ network, never the prod registry.
 - [x] P4 payload contract (title/body/tag/url/event_id/unread_count/image)
 - [x] P5 payload without thumb: image key absent, not null
 - [x] P6 camera filter gates before fanout
-- [ ] P7 person filter gates before fanout
-- [ ] P8 quiet-hours filter gates before fanout
-- [ ] P9 webpush call-boundary kwargs (TTL/urgency) — may add prod kwargs
-- [ ] P10 LIVE: single-sub test push accepted by real gateway (gated)
-- [ ] P11 LIVE: event-shaped payload accepted, image+badge intact (gated)
-- [ ] P12 LIVE: 404/410 prune on disposable copy over real network (gated)
-- [ ] P13 PARITY prep (product): promote per-send outcome logging from
-      debug to info (send successes are currently invisible in journald —
-      0 push lines in 48h — so no Jetson-side ground truth exists yet);
-      deploy, let real events flow, re-fetch snapshot
+- [x] P7 person filter gates before fanout
+- [x] P8 quiet-hours filter gates before fanout
+- [x] P9 webpush call-boundary kwargs (TTL/urgency) — FOUND+FIXED real bug: TTL=0 default dropped notifications for offline phones
+- [x] P10 LIVE: single-sub test push accepted by real gateway (gated; live-verified 2026-07-08, sent=1, no prune, no secret leakage)
+- [x] P11 LIVE: event-shaped payload accepted, image+badge intact (gated; live-verified 2026-07-08 through real send_matching, sent=1)
+- [x] P12 LIVE: 404/410 prune on disposable copy over real network
+      (gated; live-verified 2026-07-08 — synthetic-dead sub pruned on a
+      real gateway 404, all 8 real subs accepted and retained; registry
+      has ZERO naturally-dead subs, a parity finding in itself)
+- [x] P13 PARITY prep (product): per-event fanout outcome now logs at
+      INFO ('push fanout event=… sent=… filtered=… failed=… pruned=…',
+      6583833); ALSO fixed fetch script to capture the docker app-log
+      stream (b538c47). REMAINING operator half: cross-deploy server,
+      let real events flow, re-fetch snapshot before P14 can run
 - [ ] P14 PARITY: replay real person events from .jetson-snapshot/db/
       events.sqlite through the real route + real registry copy; diff
       selected subs, payload fields, and send outcomes against the
@@ -178,17 +182,33 @@ is the product fix contract if A7 confirms.
 - [x] A1 login cookie contract (names/path/secure) on scratch server
 - [x] A2 token kind/sub/role/exp claims pin
 - [x] A3 wrong-kind boundary 401s both directions
-- [ ] A4 access-expired + refresh-valid REST path rotates and retries
-- [ ] A5 refresh single-flight under concurrent 401s
+- [x] A4 access-expired + refresh-valid REST path rotates and retries
+- [x] A5 refresh single-flight under concurrent 401s (server side: sliding-window reuse pinned)
 - [ ] A6 refresh-expired emits ONE session-expired
-- [ ] A7 REPRODUCER: WS 1008 + /me 401 signs out despite valid refresh
-- [ ] A8 fix contract: 1008 attempts refresh before anon
-- [ ] A9 1008 + failed refresh -> session-expired
+- [x] A7 REPRODUCER: WS 1008 + /me 401 signs out despite valid refresh
+      (confirmed vs production trace — zero refresh attempts; 7552510)
+- [x] A8 fix contract: 1008 attempts refresh before anon (88fc13e;
+      single-flight reuse, signals stay distinct, full client suite green)
+- [x] A9 1008 + failed refresh -> session-expired (3ca4018)
 - [ ] A10 real-browser cookie expiry/rotation (Playwright, scratch uvicorn)
+      — decomposed (codex design r5, 2026-07-08): runner = existing
+      Playwright conventions; new playwright.auth-harness.config.ts (no
+      global webServer) + client/e2e/authHarness.ts fixture (temp dirs,
+      free port, env TTL/secret injection, uvicorn spawn/readiness/logs)
+      + auth-session-lifecycle.spec.ts; env-gated HOMECAM_RUN_REAL_BROWSER_AUTH=1
+  - [ ] A10.0 infra: harness boots scratch uvicorn serving built dist; browser reaches login
+  - [ ] A10.1 real-Chromium login cookie attrs (httpOnly/path/sameSite/expiry)
+  - [ ] A10.2 access expiry rotates via refresh; cookie values/expiry change; stays authed
+  - [ ] A10.3 both-expired reaches session-expired UX
 - [ ] A11 background/resume past access TTL stays signed in
+  - [ ] A11.1 resume past access TTL refreshes and stays signed in
+  - [ ] A11.2 WS reconnect self-heal after expiry (browser leg of A8)
 - [ ] A12 secret rotation kills sessions into session-expired
-- [ ] A13 PARITY: replay the real auth_rejected sequences from Jetson
-      journald (homecam-server) against the scratch server — same
-      request shapes must produce the same rejection reasons and codes
-      the live server logged; diff harness WARN lines against the
-      captured ones
+  - [ ] A12.1 rotation kills REST refresh into session-expired
+  - [ ] A12.2 rotation kills WS self-heal into session-expired
+  - [ ] A12.3 parity ledger: browser/server event ledger diffs against Jetson auth trace shapes
+- [x] A13 PARITY: replay the real auth_rejected sequences from the
+      captured docker app log against the scratch server — both
+      production REST rejection shapes (40x expired-signature, 5x
+      no-cookie) reproduce identical reason+cookie_present lines;
+      WS shape deferred to A10's browser leg (named TODO)
