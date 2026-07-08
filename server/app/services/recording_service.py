@@ -379,7 +379,12 @@ def evict_to_free_space(
     return result
 
 
-def sweep_and_evict(retention_days: int | None = None) -> dict:
+def sweep_and_evict(
+    retention_days: int | None = None,
+    *,
+    disk_usage=None,
+    list_clips=None,
+) -> dict:
     """Combined retention pass: run the time-based ``sweep_old_clips`` FIRST
     (cheap, removes genuinely-old clips), THEN the age-independent byte-budget
     ``evict_to_free_space`` to reclaim space if the card is still under the
@@ -390,7 +395,7 @@ def sweep_and_evict(retention_days: int | None = None) -> dict:
     ``{"swept": int, "evicted": int, "freed_bytes": int}``.
     """
     swept = sweep_old_clips(retention_days)
-    ev = evict_to_free_space()
+    ev = evict_to_free_space(disk_usage=disk_usage, list_clips=list_clips)
     return {
         "swept": swept,
         "evicted": ev["deleted"],
