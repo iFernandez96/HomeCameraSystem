@@ -5,6 +5,70 @@ export type WhepConnection = {
   close: () => void
 }
 
+export type WhepAttemptOutcome =
+  | 'connected'
+  | `http-${number}`
+  | 'set-remote-failed'
+  | 'aborted'
+  | 'ice-failed'
+  // pre-response throws (fetch network error, createOffer reject) — NOT an
+  // ICE verdict; keep distinct so parity diffs vs mediamtx logs stay honest
+  | 'error'
+
+export type WhepAttemptLedgerEntry = Readonly<{
+  attemptId: number
+  rungPath: string
+  startedAt: number
+  settledAt?: number
+  outcome?: WhepAttemptOutcome
+  msToFirstTrack?: number
+  offerCandidates?: ReturnType<typeof summarizeCandidates>
+  answerCandidates?: ReturnType<typeof summarizeCandidates>
+}>
+
+const WHEP_ATTEMPT_LEDGER_CAP = 20
+let _nextWhepAttemptId = 1
+const _whepAttemptLedger: WhepAttemptLedgerEntry[] = []
+
+function whepRungPath(url: string): string {
+  try {
+    const base = typeof window !== 'undefined' ? window.location.href : 'http://local.invalid/'
+    return new URL(url, base).pathname
+  } catch {
+    return '<invalid-url>'
+  }
+}
+
+function appendWhepAttempt(entry: WhepAttemptLedgerEntry): void {
+  _whepAttemptLedger.push(entry)
+  while (_whepAttemptLedger.length > WHEP_ATTEMPT_LEDGER_CAP) {
+    _whepAttemptLedger.shift()
+  }
+}
+
+function upsertWhepAttempt(entry: WhepAttemptLedgerEntry): void {
+  const idx = _whepAttemptLedger.findIndex((existing) => existing.attemptId === entry.attemptId)
+  if (idx === -1) {
+    appendWhepAttempt(entry)
+    return
+  }
+  _whepAttemptLedger[idx] = entry
+}
+
+export function getWhepAttemptLedger(): readonly WhepAttemptLedgerEntry[] {
+  return _whepAttemptLedger.map((entry) => ({
+    ...entry,
+    offerCandidates: entry.offerCandidates ? { ...entry.offerCandidates } : undefined,
+    answerCandidates: entry.answerCandidates ? { ...entry.answerCandidates } : undefined,
+  }))
+}
+
+/** Test-only helper: reset the WHEP attempt ledger between tests. */
+export function _resetWhepAttemptLedgerForTests(): void {
+  _nextWhepAttemptId = 1
+  _whepAttemptLedger.length = 0
+}
+
 /**
  * Summarize an SDP's ICE candidates WITHOUT leaking private IPs. Returns the
  * count plus per-type counts (host / srflx / relay / prflx) derived from the
@@ -218,6 +282,43 @@ export async function connectWhep(
   opts?: { signal?: AbortSignal },
 ): Promise<WhepConnection> {
   const signal = opts?.signal
+  const attemptId = _nextWhepAttemptId++
+  const attempt: WhepAttemptLedgerEntry = {
+    attemptId,
+    rungPath: whepRungPath(url),
+    startedAt: Date.now(),
+  }
+  appendWhepAttempt(attempt)
+  let settled = false
+  const settleAttempt = (
+    outcome: WhepAttemptOutcome,
+    extra: Partial<Pick<WhepAttemptLedgerEntry, 'msToFirstTrack' | 'offerCandidates' | 'answerCandidates'>> = {},
+  ) => {
+    if (settled) return
+    settled = true
+    const entry: WhepAttemptLedgerEntry = {
+      ...attempt,
+      settledAt: Date.now(),
+      outcome,
+      ...extra,
+    }
+    upsertWhepAttempt(entry)
+    const fields = {
+      attemptId: entry.attemptId,
+      rungPath: entry.rungPath,
+      startedAt: entry.startedAt,
+      settledAt: entry.settledAt,
+      outcome: entry.outcome,
+      msToFirstTrack: entry.msToFirstTrack,
+      offerCandidates: entry.offerCandidates,
+      answerCandidates: entry.answerCandidates,
+    }
+    if (outcome === 'connected') {
+      log.info('webrtc:whep-attempt-settled', fields)
+    } else {
+      log.warn('webrtc:whep-attempt-settled', fields)
+    }
+  }
   const claimed = _claimWarmed()
   let pc: RTCPeerConnection
   if (claimed) {
@@ -249,6 +350,9 @@ export async function connectWhep(
     } catch {
       /* ignore — mock / already-closed */
     }
+    settleAttempt('aborted', {
+      offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+    })
     throw new DOMException('Aborted', 'AbortError')
   }
   throwIfAborted()
@@ -271,7 +375,27 @@ export async function connectWhep(
     if (video.srcObject !== e.streams[0]) {
       video.srcObject = e.streams[0]
     }
+    settleAttempt('connected', {
+      msToFirstTrack: Date.now() - attempt.startedAt,
+      offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+      answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
+    })
   }
+  const onConnectionFailed = () => {
+    const statefulPc = pc as RTCPeerConnection & {
+      connectionState?: RTCPeerConnectionState
+      iceConnectionState?: RTCIceConnectionState
+    }
+    if (statefulPc.connectionState !== 'failed' && statefulPc.iceConnectionState !== 'failed') {
+      return
+    }
+    settleAttempt('ice-failed', {
+      offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+      answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
+    })
+  }
+  pc.addEventListener('connectionstatechange', onConnectionFailed)
+  pc.addEventListener('iceconnectionstatechange', onConnectionFailed)
 
   // PC-LEAK FIX (iter logging): pc.close() previously ran ONLY in the
   // `!res.ok` branch, so a reject from createOffer / setLocalDescription /
@@ -326,6 +450,9 @@ export async function connectWhep(
         status: res.status,
         bodyTail: bodyText.slice(-200),
       })
+      settleAttempt(`http-${res.status}`, {
+        offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+      })
       throw new Error(`WHEP ${res.status} ${bodyText}`)
     }
     const answerSdp = await res.text()
@@ -340,6 +467,10 @@ export async function connectWhep(
         answerCandidates: summarizeCandidates(answerSdp),
         ...errFields(e),
       })
+      settleAttempt('set-remote-failed', {
+        offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+        answerCandidates: summarizeCandidates(answerSdp),
+      })
       throw e
     }
 
@@ -347,6 +478,8 @@ export async function connectWhep(
     return {
       pc,
       close: () => {
+        pc.removeEventListener('connectionstatechange', onConnectionFailed)
+        pc.removeEventListener('iceconnectionstatechange', onConnectionFailed)
         pc.getReceivers().forEach((r) => r.track?.stop())
         // Defect-2 fix: only clear srcObject if it still points at THIS
         // connection's stream — closing a superseded connection must not
@@ -359,6 +492,14 @@ export async function connectWhep(
     }
   } finally {
     if (!succeeded) {
+      if (!settled) {
+        settleAttempt(signal?.aborted ? 'aborted' : 'error', {
+          offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+          answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
+        })
+      }
+      pc.removeEventListener('connectionstatechange', onConnectionFailed)
+      pc.removeEventListener('iceconnectionstatechange', onConnectionFailed)
       // Any error path above leaks the PC unless we close it here.
       try {
         pc.close()

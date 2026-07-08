@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { log } from './log'
 import {
+  _resetWhepAttemptLedgerForTests,
   _resetWhepWarmupForTests,
   connectWhep,
+  getWhepAttemptLedger,
   summarizeCandidates,
   warmWhepConnection,
 } from './webrtc'
@@ -60,6 +62,7 @@ function makeVideo(): HTMLVideoElement {
 describe('lib/webrtc.connectWhep', () => {
   beforeEach(() => {
     MockRTCPeerConnection.instances = []
+    _resetWhepAttemptLedgerForTests()
     vi.stubGlobal('RTCPeerConnection', MockRTCPeerConnection as unknown as typeof RTCPeerConnection)
     vi.stubGlobal(
       'fetch',
@@ -67,6 +70,7 @@ describe('lib/webrtc.connectWhep', () => {
     )
   })
   afterEach(() => {
+    _resetWhepAttemptLedgerForTests()
     vi.unstubAllGlobals()
   })
 
@@ -199,6 +203,136 @@ describe('lib/webrtc.connectWhep', () => {
     expect(pc.closed).toBe(true)
   })
 
+  it('Given a WHEP attempt receives its first track, When the ledger is read, Then the attempt is settled as connected with machine-diffable timing fields (W13/W14)', async () => {
+    // arrange
+    const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {})
+    const video = makeVideo()
+
+    // act
+    await connectWhep('http://192.168.1.10:8889/cam/whep?token=secret', video)
+    expect(getWhepAttemptLedger()[0]).toEqual(
+      expect.objectContaining({
+        attemptId: 1,
+        rungPath: '/cam/whep',
+        startedAt: expect.any(Number),
+      }),
+    )
+    expect(getWhepAttemptLedger()[0].outcome).toBeUndefined()
+    const pc = MockRTCPeerConnection.instances[0]
+    pc.ontrack?.({ streams: [{ id: 'inbound' } as unknown as MediaStream] })
+
+    // assert
+    const ledger = getWhepAttemptLedger()
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]).toEqual(
+      expect.objectContaining({
+        attemptId: 1,
+        rungPath: '/cam/whep',
+        outcome: 'connected',
+      }),
+    )
+    expect(ledger[0].settledAt).toBeGreaterThanOrEqual(ledger[0].startedAt)
+    expect(ledger[0].msToFirstTrack).toBeGreaterThanOrEqual(0)
+    expect(infoSpy).toHaveBeenCalledTimes(1)
+    expect(infoSpy).toHaveBeenCalledWith(
+      'webrtc:whep-attempt-settled',
+      expect.objectContaining({
+        attemptId: 1,
+        rungPath: '/cam/whep',
+        outcome: 'connected',
+      }),
+    )
+    infoSpy.mockRestore()
+  })
+
+  it('Given WHEP returns non-2xx, When the attempt settles, Then the ledger captures the HTTP outcome and emits one warning log line (W13/W14)', async () => {
+    // arrange
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    ;(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response('no such path', { status: 404 }),
+    )
+
+    // act
+    await expect(connectWhep('http://example/cam/whep', makeVideo())).rejects.toThrow(/WHEP 404/)
+
+    // assert
+    const ledger = getWhepAttemptLedger()
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]).toEqual(
+      expect.objectContaining({
+        attemptId: 1,
+        rungPath: '/cam/whep',
+        outcome: 'http-404',
+      }),
+    )
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(
+      'webrtc:whep-attempt-settled',
+      expect.objectContaining({
+        attemptId: 1,
+        rungPath: '/cam/whep',
+        outcome: 'http-404',
+      }),
+    )
+    warnSpy.mockRestore()
+  })
+
+  it('Given more than twenty WHEP attempts settle, When the ledger is read, Then only the latest twenty entries remain (W13)', async () => {
+    // arrange
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() =>
+        Promise.resolve(new Response('ANSWER_SDP', { status: 200 })),
+      ),
+    )
+    const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {})
+
+    // act
+    for (let i = 0; i < 21; i++) {
+      await connectWhep(`http://example/cam-${i}/whep`, makeVideo())
+      const pc = MockRTCPeerConnection.instances[i]
+      pc.ontrack?.({ streams: [{ id: `stream-${i}` } as unknown as MediaStream] })
+    }
+
+    // assert
+    const ledger = getWhepAttemptLedger()
+    expect(ledger).toHaveLength(20)
+    expect(ledger[0].attemptId).toBe(2)
+    expect(ledger[19].attemptId).toBe(21)
+    infoSpy.mockRestore()
+  })
+
+  it('Given SDP bodies contain candidates and IPs, When an attempt is serialized from the ledger, Then no SDP, candidate string, or IP substring is present (W13 privacy)', async () => {
+    // arrange
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    const answerSdp = [
+      'v=0',
+      'a=candidate:1 1 udp 2113937151 192.168.1.50 54321 typ host',
+      'a=candidate:2 1 udp 1677729535 203.0.113.7 40000 typ srflx raddr 192.168.1.50 rport 54321',
+    ].join('\n')
+    ;(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response(answerSdp, { status: 200 }),
+    )
+    const remoteSpy = vi.spyOn(MockRTCPeerConnection.prototype, 'setRemoteDescription').mockRejectedValueOnce(
+      new Error('remote rejected'),
+    )
+
+    // act
+    await expect(connectWhep('http://example/cam/whep', makeVideo())).rejects.toThrow(
+      /remote rejected/,
+    )
+
+    // assert
+    const serialized = JSON.stringify(getWhepAttemptLedger())
+    expect(serialized).toContain('"answerCandidates"')
+    expect(serialized).not.toContain('v=0')
+    expect(serialized).not.toContain('a=candidate')
+    expect(serialized).not.toContain('192.168.1.50')
+    expect(serialized).not.toContain('203.0.113.7')
+    remoteSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
   it('Given the signal aborts while the WHEP POST is in flight, When the fetch rejects, Then connectWhep closes the pc (no leak on a hung POST) (defect 1)', async () => {
     // arrange — fetch never resolves on its own; only rejects when the
     // signal aborts, mirroring the real fetch+AbortController contract.
@@ -319,6 +453,7 @@ describe('lib/webrtc.summarizeCandidates', () => {
 describe('lib/webrtc.warmWhepConnection', () => {
   beforeEach(() => {
     MockRTCPeerConnection.instances = []
+    _resetWhepAttemptLedgerForTests()
     vi.stubGlobal('RTCPeerConnection', MockRTCPeerConnection as unknown as typeof RTCPeerConnection)
     vi.stubGlobal(
       'fetch',
@@ -328,6 +463,7 @@ describe('lib/webrtc.warmWhepConnection', () => {
   })
   afterEach(() => {
     _resetWhepWarmupForTests()
+    _resetWhepAttemptLedgerForTests()
     vi.unstubAllGlobals()
   })
 
