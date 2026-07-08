@@ -2,6 +2,7 @@ import { test as base, expect, type Page } from '@playwright/test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import type { WhepAttemptLedgerEntry } from '../src/lib/webrtc'
 
 type WhepPost = {
   path: string
@@ -37,6 +38,7 @@ type BrowserPcProbe = {
 export type WhepLiveLedger = {
   origin: string
   whepPosts: WhepPost[]
+  attemptLedger: readonly WhepAttemptLedgerEntry[]
   consoleWebrtcMarkers: ConsoleMarker[]
   frameProbe: BrowserFrameProbe
   pcProbe: BrowserPcProbe
@@ -184,6 +186,7 @@ export const test = base.extend<WhepLiveFixtures>({
     const ledger: WhepLiveLedger = {
       origin: String(baseURL),
       whepPosts: [],
+      attemptLedger: [],
       consoleWebrtcMarkers: [],
       frameProbe: {
         firstFrameAt: null,
@@ -271,6 +274,15 @@ export const test = base.extend<WhepLiveFixtures>({
             ).__homecamWhepPcProbe ?? { constructed: 0, closed: 0, active: 0 }
           )
         })
+        whepLedger.attemptLedger = await page.evaluate(() => {
+          return (
+            (
+              window as unknown as {
+                __homecamWhepLedgerDump?: () => readonly WhepAttemptLedgerEntry[]
+              }
+            ).__homecamWhepLedgerDump?.() ?? []
+          )
+        })
       } catch {
         whepLedger.frameProbe = {
           firstFrameAt: null,
@@ -278,6 +290,7 @@ export const test = base.extend<WhepLiveFixtures>({
           samples: [],
         }
         whepLedger.pcProbe = { constructed: 0, closed: 0, active: 0 }
+        whepLedger.attemptLedger = []
       }
     }
   },

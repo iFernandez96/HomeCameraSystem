@@ -62,6 +62,7 @@ export function getWhepAttemptLedger(): readonly WhepAttemptLedgerEntry[] {
     answerCandidates: entry.answerCandidates ? { ...entry.answerCandidates } : undefined,
   }))
 }
+if (typeof window !== 'undefined') (window as unknown as { __homecamWhepLedgerDump?: typeof getWhepAttemptLedger }).__homecamWhepLedgerDump = getWhepAttemptLedger
 
 /** Test-only helper: reset the WHEP attempt ledger between tests. */
 export function _resetWhepAttemptLedgerForTests(): void {
@@ -362,10 +363,11 @@ export async function connectWhep(
   // it still points at this connection's stream — a superseded connection's
   // close() must not blank a NEWER connection's live video.
   let ownStream: MediaStream | null = null
+  let msToFirstTrack: number | undefined
   pc.ontrack = (e) => {
-    // Breadcrumb: ontrack firing is the proof the media path negotiated. Its
-    // ABSENCE (connect "succeeds" but no frame) is the symptom we diagnose by
-    // checking whether this line appears. DEBUG — fires at most once.
+    // Breadcrumb: ontrack can fire as soon as setRemoteDescription applies the
+    // answer. It records first-track timing, but the ledger does not call the
+    // attempt media-connected until RTCPeerConnection.connectionState does.
     log.debug('webrtc:ontrack', { streams: e.streams.length })
     // Defect-2 fix: stale ontrack race — quality A connecting, user switches
     // to B; A's ontrack can still fire (async) after A was aborted. Guard
@@ -375,27 +377,32 @@ export async function connectWhep(
     if (video.srcObject !== e.streams[0]) {
       video.srcObject = e.streams[0]
     }
-    settleAttempt('connected', {
-      msToFirstTrack: Date.now() - attempt.startedAt,
-      offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
-      answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
-    })
+    msToFirstTrack = msToFirstTrack ?? Date.now() - attempt.startedAt
   }
-  const onConnectionFailed = () => {
+  const onConnectionStateChange = () => {
     const statefulPc = pc as RTCPeerConnection & {
       connectionState?: RTCPeerConnectionState
       iceConnectionState?: RTCIceConnectionState
+    }
+    if (statefulPc.connectionState === 'connected') {
+      settleAttempt('connected', {
+        msToFirstTrack,
+        offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+        answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
+      })
+      return
     }
     if (statefulPc.connectionState !== 'failed' && statefulPc.iceConnectionState !== 'failed') {
       return
     }
     settleAttempt('ice-failed', {
+      msToFirstTrack,
       offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
       answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
     })
   }
-  pc.addEventListener('connectionstatechange', onConnectionFailed)
-  pc.addEventListener('iceconnectionstatechange', onConnectionFailed)
+  pc.addEventListener('connectionstatechange', onConnectionStateChange)
+  pc.addEventListener('iceconnectionstatechange', onConnectionStateChange)
 
   // PC-LEAK FIX (iter logging): pc.close() previously ran ONLY in the
   // `!res.ok` branch, so a reject from createOffer / setLocalDescription /
@@ -478,8 +485,13 @@ export async function connectWhep(
     return {
       pc,
       close: () => {
-        pc.removeEventListener('connectionstatechange', onConnectionFailed)
-        pc.removeEventListener('iceconnectionstatechange', onConnectionFailed)
+        pc.removeEventListener('connectionstatechange', onConnectionStateChange)
+        pc.removeEventListener('iceconnectionstatechange', onConnectionStateChange)
+        settleAttempt('aborted', {
+          msToFirstTrack,
+          offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
+          answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
+        })
         pc.getReceivers().forEach((r) => r.track?.stop())
         // Defect-2 fix: only clear srcObject if it still points at THIS
         // connection's stream — closing a superseded connection must not
@@ -494,12 +506,13 @@ export async function connectWhep(
     if (!succeeded) {
       if (!settled) {
         settleAttempt(signal?.aborted ? 'aborted' : 'error', {
+          msToFirstTrack,
           offerCandidates: summarizeCandidates(pc.localDescription?.sdp),
           answerCandidates: summarizeCandidates(pc.remoteDescription?.sdp),
         })
       }
-      pc.removeEventListener('connectionstatechange', onConnectionFailed)
-      pc.removeEventListener('iceconnectionstatechange', onConnectionFailed)
+      pc.removeEventListener('connectionstatechange', onConnectionStateChange)
+      pc.removeEventListener('iceconnectionstatechange', onConnectionStateChange)
       // Any error path above leaks the PC unless we close it here.
       try {
         pc.close()

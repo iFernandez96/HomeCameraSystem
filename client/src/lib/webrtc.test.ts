@@ -15,6 +15,8 @@ class MockRTCPeerConnection {
   static instances: MockRTCPeerConnection[] = []
 
   iceGatheringState: 'new' | 'gathering' | 'complete' = 'new'
+  connectionState: RTCPeerConnectionState = 'new'
+  iceConnectionState: RTCIceConnectionState = 'new'
   localDescription: { sdp: string; type: 'offer' | 'answer' } | null = null
   remoteDescription: { sdp: string; type: 'offer' | 'answer' } | null = null
   receivers: Array<{ track: { stop: () => void } }> = []
@@ -34,6 +36,9 @@ class MockRTCPeerConnection {
   removeEventListener(t: string, cb: Listener) {
     this.listeners[t] = (this.listeners[t] ?? []).filter((f) => f !== cb)
   }
+  dispatchEventType(t: string) {
+    ;(this.listeners[t] ?? []).forEach((f) => f())
+  }
   async createOffer() {
     return { sdp: 'OFFER_SDP', type: 'offer' as const }
   }
@@ -41,7 +46,7 @@ class MockRTCPeerConnection {
     this.localDescription = d
     queueMicrotask(() => {
       this.iceGatheringState = 'complete'
-      ;(this.listeners['icegatheringstatechange'] ?? []).forEach((f) => f())
+      this.dispatchEventType('icegatheringstatechange')
     })
   }
   async setRemoteDescription(d: { sdp: string; type: 'offer' | 'answer' }) {
@@ -52,6 +57,7 @@ class MockRTCPeerConnection {
   }
   close() {
     this.closed = true
+    this.connectionState = 'closed'
   }
 }
 
@@ -138,6 +144,25 @@ describe('lib/webrtc.connectWhep', () => {
     expect(pc.closed).toBe(true)
   })
 
+  it('Given close() runs before connectionState reaches connected, When the ledger is read, Then the attempt settles as aborted', async () => {
+    const conn = await connectWhep('http://example/cam/whep', makeVideo())
+    const pc = MockRTCPeerConnection.instances[0]
+    pc.ontrack?.({ streams: [{ id: 'inbound' } as unknown as MediaStream] })
+
+    conn.close()
+
+    const ledger = getWhepAttemptLedger()
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]).toEqual(
+      expect.objectContaining({
+        attemptId: 1,
+        rungPath: '/cam/whep',
+        outcome: 'aborted',
+        msToFirstTrack: expect.any(Number),
+      }),
+    )
+  })
+
   it('Given the WHEP POST rejects at the network layer, When connectWhep runs, Then the peer connection is closed (no PC leak) and the failure is logged', async () => {
     // arrange — fetch rejects (offline / MediaMTX unreachable). Before the
     // try/finally fix, pc.close() ran only in the `!res.ok` branch, so a
@@ -203,7 +228,7 @@ describe('lib/webrtc.connectWhep', () => {
     expect(pc.closed).toBe(true)
   })
 
-  it('Given a WHEP attempt receives its first track, When the ledger is read, Then the attempt is settled as connected with machine-diffable timing fields (W13/W14)', async () => {
+  it('Given a WHEP attempt receives its first track then the PC connects, When the ledger is read, Then the attempt is settled as connected with machine-diffable timing fields (W13/W14)', async () => {
     // arrange
     const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {})
     const video = makeVideo()
@@ -220,6 +245,9 @@ describe('lib/webrtc.connectWhep', () => {
     expect(getWhepAttemptLedger()[0].outcome).toBeUndefined()
     const pc = MockRTCPeerConnection.instances[0]
     pc.ontrack?.({ streams: [{ id: 'inbound' } as unknown as MediaStream] })
+    expect(getWhepAttemptLedger()[0].outcome).toBeUndefined()
+    pc.connectionState = 'connected'
+    pc.dispatchEventType('connectionstatechange')
 
     // assert
     const ledger = getWhepAttemptLedger()
@@ -292,6 +320,8 @@ describe('lib/webrtc.connectWhep', () => {
       await connectWhep(`http://example/cam-${i}/whep`, makeVideo())
       const pc = MockRTCPeerConnection.instances[i]
       pc.ontrack?.({ streams: [{ id: `stream-${i}` } as unknown as MediaStream] })
+      pc.connectionState = 'connected'
+      pc.dispatchEventType('connectionstatechange')
     }
 
     // assert
