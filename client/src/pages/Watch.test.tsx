@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import type { ReactNode } from 'react'
@@ -272,6 +272,61 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // act — exit
     await user.click(screen.getByRole('button', { name: 'Exit full screen' }))
     expect(viewport.className).toMatch(/relative/)
+  })
+
+  it('Given full screen is showing, When 3.5s pass with no interaction, Then the chrome fades out; a later poke brings it back (fullscreen contract item 4)', async () => {
+    // arrange — fireEvent (not userEvent): fake timers stall
+    // userEvent's internal waits.
+    vi.useFakeTimers()
+    try {
+      renderWatch()
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Full screen live view' }),
+      )
+      const exitBtn = screen.getByRole('button', { name: 'Exit full screen' })
+      const topCluster = exitBtn.parentElement as HTMLElement
+      expect(topCluster.style.visibility).not.toBe('hidden')
+
+      // act — idle past the hide window.
+      act(() => {
+        vi.advanceTimersByTime(3600)
+      })
+
+      // assert — chrome hidden.
+      expect(topCluster.style.opacity).toBe('0')
+      expect(topCluster.style.visibility).toBe('hidden')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Given full screen is entered, When entered, Then a history entry is pushed so the platform back gesture maps to "exit fullscreen" (fullscreen contract 2026-07-07)', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+
+    // act
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+
+    // assert — the marker entry is on top of the stack.
+    expect(window.history.state?.homecamFull).toBe(true)
+  })
+
+  it('Given full screen is showing, When the back gesture fires (popstate), Then fullscreen exits back to the docked layout', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch()
+    const viewport = screen.getByTestId('live-viewport')
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
+    expect(viewport.className).toMatch(/fixed inset-0/)
+
+    // act — what the Android back gesture produces.
+    act(() => {
+      window.history.back()
+    })
+
+    // assert
+    await waitFor(() => expect(viewport.className).toMatch(/relative/))
   })
 
   it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the glance card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled glance card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {

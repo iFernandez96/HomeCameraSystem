@@ -33,6 +33,7 @@ export function VideoTile({
   actions,
   showFullscreenButton = true,
   safeAreaBottom = false,
+  dimControls = false,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -145,6 +146,14 @@ export function VideoTile({
    * the inset on toolbar collapse / app resume.
    */
   safeAreaBottom?: boolean
+  /**
+   * Fade out the control row (quality pill + toggles) — the page's
+   * fullscreen chrome auto-hide drives this so the tile's own
+   * controls disappear together with the page-owned overlays.
+   * `visibility: hidden` rides along after the fade so hidden
+   * controls can't eat taps.
+   */
+  dimControls?: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -759,6 +768,13 @@ export function VideoTile({
           bottom: safeAreaBottom
             ? 'calc(0.75rem + env(safe-area-inset-bottom))'
             : '0.75rem',
+          ...(dimControls
+            ? {
+                opacity: 0,
+                visibility: 'hidden' as const,
+                transition: 'opacity 300ms ease, visibility 0ms linear 300ms',
+              }
+            : { opacity: 1, transition: 'opacity 300ms ease' }),
         }}
       >
         <div className="pointer-events-auto">

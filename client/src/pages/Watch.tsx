@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
@@ -12,6 +12,14 @@ import { clockTime, recognizedNames, relativeTime } from '../lib/eventLabel'
 import { identityOf, type IdentityKind } from '../lib/identity'
 import { useRipple } from '../lib/ripple'
 import { sentryCatName, useSentryCat } from '../lib/sentryCat'
+import {
+  ZOOM_IDENTITY,
+  isZoomed,
+  panUpdate,
+  pinchUpdate,
+  toTransform,
+  type ZoomState,
+} from '../lib/pinchZoom'
 import { useToast } from '../lib/toast'
 import { useTicker } from '../lib/useTicker'
 import type { DetectionEvent } from '../lib/types'
@@ -153,6 +161,27 @@ export function Watch() {
   const { events, quietSince, error, refetch: refetchTodayEvents } = useTodayEvents()
 
   const [full, setFull] = useState(false)
+  // Fullscreen chrome auto-hide (fullscreen contract item 4): controls
+  // fade out ~3.5 s after the last interaction so fullscreen is for
+  // WATCHING; any tap brings them back. All state changes happen in
+  // event handlers / the timer callback (never synchronously in an
+  // effect — react-hooks/set-state-in-effect).
+  const [chromeVisible, setChromeVisible] = useState(true)
+  const chromeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pokeChrome = useCallback(() => {
+    setChromeVisible(true)
+    if (chromeTimerRef.current !== null) clearTimeout(chromeTimerRef.current)
+    chromeTimerRef.current = setTimeout(() => {
+      chromeTimerRef.current = null
+      setChromeVisible(false)
+    }, 3500)
+  }, [])
+  const cancelChromeTimer = useCallback(() => {
+    if (chromeTimerRef.current !== null) {
+      clearTimeout(chromeTimerRef.current)
+      chromeTimerRef.current = null
+    }
+  }, [])
   const [busy, setBusy] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [openEvent, setOpenEvent] = useState<DetectionEvent | null>(null)
@@ -251,12 +280,150 @@ export function Watch() {
     return `${persons} ${personWord} · ${cats} ${catWord}`
   }, [events])
 
+  // Fullscreen contract (2026-07-07, user session): entering pushes a
+  // history entry so the Android back gesture exits FULLSCREEN, not
+  // the app — the number-one "acts like a real camera app"
+  // expectation. All exits funnel through history.back() so the
+  // pushed entry is always consumed exactly once:
+  //   back gesture → popstate → setFull(false)
+  //   chevron / Esc / swipe-down → history.back() → popstate → same
+  // A reload while fullscreen loses React state but leaves the pushed
+  // entry; the first back press then just consumes it (harmless
+  // no-op) — the standard cost of the pattern, same as every SPA
+  // modal that plays this trick.
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  // Pinch-zoom state (fullscreen contract item 7) — declared before
+  // the fullscreen effects because the popstate exit path resets it.
+  const zoomLayerRef = useRef<HTMLDivElement | null>(null)
+  const zoomRef = useRef<ZoomState>(ZOOM_IDENTITY)
+  const applyZoom = () => {
+    const el = zoomLayerRef.current
+    if (el) el.style.transform = toTransform(zoomRef.current)
+  }
+  const resetZoom = useCallback(() => {
+    zoomRef.current = ZOOM_IDENTITY
+    const el = zoomLayerRef.current
+    if (el) el.style.transform = ''
+  }, [])
+  const enterFull = () => {
+    window.history.pushState({ homecamFull: true }, '')
+    setFull(true)
+    pokeChrome()
+    // TRUE fullscreen (2026-07-07 fullscreen contract, items 1+3):
+    // hide the browser toolbar + system bars, then rotate to landscape
+    // — the stream is 16:9, so fullscreen means landscape, matching
+    // Ring/Nest muscle memory. Must be called HERE (inside the tap's
+    // transient activation), not from an effect. Both calls are
+    // best-effort: iOS Safari has neither Element.requestFullscreen
+    // nor orientation.lock, and the CSS overlay stays the functional
+    // fallback there.
+    const el = viewportRef.current as
+      | (HTMLDivElement & {
+          requestFullscreen?: (o?: { navigationUI?: string }) => Promise<void>
+        })
+      | null
+    el?.requestFullscreen?.({ navigationUI: 'hide' })
+      .then(() => {
+        const so = screen.orientation as
+          | (ScreenOrientation & { lock?: (o: string) => Promise<void> })
+          | undefined
+        so?.lock?.('landscape').catch(() => {
+          // Expected on desktop and iOS; the video still renders in
+          // whatever orientation the user holds.
+        })
+      })
+      .catch(() => {
+        // No Fullscreen API (iOS Safari) or the browser denied it —
+        // the fixed-inset CSS overlay is already showing.
+      })
+  }
+  const exitFull = useCallback(() => {
+    // Guard: only walk history if OUR entry is on top, so a stray
+    // double-call can't navigate the user away from the page.
+    if (window.history.state?.homecamFull) window.history.back()
+    else setFull(false)
+  }, [])
+  useEffect(() => {
+    if (!full) return
+    const onPop = () => {
+      setFull(false)
+      // Docked mode has no auto-hide — restore the chrome, and drop
+      // any pinch-zoom so the docked tile renders untransformed.
+      cancelChromeTimer()
+      setChromeVisible(true)
+      resetZoom()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [full, cancelChromeTimer, resetZoom])
+
+  // Keep React state honest when the BROWSER ends real fullscreen on
+  // its own (system back inside true fullscreen, the OS "exit
+  // fullscreen" affordance, an app switch): fullscreenchange with no
+  // fullscreenElement → funnel through exitFull so the history marker
+  // is consumed too. Cleanup releases the orientation lock and real
+  // fullscreen for the programmatic exits (popstate flipped `full`
+  // first, so the element is still fullscreen here).
+  useEffect(() => {
+    if (!full) return
+    const onFsChange = () => {
+      if (!document.fullscreenElement) exitFull()
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange)
+      const so = screen.orientation as
+        | (ScreenOrientation & { unlock?: () => void })
+        | undefined
+      so?.unlock?.()
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {
+          // Already out (e.g. the browser exited first) — nothing to do.
+        })
+      }
+    }
+  }, [full, exitFull])
+
+  // Screen wake lock while fullscreen (fullscreen contract item 6): a
+  // live view session must not dim/sleep mid-watch. Re-acquired on
+  // visibility resume (the OS silently releases it when the tab
+  // hides). Best-effort — browsers without navigator.wakeLock just
+  // keep their normal screen timeout.
+  useEffect(() => {
+    if (!full) return
+    let lock: WakeLockSentinel | null = null
+    let cancelled = false
+    const acquire = () => {
+      navigator.wakeLock
+        ?.request('screen')
+        .then((l) => {
+          if (cancelled) l.release().catch(() => {})
+          else lock = l
+        })
+        .catch(() => {
+          // Low battery / permissions / unsupported — fine, no lock.
+        })
+    }
+    acquire()
+    const onVis = () => {
+      if (document.visibilityState === 'visible') acquire()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVis)
+      lock?.release().catch(() => {})
+      // Also stop any pending chrome-hide timer when leaving full.
+      cancelChromeTimer()
+    }
+  }, [full, cancelChromeTimer])
+
   // ESC exits full screen; body scroll locks while full so the page
   // behind can't scroll on overscroll.
   useEffect(() => {
     if (!full) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFull(false)
+      if (e.key === 'Escape') exitFull()
     }
     window.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
@@ -264,7 +431,197 @@ export function Watch() {
       window.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [full])
+  }, [full, exitFull])
+
+  // Chrome auto-hide + swipe-down-dismiss input handling (fullscreen
+  // contract items 4 + 9). Tap on the video toggles the chrome; a tap
+  // that lands on a control just re-arms the hide timer. The swipe
+  // tracker mutates the viewport's transform directly (no per-move
+  // React render — the CatLayer rule) and only ever acts on a single
+  // touch whose axis locked vertical-downward, so scrubber taps and
+  // horizontal motion are untouched.
+  const chromeHidden = full && !chromeVisible
+  // Fade helper: visibility flips AFTER the opacity fade when hiding
+  // (the 300 ms delay) so the fade-out is actually seen, and flips
+  // back instantly when showing. `visibility: hidden` also defeats the
+  // children's own `pointer-events-auto`, so hidden chrome can't eat
+  // taps meant for the video.
+  const chromeFade = (hidden: boolean): React.CSSProperties =>
+    hidden
+      ? {
+          opacity: 0,
+          visibility: 'hidden',
+          transition: 'opacity 300ms ease, visibility 0ms linear 300ms',
+        }
+      : { opacity: 1, visibility: 'visible', transition: 'opacity 300ms ease' }
+  // Mouse click toggles chrome (touch taps are handled in touchend so
+  // pans/pinches never count as taps).
+  const toggleChrome = useCallback(() => {
+    if (chromeVisible) {
+      cancelChromeTimer()
+      setChromeVisible(false)
+    } else {
+      pokeChrome()
+    }
+  }, [chromeVisible, cancelChromeTimer, pokeChrome])
+  const onViewportPointerDown = (e: React.PointerEvent) => {
+    if (!full || e.pointerType !== 'mouse') return
+    const t = e.target as HTMLElement
+    if (t.closest('button')) {
+      pokeChrome()
+      return
+    }
+    toggleChrome()
+  }
+
+  // Touch gesture arbiter (fullscreen only): 2 fingers = pinch zoom,
+  // 1 finger while zoomed = pan, 1 finger at scale 1 = swipe-down to
+  // dismiss, 1 finger that never moved = tap (chrome toggle). Zoom /
+  // swipe write transforms straight to the DOM refs — no per-move
+  // React render (CatLayer rule).
+  const gestureRef = useRef<{
+    mode: 'tap' | 'swipe' | 'pan' | 'pinch' | 'dead'
+    x0: number
+    y0: number
+    lastX: number
+    lastY: number
+    dy: number
+    pinchDist: number
+    onButton: boolean
+  } | null>(null)
+  const clearSwipeTransform = () => {
+    const el = viewportRef.current
+    if (!el) return
+    el.style.transform = ''
+    el.style.transition = ''
+  }
+  const viewportSize = () => {
+    const r = viewportRef.current?.getBoundingClientRect()
+    return { vw: r?.width ?? window.innerWidth, vh: r?.height ?? window.innerHeight }
+  }
+  const pinchDistance = (e: React.TouchEvent) => {
+    const a = e.touches[0]
+    const b = e.touches[1]
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+  }
+  const onViewportTouchStart = (e: React.TouchEvent) => {
+    if (!full) {
+      gestureRef.current = null
+      return
+    }
+    if (e.touches.length >= 2) {
+      gestureRef.current = {
+        mode: 'pinch',
+        x0: 0,
+        y0: 0,
+        lastX: 0,
+        lastY: 0,
+        dy: 0,
+        pinchDist: pinchDistance(e),
+        onButton: false,
+      }
+      clearSwipeTransform()
+      return
+    }
+    const t = e.touches[0]
+    gestureRef.current = {
+      mode: 'tap',
+      x0: t.clientX,
+      y0: t.clientY,
+      lastX: t.clientX,
+      lastY: t.clientY,
+      dy: 0,
+      pinchDist: 0,
+      onButton: Boolean((e.target as HTMLElement).closest('button')),
+    }
+  }
+  const onViewportTouchMove = (e: React.TouchEvent) => {
+    const g = gestureRef.current
+    if (!g || !full) return
+    if (e.touches.length >= 2) {
+      // Upgrade any single-finger gesture to a pinch the moment the
+      // second finger lands.
+      if (g.mode !== 'pinch') {
+        g.mode = 'pinch'
+        g.pinchDist = pinchDistance(e)
+        clearSwipeTransform()
+        return
+      }
+      const d = pinchDistance(e)
+      if (g.pinchDist > 0 && d > 0) {
+        const rect = viewportRef.current?.getBoundingClientRect()
+        const left = rect?.left ?? 0
+        const top = rect?.top ?? 0
+        const { vw, vh } = viewportSize()
+        const fx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - left
+        const fy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - top
+        zoomRef.current = pinchUpdate(zoomRef.current, fx, fy, d / g.pinchDist, vw, vh)
+        applyZoom()
+      }
+      g.pinchDist = d
+      return
+    }
+    const t = e.touches[0]
+    const dxTotal = t.clientX - g.x0
+    const dyTotal = t.clientY - g.y0
+    if (g.mode === 'tap' && (Math.abs(dxTotal) > 12 || Math.abs(dyTotal) > 12)) {
+      if (isZoomed(zoomRef.current)) g.mode = 'pan'
+      else if (Math.abs(dyTotal) > Math.abs(dxTotal) && dyTotal > 0) g.mode = 'swipe'
+      else g.mode = 'dead'
+    }
+    if (g.mode === 'pan') {
+      const { vw, vh } = viewportSize()
+      zoomRef.current = panUpdate(
+        zoomRef.current,
+        t.clientX - g.lastX,
+        t.clientY - g.lastY,
+        vw,
+        vh,
+      )
+      applyZoom()
+    } else if (g.mode === 'swipe') {
+      g.dy = Math.max(0, dyTotal)
+      const el = viewportRef.current
+      if (el) {
+        el.style.transition = 'none'
+        el.style.transform = `translateY(${g.dy}px)`
+      }
+    }
+    g.lastX = t.clientX
+    g.lastY = t.clientY
+  }
+  const onViewportTouchEnd = (e: React.TouchEvent) => {
+    const g = gestureRef.current
+    if (!g || !full) {
+      gestureRef.current = null
+      return
+    }
+    if (e.touches.length > 0) {
+      // Fingers remain (e.g. pinch → one finger lifted): rebase as a
+      // fresh single-finger gesture so panning continues smoothly.
+      const t = e.touches[0]
+      gestureRef.current = {
+        mode: isZoomed(zoomRef.current) ? 'pan' : 'dead',
+        x0: t.clientX,
+        y0: t.clientY,
+        lastX: t.clientX,
+        lastY: t.clientY,
+        dy: 0,
+        pinchDist: 0,
+        onButton: false,
+      }
+      return
+    }
+    gestureRef.current = null
+    if (g.mode === 'swipe') {
+      clearSwipeTransform()
+      if (g.dy > 110) exitFull()
+    } else if (g.mode === 'tap' && !g.onButton) {
+      toggleChrome()
+    } else if (g.mode === 'tap' && g.onButton) {
+      pokeChrome()
+    }
+  }
 
   const onSnapshot = async () => {
     if (busy) return
@@ -329,10 +686,18 @@ export function Watch() {
 
       {/* ============ LIVE VIEWPORT (docked ↔ full-bleed) ============ */}
       <div
+        ref={viewportRef}
         data-testid="live-viewport"
+        onPointerDown={onViewportPointerDown}
+        onTouchStart={onViewportTouchStart}
+        onTouchMove={onViewportTouchMove}
+        onTouchEnd={onViewportTouchEnd}
+        onTouchCancel={onViewportTouchEnd}
         className={
           full
-            ? 'fixed inset-0 z-[45] bg-black flex flex-col'
+            ? // overflow-hidden: the pinch-zoomed video layer must clip
+              // at the screen edge instead of painting over nothing.
+              'fixed inset-0 z-[45] bg-black flex flex-col overflow-hidden'
             : // Docked: a TRUE 16:9 box (the stream's aspect) so the
               // video fills it exactly — no letterbox band, no crop.
               // max-h guards short-viewport landscape. Playroom tile
@@ -355,10 +720,20 @@ export function Watch() {
               // 16:9 box — `max-w-[85.33dvh]` is 48dvh × 16/9, so the
               // box can never outgrow its own max-h into a wider-than-
               // 16:9 shape (which is what made `cover` canyon-crop).
-              'relative aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3 lg:col-start-1 lg:row-start-2 lg:self-start lg:mx-6 lg:mt-3 lg:mb-6 lg:max-w-[85.33dvh]'
+              // flex flex-col (2026-07-07 fullscreen contract): the
+              // inner pane is flex-1 and the pinch-zoom layer inside it
+              // is absolute — without a flex parent the pane's height
+              // collapses to 0 in docked mode (user-caught: black tile,
+              // no controls, on the landscape two-pane layout).
+              'relative flex flex-col aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3 lg:col-start-1 lg:row-start-2 lg:self-start lg:mx-6 lg:mt-3 lg:mb-6 lg:max-w-[85.33dvh]'
         }
       >
-        <div className="relative flex-1 min-h-0">
+        <div className="relative flex-1 min-h-0 overflow-hidden">
+          {/* Pinch-zoom layer (fullscreen contract item 7): only the
+              video scales/pans; the pills, rail and scrubber are
+              siblings and stay put. Transform written imperatively by
+              the touch arbiter above — identity in docked mode. */}
+          <div ref={zoomLayerRef} className="absolute inset-0 will-change-transform">
           <VideoTile
             detectionActive={detectionActive}
             workerAlive={workerAlive}
@@ -399,6 +774,7 @@ export function Watch() {
             // Fullscreen API button would be a second, competing one).
             showFullscreenButton={false}
             safeAreaBottom={full}
+            dimControls={chromeHidden}
             actions={
               full ? undefined : (
                 <>
@@ -423,7 +799,7 @@ export function Watch() {
                   <button
                     type="button"
                     aria-label="Full screen live view"
-                    onClick={() => setFull(true)}
+                    onClick={enterFull}
                     onPointerDown={ripple}
                     className="relative overflow-hidden inline-flex items-center justify-center w-11 h-11 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
                   >
@@ -433,6 +809,7 @@ export function Watch() {
               )
             }
           />
+          </div>
 
           {/* Floating pill overlays — the armed state lives ON the
               video here (the ribbon is hidden on this route on
@@ -449,13 +826,16 @@ export function Watch() {
               duplication (fuzz F3). */}
           <div
             className="absolute top-0 left-0 right-0 flex items-center gap-2 px-4 pointer-events-none"
-            style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+            style={{
+              paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
+              ...chromeFade(chromeHidden),
+            }}
           >
             {full && (
               <button
                 type="button"
                 aria-label="Exit full screen"
-                onClick={() => setFull(false)}
+                onClick={exitFull}
                 onPointerDown={ripple}
                 // Overhaul W1 item 4 (frank#1, hari REACH-2): w-9 was
                 // the one sub-44px target in the app, on the button
@@ -498,6 +878,7 @@ export function Watch() {
               style={{
                 paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
                 paddingRight: 'max(0.5rem, env(safe-area-inset-right))',
+                ...chromeFade(chromeHidden),
               }}
             >
               <RailButton
@@ -513,12 +894,18 @@ export function Watch() {
 
         {/* Full-mode bottom: hour scrubber with event markers */}
         {full && (
+          <div style={chromeFade(chromeHidden)}>
           <HourScrubber
             onJumpHistory={() => {
+              // Replace the fullscreen history marker with the events
+              // route so back-from-Events lands on the ORIGINAL Watch
+              // entry, not a stale marker that eats one back press.
+              const replacing = Boolean(window.history.state?.homecamFull)
               setFull(false)
-              navigate('/events')
+              navigate('/events', { replace: replacing })
             }}
           />
+          </div>
         )}
       </div>
 
