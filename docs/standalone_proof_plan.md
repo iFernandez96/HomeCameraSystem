@@ -113,7 +113,7 @@ Every harness and every feature is built as SMALL ATOMIC STEPS:
 - [x] A1 manifest parser (manifest_fixture.py) + parser-integrity test
 - [x] A2 sparse scratch builder + size/mtime round-trip test
 - [x] A3 sweep_and_evict injection seam (disk_usage/list_clips kwargs), default path byte-identical
-- [ ] A4 invariant: expiry sweeps before byte eviction
+- [x] A4 invariant: expiry sweeps before byte eviction
 - [ ] A5 invariant: byte floor met via oldest-fresh prefix, mtime order
 - [ ] A6 invariant: untouchables survive (non-mp4, _preroll/, _visits/, *.mp4.tmp, .open_visits.json)
 - [ ] A7 invariant: sidecar policy pinned as-is

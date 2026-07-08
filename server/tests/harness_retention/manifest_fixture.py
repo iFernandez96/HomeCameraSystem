@@ -1,5 +1,33 @@
 import os
+from collections import namedtuple
 from pathlib import Path
+
+
+Usage = namedtuple("Usage", ["total", "used", "free"])
+
+
+class DiskModel:
+    def __init__(self, start_free, clips, recordings_dir):
+        self.start_free = int(start_free)
+        self._sizes_by_name = {name: int(size_bytes) for name, size_bytes, _mtime in clips}
+        self.recordings_dir = Path(recordings_dir)
+        self.calls = []
+
+    def deleted_mp4_names(self):
+        return {
+            name
+            for name in self._sizes_by_name
+            if not (self.recordings_dir / name).exists()
+        }
+
+    def free_bytes(self):
+        return self.start_free + sum(
+            self._sizes_by_name[name] for name in self.deleted_mp4_names()
+        )
+
+    def __call__(self, path):
+        self.calls.append(path)
+        return Usage(total=0, used=0, free=self.free_bytes())
 
 
 def build_scratch_recordings(clips, dest_dir):
