@@ -293,7 +293,7 @@ RTCPeerConnection, error paths only — a canned SDP cannot make frames).
 Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 - [x] W1 live config reusing auth-harness runner shape
 - [x] W2 live fixture: console/event capture + JSON attempt ledger
-- [ ] W3 LIVE smoke: real frame -> Live pill only after frame evidence
+- [x] W3 LIVE smoke: real frame -> Live pill only after frame evidence
 - [ ] W4 LIVE rung hq (/whep/cam/whep, first frame <8s)
 - [ ] W5 LIVE rung sd (/whep/cam_lq/whep)
 - [ ] W6 LIVE rung xs (/whep/cam_uq/whep)
