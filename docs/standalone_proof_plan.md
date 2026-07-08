@@ -220,3 +220,26 @@ is the product fix contract if A7 confirms.
       production REST rejection shapes (40x expired-signature, 5x
       no-cookie) reproduce identical reason+cookie_present lines;
       WS shape deferred to A10's browser leg (named TODO)
+
+## Harness #4 — snapshot/thumbnail pipeline: atomic steps (spec: codex r6, 2026-07-08)
+Risky cores: unauth thumb carve-out boundaries; thumb_url wire regex;
+DB->file->route->production-log parity chain (9 logged filenames overlap
+all four). Fixtures: proof_fixtures/snapshots/ (139 real jpgs),
+events.sqlite (2772 thumb_urls), homecam-server-app.log (real unauth
+push-daemon fetches).
+- [ ] H4.1 fixture inventory readable, counts nonzero
+- [ ] H4.2 every DB thumb_url matches ^/snapshots/thumb_[0-9]+\.jpg$
+- [ ] H4.3 fixture filenames are only production shapes
+- [ ] H4.4 DB->file overlap set nonempty, reported
+- [ ] H4.5 worker save_thumb contract (path shape, dir, no external URLs)
+- [ ] H4.6 worker retention: prunes only thumb_*, spares latest/snap
+- [ ] H4.7 wire accept: real-shaped event with fixture thumb_url preserved
+- [ ] H4.8 wire reject: external/traversal/wrong-shape thumb_url refused
+- [ ] H4.9 push image == thumb_url exactly (spied send_matching)
+- [ ] H4.10 unauth thumb serve: 200, image/jpeg, exact bytes, no Set-Cookie
+- [ ] H4.11 latest/snap 308 to auth-gated path; arbitrary names 404
+- [ ] H4.12 EventList thumb consumption (img src, selectability)
+- [ ] H4.13 ClipModal poster + still fallback
+- [ ] H4.14 SW: payload image -> notification options image, unrewritten
+- [ ] H4.15 PARITY: every production-logged thumb 200 replays 200 with
+      matching bytes AND appears in events.sqlite thumb_url
