@@ -53,9 +53,8 @@ def _safe_extract_tar(artifact_path: Path, destination: Path) -> bool:
             destination_resolved = destination.resolve()
             for member in archive.getmembers():
                 member_path = (destination / member.name).resolve()
-                if (
-                    member.name.startswith("/")
-                    or member_path != destination_resolved
+                if member.name.startswith("/") or (
+                    member_path != destination_resolved
                     and destination_resolved not in member_path.parents
                 ):
                     log.warning(
@@ -65,7 +64,21 @@ def _safe_extract_tar(artifact_path: Path, destination: Path) -> bool:
                         member.name,
                     )
                     return False
-            archive.extractall(destination)
+                # Path checks alone don't cover link TARGETS: a symlink or
+                # hardlink member can point outside the staging root and a
+                # later member written through it escapes. An update artifact
+                # has no business shipping links at all — reject outright.
+                if member.islnk() or member.issym():
+                    log.warning(
+                        "rejecting OTA artifact staging path=%s reason=%s member=%s",
+                        artifact_path,
+                        "link_member_in_artifact",
+                        member.name,
+                    )
+                    return False
+            # 'data' filter (3.11.4+) re-enforces path/link safety at extract
+            # time as defense in depth.
+            archive.extractall(destination, filter="data")
     except (OSError, tarfile.TarError):
         return False
     return True

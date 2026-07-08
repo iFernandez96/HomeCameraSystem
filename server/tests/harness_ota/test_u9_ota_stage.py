@@ -68,3 +68,35 @@ def test_given_live_and_persisted_data_dirs_when_artifact_staged_then_they_are_u
     assert result.status == "staged"
     assert _tree_snapshot(live) == before_live
     assert _tree_snapshot(data) == before_data
+
+
+def test_given_tar_with_symlink_member_when_staged_then_rejected_and_nothing_extracted(
+    tmp_path,
+):
+    # arrange — a tarball smuggling a symlink pointing outside the staging root
+    import io
+    import tarfile
+
+    artifact = tmp_path / "artifact.tar.gz"
+    with tarfile.open(artifact, "w:gz") as tar:
+        payload = io.BytesIO(b"ok")
+        info = tarfile.TarInfo("app/ok.txt")
+        info.size = 2
+        tar.addfile(info, payload)
+        link = tarfile.TarInfo("app/escape")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../../outside"
+        tar.addfile(link)
+    staging_root = tmp_path / "staging"
+
+    # act
+    result = stage_artifact_to_versioned_dir(
+        artifact,
+        version="1.2.3",
+        staging_root=staging_root,
+        clock=fixed_clock,
+    )
+
+    # assert — typed rejection, no staged dir left behind
+    assert result.status == "rejected"
+    assert not (staging_root / "1.2.3").exists()
