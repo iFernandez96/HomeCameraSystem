@@ -331,3 +331,31 @@ setuptools>=81 removes pkg_resources which the models package needs).
 - [ ] R13 name-them flow contract (review link + sidecar move)
 - [ ] R14 refresh-required sentinel for named parity
 - [ ] R15 close only after fresh named snapshot passes parity
+
+## Harness #6 — SW cache/update: atomic steps (spec: codex r11, 2026-07-08)
+A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
+- [ ] H6.1-H6.4 rig: two real builds with markers, scratch serve, SW active
+- [ ] H6.5 first-load-after-deploy truth pinned (A or B — observed reality)
+- [ ] H6.6 takeover timing (controllerchange -> B)
+- [ ] H6.7 fetch ledger explains 6.5/6.6
+- [ ] H6.8 precache completeness (no excluded cat PNGs)
+- [ ] H6.9 offline shell renders from cache
+- [ ] H6.10 events NetworkFirst: cached 200 offline; 401 never cached
+- [ ] H6.11 notificationclick: dismiss/view/tap contracts
+- [ ] H6.12 stale-handler risk pinned across A->B
+- [ ] H6.13 observability prep (build-id visibility) if needed for parity
+- [ ] H6.14 PARITY vs production log window post-deploy
+
+## Harness #10 — multicam synthetic: atomic steps (spec: codex r12, 2026-07-08)
+- [ ] M10.1 contract doc vs code audit
+- [ ] M10.2 local mediamtx fixture (env-gated download/boot)
+- [ ] M10.3 ffmpeg testsrc RTSP publish -> /synth/whep
+- [ ] M10.4 two-camera registry route
+- [ ] M10.5 browser switcher -> /whep/synth/whep
+- [ ] M10.6 quality rung URL composition per camera
+- [ ] M10.7 worker DETECT_CAMERA_ID -> payload camera_id
+- [ ] M10.8 per-camera persistence + search filter
+- [ ] M10.9 client Events camera chip narrows
+- [ ] M10.10 LIVE dynamic publish probe (gated)
+- [ ] M10.11 PARITY: cam1->front_door migration on scratch copy
+- [ ] M10.12 PARITY: production DB single-camera invariants
