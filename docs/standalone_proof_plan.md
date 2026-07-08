@@ -296,9 +296,9 @@ Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 - [x] W1 live config reusing auth-harness runner shape
 - [x] W2 live fixture: console/event capture + JSON attempt ledger
 - [x] W3 LIVE smoke: real frame -> Live pill only after frame evidence
-- [ ] W4 LIVE rung hq (/whep/cam/whep, first frame <8s)
-- [ ] W5 LIVE rung sd (/whep/cam_lq/whep)
-- [ ] W6 LIVE rung xs (/whep/cam_uq/whep)
+- [x] W4 LIVE rung hq (/whep/cam/whep, first frame <8s)
+- [x] W5 LIVE rung sd (/whep/cam_lq/whep)
+- [x] W6 LIVE rung xs (/whep/cam_uq/whep)
 - [ ] W7 LIVE quality switch: old attempt closes, no stale-blank
 - [ ] W8 LIVE resume/error coalescing: at most one reconnect
 - [x] W9 local error-harness fixture (404/503/hang/net-close/invalid-sdp)
@@ -330,8 +330,8 @@ setuptools>=81 removes pkg_resources which the models package needs).
 - [x] R10 null-name propagation through ingest + face_unrecognized search
 - [x] R11 named propagation contract (person_names -> legacy person_name)
 - [x] R12 training/review routes against copied real fixture tree
-- [ ] R13 name-them flow contract (review link + sidecar move)
-- [ ] R14 refresh-required sentinel for named parity
+- [x] R13 name-them flow contract (review link + sidecar move)
+- [x] R14 refresh-required sentinel for named parity
 - [ ] R15 close only after fresh named snapshot passes parity
 
 ## Harness #6 — SW cache/update: atomic steps (spec: codex r11, 2026-07-08)
