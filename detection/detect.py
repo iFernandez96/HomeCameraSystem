@@ -223,7 +223,7 @@ def save_thumb(cuda_img, ts, thumb_dir, max_keep, quality):
         # operator can tell disk-full / RO-mount / bad-extension apart.
         # Runs at most once per emitted event (cooldown-gated), not
         # per-frame. Caller bumps `thumb_save_failures` on the None return.
-        log.error(
+        log.warning(
             "thumb save failed for dir=%s: %s: %s",
             thumb_dir, type(e).__name__, e,
         )
@@ -1024,13 +1024,15 @@ def _do_reboot():
 
 
 def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
-                        event_url, camera_id):
+                        event_url, camera_id, thumb_dir=None,
+                        thumb_max=None, thumb_quality=None, metrics=None):
     """Construct a ``visit_runtime.VisitRunner`` with the three side-effect
     callables wired to the real recorder/preroll/POST path (plan S4 item 2).
     Factored out of ``main()`` so the wiring is small + the loop body stays
     focused. The callables themselves are thin adapters; the heavy lifting is
     in ``recording.finalize_visit`` / ``preroll.copy_new_segments`` (S2/S3)."""
-    def _post_open(visit_id, key, start_ts, boxes, segment_index=0):
+    def _post_open(visit_id, key, start_ts, boxes, segment_index=0,
+                   cuda_img=None):
         # event_id == visit_id (plan: "pick an event_id (= visit_id)"). POST
         # the open event today with clip_url pointing at the eventual clip
         # (R4's no-clip-url-at-open is S6's job, NOT here). label is the part
@@ -1059,6 +1061,29 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
             "camera_id": camera_id,
             "clip_url": "/api/events/{}/clip".format(visit_id),
         }
+        thumb_url = None
+        if cuda_img is not None and thumb_dir:
+            try:
+                thumb_t0 = time.time()
+                thumb_url = save_thumb(
+                    cuda_img, start_ts, thumb_dir, thumb_max, thumb_quality,
+                )
+                if metrics is not None and hasattr(metrics, "record_thumb_ms"):
+                    metrics.record_thumb_ms((time.time() - thumb_t0) * 1000.0)
+                if thumb_url is None:
+                    if metrics is not None and hasattr(metrics, "thumb_save_failures"):
+                        metrics.thumb_save_failures += 1
+            except Exception as e:
+                if metrics is not None and hasattr(metrics, "thumb_save_failures"):
+                    metrics.thumb_save_failures += 1
+                log.warning(
+                    "visit thumb save failed for visit=%s dir=%s: %s: %s "
+                    "(event still posts without thumb_url)",
+                    visit_id, thumb_dir, type(e).__name__, e,
+                )
+                thumb_url = None
+        if thumb_url:
+            payload["thumb_url"] = thumb_url
         # Cap-split continuations (segment_index > 0) are the SAME physical
         # presence rolling into its next max_visit_s window — mark them so
         # the server records the row (it is a real clip) but does NOT push
@@ -1090,7 +1115,8 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
 
 
 def _arm_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
-                      event_url, camera_id, runtime):
+                      event_url, camera_id, runtime, thumb_dir=None,
+                      thumb_max=None, thumb_quality=None, metrics=None):
     """Build + arm the continuous-capture runner (boot AND runtime flag
     flips share this path — 2026-07-07 fix: a Settings toggle used to be
     a no-op until restart). Order is load-bearing: recovery + orphan
@@ -1099,7 +1125,8 @@ def _arm_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
     global _VISIT_RUNNER
     _vr = _build_visit_runner(
         recordings_dir, clip_recorder, preroll_buffer, event_url,
-        camera_id,
+        camera_id, thumb_dir=thumb_dir, thumb_max=thumb_max,
+        thumb_quality=thumb_quality, metrics=metrics,
     )
     try:
         _recover_open_visits(
@@ -1662,7 +1689,8 @@ def main():
     if runtime.continuous_capture and recordings_dir and clip_recorder is not None:
         _arm_visit_runner(
             recordings_dir, clip_recorder, preroll_buffer, event_url,
-            camera_id, runtime,
+            camera_id, runtime, thumb_dir=thumb_dir, thumb_max=thumb_max,
+            thumb_quality=thumb_quality, metrics=metrics,
         )
     # iter-356.53 (bbox-track sidecar, Feature #1 follow-up):
     # rolling deque of (frame_ts, boxes) for the last ~64 s of
@@ -1935,7 +1963,8 @@ def main():
                 and recordings_dir and clip_recorder is not None):
             _arm_visit_runner(
                 recordings_dir, clip_recorder, preroll_buffer, event_url,
-                camera_id, runtime,
+                camera_id, runtime, thumb_dir=thumb_dir, thumb_max=thumb_max,
+                thumb_quality=thumb_quality, metrics=metrics,
             )
         elif not runtime.continuous_capture and _VISIT_RUNNER is not None:
             _disarm_visit_runner(now)
@@ -2209,7 +2238,7 @@ def main():
                 emit_key, top_box_cc, now,
                 float(runtime.clip_pre_roll_s),
                 runtime.absence_finalize_s, runtime.max_visit_s,
-                boxes=boxes,
+                boxes=boxes, cuda_img=img,
             )
             del img
             continue

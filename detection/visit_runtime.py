@@ -430,7 +430,8 @@ class VisitRunner(object):
 
       * ``post_event(visit_id, key, start_ts)`` — POST the open event today
         (clip_url still points at ``/api/events/<id>/clip``; R4's no-clip-url-
-        at-open is S6's job, not here).
+        at-open is S6's job, not here). When observe() supplies cuda_img, the
+        live detect.py adapter may save the first-frame thumb before posting.
       * ``copy_segments(visit_id, start_ts, until_ts, scratch_dir)`` — the
         incremental ``preroll.copy_new_segments`` call (B3).
       * ``finalize_visit(visit_id, scratch_dir, start_ts, end_ts)`` — the
@@ -479,6 +480,7 @@ class VisitRunner(object):
         # synchronous _on_open for the open-event POST. None until first
         # observe / on tick-driven paths (which never open).
         self._pending_boxes = None
+        self._pending_cuda_img = None
         # Observability counters (plan S6). Incremented at their main-thread
         # choke points and mirrored onto the metrics heartbeat by detect.py.
         #  - visits_finalized: visits handed to a (de-duped) finalize.
@@ -519,7 +521,7 @@ class VisitRunner(object):
         self._handle(transitions, now)
 
     def observe(self, key, box, now, pre_roll_s, absence_finalize_s,
-                max_visit_s, boxes=None):
+                max_visit_s, boxes=None, cuda_img=None):
         """Present-frame observe: feed the detection into the tracker and
         handle its open/extend/finalize transitions.
 
@@ -527,9 +529,11 @@ class VisitRunner(object):
         ``boxes`` is the frame's full server-valid normalized box list used
         for the open-event POST (the server requires >=1 box). Stashed so the
         synchronous ``_on_open`` below can read it without re-plumbing the
-        transition dicts.
+        transition dicts. ``cuda_img`` is the current detection frame; the
+        live adapter uses it only on visit open to preserve legacy thumbnails.
         """
         self._pending_boxes = boxes
+        self._pending_cuda_img = cuda_img
         transitions = self.tracker.observe(
             key, box, now, pre_roll_s, absence_finalize_s, max_visit_s,
         )
@@ -594,10 +598,16 @@ class VisitRunner(object):
         # _pending_boxes is the frame's server-valid box list from observe()
         # (the server requires >=1 box); None on a tick-driven/test path.
         try:
-            self._post_event(
-                visit_id, key, start_ts, self._pending_boxes,
-                rec["segment_index"],
-            )
+            if self._pending_cuda_img is None:
+                self._post_event(
+                    visit_id, key, start_ts, self._pending_boxes,
+                    rec["segment_index"],
+                )
+            else:
+                self._post_event(
+                    visit_id, key, start_ts, self._pending_boxes,
+                    rec["segment_index"], cuda_img=self._pending_cuda_img,
+                )
         except Exception as e:
             applog.emit(
                 "visit",

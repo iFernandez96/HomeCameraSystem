@@ -251,10 +251,10 @@ def test_given_post_event_http_error_when_post_then_logs_status_and_bumps(
 
 
 # --------------------------------------------------------------------------
-# save_thumb: failure -> ERROR naming the dir; returns None.
+# save_thumb: failure -> WARNING naming the dir; returns None.
 # --------------------------------------------------------------------------
 
-def test_given_save_image_raises_when_save_thumb_then_errors_and_returns_none(
+def test_given_save_image_raises_when_save_thumb_then_warns_and_returns_none(
     monkeypatch, caplog,
 ):
     # arrange — saveImage blows up (disk full / RO mount / bad extension).
@@ -265,15 +265,15 @@ def test_given_save_image_raises_when_save_thumb_then_errors_and_returns_none(
     )
 
     # act
-    with caplog.at_level(logging.ERROR, logger="detect"):
+    with caplog.at_level(logging.WARNING, logger="detect"):
         url = detect.save_thumb(
             object(), 1000.0, "/some/thumb/dir", 100, 70,
         )
 
-    # assert — None return (caller omits thumb_url) + ERROR names the dir.
+    # assert — None return (caller omits thumb_url) + WARNING names the dir.
     assert url is None
-    errs = [r for r in caplog.records if r.levelno == logging.ERROR]
-    assert errs and "/some/thumb/dir" in errs[0].getMessage()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings and "/some/thumb/dir" in warnings[0].getMessage()
 
 
 # --------------------------------------------------------------------------
