@@ -45,26 +45,40 @@ export function resolveAutoQuality(
   return 'hq'
 }
 
-// MediaMTX path per resolved tier.
-const PATH_BY_QUALITY: Record<ResolvedQuality, string> = {
-  hq: 'cam',
-  sd: 'cam_lq',
-  xs: 'cam_uq',
+// Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+// registry's default camera path. Quality rungs derive from a
+// camera's base path exactly as they always did for `cam`
+// (`<path>` / `<path>_lq` / `<path>_uq`), so with the default
+// single-camera registry every composed URL is byte-identical to
+// the pre-multicam behavior.
+export const DEFAULT_CAMERA_PATH = 'cam'
+
+// MediaMTX rung suffix per resolved tier, appended to the camera's
+// base path.
+const SUFFIX_BY_QUALITY: Record<ResolvedQuality, string> = {
+  hq: '',
+  sd: '_lq',
+  xs: '_uq',
 }
 
 /**
  * The MediaMTX path for a chosen quality. `auto` resolves against the link
  * (optionally supplied; defaults to `navigator.connection`).
+ *
+ * `basePath` is the camera's MediaMTX base path from the registry
+ * (`getCameras()`); defaults to `cam` so single-camera callers are
+ * unchanged.
  */
 export function pathForQuality(
   q: StreamQuality,
   conn?: ConnectionLike | undefined | null,
+  basePath: string = DEFAULT_CAMERA_PATH,
 ): string {
   const resolved: ResolvedQuality =
     q === 'auto'
       ? resolveAutoQuality(conn === undefined ? readConnection() : conn)
       : q
-  return PATH_BY_QUALITY[resolved]
+  return `${basePath}${SUFFIX_BY_QUALITY[resolved]}`
 }
 
 /**

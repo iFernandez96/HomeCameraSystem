@@ -118,6 +118,29 @@ describe('pathForQuality', () => {
     // arrange / act / assert
     expect(pathForQuality('auto', null)).toBe('cam')
   })
+
+  // Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+  // rungs derive from the camera's registry `path` instead of the
+  // hardcoded 'cam'. Default stays 'cam' so single-camera composition
+  // is byte-identical (pinned by the tests above).
+
+  it('Given a camera base path, When each fixed tier is resolved, Then the rungs derive from that path (multicam contract)', () => {
+    // arrange — a second registry camera on MediaMTX path 'garage'.
+    const basePath = 'garage'
+
+    // act / assert
+    expect(pathForQuality('hq', null, basePath)).toBe('garage')
+    expect(pathForQuality('sd', null, basePath)).toBe('garage_lq')
+    expect(pathForQuality('xs', null, basePath)).toBe('garage_uq')
+  })
+
+  it('Given a camera base path on a cellular link, When auto resolves, Then the ultra-low rung derives from that path (multicam contract)', () => {
+    // arrange
+    const conn: ConnectionLike = { type: 'cellular', effectiveType: '4g' }
+
+    // act / assert
+    expect(pathForQuality('auto', conn, 'garage')).toBe('garage_uq')
+  })
 })
 
 describe('whepUrlForPath', () => {

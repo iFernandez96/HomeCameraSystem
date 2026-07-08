@@ -7,8 +7,13 @@
  * "the card says 'Israel at the front door'" string match three
  * components deep.
  */
-import { describe, expect, it } from 'vitest'
-import { eventTitle, recognizedNames } from './eventLabel'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  eventTitle,
+  humanCameraName,
+  recognizedNames,
+  registerCameraNames,
+} from './eventLabel'
 import type { DetectionEvent } from './types'
 
 function makeEvent(over: Partial<DetectionEvent> = {}): DetectionEvent {
@@ -182,5 +187,63 @@ describe('recognizedNames', () => {
 
     // assert
     expect(out).toEqual(['israel'])
+  })
+})
+
+// Multicam contract (docs/multicam_contract.md, 2026-07-07): registry-
+// driven camera display names. Single-camera copy must stay byte-
+// identical; only a >1-camera registry changes what rows say.
+describe('humanCameraName + registerCameraNames', () => {
+  afterEach(() => {
+    // The registry is module-level state — reset so tests stay
+    // order-independent.
+    registerCameraNames([])
+  })
+
+  it('Given no registered cameras, When translating the default ids, Then both cam1 (legacy) and front_door (registry default) read "the front door"', () => {
+    // arrange — nothing registered (single-camera deploy)
+    // act / assert
+    expect(humanCameraName('cam1')).toBe('the front door')
+    expect(humanCameraName('front_door')).toBe('the front door')
+  })
+
+  it('Given no registered cameras, When translating an unknown id, Then the raw id passes through', () => {
+    // arrange / act / assert
+    expect(humanCameraName('garage')).toBe('garage')
+  })
+
+  it('Given a multi-camera registry, When translating a registered id, Then the display name wins', () => {
+    // arrange
+    registerCameraNames([
+      { id: 'front_door', name: 'Front Door' },
+      { id: 'back_yard', name: 'Back Yard' },
+    ])
+
+    // act / assert
+    expect(humanCameraName('back_yard')).toBe('Back Yard')
+    expect(humanCameraName('front_door')).toBe('Front Door')
+    // Unregistered ids still pass through raw.
+    expect(humanCameraName('mystery')).toBe('mystery')
+  })
+
+  it('Given a SINGLE-camera registry, When registered, Then the map stays empty so single-camera copy is unchanged (acceptance bar)', () => {
+    // arrange — one camera: registerCameraNames must self-gate.
+    registerCameraNames([{ id: 'front_door', name: 'Porch Cam' }])
+
+    // act / assert — still the pre-multicam friendly default, NOT
+    // the registry name.
+    expect(humanCameraName('front_door')).toBe('the front door')
+  })
+
+  it('Given a multi-camera registry, When eventTitle is built, Then the row reads "Name at <camera display name>"', () => {
+    // arrange
+    registerCameraNames([
+      { id: 'front_door', name: 'Front Door' },
+      { id: 'back_yard', name: 'Back Yard' },
+    ])
+    const e = makeEvent({ camera_id: 'back_yard', person_name: 'israel' })
+
+    // act / assert
+    expect(eventTitle(e)).toBe('Israel at Back Yard')
   })
 })

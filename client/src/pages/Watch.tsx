@@ -7,8 +7,10 @@ import { SnapshotPreview } from '../components/SnapshotPreview'
 import { ErrorState } from '../components/states/ErrorState'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
-import { captureSnapshot, searchEvents, HttpError } from '../lib/api'
-import { clockTime, recognizedNames, relativeTime } from '../lib/eventLabel'
+import { captureSnapshot, getCameras, searchEvents, HttpError, type Camera } from '../lib/api'
+import { nextRovingIndex } from '../lib/a11y'
+import { clockTime, recognizedNames, registerCameraNames, relativeTime } from '../lib/eventLabel'
+import { DEFAULT_CAMERA_PATH } from '../lib/streamQuality'
 import { identityOf, type IdentityKind } from '../lib/identity'
 import { useRipple } from '../lib/ripple'
 import { sentryCatName, useSentryCat } from '../lib/sentryCat'
@@ -86,6 +88,74 @@ function useIsLandscape(): boolean {
 
 const _DEFAULT_CAMERA_LABEL = 'Front Door'
 
+// Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+// selected camera id persists across reloads so the user's chosen
+// view survives PWA tab re-mounts. Same localStorage idiom as
+// homecam:streamQuality.
+const _CAMERA_STORAGE_KEY = 'homecam:cameraId'
+
+function readStoredCameraId(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(_CAMERA_STORAGE_KEY)
+  } catch {
+    // localStorage can throw in private/lockdown modes.
+    return null
+  }
+}
+
+/**
+ * Fetch the camera registry once on mount (inline fetch + cancelled
+ * flag — the React 19 set-state-in-effect discipline). Returns the
+ * list (null until it arrives / on failure — both render the
+ * single-camera layout, which is also the graceful-degrade path when
+ * the route is unreachable) plus the selection. Registry display
+ * names are registered with eventLabel so event rows and the
+ * ClipModal header say the camera's name — ONLY when more than one
+ * camera exists (registerCameraNames self-gates).
+ */
+function useCameras() {
+  const [cameras, setCameras] = useState<Camera[] | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    readStoredCameraId(),
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    getCameras()
+      .then((r) => {
+        if (cancelled) return
+        registerCameraNames(r.cameras)
+        setCameras(r.cameras)
+      })
+      .catch((e) => {
+        // Single-camera fallback keeps the page fully functional
+        // (default `cam` path + status-provided label) — log WHY so a
+        // registry outage on a real multi-cam deploy is explainable.
+        console.error('watch:cameras-load-failed', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const selectCamera = useCallback((id: string) => {
+    setSelectedId(id)
+    try {
+      window.localStorage.setItem(_CAMERA_STORAGE_KEY, id)
+    } catch {
+      // Best-effort — the choice just won't survive reload.
+    }
+  }, [])
+
+  // A stored id that no longer exists in the registry (camera
+  // removed / renamed) falls back to the first camera.
+  const selectedCamera =
+    cameras?.find((c) => c.id === selectedId) ?? cameras?.[0] ?? null
+
+  return { cameras, selectedCamera, selectCamera }
+}
+
 function localMidnightTs(): number {
   const d = new Date()
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000
@@ -159,6 +229,12 @@ export function Watch() {
   const isLandscape = useIsLandscape()
   const nowMs = useTicker()
   const { events, quietSince, error, refetch: refetchTodayEvents } = useTodayEvents()
+  const { cameras, selectedCamera, selectCamera } = useCameras()
+  // Multicam contract: the switcher + per-event camera labels only
+  // exist when a second camera is configured. With one camera this
+  // page renders EXACTLY as before (the acceptance bar).
+  const multiCam = (cameras?.length ?? 0) > 1
+  const streamPath = selectedCamera?.path ?? DEFAULT_CAMERA_PATH
 
   const [full, setFull] = useState(false)
   // Fullscreen chrome auto-hide (fullscreen contract item 4): controls
@@ -215,7 +291,12 @@ export function Watch() {
   const streamStaleSeconds = status?.seconds_since_last_frame ?? null
   const lowMemory = status?.worker_metrics?.gear === 'low-memory'
   const thermal = status?.worker_metrics?.gear === 'thermal-throttled'
-  const cameraLabel = status?.camera_label ?? _DEFAULT_CAMERA_LABEL
+  // Multicam: the registry name for the SELECTED camera wins when
+  // more than one camera exists; single-camera keeps the iter-313
+  // status-inlined label byte-for-byte.
+  const cameraLabel = multiCam
+    ? selectedCamera?.name ?? _DEFAULT_CAMERA_LABEL
+    : status?.camera_label ?? _DEFAULT_CAMERA_LABEL
 
   // Overhaul W1 item 2 (one state vocabulary): the three-state truth
   // model (status-confirmed down / status unknown with video-truth
@@ -677,11 +758,26 @@ export function Watch() {
           internal right-pane scroll degrades to page-level scroll in
           that edge case, which is acceptable). */}
       {/* ============ PAGE HEADER ============ */}
-      <header className="px-4 pt-4 pb-1 flex items-center justify-between gap-3 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:px-3 landscape-phone:pt-2 landscape-phone:pb-1 lg:col-span-2 lg:row-start-1 lg:px-6">
-        <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
-          Home
-        </h1>
-        <BrandMarkRow size={28} />
+      <header className="px-4 pt-4 pb-1 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:px-3 landscape-phone:pt-2 landscape-phone:pb-1 lg:col-span-2 lg:row-start-1 lg:px-6">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
+            Home
+          </h1>
+          <BrandMarkRow size={28} />
+        </div>
+        {/* Multicam contract (2026-07-07): camera switcher — renders
+            ONLY when a second camera is configured. Same pill/
+            radiogroup grammar + roving tabindex as the Events chip
+            rows; selection drives the WHEP path and the camera-name
+            pill and persists to localStorage. Single-camera deploys
+            never see this row. */}
+        {multiCam && cameras && (
+          <CameraSwitcher
+            cameras={cameras}
+            selectedId={selectedCamera?.id ?? null}
+            onSelect={selectCamera}
+          />
+        )}
       </header>
 
       {/* ============ LIVE VIEWPORT (docked ↔ full-bleed) ============ */}
@@ -735,6 +831,11 @@ export function Watch() {
               the touch arbiter above — identity in docked mode. */}
           <div ref={zoomLayerRef} className="absolute inset-0 will-change-transform">
           <VideoTile
+            // Multicam contract: the selected camera's MediaMTX base
+            // path. Defaults to 'cam' (single-camera registry
+            // default), so with one camera the composed WHEP URL is
+            // byte-identical to before.
+            streamPath={streamPath}
             detectionActive={detectionActive}
             workerAlive={workerAlive}
             lowMemory={lowMemory}
@@ -1284,6 +1385,73 @@ function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
           ● LIVE
         </span>
       </div>
+    </div>
+  )
+}
+
+/* ================= Camera switcher (multicam) ================= */
+
+/**
+ * Multicam contract (docs/multicam_contract.md, 2026-07-07): pill
+ * radiogroup for picking which camera the live viewport shows. Only
+ * rendered when cameras.length > 1. Same accessible grammar as the
+ * Events filter chips: role="radiogroup" + roving tabindex (only the
+ * selected pill is in the Tab order; arrow keys move within), 44px
+ * touch targets, ink-fill selected state (Playroom pill grammar).
+ */
+function CameraSwitcher({
+  cameras,
+  selectedId,
+  onSelect,
+}: {
+  cameras: Camera[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([])
+  const idx = cameras.findIndex((c) => c.id === selectedId)
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Switch camera"
+      tabIndex={-1}
+      className="mt-2 flex gap-2 -mx-1 px-1 min-h-[44px] items-center overflow-x-auto overscroll-x-contain scrollbar-hide"
+      onKeyDown={(e) => {
+        if (idx === -1) return
+        const next = nextRovingIndex(e.key, idx, cameras.length)
+        if (next === null) return
+        e.preventDefault()
+        onSelect(cameras[next].id)
+        // Focus after the tabIndex flip lands (same rAF pattern as
+        // the Events ChipRadiogroup / iter-335 ClipModal).
+        requestAnimationFrame(() => {
+          refs.current[next]?.focus()
+        })
+      }}
+    >
+      {cameras.map((c, i) => {
+        const active = c.id === selectedId
+        return (
+          <button
+            key={c.id}
+            ref={(el) => {
+              refs.current[i] = el
+            }}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onSelect(c.id)}
+            className={`inline-flex items-center gap-1.5 min-h-[44px] px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors border focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 flex-shrink-0 ${
+              active
+                ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] border-[var(--color-ink)]'
+                : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
+            }`}
+          >
+            {c.name}
+          </button>
+        )
+      })}
     </div>
   )
 }

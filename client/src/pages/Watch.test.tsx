@@ -9,6 +9,11 @@ import type { DetectionEvent } from '../lib/types'
 const searchEvents = vi.fn()
 const captureSnapshot = vi.fn()
 const getStatusM = vi.fn()
+// Multicam contract (2026-07-07): Watch now fetches the camera
+// registry once on mount. Defaults to the single-camera registry in
+// beforeEach so every pre-multicam test renders exactly as before
+// (no switcher); the multicam tests override.
+const getCamerasM = vi.fn()
 
 vi.mock('../lib/api', () => {
   // Defined inside the factory — vi.mock hoists above imports, so a
@@ -24,6 +29,7 @@ vi.mock('../lib/api', () => {
     searchEvents: (...a: unknown[]) => searchEvents(...a),
     captureSnapshot: (...a: unknown[]) => captureSnapshot(...a),
     getStatus: (...a: unknown[]) => getStatusM(...a),
+    getCameras: (...a: unknown[]) => getCamerasM(...a),
     HttpError,
   }
 })
@@ -40,17 +46,20 @@ vi.mock('../components/VideoTile', () => ({
     onPlayingChange,
     actions,
     showFullscreenButton,
+    streamPath,
   }: {
     fit?: string
     showStatusPill?: boolean
     onPlayingChange?: (playing: boolean) => void
     actions?: ReactNode
     showFullscreenButton?: boolean
+    streamPath?: string
   }) => (
     <div
       data-testid="video-tile-stub"
       data-fit={fit}
       data-show-status-pill={String(showStatusPill)}
+      data-stream-path={streamPath}
     >
       {/* Status-truth fix test hooks: the real VideoTile fires
           onPlayingChange on confirmed 'live'/'error' transitions —
@@ -93,6 +102,7 @@ vi.mock('../components/SnapshotPreview', () => ({
 }))
 
 import { ToastProvider } from '../lib/toast'
+import { registerCameraNames } from '../lib/eventLabel'
 import { Watch } from './Watch'
 
 const HEALTHY = {
@@ -136,6 +146,14 @@ beforeEach(() => {
   vi.clearAllMocks()
   getStatusM.mockResolvedValue(HEALTHY)
   searchEvents.mockResolvedValue({ items: [], next_cursor: null })
+  // Multicam: single-camera registry default so pre-multicam tests
+  // render exactly as before; the eventLabel registry + persisted
+  // selection are module/storage state — reset for order-independence.
+  getCamerasM.mockResolvedValue({
+    cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
+  })
+  registerCameraNames([])
+  window.localStorage.removeItem('homecam:cameraId')
 })
 
 describe('Watch — Home screen (Playroom Modern)', () => {
@@ -766,5 +784,95 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(exit.className).toMatch(/w-11/)
     expect(exit.className).toMatch(/h-11/)
     expect(exit.className).not.toMatch(/w-9/)
+  })
+
+  // Multicam contract (docs/multicam_contract.md, 2026-07-07): with
+  // ONE camera this page renders exactly as before — no switcher.
+  // With more, a pill radiogroup drives the WHEP path + name pill and
+  // the choice persists to localStorage.
+
+  it('Given the default single-camera registry, When Watch renders, Then no camera switcher appears and the WHEP path stays the default cam (multicam contract)', async () => {
+    // arrange / act — beforeEach already seeds the one-camera registry.
+    renderWatch()
+
+    // assert — the stream path settles on the default…
+    await waitFor(() =>
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute(
+        'data-stream-path',
+        'cam',
+      ),
+    )
+    // …and no switcher radiogroup is in the DOM.
+    expect(
+      screen.queryByRole('radiogroup', { name: 'Switch camera' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('Given two registered cameras, When one is selected, Then the switcher drives the WHEP path and the camera-name pill and persists the choice (multicam contract)', async () => {
+    // arrange
+    getCamerasM.mockResolvedValue({
+      cameras: [
+        { id: 'front_door', name: 'Front Door', path: 'cam' },
+        { id: 'back_yard', name: 'Back Yard', path: 'garage' },
+      ],
+    })
+    const user = userEvent.setup()
+    try {
+      // act
+      renderWatch()
+
+      // assert — the switcher renders with both cameras as radios.
+      const group = await screen.findByRole('radiogroup', { name: 'Switch camera' })
+      expect(group).toBeInTheDocument()
+      expect(screen.getByRole('radio', { name: 'Front Door' })).toBeChecked()
+      expect(screen.getByRole('radio', { name: 'Back Yard' })).not.toBeChecked()
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute(
+        'data-stream-path',
+        'cam',
+      )
+
+      // act — pick the second camera.
+      await user.click(screen.getByRole('radio', { name: 'Back Yard' }))
+
+      // assert — WHEP path follows the registry `path`, the name pill
+      // shows the selected camera, and the choice is persisted.
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute(
+        'data-stream-path',
+        'garage',
+      )
+      expect(screen.getByRole('radio', { name: 'Back Yard' })).toBeChecked()
+      // Name pill: "Back Yard" now appears both as the pill and the
+      // selected radio — assert the pill copy exists beyond the radio.
+      expect(screen.getAllByText('Back Yard').length).toBeGreaterThanOrEqual(2)
+      expect(window.localStorage.getItem('homecam:cameraId')).toBe('back_yard')
+    } finally {
+      registerCameraNames([])
+    }
+  })
+
+  it('Given a persisted camera choice, When Watch mounts, Then the stored camera is pre-selected (multicam contract)', async () => {
+    // arrange
+    getCamerasM.mockResolvedValue({
+      cameras: [
+        { id: 'front_door', name: 'Front Door', path: 'cam' },
+        { id: 'back_yard', name: 'Back Yard', path: 'garage' },
+      ],
+    })
+    window.localStorage.setItem('homecam:cameraId', 'back_yard')
+    try {
+      // act
+      renderWatch()
+
+      // assert
+      expect(
+        await screen.findByRole('radio', { name: 'Back Yard' }),
+      ).toBeChecked()
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute(
+        'data-stream-path',
+        'garage',
+      )
+    } finally {
+      registerCameraNames([])
+    }
   })
 })

@@ -148,6 +148,21 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getStatus = (init?: RequestInit) =>
   req<ServerStatus>('/api/status', init)
+
+// Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+// server-owned camera registry. One entry by default
+// ({id: front_door, name: Front Door, path: cam}); a second camera is
+// a config entry (HOMECAM_CAMERAS env), not a rewrite. `path` is the
+// MediaMTX base path the client's streamQuality tiers derive from
+// (`cam` / `cam_lq` / `cam_uq`). Auth-gated route; mirrors
+// server/app/routes/cameras.py (wire-contract-sync rule).
+export type Camera = {
+  id: string
+  name: string
+  path: string
+}
+export const getCameras = () =>
+  req<{ cameras: Camera[] }>('/api/cameras')
 export const fetchEvents = (limit = 100) =>
   req<DetectionEvent[]>(`/api/events?limit=${limit}`)
 
@@ -181,6 +196,13 @@ export async function fetchEventTracks(
 // previous page. Returns `{items, next_cursor}` — `next_cursor` is
 // null on the last page so the caller knows to stop.
 export type EventSearchFilters = {
+  /**
+   * Multicam contract (2026-07-07): the blessed camera filter — a
+   * registry id from `getCameras()`. The server keeps the legacy
+   * `camera_id` param for back-compat and lets `camera` win when
+   * both arrive; new callers should use this one.
+   */
+  camera?: string
   camera_id?: string
   person_name?: string
   label?: string
@@ -203,6 +225,7 @@ export type EventSearchResult = {
 }
 export const searchEvents = (filters: EventSearchFilters = {}) => {
   const params = new URLSearchParams()
+  if (filters.camera) params.set('camera', filters.camera)
   if (filters.camera_id) params.set('camera_id', filters.camera_id)
   if (filters.person_name) params.set('person_name', filters.person_name)
   if (filters.label) params.set('label', filters.label)

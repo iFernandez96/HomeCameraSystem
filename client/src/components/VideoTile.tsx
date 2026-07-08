@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { drawBoxes } from '../lib/drawBoxes'
 import { log, errFields } from '../lib/log'
 import {
+  DEFAULT_CAMERA_PATH,
   getStreamQuality,
   pathForQuality,
   setStreamQuality,
@@ -34,6 +35,7 @@ export function VideoTile({
   showFullscreenButton = true,
   safeAreaBottom = false,
   dimControls = false,
+  streamPath = DEFAULT_CAMERA_PATH,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -154,6 +156,17 @@ export function VideoTile({
    * controls can't eat taps.
    */
   dimControls?: boolean
+  /**
+   * Multicam contract (docs/multicam_contract.md, 2026-07-07): the
+   * selected camera's MediaMTX base path from the registry
+   * (`Camera.path`). The quality tiers derive their rungs from it
+   * (`<path>` / `<path>_lq` / `<path>_uq`). Defaults to `cam` — the
+   * single-camera registry default — so every existing consumer
+   * composes byte-identical URLs. Changing it recomputes
+   * `effectiveSrc`, which re-runs the connect effect (same teardown/
+   * reconnect path a quality switch uses).
+   */
+  streamPath?: string
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -211,7 +224,7 @@ export function VideoTile({
   const [quality, setQuality] = useState<StreamQuality>(() => getStreamQuality())
   // `src` override (tests / future multi-cam wiring) wins; otherwise the
   // tile composes its own URL from the chosen quality.
-  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(quality))
+  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(quality, undefined, streamPath))
   // Keep the latest quality in a ref so the connect effect can LOG it
   // without taking it as a reactive dependency. The effect re-runs on
   // `effectiveSrc` (which already changes in lockstep with quality in the

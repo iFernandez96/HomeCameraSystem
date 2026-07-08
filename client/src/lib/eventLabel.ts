@@ -80,11 +80,43 @@ export function recognizedNames(e: DetectionEvent): string[] {
   return []
 }
 
+/**
+ * Multicam contract (docs/multicam_contract.md, 2026-07-07):
+ * registry-driven camera display names. Pages that fetch
+ * `getCameras()` call `registerCameraNames` with the result;
+ * `humanCameraName` then resolves ids through the registry FIRST.
+ * The map is only populated when MORE THAN ONE camera is configured
+ * — with a single camera the map stays empty and every label below
+ * renders exactly as it did pre-multicam (the acceptance bar).
+ * Module-level on purpose: eventTitle is called deep inside
+ * EventList/ClipModal render paths and threading a name map through
+ * every row component would touch a dozen prop chains for a value
+ * that is global to the deployment.
+ */
+let _cameraNames: Record<string, string> = {}
+
+export function registerCameraNames(
+  cameras: Array<{ id: string; name: string }>,
+): void {
+  if (cameras.length > 1) {
+    const next: Record<string, string> = {}
+    for (const c of cameras) next[c.id] = c.name
+    _cameraNames = next
+  } else {
+    // Single camera (or none): keep pre-multicam copy byte-identical.
+    _cameraNames = {}
+  }
+}
+
 /** Translate the internal camera_id to a friendlier label.
- * `cam1` → "the front door" by convention (single-camera default).
- * Multi-cam deploys can map ids to names in a future iter. */
+ * Registry names (multi-camera deploys) win; otherwise `cam1` /
+ * `front_door` → "the front door" by convention (the single-camera
+ * default ids — `front_door` is the multicam-contract registry
+ * default, `cam1` the legacy worker default). */
 export function humanCameraName(cameraId: string): string {
-  if (cameraId === 'cam1') return 'the front door'
+  const registered = _cameraNames[cameraId]
+  if (registered) return registered
+  if (cameraId === 'cam1' || cameraId === 'front_door') return 'the front door'
   return cameraId
 }
 

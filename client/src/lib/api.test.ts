@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   captureSnapshot,
   fetchEvents,
+  getCameras,
   getDetectionConfig,
   getEventCountsByDay,
   getMe,
@@ -392,6 +393,62 @@ describe('lib/api', () => {
     const r = await searchEvents({ limit: 1 })
     expect(r.items).toHaveLength(1)
     expect(r.next_cursor).toBe(100)
+  })
+
+  // Multicam contract (docs/multicam_contract.md, 2026-07-07) —
+  // wire-contract-sync mirrors of server/tests/test_cameras.py +
+  // test_events.py.
+
+  it('Given the camera registry route, When getCameras is called, Then it GETs /api/cameras and returns the {cameras: [{id,name,path}]} shape (multicam contract)', async () => {
+    // arrange — the server's default single-camera registry.
+    mockJson({
+      cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
+    })
+
+    // act
+    const r = await getCameras()
+
+    // assert — pins the exact wire fields the UI consumes.
+    expect(asMock()).toHaveBeenCalledWith('/api/cameras', expect.any(Object))
+    expect(asMock().mock.calls[0][1].method).toBeUndefined()
+    expect(r.cameras).toHaveLength(1)
+    expect(r.cameras[0]).toEqual({
+      id: 'front_door',
+      name: 'Front Door',
+      path: 'cam',
+    })
+  })
+
+  it('Given a camera filter, When searchEvents is called, Then it forwards the blessed camera= query param (multicam contract)', async () => {
+    // arrange
+    mockJson({ items: [], next_cursor: null })
+
+    // act
+    await searchEvents({ camera: 'back_yard' })
+
+    // assert
+    expect(asMock().mock.calls[0][0] as string).toContain('camera=back_yard')
+  })
+
+  it('Given an event row from the server, When searchEvents resolves, Then the item carries camera_id (multicam contract)', async () => {
+    // arrange — camera_id is NOT optional on the wire; the server
+    // defaults it to front_door and always emits it.
+    mockJson({
+      items: [
+        {
+          v: 1, type: 'detection', id: 'a',
+          ts: 100, camera_id: 'front_door',
+          label: 'person', score: 0.9, boxes: [],
+        },
+      ],
+      next_cursor: null,
+    })
+
+    // act
+    const r = await searchEvents({ limit: 1 })
+
+    // assert
+    expect(r.items[0].camera_id).toBe('front_door')
   })
 
   it('getEventCountsByDay GETs /api/events/count_by_day (iter-223)', async () => {
