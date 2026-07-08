@@ -70,7 +70,8 @@ class PresenceTracker(object):
         # last_emit_by_key cap). label-vocab x camera-count is small in
         # practice (single camera, ~10 wanted classes).
         self._max_keys = max_keys
-        # key -> {"box", "last_seen", "clip_ends_at", "last_emit"}
+        # key -> {"box", "last_seen", "clip_ends_at", "last_emit",
+        #         "suppress_ledgered"}
         self._presence = {}
 
     def should_emit(self, key, box, now, clip_duration_s, presence_gap_s,
@@ -88,9 +89,26 @@ class PresenceTracker(object):
         ``min_gap_s``      : floor between emits for one key (the old cooldown)
                              so distinct subjects can't ping-pong-spam.
         """
+        emit, _decision = self.should_emit_with_decision(
+            key, box, now, clip_duration_s, presence_gap_s, min_gap_s,
+        )
+        return emit
+
+    def should_emit_with_decision(self, key, box, now, clip_duration_s,
+                                  presence_gap_s, min_gap_s):
+        """Like ``should_emit`` but also returns a transition descriptor.
+
+        The descriptor is for low-rate observability only. ``ledger`` is True
+        on transitions worth recording and False for continuing per-frame
+        suppressions.
+        """
         p = self._presence.get(key)
+        gap_lapsed = False
+        gap_iou = None
         # Presence lapsed (subject gone longer than the gap) -> brand-new visit.
         if p is not None and (now - p["last_seen"]) > presence_gap_s:
+            gap_lapsed = True
+            gap_iou = bbox_iou(box, p["box"])
             p = None
         if p is None:
             self._prune(now, presence_gap_s)
@@ -99,26 +117,55 @@ class PresenceTracker(object):
                 "last_seen": now,
                 "clip_ends_at": now + clip_duration_s,
                 "last_emit": now,
+                "suppress_ledgered": False,
             }
-            return True
-        same_subject = bbox_iou(box, p["box"]) >= self._iou_threshold
+            reason = "gap-new-visit" if gap_lapsed else "emit"
+            return (True, {
+                "ledger": True,
+                "transition": reason,
+                "reason": reason,
+                "iou": gap_iou,
+                "key": key,
+            })
+        iou = bbox_iou(box, p["box"])
+        same_subject = iou >= self._iou_threshold
         p["last_seen"] = now
         p["box"] = box
         emit = False
+        transition = "suppress-first-only"
+        reason = "suppress"
+        ledger = False
         if not same_subject:
             # A different / relocated subject under the same (label, camera).
             # Emit a fresh event, but never faster than the floor.
             if (now - p["last_emit"]) >= min_gap_s:
                 emit = True
+                transition = "emit"
+                reason = "emit"
+                ledger = True
         elif now >= p["clip_ends_at"]:
             # Same subject, but its clip has finished recording — start the
             # next segment so a long linger stays covered (and the segments
             # tile back-to-back without overlap).
             emit = True
+            transition = "re-arm"
+            reason = "re-arm"
+            ledger = True
+        elif not p.get("suppress_ledgered"):
+            ledger = True
         if emit:
             p["clip_ends_at"] = now + clip_duration_s
             p["last_emit"] = now
-        return emit
+            p["suppress_ledgered"] = False
+        elif ledger:
+            p["suppress_ledgered"] = True
+        return (emit, {
+            "ledger": ledger,
+            "transition": transition,
+            "reason": reason,
+            "iou": iou,
+            "key": key,
+        })
 
     def _prune(self, now, presence_gap_s):
         """Drop lapsed presences and hard-cap the dict size."""

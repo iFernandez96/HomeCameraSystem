@@ -7,6 +7,8 @@ import socket
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import sdnotify  # noqa: E402
@@ -34,7 +36,11 @@ def test_given_a_notify_socket_then_ready_and_watchdog_datagrams_are_sent(
     # arrange — a real datagram socket standing in for systemd's.
     sock_path = str(tmp_path / "notify.sock")
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    srv.bind(sock_path)
+    try:
+        srv.bind(sock_path)
+    except PermissionError as e:
+        srv.close()
+        pytest.skip("AF_UNIX datagram bind not permitted here: {}".format(e))
     srv.settimeout(2.0)
     monkeypatch.setenv("NOTIFY_SOCKET", sock_path)
     _reset()

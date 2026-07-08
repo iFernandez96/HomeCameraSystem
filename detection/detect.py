@@ -182,6 +182,7 @@ _PRESENCE_GAP_S = 20.0
 
 from box_norm import normalize_box  # noqa: E402
 import camera_ident  # noqa: E402  (multicam: DETECT_CAMERA_ID resolution)
+from decision_ledger import DecisionLedger  # noqa: E402
 from mediamtx_watchdog import (  # noqa: E402
     ACTION_REBOOT,
     ACTION_RESTART_MEDIAMTX,
@@ -874,6 +875,7 @@ def escalate_argus_recovery():
 # reboot didn't clear the wedge, we must NOT reboot again immediately.
 _WATCHDOG_STATE = {}          # type: ignore[var-annotated]
 _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_state.json
+_DECISION_LEDGER = None       # set in main() to <recordings_dir>/decision.jsonl
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
 # capture-failure handler reads it to finalize any open visit at last_seen
@@ -937,6 +939,13 @@ def _persist_watchdog_level(watchdog):
     _WATCHDOG_STATE["level"] = snap["level"]
     _WATCHDOG_STATE["last_action_at"] = snap["last_action_at"]
     _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
+
+
+def _ledger_append(tag, fields):
+    ledger = _DECISION_LEDGER
+    if ledger is None:
+        return False
+    return ledger.append(tag, fields)
 
 
 def _clear_watchdog_escalation():
@@ -1219,8 +1228,17 @@ def _handle_capture_failure(
             flush=True,
         )
     now = time.time()
+    prev_level = mediamtx_watchdog.level
     action = mediamtx_watchdog.next_action(now)
     if action is not None:
+        _ledger_append("watchdog", {
+            "transition": "ladder-climb",
+            "action": action,
+            "level_from": prev_level,
+            "level_to": mediamtx_watchdog.level,
+            "failures": consecutive_failures,
+            "watchdog_fail_threshold": mediamtx_watchdog.fail_threshold,
+        })
         # The watchdog chose a recovery rung (mediamtx -> nvargus -> reboot).
         # Capture diagnostics FIRST (the wedge's root cause is still unknown),
         # then execute, then persist the new escalation level so a systemd
@@ -1312,6 +1330,21 @@ def gear_transition(prev_gear, new_gear):
     return (True, msg)
 
 
+def _env_int(name, default):
+    return _env(name, default, int)
+
+
+def _detection_box_for_flight(det, label):
+    return {
+        "label": label,
+        "score": float(det.Confidence),
+        "x1": float(det.Left),
+        "y1": float(det.Top),
+        "x2": float(det.Right),
+        "y2": float(det.Bottom),
+    }
+
+
 def main():
     # First thing: install the root logging handler so every leaf-lib
     # `log.warning(...)` (recognizer / detector / *_guard / watchdog) and
@@ -1378,6 +1411,21 @@ def main():
     recordings_dir = _env(
         "RECORDINGS_DIR", "/home/israel/HomeCameraSystem/recordings"
     )
+    ledger_max_bytes = _env("DETECT_LEDGER_MAX_BYTES", 10 * 1024 * 1024, int)
+    flight_sample_n = _env_int("DETECT_FLIGHT_SAMPLE_N", 10)
+    global _DECISION_LEDGER
+    if recordings_dir:
+        _DECISION_LEDGER = DecisionLedger(
+            os.path.join(str(recordings_dir), "decision.jsonl"),
+            max_bytes=ledger_max_bytes,
+        )
+        flight_ledger = DecisionLedger(
+            os.path.join(str(recordings_dir), "flight.jsonl"),
+            max_bytes=ledger_max_bytes,
+        )
+    else:
+        _DECISION_LEDGER = None
+        flight_ledger = None
     # iter-352 (face-capture-for-retraining, Phase 2): worker writes
     # face crops into this dir via face_recog/recognizer.py +
     # face_recog/capture.py. Container server reads via the auth-
@@ -1659,6 +1707,12 @@ def main():
         should_log, msg = gear_transition(gear_state["prev"], new_gear)
         if should_log:
             log.info("%s", msg)
+            _ledger_append("gear", {
+                "transition": "gear",
+                "from": gear_state["prev"],
+                "to": new_gear,
+                "reason": _GEAR_REASON.get(new_gear, ""),
+            })
             gear_state["prev"] = new_gear
 
     # Throttle state for the in-loop INFO/WARN lines that would
@@ -1779,6 +1833,11 @@ def main():
         if mediamtx_watchdog.on_capture_ok():
             # Recovered from an escalated state — reset the PERSISTED ladder so
             # the next incident starts cheap (mediamtx restart), not mid-ladder.
+            _ledger_append("watchdog", {
+                "transition": "recovered",
+                "level_to": 0,
+                "reason": "capture-ok",
+            })
             _clear_watchdog_escalation()
         # iter-302: timestamp of the most recent real frame. The
         # heartbeat thread forwards this; server derives
@@ -1973,6 +2032,23 @@ def main():
         # ring buffer so the heartbeat snapshot can report both.
         metrics.record_infer_ms((time.time() - infer_t0) * 1000.0)
         metrics.inferences += 1
+        if (
+            flight_ledger is not None
+            and flight_sample_n > 0
+            and metrics.inferences % flight_sample_n == 0
+        ):
+            flight_boxes = []
+            for fd in detections:
+                try:
+                    flabel = net.GetClassDesc(fd.ClassID).lower()
+                except Exception:
+                    flabel = str(fd.ClassID)
+                flight_boxes.append(_detection_box_for_flight(fd, flabel))
+            flight_ledger.append("flight", {
+                "frame": metrics.frames,
+                "inference": metrics.inferences,
+                "boxes": flight_boxes,
+            })
         # detectNet runs at a low floor; gate on the user's chosen threshold
         # post-inference so the slider in Settings is live. Per-class filter
         # uses jetson-inference's GetClassDesc(class_id) so we match on the
@@ -2149,10 +2225,19 @@ def main():
         clip_duration_s = max(
             runtime.clip_pre_roll_s + runtime.clip_post_roll_s, cooldown_now
         )
-        if not presence_tracker.should_emit(
+        should_emit, presence_decision = presence_tracker.should_emit_with_decision(
             emit_key, top_box, now, clip_duration_s,
             _PRESENCE_GAP_S, cooldown_now,
-        ):
+        )
+        if presence_decision.get("ledger"):
+            _ledger_append("presence", {
+                "transition": presence_decision.get("transition"),
+                "key": emit_key,
+                "reason": presence_decision.get("reason"),
+                "iou": presence_decision.get("iou"),
+                "emit": bool(should_emit),
+            })
+        if not should_emit:
             # iter-172 cudaImage release symmetry — release the dmabuf promptly
             # so jetson-utils can recycle it; matches every other early-continue.
             del img

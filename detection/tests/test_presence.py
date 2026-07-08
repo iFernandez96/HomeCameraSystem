@@ -56,6 +56,41 @@ def test_given_first_detection_when_should_emit_then_true():
     assert _emit(t, (0, 0, 100, 200), now=1000.0) is True
 
 
+def test_decision_ledgers_first_suppress_only_once_per_presence():
+    t = PresenceTracker()
+    key = "person:cam1"
+    box = (0, 0, 50, 100)
+
+    emit, decision = t.should_emit_with_decision(
+        key, box, 1000.0, CLIP, 200.0, FLOOR,
+    )
+    assert emit is True
+    assert decision["ledger"] is True
+    assert decision["transition"] == "emit"
+
+    emit, decision = t.should_emit_with_decision(
+        key, box, 1001.0, CLIP, 200.0, FLOOR,
+    )
+    assert emit is False
+    assert decision["ledger"] is True
+    assert decision["transition"] == "suppress-first-only"
+    assert decision["reason"] == "suppress"
+    assert decision["iou"] == 1.0
+
+    emit, decision = t.should_emit_with_decision(
+        key, box, 1002.0, CLIP, 200.0, FLOOR,
+    )
+    assert emit is False
+    assert decision["ledger"] is False
+
+    emit, decision = t.should_emit_with_decision(
+        key, box, 1000.0 + CLIP + 1.0, CLIP, 200.0, FLOOR,
+    )
+    assert emit is True
+    assert decision["ledger"] is True
+    assert decision["transition"] == "re-arm"
+
+
 def test_given_same_subject_lingering_within_clip_then_suppressed():
     """THE fix: a stationary subject re-detected every 5 s while its clip is
     still recording emits ONCE, not every cooldown."""
