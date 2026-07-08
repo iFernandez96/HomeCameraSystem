@@ -17,6 +17,11 @@ services:
     image: homecam-server:latest
     container_name: homecam-server
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     # Memory caps (iter-167). The Jetson Nano 2GB has ~2 GB total RAM, of
     # which `nvargus-daemon`, MediaMTX, the detection worker, and TensorRT
     # already eat ~1.4–1.7 GB in steady state. A leak in this container
