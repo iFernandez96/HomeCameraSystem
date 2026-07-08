@@ -303,8 +303,22 @@ export const triggerBackup = () =>
 // traversal defense lives on the server (regex + Path.resolve()
 // .relative_to()); client passes the bare filename. Returns the
 // echoed `backup_path` for confirmation.
+export type RestoreStatus =
+  | 'no_backups'
+  | 'invalid_backup'
+  | 'incompatible'
+  | 'dry_run_failed'
+  | 'dry_run_only'
+  | 'restored'
+  | 'rolled_back'
+
 export const triggerRestore = (backupPath: string) =>
-  req<{ ok: boolean; note?: string; backup_path: string }>(
+  req<{
+    ok: boolean
+    note?: string
+    status?: RestoreStatus
+    backup_path: string
+  }>(
     '/api/system/restore',
     {
       method: 'POST',
@@ -328,8 +342,18 @@ export const listBackups = () =>
 // owner-only POST that returns `note` while the host-helper is
 // stubbed (slice 4, operator-side). Three plausible host-helper
 // designs documented in iter-230 route comment + feature_12_state.
+export type UpdateStatus =
+  | 'unavailable'
+  | 'blocked'
+  | 'staged'
+  | 'applied'
+  | 'rolled_back'
+
 export const triggerUpdate = () =>
-  req<{ ok: boolean; note?: string }>('/api/system/update', { method: 'POST' })
+  req<{ ok: boolean; note?: string; status?: UpdateStatus }>(
+    '/api/system/update',
+    { method: 'POST' },
+  )
 // iter-234 (Feature #12 OTA slice 3b): hand-bumped server version
 // string from the iter-232 GET route. Auth-gated (any role) —
 // informational, not destructive. Used by the Settings UI to show

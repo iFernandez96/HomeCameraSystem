@@ -1383,6 +1383,79 @@ describe('Settings page', () => {
     )
   })
 
+  it.each([
+    {
+      status: 'unavailable',
+      message: /isn't set up yet/i,
+      variant: 'info',
+    },
+    {
+      status: 'blocked',
+      message: /blocked right now/i,
+      variant: 'error',
+    },
+    {
+      status: 'staged',
+      message: /staged, but it has not been applied yet/i,
+      variant: 'info',
+    },
+    {
+      status: 'applied',
+      message: /update applied/i,
+      variant: 'success',
+    },
+    {
+      status: 'rolled_back',
+      message: /rolled back/i,
+      variant: 'error',
+    },
+  ])(
+    'update maps future status "$status" to honest toast copy (U16)',
+    async ({ status, message, variant }) => {
+      confirmFn.mockReset().mockResolvedValue(true)
+      triggerUpdate.mockResolvedValue({ ok: true, status })
+      const user = userEvent.setup()
+      render(<Settings />)
+      await user.click(
+        screen.getByRole('button', { name: /install camera updates/i }),
+      )
+      await waitFor(() => expect(triggerUpdate).toHaveBeenCalledTimes(1))
+      await waitFor(() =>
+        expect(showToast).toHaveBeenCalledWith(
+          expect.stringMatching(message),
+          variant,
+        ),
+      )
+      if (status !== 'applied') {
+        expect(showToast).not.toHaveBeenCalledWith(
+          expect.any(String),
+          'success',
+        )
+      }
+    },
+  )
+
+  it('update note wins over a future status while the endpoint is scaffolded (U16)', async () => {
+    confirmFn.mockReset().mockResolvedValue(true)
+    triggerUpdate.mockResolvedValue({
+      ok: true,
+      note: 'scaffold: update is stubbed',
+      status: 'applied',
+    })
+    const user = userEvent.setup()
+    render(<Settings />)
+    await user.click(
+      screen.getByRole('button', { name: /install camera updates/i }),
+    )
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringMatching(/isn't set up yet/i),
+        'info',
+      ),
+    )
+    expect(showToast).not.toHaveBeenCalledWith(expect.any(String), 'success')
+  })
+
   it('update toasts an error when triggerUpdate rejects (iter-231)', async () => {
     confirmFn.mockReset().mockResolvedValue(true)
     triggerUpdate.mockRejectedValue(new Error('boom'))
@@ -1521,6 +1594,104 @@ describe('Settings page', () => {
         'info',
       ),
     )
+  })
+
+  it.each([
+    {
+      status: 'no_backups',
+      message: /no backups are available yet/i,
+      variant: 'info',
+    },
+    {
+      status: 'invalid_backup',
+      message: /not valid/i,
+      variant: 'error',
+    },
+    {
+      status: 'incompatible',
+      message: /does not match this camera box/i,
+      variant: 'error',
+    },
+    {
+      status: 'dry_run_failed',
+      message: /check failed/i,
+      variant: 'error',
+    },
+    {
+      status: 'dry_run_only',
+      message: /check finished/i,
+      variant: 'info',
+    },
+    {
+      status: 'restored',
+      message: /restored from snap\.tar\.gz/i,
+      variant: 'success',
+    },
+    {
+      status: 'rolled_back',
+      message: /rolled back/i,
+      variant: 'error',
+    },
+  ])(
+    'restore maps future status "$status" to honest toast copy (B19)',
+    async ({ status, message, variant }) => {
+      triggerRestore.mockResolvedValue({
+        ok: true,
+        status,
+        backup_path: 'snap.tar.gz',
+      })
+      confirmFn.mockReset().mockResolvedValue(true)
+      const user = userEvent.setup()
+      render(<Settings />)
+      await user.click(
+        await screen.findByRole('button', { name: /^restore from backup$/i }),
+      )
+      await screen.findByLabelText(/^backup file$/i)
+      await user.click(
+        screen.getByRole('button', { name: /^restore from backup$/i }),
+      )
+      await waitFor(() =>
+        expect(triggerRestore).toHaveBeenCalledWith('snap.tar.gz'),
+      )
+      await waitFor(() =>
+        expect(showToast).toHaveBeenCalledWith(
+          expect.stringMatching(message),
+          variant,
+        ),
+      )
+      if (status !== 'restored') {
+        expect(showToast).not.toHaveBeenCalledWith(
+          expect.any(String),
+          'success',
+        )
+      }
+    },
+  )
+
+  it('restore note wins over a future status while the endpoint is scaffolded (B19)', async () => {
+    triggerRestore.mockResolvedValue({
+      ok: true,
+      note: 'scaffold: restore is stubbed',
+      status: 'restored',
+      backup_path: 'snap.tar.gz',
+    })
+    confirmFn.mockReset().mockResolvedValue(true)
+    const user = userEvent.setup()
+    render(<Settings />)
+    await user.click(
+      await screen.findByRole('button', { name: /^restore from backup$/i }),
+    )
+    await screen.findByLabelText(/^backup file$/i)
+    await user.click(
+      screen.getByRole('button', { name: /^restore from backup$/i }),
+    )
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringMatching(/isn't set up yet/i),
+        'info',
+      ),
+    )
+    expect(showToast).not.toHaveBeenCalledWith(expect.any(String), 'success')
   })
 
   it('Submit cancelled by confirm dialog → no triggerRestore (iter-237)', async () => {

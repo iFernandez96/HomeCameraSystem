@@ -145,6 +145,7 @@ describe('lib/api', () => {
     const r = await triggerRestore('snap-2026-05-01.tar.gz')
     expect(r.ok).toBe(true)
     expect(r.backup_path).toBe('snap-2026-05-01.tar.gz')
+    expect(r.status).toBeUndefined()
     const call = asMock().mock.calls[0]
     expect(call[0]).toBe('/api/system/restore')
     expect(call[1].method).toBe('POST')
@@ -153,12 +154,34 @@ describe('lib/api', () => {
     })
   })
 
+  it('triggerRestore tolerates a future optional status field (B19)', async () => {
+    mockJson({
+      ok: true,
+      status: 'restored',
+      backup_path: 'snap-2026-05-01.tar.gz',
+    })
+    const r = await triggerRestore('snap-2026-05-01.tar.gz')
+    expect(r.status).toBe('restored')
+    expect(r.backup_path).toBe('snap-2026-05-01.tar.gz')
+  })
+
   it('triggerUpdate POSTs /api/system/update (iter-231)', async () => {
     // iter-231 (Feature #12 OTA slice 2): mirror of triggerBackup.
     mockJson({ ok: true, note: 'scaffold: update is stubbed' })
     const r = await triggerUpdate()
     expect(r.ok).toBe(true)
     expect(r.note).toMatch(/stub/i)
+    expect(r.status).toBeUndefined()
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/update',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('triggerUpdate tolerates a future optional status field (U16)', async () => {
+    mockJson({ ok: true, status: 'applied' })
+    const r = await triggerUpdate()
+    expect(r.status).toBe('applied')
     expect(asMock()).toHaveBeenCalledWith(
       '/api/system/update',
       expect.objectContaining({ method: 'POST' }),

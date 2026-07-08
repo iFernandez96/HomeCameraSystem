@@ -6,6 +6,8 @@ import {
   triggerRestore,
   triggerUpdate,
   type BackupItem,
+  type RestoreStatus,
+  type UpdateStatus,
 } from '../../lib/api'
 import { Button } from '../../components/primitives/Button'
 import { useConfirm } from '../../lib/confirm'
@@ -25,6 +27,98 @@ import { useReportError, useToast } from '../../lib/toast'
 // (CLAUDE.md "Stub-with-note pattern" sharp edge); the toast
 // surfaces an honest "isn't set up yet" message instead of a
 // fake green-checkmark success.
+
+function updateToastFor(
+  r: { note?: string; status?: UpdateStatus },
+): { message: string; variant: 'success' | 'info' | 'error' } {
+  if (r.note || r.status === 'unavailable') {
+    return {
+      message: "Update isn't set up yet on the camera box. Nothing was installed.",
+      variant: 'info',
+    }
+  }
+  if (r.status === 'blocked') {
+    return {
+      message: 'Update is blocked right now. Nothing was installed.',
+      variant: 'error',
+    }
+  }
+  if (r.status === 'staged') {
+    return {
+      message: 'Update is staged, but it has not been applied yet.',
+      variant: 'info',
+    }
+  }
+  if (r.status === 'rolled_back') {
+    return {
+      message: 'Update was rolled back. The camera box kept the previous version.',
+      variant: 'error',
+    }
+  }
+  if (r.status === 'applied') {
+    return { message: 'Update applied', variant: 'success' }
+  }
+  return { message: 'Update requested', variant: 'success' }
+}
+
+function restoreToastFor(r: {
+  note?: string
+  status?: RestoreStatus
+  backup_path?: string
+}): { message: string; variant: 'success' | 'info' | 'error' } {
+  if (r.note) {
+    return {
+      message: "Restore isn't set up yet on the camera box. Nothing was changed.",
+      variant: 'info',
+    }
+  }
+  if (r.status === 'no_backups') {
+    return {
+      message: 'No backups are available yet. Nothing was restored.',
+      variant: 'info',
+    }
+  }
+  if (r.status === 'invalid_backup') {
+    return {
+      message: 'That backup file is not valid. Nothing was restored.',
+      variant: 'error',
+    }
+  }
+  if (r.status === 'incompatible') {
+    return {
+      message: 'That backup does not match this camera box. Nothing was restored.',
+      variant: 'error',
+    }
+  }
+  if (r.status === 'dry_run_failed') {
+    return {
+      message: 'Restore check failed before anything changed.',
+      variant: 'error',
+    }
+  }
+  if (r.status === 'dry_run_only') {
+    return {
+      message: 'Restore check finished. Nothing was changed.',
+      variant: 'info',
+    }
+  }
+  if (r.status === 'rolled_back') {
+    return {
+      message: 'Restore was rolled back. The current settings were kept.',
+      variant: 'error',
+    }
+  }
+  if (r.status === 'restored') {
+    return {
+      message: `Restored from ${r.backup_path ?? 'backup'}`,
+      variant: 'success',
+    }
+  }
+  return {
+    message: `Restored from ${r.backup_path ?? 'backup'}`,
+    variant: 'success',
+  }
+}
 
 export function DangerZone() {
   const confirm = useConfirm()
@@ -138,14 +232,8 @@ export function DangerZone() {
     if (!ok) return
     try {
       const r = await triggerUpdate()
-      if (r.note) {
-        showToast(
-          "Update isn't set up yet on the camera box. Nothing was installed.",
-          'info',
-        )
-      } else {
-        showToast('Update requested', 'success')
-      }
+      const toast = updateToastFor(r)
+      showToast(toast.message, toast.variant)
     } catch (e) {
       reportError('dangerZone:update-failed', 'Update failed: ' + formatError(e), errFields(e))
     }
@@ -170,14 +258,8 @@ export function DangerZone() {
     setRestoreSubmitting(true)
     try {
       const r = await triggerRestore(path)
-      if (r.note) {
-        showToast(
-          "Restore isn't set up yet on the camera box. Nothing was changed.",
-          'info',
-        )
-      } else {
-        showToast(`Restored from ${r.backup_path}`, 'success')
-      }
+      const toast = restoreToastFor(r)
+      showToast(toast.message, toast.variant)
       // Close the form on any non-error completion (stubbed or real).
       setRestorePath(null)
     } catch (e) {
