@@ -30,10 +30,19 @@ def _save_image_stub(path, cuda_img, quality=None):
 
 # Mock the host-only Jetson SDK imports BEFORE importing detect.
 # detect.py imports these at module top, matching detection/tests/test_capture_recovery.py.
+# setdefault means ANOTHER harness's plain MagicMock may already be installed
+# (full-suite order), so behavior is patched per-test on detect.jetson_utils
+# below — never rely on which stub won the import race.
 sys.modules.setdefault("jetson_inference", MagicMock())
 sys.modules.setdefault("jetson_utils", MagicMock(saveImage=_save_image_stub))
 
 import detect  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _writing_save_image(monkeypatch):
+    monkeypatch.setattr(detect.jetson_utils, "saveImage", _save_image_stub)
 
 
 def _seed_file(path, payload, mtime):

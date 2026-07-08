@@ -34,6 +34,15 @@ sys.modules.setdefault("jetson_inference", MagicMock())
 sys.modules.setdefault("jetson_utils", MagicMock(saveImage=_save_image_stub))
 
 import detect  # noqa: E402
+import pytest  # noqa: E402
+
+
+# setdefault means ANOTHER harness's plain MagicMock may already own the
+# jetson_utils slot (full-suite order) — patch behavior per-test instead of
+# relying on which stub won the import race.
+@pytest.fixture(autouse=True)
+def _writing_save_image(monkeypatch):
+    monkeypatch.setattr(detect.jetson_utils, "saveImage", _save_image_stub)
 
 
 THUMB_URL_RE = re.compile(r"^/snapshots/thumb_[0-9]+\.jpg$")
