@@ -25,6 +25,9 @@ log = logging.getLogger(__name__)
 # default level) but gated to once/5min so a busy day doesn't flood.
 _no_key_skip_gate = RateLimitedLog(300.0)
 
+# Security-camera events should survive brief phone/network offline windows.
+_PUSH_TTL_S = 3600
+
 
 def _endpoint_host(endpoint: object) -> str:
     """Extract just the HOST of a push endpoint for logging.
@@ -501,6 +504,8 @@ class PushService:
                     data=body,
                     vapid_private_key=vapid_key,
                     vapid_claims={"sub": settings.vapid_subject},
+                    ttl=_PUSH_TTL_S,
+                    headers={"Urgency": "normal"},
                 )
                 return True, None, None
             except WebPushException as e:
