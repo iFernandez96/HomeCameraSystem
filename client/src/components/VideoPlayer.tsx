@@ -149,7 +149,7 @@ export function VideoPlayer({
             aria-label="Playback speed"
             value={rate}
             onChange={(e) => setRate(Number(e.target.value))}
-            className="min-h-[36px] rounded-lg bg-white/10 px-2 py-1 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)]"
+            className="min-h-[44px] rounded-lg bg-white/10 px-2 py-1 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)]"
           >
             {SPEED_RATES.map((r) => (
               <option key={r} value={r} className="text-black">
@@ -163,7 +163,7 @@ export function VideoPlayer({
           aria-pressed={loop}
           aria-label="Repeat"
           onClick={() => setLoop((l) => !l)}
-          className={`ml-auto inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] ${
+          className={`ml-auto inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] ${
             loop ? 'bg-white/20 text-white' : 'text-white/60 hover:text-white'
           }`}
         >

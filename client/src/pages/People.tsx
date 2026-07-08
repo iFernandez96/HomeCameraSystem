@@ -173,7 +173,12 @@ export function People() {
               the identity-color system so a first-time viewer isn't
               left guessing why every card carries a different hue. */}
           <h1 className="sr-only">Faces</h1>
-          <p className="font-display text-2xl font-bold text-[var(--color-text-primary)] tracking-tight" aria-hidden="true">
+          {/* UI/UX overhaul 2026-07-07 (Mira #3): aligned to the
+              .page-title treatment Home uses (Bricolage 800 weight,
+              -0.03em tracking) so all visible page titles match —
+              this one was font-bold (700) + tracking-tight and read
+              visibly lighter next to Home. */}
+          <p className="page-title text-2xl text-[var(--color-text-primary)]" aria-hidden="true">
             Faces
           </p>
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">

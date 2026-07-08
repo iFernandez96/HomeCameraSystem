@@ -133,4 +133,20 @@ describe('VideoPlayer (native-controls wrapper)', () => {
     const video = screen.getByLabelText('Test clip')
     expect(video.parentElement?.className).not.toContain('flex-1')
   })
+
+  // UI/UX overhaul 2026-07-07 (portrait #3 / Frank A3): speed + repeat
+  // are the ONLY playback-speed controls on mobile and sat at 36px,
+  // below the 44px floor the rest of the app respects.
+  it('Given the speed select and Repeat button render, Then both carry the 44px touch-target floor (overhaul 2026-07-07)', () => {
+    // arrange / act
+    renderPlayer()
+
+    // assert
+    expect(screen.getByLabelText('Playback speed').className).toMatch(
+      /min-h-\[44px\]/,
+    )
+    expect(
+      screen.getByRole('button', { name: 'Repeat' }).className,
+    ).toMatch(/min-h-\[44px\]/)
+  })
 })

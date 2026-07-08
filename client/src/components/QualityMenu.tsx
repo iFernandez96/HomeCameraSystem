@@ -139,25 +139,39 @@ export function QualityMenu({
         onClick={toggleMenu}
         onKeyDown={onTriggerKeyDown}
         onPointerDown={ripple}
-        className="relative overflow-hidden flex items-center gap-1.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2 py-1 rounded-full text-xs font-medium text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
+        // UI/UX overhaul 2026-07-07 (portrait #1): the visual pill is
+        // ~26px tall — well under the 44px touch floor its sibling
+        // over-video buttons respect. Hit-area-expansion idiom
+        // (p-2.5 -m-2.5, same as parts.tsx Toggle / DetectionSection's
+        // DisabledToggleDisplay): the button grows the tap target
+        // without changing the pill's visual size. The pill visuals
+        // move to an inner span that doubles as the ripple host
+        // (data-ripple-host) so the press ripple stays clipped to the
+        // visible pill, not the invisible padding.
+        className="relative p-2.5 -m-2.5 rounded-full flex items-center focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
       >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+        <span
+          data-ripple-host
+          className="relative overflow-hidden flex items-center gap-1.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2 py-1 rounded-full text-xs font-medium text-white"
         >
-          {/* signal-bars glyph */}
-          <line x1="6" y1="20" x2="6" y2="14" />
-          <line x1="12" y1="20" x2="12" y2="9" />
-          <line x1="18" y1="20" x2="18" y2="4" />
-        </svg>
-        {currentLabel}
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            {/* signal-bars glyph */}
+            <line x1="6" y1="20" x2="6" y2="14" />
+            <line x1="12" y1="20" x2="12" y2="9" />
+            <line x1="18" y1="20" x2="18" y2="4" />
+          </svg>
+          {currentLabel}
+        </span>
       </button>
       {open && (
         <ul

@@ -105,4 +105,18 @@ describe('AppearanceSection', () => {
       screen.getByText("System follows your device's day/night setting."),
     ).toBeInTheDocument()
   })
+
+  // UI/UX overhaul 2026-07-07 (device run-through #11): on landscape /
+  // desktop the three theme tiles stretched across the full content
+  // width — comically wide. The group is now width-capped.
+  it('Given the theme radiogroup renders, Then the tile grid is width-capped so it does not stretch across a wide viewport (overhaul 2026-07-07)', () => {
+    // arrange / act
+    render(<AppearanceSection />)
+
+    // assert
+    const group = screen.getByRole('radiogroup', { name: 'Theme' })
+    const grid = group.querySelector('.grid')
+    expect(grid).not.toBeNull()
+    expect(grid?.className).toMatch(/max-w-md/)
+  })
 })

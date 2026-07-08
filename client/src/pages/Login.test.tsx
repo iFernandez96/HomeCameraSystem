@@ -36,7 +36,9 @@ function renderLogin(initialPath = '/login') {
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/live" element={<div data-testid="live">live page</div>} />
+        {/* UI/UX overhaul 2026-07-07: Login lands on "/" (Watch) —
+            the retired /live alias is no longer a navigation target. */}
+        <Route path="/" element={<div data-testid="home">home page</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -78,15 +80,23 @@ describe('Login page', () => {
     )
   })
 
-  it('redirects to /live if user is already authed', () => {
+  it('given an already-authed user, when Login renders, then it redirects home to "/" (overhaul 2026-07-07)', () => {
+    // arrange
     _authState = 'authed'
+
+    // act
     renderLogin()
-    expect(screen.getByTestId('live')).toBeInTheDocument()
+
+    // assert
+    expect(screen.getByTestId('home')).toBeInTheDocument()
   })
 
-  it('calls login() and navigates to /live on success', async () => {
+  it('given valid credentials, when the form is submitted, then login() is called and the app navigates home to "/" (overhaul 2026-07-07)', async () => {
+    // arrange
     loginFn.mockResolvedValueOnce(undefined)
     renderLogin()
+
+    // act
     fireEvent.change(screen.getByLabelText(/username/i), {
       target: { value: 'alice' },
     })
@@ -94,11 +104,13 @@ describe('Login page', () => {
       target: { value: 'hunter2' },
     })
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    // assert
     await waitFor(() => {
       expect(loginFn).toHaveBeenCalledWith('alice', 'hunter2')
     })
     await waitFor(() => {
-      expect(screen.getByTestId('live')).toBeInTheDocument()
+      expect(screen.getByTestId('home')).toBeInTheDocument()
     })
   })
 
@@ -120,8 +132,8 @@ describe('Login page', () => {
         /wrong username or password/i,
       )
     })
-    // Stays on /login — no /live redirect.
-    expect(screen.queryByTestId('live')).not.toBeInTheDocument()
+    // Stays on /login — no home redirect.
+    expect(screen.queryByTestId('home')).not.toBeInTheDocument()
   })
 
   it('shows a generic error message on non-401 failures', async () => {

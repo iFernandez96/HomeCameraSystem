@@ -1187,4 +1187,36 @@ describe('ClipModal', () => {
     // cleanup
     vi.restoreAllMocks()
   })
+
+  // UI/UX overhaul 2026-07-07 (coherence MOBILE #1): a rotated phone
+  // (landscape, height <520px) used to get the PORTRAIT stack — video
+  // squeezed to a narrow width-driven strip, evidence aside scrolled
+  // below. The modal now mirrors its own lg: split at the
+  // landscape-phone custom variant: video pane left at full pane
+  // height, evidence aside as the independently scrolling right column.
+  it('Given the modal renders, Then the dialog, video pane and evidence aside carry the landscape-phone two-pane classes (coherence MOBILE #1)', () => {
+    // arrange
+    const ev = makeEvent({ label: 'person', score: 0.5 })
+
+    // act
+    render(<ClipModal event={ev} onClose={() => {}} />)
+
+    // assert — container flows as a clipped row...
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className).toMatch(/landscape-phone:flex-row/)
+    expect(dialog.className).toMatch(/landscape-phone:overflow-hidden/)
+    // ...the video column fills the remaining width instead of
+    // sizing to content...
+    expect(
+      dialog.querySelector('[class*="landscape-phone:flex-1"]'),
+    ).not.toBeNull()
+    // ...and the aside becomes the proportional right column with a
+    // side border instead of a top border.
+    const aside = screen.getByRole('complementary', {
+      name: /incident details/i,
+    })
+    expect(aside.className).toMatch(/landscape-phone:w-\[42%\]/)
+    expect(aside.className).toMatch(/landscape-phone:border-l/)
+    expect(aside.className).toMatch(/landscape-phone:border-t-0/)
+  })
 })

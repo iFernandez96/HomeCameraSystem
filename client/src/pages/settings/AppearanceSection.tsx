@@ -53,7 +53,13 @@ export function AppearanceSection() {
         role="radiogroup"
         aria-label="Theme"
       >
-        <div className="grid grid-cols-3 gap-2">
+        {/* UI/UX overhaul 2026-07-07 (device run-through #11): cap the
+            control group width — on landscape/desktop the three theme
+            tiles stretched across the full content width (comically
+            wide on a landscape phone). max-w-md keeps them a compact
+            segmented group; portrait phones are narrower than the cap
+            so nothing changes there. */}
+        <div className="grid grid-cols-3 gap-2 max-w-md">
           {OPTIONS.map((opt) => {
             const active = pref === opt.value
             return (

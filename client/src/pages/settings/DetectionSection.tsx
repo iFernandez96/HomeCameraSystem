@@ -499,7 +499,7 @@ export function DetectionSection() {
                   // ink text (light surface; accent-colored text was a
                   // dark-era treatment) with a pre-mixed accent border —
                   // the /opacity-on-var() modifiers were unreliable.
-                  className={`px-3 py-1.5 min-h-[36px] rounded-full text-sm font-medium border transition-colors duration-150 capitalize focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
+                  className={`px-3 py-1.5 min-h-[44px] rounded-full text-sm font-medium border transition-colors duration-150 capitalize focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
                     selected
                       ? 'bg-[var(--color-accent-subtle)] border-[var(--color-accent-border)] text-[var(--color-text-primary)]'
                       : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]'

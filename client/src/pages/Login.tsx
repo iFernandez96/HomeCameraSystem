@@ -65,7 +65,10 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false)
 
   if (state === 'authed') {
-    return <Navigate to="/live" replace />
+    // UI/UX overhaul 2026-07-07 (Mira, Login): "/live" is a retired
+    // alias — the Watch page lives at "/" now. Land there directly
+    // instead of bouncing through the alias redirect.
+    return <Navigate to="/" replace />
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -74,7 +77,7 @@ export function Login() {
     setSubmitting(true)
     try {
       await login(username, password)
-      navigate('/live', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
       // docs/logging_plan.md §2 (Auth): failed sign-in WARN. GUARDRAIL
       // §4 — log the username + HTTP status ONLY; NEVER the password

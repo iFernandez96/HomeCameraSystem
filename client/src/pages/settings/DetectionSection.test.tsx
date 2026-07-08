@@ -336,4 +336,15 @@ describe('DetectionSection', () => {
     expect(screen.getByText('0.70')).toBeInTheDocument()
     expect(screen.getByText(/strict: fewer events/i)).toBeInTheDocument()
   })
+
+  // UI/UX overhaul 2026-07-07 (Frank A2): the "What to detect" chips
+  // were the last Settings controls still at 36px.
+  it('given the class chips render, then each carries the 44px touch-target floor (overhaul 2026-07-07)', async () => {
+    // arrange / act
+    render(<DetectionSection />)
+    const personChip = await screen.findByRole('button', { name: /^person$/i })
+
+    // assert
+    expect(personChip.className).toMatch(/min-h-\[44px\]/)
+  })
 })

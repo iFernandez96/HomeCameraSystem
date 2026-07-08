@@ -122,4 +122,24 @@ describe('QualityMenu (fuzz F6 — themed replacement for the native select)', (
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument(),
     )
   })
+
+  // UI/UX overhaul 2026-07-07 (portrait #1): the visual pill is ~26px
+  // tall — under the 44px touch floor its sibling over-video controls
+  // respect. The trigger grew its TAP target via the hit-area idiom
+  // (p-2.5 -m-2.5) while the pill visuals moved to an inner span that
+  // doubles as the ripple containment host.
+  it('Given the trigger renders, Then it carries the hit-area-expansion idiom and the visual pill lives on an inner ripple-host span (overhaul 2026-07-07)', () => {
+    // arrange / act
+    render(<QualityMenu quality="auto" onSelect={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: 'Stream quality' })
+
+    // assert — hit-area expansion on the button itself...
+    expect(trigger.className).toMatch(/\bp-2\.5\b/)
+    expect(trigger.className).toMatch(/-m-2\.5/)
+    // ...and pill visuals + ripple clipping on the inner host span.
+    const pill = trigger.querySelector('[data-ripple-host]')
+    expect(pill).not.toBeNull()
+    expect(pill?.className).toMatch(/overflow-hidden/)
+    expect(pill?.className).toMatch(/rounded-full/)
+  })
 })

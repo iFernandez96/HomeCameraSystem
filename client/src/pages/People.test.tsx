@@ -643,4 +643,20 @@ describe('People page', () => {
     await screen.findByRole('button', { name: /alice: 1 visit/i })
     expect(screen.getByRole('img', { name: 'Alice' })).toBeInTheDocument()
   })
+
+  // UI/UX overhaul 2026-07-07 (Mira #3): all visible page titles share
+  // the .page-title treatment (Bricolage 800). People's title was
+  // font-bold (700) and read visibly lighter next to Home's.
+  it('given the People page renders, then the visible title uses the shared .page-title treatment (overhaul 2026-07-07)', () => {
+    // arrange
+    listPeople.mockResolvedValue({ items: [], total: 0 })
+
+    // act
+    renderPeople()
+
+    // assert — the aria-hidden visible title (the sr-only h1 carries
+    // the semantics) is on the shared page-title class.
+    const title = screen.getByText('Faces', { selector: 'p' })
+    expect(title.className).toMatch(/\bpage-title\b/)
+  })
 })

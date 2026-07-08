@@ -106,12 +106,24 @@ export function CatEmptyState({
 }: CatEmptyStateProps) {
   const finalIllustration = illustration ?? moodIllustration(mood)
   return (
+    // UI/UX overhaul 2026-07-07 (device run-through #9/#10): in SHORT
+    // viewports (the landscape-phone custom variant, height <520px)
+    // the full-size mascot plus py-10 pushed the headline to the very
+    // bottom edge and the CTA below the fold (Faces), and clipped the
+    // sprite under the sticky ribbon (Review). landscape-phone:
+    // compresses the vertical rhythm and shrinks the illustration so
+    // heading + body + CTA all fit without scrolling. The sprites size
+    // themselves via inline width/height (RasterSprite /
+    // SleepingCatIllustration props), so the shrink is a transform
+    // scale on the figure's children inside a height-capped, centered
+    // row — layout footprint drops to 56px while the artwork scales
+    // down proportionally.
     <div
-      className="text-center py-10 lg:py-16 px-6 space-y-4 max-w-md mx-auto"
+      className="text-center py-10 lg:py-16 landscape-phone:py-3 px-6 space-y-4 landscape-phone:space-y-2 max-w-md mx-auto"
       role="status"
       aria-label={ariaLabel ?? heading}
     >
-      <div className="flex justify-center text-[var(--color-text-secondary)]">
+      <div className="flex justify-center text-[var(--color-text-secondary)] landscape-phone:h-14 landscape-phone:items-center landscape-phone:overflow-visible landscape-phone:[&>*]:scale-[0.55] landscape-phone:[&>*]:origin-center">
         {finalIllustration}
       </div>
       <div className="space-y-1.5">

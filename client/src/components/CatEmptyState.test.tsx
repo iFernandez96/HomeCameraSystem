@@ -121,4 +121,30 @@ describe('CatEmptyState', () => {
     // assert
     expect(screen.getByRole('status', { name: 'No timelapses yet' })).toBeInTheDocument()
   })
+
+  // UI/UX overhaul 2026-07-07 (device run-through #9/#10): in short
+  // landscape viewports the full-size mascot pushed the headline to
+  // the bottom edge and the CTA below the fold (Faces), and clipped
+  // under the sticky ribbon (Review).
+  it('given a short landscape viewport, when rendered, then the figure and vertical rhythm carry landscape-phone compaction classes (overhaul 2026-07-07)', () => {
+    // arrange / act
+    render(
+      <CatEmptyState
+        heading="All quiet"
+        body="Nothing yet."
+        action={{ label: 'Add one', onClick: vi.fn() }}
+      />,
+    )
+    // The Button primitive mounts its own sr-only role="status" live
+    // region — scope by accessible name to the empty-state wrapper.
+    const wrapper = screen.getByRole('status', { name: 'All quiet' })
+
+    // assert — tighter padding + gaps, height-capped figure, and a
+    // scale-down applied to the illustration inside it.
+    expect(wrapper.className).toMatch(/landscape-phone:py-3/)
+    expect(wrapper.className).toMatch(/landscape-phone:space-y-2/)
+    const figure = wrapper.firstElementChild
+    expect(figure?.className).toMatch(/landscape-phone:h-14/)
+    expect(figure?.className).toMatch(/scale-\[0\.55\]/)
+  })
 })

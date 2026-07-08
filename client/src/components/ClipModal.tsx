@@ -819,7 +819,19 @@ export function ClipModal({
       // on mobile means excess content pushes into a scroll instead of
       // being crushed to nothing. lg+ keeps the fixed split-pane
       // layout (both columns are height-capped to the viewport there).
-      className="fixed inset-0 z-40 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
+      // UI/UX overhaul 2026-07-07 (coherence MOBILE #1): landscape-phone
+      // two-pane reflow, mirroring Watch.tsx's landscape-phone grid and
+      // this modal's own lg: split. A rotated phone (landscape, height
+      // <520px — the `landscape-phone` custom variant in index.css) used
+      // to get the PORTRAIT stack: header → aspect-video strip → actions
+      // → evidence aside all scrolled vertically in a <400px-tall
+      // viewport, squeezing the video to a narrow width-driven band.
+      // Now landscape-phone reuses the lg shape: video pane docks left
+      // at full pane height, evidence aside becomes the independently
+      // scrolling right column. The mobile-collapse fixes (shrink-0
+      // column + aspect-video frame, see comments below) stay intact
+      // for portrait.
+      className="fixed inset-0 z-40 flex flex-col lg:flex-row landscape-phone:flex-row overflow-y-auto lg:overflow-hidden landscape-phone:overflow-hidden bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
     >
       {/* iter-270 (accessibility-auditor A top-3): backdrop is a
           DIV with onClick + aria-hidden, NOT a button. Pre-iter-270
@@ -848,7 +860,12 @@ export function ClipModal({
           the total is taller than the viewport. lg+ keeps `flex-1
           min-h-0` since the split-pane layout there needs this column
           to fill the remaining WIDTH within a height-capped row. */}
-      <div className="relative flex flex-col shrink-0 lg:flex-1 lg:min-h-0 min-w-0">
+      {/* landscape-phone mirrors the lg treatment: this column fills
+          the remaining width beside the evidence aside instead of
+          sizing to content (the 58%-ish left pane of Watch.tsx's
+          landscape grid, expressed here as flex-1 vs the aside's
+          fixed 42%). */}
+      <div className="relative flex flex-col shrink-0 lg:flex-1 lg:min-h-0 landscape-phone:flex-1 landscape-phone:min-h-0 min-w-0">
       {/* iter-356.17 (Maya 11th CRITICAL #1): event-header bar.
           Title + camera + face-match badge + close-X. Lives ABOVE the
           video region so the user has context before the player even
@@ -924,7 +941,7 @@ export function ClipModal({
           else in this column. lg+ drops the ratio in favor of filling
           the height-capped row (`lg:flex-1 lg:aspect-auto
           lg:min-h-0`), matching the split-pane desktop layout. */}
-      <div className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 flex items-center justify-center overflow-hidden bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4">
+      <div className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1">
         {body}
       </div>
       {/* Playback speed, repeat, scrub/play and fullscreen now live IN the
@@ -1028,7 +1045,12 @@ export function ClipModal({
         // viewport (was paper on lg only, white-on-black on mobile).
         // The video area above keeps its dark glass; the metadata
         // reads as a cream evidence card in both layouts.
-        className="relative shrink-0 w-full lg:w-80 lg:border-l border-t lg:border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] overflow-y-auto overscroll-contain"
+        // UI/UX overhaul 2026-07-07 (coherence MOBILE #1): on
+        // landscape-phone the aside becomes the right column —
+        // proportional 42% (mirroring Watch.tsx's 58%/1fr landscape
+        // split; lg keeps its fixed w-80) with its own scroll, side
+        // border instead of top border.
+        className="relative shrink-0 w-full lg:w-80 landscape-phone:w-[42%] lg:border-l landscape-phone:border-l border-t lg:border-t-0 landscape-phone:border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] overflow-y-auto overscroll-contain"
       >
         {personLabel && (
           <div className="px-5 py-4 border-b border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
