@@ -349,16 +349,16 @@ A/B two-build rig on the scratch uvicorn; real Chromium SW lifecycle.
 - [ ] H6.14 PARITY vs production log window post-deploy
 
 ## Harness #10 — multicam synthetic: atomic steps (spec: codex r12, 2026-07-08)
-- [ ] M10.1 contract doc vs code audit
+- [x] M10.1 contract doc vs code audit (verified 2026-07-08: regex identical across camera_ident.py/_internal.py/doc; registry+default+reject+getCameras pins all present)
 - [x] M10.2 local mediamtx fixture (env-gated download/boot)
 - [x] M10.3 ffmpeg testsrc RTSP publish -> /synth/whep
 - [x] M10.4 two-camera registry route
-- [ ] M10.5 browser switcher -> /whep/synth/whep
-- [ ] M10.6 quality rung URL composition per camera
+- [x] M10.5 browser switcher -> /whep/synth/whep
+- [x] M10.6 quality rung URL composition per camera
 - [x] M10.7 worker DETECT_CAMERA_ID -> payload camera_id
 - [x] M10.8 per-camera persistence + search filter
 - [x] M10.9 client Events camera chip narrows (already pinned: Events.test.tsx "camera chip is selected...list narrows" + "Load more...camera= forwarded"; codex skip-pin of a search-on-chip-activation contract REJECTED as aspirational, not current product behavior)
-- [ ] M10.10 LIVE dynamic publish probe (gated)
+- [x] M10.10 LIVE dynamic publish probe (gated)
 - [x] M10.11 PARITY: cam1->front_door migration on scratch copy
 - [x] M10.12 PARITY: production DB single-camera invariants
 
