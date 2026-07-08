@@ -453,7 +453,7 @@ must happen before any "proof" can claim the features work.
 - [x] U15 API response honesty: route returns applied/version/ledger id only
       when U11-U13 pass; invariant: no `ok:true` success for skipped/stubbed
       apply.
-- [ ] U16 client status copy: UI distinguishes update unavailable, blocked,
+- [x] U16 client status copy: UI distinguishes update unavailable, blocked,
       staged, applied, rolled back; invariant: no success toast on any
       terminal non-applied state.
 - [ ] U17 offline harness: drive U2-U16 against a scratch deploy clone and
@@ -570,7 +570,7 @@ must happen before any "proof" can claim the features work.
 - [ ] B18 restore API response: return restored filename, manifest id, changed
       file count, restart-required/applied, and ledger id; invariant: no
       `ok:true` restore unless B10-B16 passed.
-- [ ] B19 client restore status: UI distinguishes no backups, invalid backup,
+- [x] B19 client restore status: UI distinguishes no backups, invalid backup,
       dry-run failure, restored, and rolled back; invariant: no success toast
       on stub/blocked/fail/rollback.
 - [ ] B20 offline round-trip harness: backup scratch state, mutate scratch
