@@ -584,6 +584,40 @@ async def test_given_two_events_posted_within_one_second_when_push_fanout_runs_t
     assert count_spy.call_count == 1
 
 
+async def test_given_continuation_event_when_posted_then_row_lands_but_push_is_suppressed(
+    client: TestClient,
+):
+    """Continuous-capture cap-splits (2026-07-07): a continuation open is
+    the same physical presence rolling into its next max_visit_s window —
+    the row and WS broadcast happen (it owns a real clip) but re-pushing
+    a notification every window is spam."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    # arrange
+    fanout = AsyncMock(return_value=0)
+
+    # act — one normal open, one continuation.
+    with patch(
+        "app.services.push_service.push_service.send_matching", fanout
+    ):
+        first = client.post("/api/_internal/event", json=_payload())
+        cont_payload = _payload()
+        cont_payload["continuation"] = True
+        second = client.post("/api/_internal/event", json=cont_payload)
+        for _ in range(20):
+            if fanout.call_count >= 1:
+                break
+            await asyncio.sleep(0.01)
+        # give a would-be second fanout a chance to (wrongly) fire
+        await asyncio.sleep(0.05)
+
+    # assert — both rows accepted; only the FIRST pushed.
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert fanout.call_count == 1
+
+
 async def test_given_event_posted_when_push_fanout_called_then_payload_carries_unread_count_for_setAppBadge(
     client: TestClient,
 ):

@@ -173,6 +173,51 @@ def test_given_env_override_when_event_posted_then_payload_has_override(
     assert payload["camera_id"] == "garage"
 
 
+# --------------------------------------------------------------------------
+# Continuation marker (2026-07-07): a cap-split continuation open
+# (segment_index > 0) marks its payload so the server suppresses the push;
+# a first open (segment_index 0) must NOT carry the key at all.
+# --------------------------------------------------------------------------
+
+def _open_event_payload_with_segment(monkeypatch, tmp_path, segment_index):
+    captured = []
+    monkeypatch.setattr(
+        detect, "post_event",
+        lambda url, payload, **kwargs: captured.append(payload),
+    )
+    runner = detect._build_visit_runner(
+        str(tmp_path), MagicMock(), None,
+        "http://127.0.0.1:8000/api/_internal/event",
+        camera_ident.camera_id_from_env(),
+    )
+    boxes = [{"label": "person", "score": 0.9,
+              "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5}]
+    runner._post_event("visit-1", "person:test", 1000.0, boxes, segment_index)
+    assert len(captured) == 1
+    return captured[0]
+
+
+def test_given_first_open_when_event_posted_then_no_continuation_key(
+    monkeypatch, tmp_path,
+):
+    # arrange / act
+    payload = _open_event_payload_with_segment(monkeypatch, tmp_path, 0)
+
+    # assert — absent, not False: the server default covers it and the
+    # wire stays byte-identical to pre-continuation workers.
+    assert "continuation" not in payload
+
+
+def test_given_cap_split_open_when_event_posted_then_continuation_true(
+    monkeypatch, tmp_path,
+):
+    # arrange / act
+    payload = _open_event_payload_with_segment(monkeypatch, tmp_path, 1)
+
+    # assert
+    assert payload["continuation"] is True
+
+
 def test_given_invalid_env_when_event_posted_then_payload_falls_back(
     monkeypatch, tmp_path,
 ):

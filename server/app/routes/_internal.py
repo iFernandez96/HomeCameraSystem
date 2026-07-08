@@ -266,6 +266,12 @@ class DetectionPayload(BaseModel):
     # (`camera_registry.CAMERA_ID_RE`) — the pattern also enforces the
     # 1..32 length bound.
     camera_id: str = Field(default="front_door", pattern=r"^[a-z0-9_]{1,32}$")
+    # Continuous-capture cap-splits (2026-07-07): segment_index > 0 visit
+    # opens are the SAME physical presence rolling into its next
+    # max_visit_s window. The row is real (it owns a real clip) but a
+    # fresh push notification per window is spam — `continuation: true`
+    # keeps the insert + WS broadcast and suppresses ONLY the push fanout.
+    continuation: bool = False
     # iter-193 (iter-169 Minor S3 closure): regex-validate the thumb
     # URL. The worker (detect.py:114) emits `/snapshots/thumb_<ts>.jpg`
     # only — pin that format strictly. Pre-iter-193 a buggy or
@@ -562,17 +568,27 @@ async def publish_detection(payload: DetectionPayload) -> dict[str, object]:
     # don't want detection latency tied to Apple/Google push servers.
     # iter-176: hold a strong reference until the task completes so Python's
     # GC can't collect it mid-flight (CPython issue #44665).
-    task = asyncio.create_task(_send_push(evt))
-    _BACKGROUND_TASKS.add(task)
-    # logging-plan §2: the done-callback must check `task.exception()`.
-    # `_send_push` catches its own send failures, but ANY other escape
-    # (a bug, a CancelledError, an exception raised before the inner
-    # try) would otherwise be swallowed — asyncio only surfaces it as an
-    # unattributed "Task exception was never retrieved" at GC time. The
-    # callback retrieves it and logs with the event id so a fanout crash
-    # is never silent. Carry the event id via a closure since the
-    # callback only receives the Task.
-    task.add_done_callback(_make_push_done_callback(evt.get("id")))
+    # Continuation opens (continuous-capture cap-splits) skip the push
+    # fanout entirely: the person was already announced when their visit
+    # opened; re-notifying every max_visit_s window is spam. Row + WS
+    # broadcast above still happen (the clip is real, the timeline shows it).
+    if payload.continuation:
+        log.info(
+            "push suppressed for continuation event %s (camera_id=%s)",
+            payload.id, payload.camera_id,
+        )
+    else:
+        task = asyncio.create_task(_send_push(evt))
+        _BACKGROUND_TASKS.add(task)
+        # logging-plan §2: the done-callback must check `task.exception()`.
+        # `_send_push` catches its own send failures, but ANY other escape
+        # (a bug, a CancelledError, an exception raised before the inner
+        # try) would otherwise be swallowed — asyncio only surfaces it as an
+        # unattributed "Task exception was never retrieved" at GC time. The
+        # callback retrieves it and logs with the event id so a fanout crash
+        # is never silent. Carry the event id via a closure since the
+        # callback only receives the Task.
+        task.add_done_callback(_make_push_done_callback(evt.get("id")))
 
     return {"ok": True, "event_id": evt["id"]}
 

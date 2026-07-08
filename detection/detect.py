@@ -1021,7 +1021,7 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
     Factored out of ``main()`` so the wiring is small + the loop body stays
     focused. The callables themselves are thin adapters; the heavy lifting is
     in ``recording.finalize_visit`` / ``preroll.copy_new_segments`` (S2/S3)."""
-    def _post_open(visit_id, key, start_ts, boxes):
+    def _post_open(visit_id, key, start_ts, boxes, segment_index=0):
         # event_id == visit_id (plan: "pick an event_id (= visit_id)"). POST
         # the open event today with clip_url pointing at the eventual clip
         # (R4's no-clip-url-at-open is S6's job, NOT here). label is the part
@@ -1050,6 +1050,13 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
             "camera_id": camera_id,
             "clip_url": "/api/events/{}/clip".format(visit_id),
         }
+        # Cap-split continuations (segment_index > 0) are the SAME physical
+        # presence rolling into its next max_visit_s window — mark them so
+        # the server records the row (it is a real clip) but does NOT push
+        # a fresh "Person at the front door" notification every window
+        # (2026-07-07 gpt-5.5 consult, event-spam finding).
+        if segment_index > 0:
+            payload["continuation"] = True
         post_event(event_url, payload)
 
     def _copy_segments(visit_id, start_ts, until_ts, scratch_dir, already):
@@ -1070,6 +1077,65 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
         post_event=_post_open,
         copy_segments=_copy_segments,
         finalize_visit=_finalize,
+    )
+
+
+def _arm_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
+                      event_url, camera_id, runtime):
+    """Build + arm the continuous-capture runner (boot AND runtime flag
+    flips share this path — 2026-07-07 fix: a Settings toggle used to be
+    a no-op until restart). Order is load-bearing: recovery + orphan
+    sweep run BEFORE the runner can open its first visit (plan B4/R8).
+    Sets the module-global ``_VISIT_RUNNER``."""
+    global _VISIT_RUNNER
+    _vr = _build_visit_runner(
+        recordings_dir, clip_recorder, preroll_buffer, event_url,
+        camera_id,
+    )
+    try:
+        _recover_open_visits(
+            recordings_dir, clip_recorder, _vr, runtime.absence_finalize_s,
+        )
+    except Exception as e:
+        log.error(
+            "continuous-capture recovery failed: %s: %s",
+            type(e).__name__, e,
+        )
+    try:
+        visit_runtime.sweep_orphans(recordings_dir)
+    except Exception as e:
+        log.error(
+            "continuous-capture orphan sweep failed: %s: %s",
+            type(e).__name__, e,
+        )
+    _VISIT_RUNNER = _vr
+    log.info(
+        "continuous-capture ARMED (max_visit=%ss, absence_finalize=%ss) "
+        "— legacy start_clip path SUPPRESSED",
+        runtime.max_visit_s, runtime.absence_finalize_s,
+    )
+
+
+def _disarm_visit_runner(now):
+    """Flag flipped off mid-run: close any open visits at their last-seen
+    instant (same helper the watchdog-escalation path uses, so mid-visit
+    footage is finalized into a short VALID clip, not lost), then drop the
+    runner — the loop's XOR (`_VISIT_RUNNER is None`) reverts every later
+    detection to the legacy per-event recorder."""
+    global _VISIT_RUNNER
+    runner = _VISIT_RUNNER
+    if runner is None:
+        return
+    try:
+        runner.finalize_open_visits_for_escalation(now)
+    except Exception as e:
+        log.error(
+            "continuous-capture disarm finalize failed: %s: %s",
+            type(e).__name__, e,
+        )
+    _VISIT_RUNNER = None
+    log.info(
+        "continuous-capture DISARMED — legacy start_clip path restored",
     )
 
 
@@ -1546,34 +1612,9 @@ def main():
     global _VISIT_RUNNER
     _VISIT_RUNNER = None
     if runtime.continuous_capture and recordings_dir and clip_recorder is not None:
-        _vr = _build_visit_runner(
+        _arm_visit_runner(
             recordings_dir, clip_recorder, preroll_buffer, event_url,
-            camera_id,
-        )
-        _VISIT_RUNNER = _vr
-        # Boot recovery (B4) + orphan sweep (R8) BEFORE the loop opens any new
-        # visit. Idempotent: a visit whose <id>.mp4 already validates is
-        # marked done and skipped (never re-finalized / never os.replace'd).
-        try:
-            _recover_open_visits(
-                recordings_dir, clip_recorder, _vr, runtime.absence_finalize_s,
-            )
-        except Exception as e:
-            log.error(
-                "continuous-capture recovery failed: %s: %s",
-                type(e).__name__, e,
-            )
-        try:
-            visit_runtime.sweep_orphans(recordings_dir)
-        except Exception as e:
-            log.error(
-                "continuous-capture orphan sweep failed: %s: %s",
-                type(e).__name__, e,
-            )
-        log.info(
-            "continuous-capture ARMED (max_visit=%ss, absence_finalize=%ss) "
-            "— legacy start_clip path SUPPRESSED",
-            runtime.max_visit_s, runtime.absence_finalize_s,
+            camera_id, runtime,
         )
     # iter-356.53 (bbox-track sidecar, Feature #1 follow-up):
     # rolling deque of (frame_ts, boxes) for the last ~64 s of
@@ -1820,6 +1861,25 @@ def main():
         # active_fps (default 5 Hz). This keeps the GPU off the thermal
         # throttle while still giving prompt response on motion.
         now = time.time()
+        # Runtime flag reconciler (2026-07-07 user report "apparently it
+        # doesn't work"): the config poll flips runtime.continuous_capture
+        # mid-run, but the loop gates on _VISIT_RUNNER — which was only
+        # ever built at startup, so a Settings toggle did NOTHING until a
+        # worker restart. Reconcile here, at the loop top, BEFORE tick:
+        #   flag ON  + no runner -> build, recover, sweep, arm (same order
+        #                           as boot: recovery before the first open)
+        #   flag OFF + runner    -> finalize open visits at last_seen, then
+        #                           disarm; the legacy start_clip path takes
+        #                           over on the next detection (XOR is
+        #                           _VISIT_RUNNER is None).
+        if (runtime.continuous_capture and _VISIT_RUNNER is None
+                and recordings_dir and clip_recorder is not None):
+            _arm_visit_runner(
+                recordings_dir, clip_recorder, preroll_buffer, event_url,
+                camera_id, runtime,
+            )
+        elif not runtime.continuous_capture and _VISIT_RUNNER is not None:
+            _disarm_visit_runner(now)
         # plan B5: continuous-capture tick at the TOP of the loop body, BEFORE
         # any detection logic or early-continue (off / scheduled-off / zone-
         # reject / no-detection all early-continue below — exactly the absent

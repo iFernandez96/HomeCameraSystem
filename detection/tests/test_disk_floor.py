@@ -29,7 +29,7 @@ def _make_runner(tmp_path, free_bytes, min_free_bytes=None):
     finalize run synchronously."""
     events = {"open": [], "copy": [], "finalize": []}
 
-    def post_event(visit_id, key, start_ts, boxes=None):
+    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0):
         events["open"].append((visit_id, key, start_ts, boxes))
 
     def copy_segments(visit_id, start_ts, until_ts, scratch, already):

@@ -110,15 +110,23 @@ class VisitTracker(object):
                                   start_ts=now - pre_roll_s))
             return out
 
-        same_subject = bbox_iou(box, rec["box"]) >= self._iou_threshold
+        # User-semantics fix (2026-07-07, gpt-5.5 consult finding #2): the
+        # IoU "same subject" test used to GATE continuation — a person
+        # re-entering at a different spot within the grace window finalized
+        # the visit and opened a new one, which is exactly the duplicate-
+        # event spam this feature exists to kill, and it contradicted the
+        # module's own "IoU is ADVISORY, never gating" contract. Presence
+        # of ANY detection for this key inside the window now continues
+        # the visit; identity tracking is not something the detector can
+        # do anyway (no re-id model), so position must not split visits.
 
         # 1. Non-resettable max-visit cap (disk guard) takes precedence for a
-        #    still-present, same-subject continuation: this IS a present frame,
-        #    so even if the inter-frame gap nominally exceeds the absence grace
-        #    we split into adjacent continuation windows rather than declaring
-        #    a separate visit. v2.start_ts == v1.end_ts EXACTLY at the nominal
+        #    still-present continuation: this IS a present frame, so even if
+        #    the inter-frame gap nominally exceeds the absence grace we split
+        #    into adjacent continuation windows rather than declaring a
+        #    separate visit. v2.start_ts == v1.end_ts EXACTLY at the nominal
         #    level, NO pre-roll re-added (keyframe snapping is finalize-layer).
-        if same_subject and (now - rec["started_at"]) >= max_visit_s:
+        if (now - rec["started_at"]) >= max_visit_s:
             boundary = rec["started_at"] + max_visit_s
             seg = rec["segment_index"]
             out.append(self._finalize(key, rec, boundary, now,
@@ -138,18 +146,8 @@ class VisitTracker(object):
                                   start_ts=now - pre_roll_s))
             return out
 
-        # 3. A clearly-different subject arriving mid-window (advisory IoU):
-        #    finalize the old window at last_seen + grace (clamped to now) and
-        #    open a brand-new visit for the newcomer.
-        if not same_subject:
-            end_ts = min(now, rec["last_seen"] + absence_finalize_s)
-            out.append(self._finalize(key, rec, end_ts, now))
-            out.append(self._open(key, box, now, pre_roll_s, segment_index=0,
-                                  start_ts=now - pre_roll_s))
-            return out
-
-        # 4. Ordinary continuation: same subject, in-window -> extend. This
-        #     resets the absence countdown (last_seen = now).
+        # 3. Ordinary continuation: any detection for this key in-window ->
+        #    extend. This resets the absence countdown (last_seen = now).
         rec["box"] = box
         rec["last_seen"] = now
         rec["state"] = "PRESENT"

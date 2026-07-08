@@ -238,26 +238,38 @@ def test_given_raised_absence_mid_visit_then_deadline_extends():
     assert _kinds(out2) == ["finalize"]
 
 
-# 9. different subject during POST_ROLL tail => old finalize + new open ------
+# 9. ANY detection during the grace window continues the visit -------------
+# (2026-07-07 user-semantics fix: position/IoU never splits a visit. A
+# person re-entering across the frame within the grace window used to
+# finalize + reopen — the exact duplicate-event spam this feature kills.
+# The detector has no re-id model, so "different subject" was always a
+# guess; presence is the only gate.)
 
 
-def test_given_different_subject_in_postroll_then_old_finalize_new_open():
-    # arrange — subject A opens, then goes absent into the grace window.
+def test_given_disjoint_box_in_grace_window_then_same_visit_extends():
+    # arrange — subject opens, then a detection lands far across the frame
+    # within the grace window (IoU 0 with the last box).
     t = VisitTracker(id_factory=_ids("vA", "vB"))
     a_box = (0.0, 0.0, 100.0, 100.0)
     b_box = (500.0, 500.0, 600.0, 600.0)  # disjoint -> IoU 0
     t.observe(KEY, a_box, now=1000.0, pre_roll_s=PRE_ROLL,
               absence_finalize_s=ABSENCE, max_visit_s=MAX_VISIT)
-    # act — a clearly-different subject arrives at 1004 (within A's grace tail).
+
+    # act
     out = t.observe(KEY, b_box, now=1004.0, pre_roll_s=PRE_ROLL,
                     absence_finalize_s=ABSENCE, max_visit_s=MAX_VISIT)
-    # assert — A finalizes, B opens, distinct ids.
-    assert _kinds(out) == ["finalize", "open"]
-    fin, opn = out
-    assert fin["visit_id"] == "vA"
-    assert opn["visit_id"] == "vB"
-    assert opn["start_ts"] == 1004.0 - PRE_ROLL
-    assert t.active_visit_id(KEY) == "vB"
+
+    # assert — SAME visit extends; the absence countdown reset to 1004.
+    assert _kinds(out) == ["extend"]
+    assert out[0]["visit_id"] == "vA"
+    assert t.active_visit_id(KEY) == "vA"
+    # and the reset countdown is measured from the new detection:
+    assert t.tick(now=1004.0 + ABSENCE, absence_finalize_s=ABSENCE,
+                  max_visit_s=MAX_VISIT) == []
+    assert _kinds(
+        t.tick(now=1004.0 + ABSENCE + 0.1, absence_finalize_s=ABSENCE,
+               max_visit_s=MAX_VISIT)
+    ) == ["finalize"]
 
 
 def test_given_same_subject_drift_in_window_then_just_extends():

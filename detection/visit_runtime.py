@@ -550,7 +550,10 @@ class VisitRunner(object):
         # _pending_boxes is the frame's server-valid box list from observe()
         # (the server requires >=1 box); None on a tick-driven/test path.
         try:
-            self._post_event(visit_id, key, start_ts, self._pending_boxes)
+            self._post_event(
+                visit_id, key, start_ts, self._pending_boxes,
+                rec["segment_index"],
+            )
         except Exception as e:
             applog.emit(
                 "visit",
