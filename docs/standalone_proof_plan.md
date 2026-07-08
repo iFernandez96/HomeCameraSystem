@@ -418,14 +418,14 @@ must happen before any "proof" can claim the features work.
 - [x] U4 manifest reader: read a local update manifest file from a scratch
       path, not network; invariant: missing/malformed manifest returns
       unavailable, never apply.
-- [ ] U5 version comparison: available version is newer/equal/older; invariant:
+- [x] U5 version comparison: available version is newer/equal/older; invariant:
       equal/older versions are rejected without side effects.
-- [ ] U6 artifact integrity: verify size + sha256 for a local artifact;
+- [x] U6 artifact integrity: verify size + sha256 for a local artifact;
       invariant: digest mismatch leaves scratch deploy tree byte-identical.
-- [ ] U7 kill-switch: config/env can disable update apply; invariant:
+- [x] U7 kill-switch: config/env can disable update apply; invariant:
       kill-switch rejection happens after manifest read but before artifact
       unpack.
-- [ ] U8 scratch deploy layout detector: identify required compose/env/data
+- [x] U8 scratch deploy layout detector: identify required compose/env/data
       paths in a temp clone; invariant: incomplete layout is rejected without
       writes.
 - [ ] U9 stage artifact: unpack/copy to a versioned staging dir; invariant:
@@ -528,13 +528,13 @@ must happen before any "proof" can claim the features work.
 - [x] B4 missing-file policy: classify required vs optional persisted files;
       invariant: missing required file blocks backup, missing optional file is
       recorded.
-- [ ] B5 archive writer to temp file: create backup archive in target dir via
+- [x] B5 archive writer to temp file: create backup archive in target dir via
       temp name; invariant: failed write leaves no final archive.
-- [ ] B6 checksum ledger: compute per-file sha256 and archive sha256;
+- [x] B6 checksum ledger: compute per-file sha256 and archive sha256;
       invariant: manifest checksums match archive contents byte-for-byte.
-- [ ] B7 atomic publish: rename temp archive+manifest into final name;
+- [x] B7 atomic publish: rename temp archive+manifest into final name;
       invariant: listBackups never shows partial temp files.
-- [ ] B8 backup retention: keep newest N or age policy in scratch dir;
+- [x] B8 backup retention: keep newest N or age policy in scratch dir;
       invariant: retention deletes only valid backup filenames and never the
       just-created archive.
 - [ ] B9 backup API response: return filename, size, manifest id, archive
