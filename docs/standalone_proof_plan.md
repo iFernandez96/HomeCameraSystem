@@ -196,17 +196,25 @@ is the product fix contract if A7 confirms.
       global webServer) + client/e2e/authHarness.ts fixture (temp dirs,
       free port, env TTL/secret injection, uvicorn spawn/readiness/logs)
       + auth-session-lifecycle.spec.ts; env-gated HOMECAM_RUN_REAL_BROWSER_AUTH=1
-  - [ ] A10.0 infra: harness boots scratch uvicorn serving built dist; browser reaches login
-  - [ ] A10.1 real-Chromium login cookie attrs (httpOnly/path/sameSite/expiry)
-  - [ ] A10.2 access expiry rotates via refresh; cookie values/expiry change; stays authed
-  - [ ] A10.3 both-expired reaches session-expired UX
+  - [x] A10.0 infra: harness boots scratch uvicorn serving built dist; browser reaches login (live-run green 2026-07-08)
+  - [x] A10.1 real-Chromium login cookie attrs (httpOnly/path/sameSite/expiry) (live-run green 2026-07-08)
+  - [x] A10.2 access expiry rotates via refresh; cookie values/expiry change; stays authed (live-run green 2026-07-08, exactly one refresh 200)
+  - [x] A10.3 both-expired reaches session-expired UX (live-run green 2026-07-08; all refresh attempts 401, bounded, lands /login?expired=1)
 - [ ] A11 background/resume past access TTL stays signed in
-  - [ ] A11.1 resume past access TTL refreshes and stays signed in
-  - [ ] A11.2 WS reconnect self-heal after expiry (browser leg of A8)
+  - [x] A11.1 resume past access TTL refreshes and stays signed in (live-run green 2026-07-08 — the production mobile-resume scenario, browser-proven)
+  - [x] A11.2 WS reconnect self-heal after expiry (browser leg of A8) —
+        FOUND+FIXED production bug 23f2a50: pre-accept close(1008) reached
+        real browsers as 1006, so ws.ts's no-retry + homecam:auth-failed
+        contract had NEVER fired from the live server (jsdom mocks hid it);
+        accept-then-close makes the whole chain real (866d760, live-run green)
 - [ ] A12 secret rotation kills sessions into session-expired
-  - [ ] A12.1 rotation kills REST refresh into session-expired
-  - [ ] A12.2 rotation kills WS self-heal into session-expired
-  - [ ] A12.3 parity ledger: browser/server event ledger diffs against Jetson auth trace shapes
+  - [x] A12.1 rotation kills REST refresh into session-expired (live-run green 2026-07-08; confirms restart-with-unpersisted-secret WOULD sign everyone out — check the deploy volume persists jwt secret)
+  - [x] A12.2 rotation kills WS self-heal into session-expired (live-run green 2026-07-08; quiescence check pins no-storm after landing on /login)
+  - [x] A12.3 parity ledger: browser/server event ledger diffs against Jetson auth trace shapes
+        (live-run green 2026-07-08; parity finding: Chromium deletes expired
+        cookies, so browser-side expiry 401s reach the server as no-cookie —
+        production's expired-signature-WITH-cookie lines are the narrow
+        clock-skew window, a distinct shape)
 - [x] A13 PARITY: replay the real auth_rejected sequences from the
       captured docker app log against the scratch server — both
       production REST rejection shapes (40x expired-signature, 5x
