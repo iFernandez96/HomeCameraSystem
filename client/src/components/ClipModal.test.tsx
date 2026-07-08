@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render as rtlRender, screen, type RenderOptions } from '@testing-library/react'
+import { fireEvent, render as rtlRender, screen, waitFor, type RenderOptions } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { ConfirmProvider } from '../lib/confirm'
@@ -1455,6 +1455,95 @@ describe('ClipModal', () => {
 
       // cleanup
       vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+  })
+
+  // Pinch-to-zoom on the clip (user request 2026-07-07): two fingers
+  // scale the zoom layer via lib/pinchZoom's clamped math; one finger
+  // pans while zoomed and clip-swipe is suppressed; switching events
+  // resets to 1x. jsdom has zero-size rects, so translation clamps to
+  // 0 — assertions pin scale, suppression, and reset.
+  describe('pinch-to-zoom on the clip', () => {
+    async function renderZoomable() {
+      const active = makeEvent({ id: 'evt-active', ts: 1700000000, label: 'person' })
+      const older = makeEvent({ id: 'evt-older', ts: 1699999000, label: 'cat' })
+      vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+        items: [older],
+        next_cursor: null,
+      })
+      render(<ClipModal event={active} onClose={() => {}} />)
+      await screen.findByText(/more from tonight/i)
+      return {
+        pane: screen.getByTestId('clip-swipe-pane'),
+        layer: screen.getByTestId('clip-zoom-layer'),
+      }
+    }
+
+    function pinchOut(pane: HTMLElement) {
+      fireEvent.touchStart(pane, {
+        touches: [
+          { clientX: 180, clientY: 150 },
+          { clientX: 220, clientY: 150 },
+        ],
+      })
+      fireEvent.touchMove(pane, {
+        touches: [
+          { clientX: 120, clientY: 150 },
+          { clientX: 280, clientY: 150 },
+        ],
+      })
+      fireEvent.touchEnd(pane)
+    }
+
+    it('Given a playing clip, When two fingers pinch outward, Then the zoom layer scales up (clamped by the pure pinchZoom math)', async () => {
+      // arrange
+      const { pane, layer } = await renderZoomable()
+
+      // act — finger distance grows 40px → 160px.
+      pinchOut(pane)
+
+      // assert — scale(4) at the midpoint; jsdom's zero-size pane
+      // clamps translation to 0.
+      expect(layer.style.transform).toContain('scale(4)')
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given the clip is zoomed in, When one finger drags horizontally past the swipe threshold, Then the picture PANS and the modal does NOT advance to a sibling', async () => {
+      // arrange
+      const { pane } = await renderZoomable()
+      pinchOut(pane)
+
+      // act — a drag that would advance to evt-older at 1x.
+      fireEvent.touchStart(pane, { touches: [{ clientX: 200, clientY: 150 }] })
+      fireEvent.touchMove(pane, { touches: [{ clientX: 90, clientY: 150 }] })
+      fireEvent.touchEnd(pane)
+
+      // assert — still the active event's clip.
+      expect(screen.getByLabelText(/clip of person event/i)).toHaveAttribute(
+        'src',
+        '/api/events/evt-active/clip',
+      )
+
+      // cleanup
+      vi.restoreAllMocks()
+    })
+
+    it('Given the clip is zoomed in, When the modal swaps to a different event, Then zoom resets to identity', async () => {
+      // arrange
+      const { pane, layer } = await renderZoomable()
+      pinchOut(pane)
+      expect(layer.style.transform).not.toBe('')
+
+      // act — swap via the rail (the tap path swipe reuses).
+      fireEvent.click(screen.getByRole('button', { name: /cat/i }))
+
+      // assert
+      await waitFor(() => expect(layer.style.transform).toBe(''))
+
+      // cleanup
       vi.restoreAllMocks()
     })
   })

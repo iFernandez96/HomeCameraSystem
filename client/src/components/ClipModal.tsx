@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import {
+  ZOOM_IDENTITY,
+  isZoomed,
+  panUpdate,
+  pinchUpdate,
+  toTransform,
+  type ZoomState,
+} from '../lib/pinchZoom'
 import { deleteEvent, exportEvents, fetchEventTracks, searchEvents } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
@@ -359,6 +367,53 @@ export function ClipModal({
   const swipeStartY = useRef<number | null>(null)
   const swipeAxis = useRef<'h' | 'v' | null>(null)
   const swipeDx = useRef(0)
+  // Pinch-to-zoom (user request 2026-07-07, mirrors Watch's fullscreen
+  // zoom): two fingers scale the INNER zoom layer (video + overlays),
+  // one finger pans while zoomed, and the clip-swipe gesture is
+  // suppressed until the zoom glides back to 1x — otherwise a pan
+  // would also flip clips. The zoom layer is separate from the pane so
+  // the swipe's translateX and the zoom's transform never fight over
+  // one style property. All math in lib/pinchZoom (unit-tested pure).
+  const zoomLayerRef = useRef<HTMLDivElement | null>(null)
+  const zoomRef = useRef<ZoomState>(ZOOM_IDENTITY)
+  const pinchDist = useRef(0)
+  const panLast = useRef<{ x: number; y: number } | null>(null)
+  const applyClipZoom = () => {
+    const el = zoomLayerRef.current
+    if (el) el.style.transform = toTransform(zoomRef.current)
+    // While zoomed the pane owns EVERY touch (panning must not scroll
+    // the modal's single-column layout underneath); back at 1x the
+    // class's touch-pan-y resumes letting vertical scrolls through.
+    const pane = videoPaneRef.current
+    if (pane) pane.style.touchAction = isZoomed(zoomRef.current) ? 'none' : ''
+  }
+  const resetClipZoom = useCallback(() => {
+    zoomRef.current = ZOOM_IDENTITY
+    pinchDist.current = 0
+    panLast.current = null
+    const el = zoomLayerRef.current
+    if (el) el.style.transform = ''
+    const pane = videoPaneRef.current
+    if (pane) pane.style.touchAction = ''
+  }, [])
+  // A different clip is a fresh viewing context — zoom starts at 1x.
+  useEffect(() => {
+    resetClipZoom()
+  }, [event.id, resetClipZoom])
+  const paneSize = () => {
+    const r = videoPaneRef.current?.getBoundingClientRect()
+    return {
+      vw: r?.width ?? 0,
+      vh: r?.height ?? 0,
+      left: r?.left ?? 0,
+      top: r?.top ?? 0,
+    }
+  }
+  const pinchDistanceOf = (ev: React.TouchEvent) => {
+    const a = ev.touches[0]
+    const b = ev.touches[1]
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+  }
   const swipeNeighbor = useCallback(
     (dx: number): DetectionEvent | null => {
       const idx = swipeTimeline.findIndex((e) => e.id === event.id)
@@ -369,12 +424,32 @@ export function ClipModal({
     [swipeTimeline, event.id],
   )
   const onPaneTouchStart = (ev: React.TouchEvent) => {
+    // Second finger down: the gesture becomes a pinch regardless of
+    // what the first finger was doing; any in-flight swipe feedback is
+    // abandoned.
+    if (ev.touches.length >= 2) {
+      pinchDist.current = pinchDistanceOf(ev)
+      panLast.current = null
+      resetSwipeRefs()
+      const pane = videoPaneRef.current
+      if (pane) {
+        pane.style.transition = ''
+        pane.style.transform = ''
+      }
+      return
+    }
     // Controls stay controls: a touch that begins on any interactive
     // element (bbox toggle, speed select, Repeat, a focused overlay
     // button) is never a swipe.
     const target = ev.target as HTMLElement | null
     if (target && target.closest('button, select, input, a, label')) return
     const t = ev.touches[0]
+    // Zoomed in: one finger pans the picture; clip-swipe stays off
+    // until the pinch glides back home to 1x.
+    if (isZoomed(zoomRef.current)) {
+      panLast.current = { x: t.clientX, y: t.clientY }
+      return
+    }
     const pane = videoPaneRef.current
     if (pane) {
       const rect = pane.getBoundingClientRect()
@@ -392,6 +467,41 @@ export function ClipModal({
     swipeDx.current = 0
   }
   const onPaneTouchMove = (ev: React.TouchEvent) => {
+    if (ev.touches.length >= 2) {
+      // Pinch step: scale around the finger midpoint, clamped by the
+      // pane box so panning never reveals off-content gaps.
+      const d = pinchDistanceOf(ev)
+      if (pinchDist.current > 0 && d > 0) {
+        const { vw, vh, left, top } = paneSize()
+        const fx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2 - left
+        const fy = (ev.touches[0].clientY + ev.touches[1].clientY) / 2 - top
+        zoomRef.current = pinchUpdate(
+          zoomRef.current,
+          fx,
+          fy,
+          d / pinchDist.current,
+          vw,
+          vh,
+        )
+        applyClipZoom()
+      }
+      pinchDist.current = d
+      return
+    }
+    if (panLast.current !== null && isZoomed(zoomRef.current)) {
+      const t0 = ev.touches[0]
+      const { vw, vh } = paneSize()
+      zoomRef.current = panUpdate(
+        zoomRef.current,
+        t0.clientX - panLast.current.x,
+        t0.clientY - panLast.current.y,
+        vw,
+        vh,
+      )
+      panLast.current = { x: t0.clientX, y: t0.clientY }
+      applyClipZoom()
+      return
+    }
     if (swipeStartX.current === null) return
     const t = ev.touches[0]
     const dx = t.clientX - swipeStartX.current
@@ -431,7 +541,25 @@ export function ClipModal({
     pane.style.transition = reduceMotion ? '' : 'transform 160ms ease-out'
     pane.style.transform = ''
   }
-  const onPaneTouchEnd = () => {
+  const onPaneTouchEnd = (ev: React.TouchEvent) => {
+    // jsdom fireEvent.touchEnd with no init has no touches list.
+    if ((ev.touches?.length ?? 0) > 0) {
+      // Pinch losing a finger: rebase so the remaining finger pans
+      // (zoomed) instead of registering as a fresh swipe.
+      pinchDist.current = 0
+      const t0 = ev.touches[0]
+      panLast.current = isZoomed(zoomRef.current)
+        ? { x: t0.clientX, y: t0.clientY }
+        : null
+      resetSwipeRefs()
+      return
+    }
+    if (panLast.current !== null || pinchDist.current > 0) {
+      // Zoom/pan gesture finished — keep the zoom where it is.
+      pinchDist.current = 0
+      panLast.current = null
+      return
+    }
     const started = swipeStartX.current !== null
     const axis = swipeAxis.current
     const dx = swipeDx.current
@@ -452,7 +580,10 @@ export function ClipModal({
   }
   const onPaneTouchCancel = () => {
     // Gesture aborted by the browser (e.g. an incoming system gesture):
-    // never advance, just settle back.
+    // never advance, just settle back. Zoom LEVEL survives — only the
+    // in-flight pinch/pan tracking resets.
+    pinchDist.current = 0
+    panLast.current = null
     const axis = swipeAxis.current
     resetSwipeRefs()
     if (axis === 'h') snapPaneBack()
@@ -1098,7 +1229,16 @@ export function ClipModal({
         onTouchCancel={onPaneTouchCancel}
         className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden touch-pan-y bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1"
       >
-        {body}
+        {/* Zoom layer: pinch scales/pans THIS wrapper (video + its
+            overlays together) while the pane above keeps translateX
+            for the clip swipe — two transforms, two owners. */}
+        <div
+          ref={zoomLayerRef}
+          data-testid="clip-zoom-layer"
+          className="w-full h-full flex items-center justify-center will-change-transform"
+        >
+          {body}
+        </div>
       </div>
       {/* Playback speed, repeat, scrub/play and fullscreen now live IN the
           VideoPlayer control bar (the user's "same as youtube"), so the old
