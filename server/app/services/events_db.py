@@ -146,6 +146,16 @@ def _ensure_camera_id_column(conn: sqlite3.Connection) -> None:
             "ALTER TABLE events ADD COLUMN camera_id "
             "TEXT NOT NULL DEFAULT 'front_door'"
         )
+    # Legacy-id normalization (2026-07-07, live-DB finding): installs
+    # that pre-date the multicam contract stored the old worker default
+    # 'cam1' (2,732 rows on the production Jetson). The registry id is
+    # 'front_door', and the client's "different camera" affordances key
+    # on ID EQUALITY — mixed cam1/front_door rows made single-camera
+    # clip siblings sprout a spurious "· the front door" location tag.
+    # Idempotent by shape (matches zero rows once normalized).
+    conn.execute(
+        "UPDATE events SET camera_id = 'front_door' WHERE camera_id = 'cam1'"
+    )
 
 
 # iter-248: schema migration for installs that pre-date the `seen`

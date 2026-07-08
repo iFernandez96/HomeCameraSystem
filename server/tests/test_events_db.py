@@ -1001,6 +1001,39 @@ def test_given_legacy_table_without_camera_id_when_init_db_then_column_added(
     events_db.init_db(path)
 
 
+def test_given_rows_with_legacy_cam1_id_when_init_db_then_normalized_to_front_door(
+    tmp_path,
+):
+    """Live-DB finding (2026-07-07): production stored the old worker
+    default 'cam1' on 2,732 pre-multicam rows while new rows write the
+    registry id 'front_door'. Client "different camera" affordances key
+    on id equality, so mixed ids made single-camera clip siblings grow
+    a spurious location tag. init_db normalizes legacy ids."""
+    # arrange — a modern table whose historical rows carry 'cam1'.
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO events (id, ts, label, score, camera_id) "
+            "VALUES ('old1', 1000.0, 'person', 0.9, 'cam1')"
+        )
+        conn.execute(
+            "INSERT INTO events (id, ts, label, score, camera_id) "
+            "VALUES ('new1', 2000.0, 'person', 0.9, 'front_door')"
+        )
+        conn.commit()
+
+    # act
+    events_db.init_db(path)
+
+    # assert — every row speaks the registry id.
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            "SELECT camera_id, COUNT(*) FROM events GROUP BY camera_id"
+        ).fetchall()
+        assert rows == [("front_door", 2)]
+
+
 def test_given_migrated_legacy_db_when_reading_events_then_camera_id_present(
     tmp_path,
 ):
