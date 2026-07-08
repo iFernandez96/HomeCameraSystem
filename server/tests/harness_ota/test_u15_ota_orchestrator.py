@@ -14,15 +14,10 @@ def fixed_clock():
 
 def _write_artifact_tree(root, persisted_data_dir):
     root.mkdir()
-    (root / "compose.yaml").write_text(
-        "services:\n  homecam:\n    volumes:\n      - ${HOMECAM_DATA_DIR}:/data\n",
-        encoding="utf-8",
-    )
-    (root / ".env").write_text(
-        f"HOMECAM_DATA_DIR={persisted_data_dir}\n",
-        encoding="utf-8",
-    )
-    (root / "data").mkdir()
+    (root / "client" / "dist").mkdir(parents=True)
+    (root / "client" / "dist" / "index.html").write_text("new client\n", encoding="utf-8")
+    (root / "detection").mkdir()
+    (root / "detection" / "detect.py").write_text("print('detect')\n", encoding="utf-8")
 
 
 def _write_manifest(path, artifact_name, artifact_path, version="1.2.4"):
@@ -46,6 +41,9 @@ def _request(tmp_path):
     active_pointer.write_text("1.2.3\n", encoding="utf-8")
     persisted = tmp_path / "persisted"
     persisted.mkdir()
+    client_dist_target = tmp_path / "client_dist"
+    client_dist_target.mkdir()
+    (client_dist_target / "index.html").write_text("old client\n", encoding="utf-8")
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     staging_source = tmp_path / "stage-source"
@@ -62,11 +60,12 @@ def _request(tmp_path):
         artifacts_dir=artifacts,
         staging_root=tmp_path / "staging",
         persisted_data_dir=persisted,
+        client_dist_target=client_dist_target,
         active_pointer=active_pointer,
         ledger_path=tmp_path / "ota-ledger.jsonl",
         current_version="1.2.3",
         expected_artifact_size=artifact.stat().st_size,
-        restart_command=["systemctl", "restart", "homecam.service"],
+        restart_command=["docker", "restart", "homecam-server"],
         env={},
     )
 
@@ -89,11 +88,18 @@ def test_given_stage_preflight_apply_and_health_pass_when_orchestrated_then_appl
     assert result.version == "1.2.4"
     assert result.ledger_id == "attempt-u15"
     assert result.reason is None
+    assert result.applied_components == ("client",)
+    assert result.host_commands[-1] == "docker restart homecam-server"
     assert request.active_pointer.read_text(encoding="utf-8") == "1.2.4\n"
-    assert runner.commands == [("systemctl", "restart", "homecam.service")]
+    assert request.client_dist_target.joinpath("index.html").read_text(
+        encoding="utf-8"
+    ) == "new client\n"
+    assert runner.commands == [result.host_commands]
     rows = read_events(request.ledger_path)
     assert [row["status"] for row in rows] == ["requested", "started", "applied"]
     assert rows[-1]["reason"] == "health_passed"
+    assert rows[-1]["metadata"]["applied_components"] == ["client"]
+    assert rows[-1]["metadata"]["host_commands"] == list(result.host_commands)
 
 
 def test_given_apply_succeeds_but_health_is_stubbed_when_orchestrated_then_rolled_back_without_success_fields(
@@ -115,9 +121,13 @@ def test_given_apply_succeeds_but_health_is_stubbed_when_orchestrated_then_rolle
     assert result.reason == "health_poller_missing"
     assert result.phase == "health"
     assert request.active_pointer.read_text(encoding="utf-8") == "1.2.3\n"
+    assert request.client_dist_target.joinpath("index.html").read_text(
+        encoding="utf-8"
+    ) == "old client\n"
     rows = read_events(request.ledger_path)
     assert [row["status"] for row in rows] == ["requested", "started", "rolled_back"]
     assert rows[-1]["reason"] == "health_poller_missing"
+    assert rows[-1]["metadata"]["applied_components"] == ["client"]
 
 
 def test_given_manifest_unavailable_when_orchestrated_then_typed_non_applied_result_has_no_ok_lie(

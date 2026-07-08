@@ -62,65 +62,19 @@ def _inert_mark(
     )
 
 
-def _env_values(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
 def preflight_staged_deploy(
-    staging_dir: Path, *, persisted_data_dir: Path, active_pointer: Path
+    staging_dir: Path, *, client_dist_target: Path, active_pointer: Path
 ) -> PreflightResult:
     """Validate a staged deployment before any active-version pointer switch."""
     active_version = _read_active_version(active_pointer)
-    layout_result = detect_scratch_deploy_layout(staging_dir)
+    layout_result = detect_scratch_deploy_layout(
+        staging_dir, client_dist_target=client_dist_target
+    )
     if not layout_result.can_apply or layout_result.layout is None:
         return _inert_mark(
             staging_dir,
             active_version=active_version,
             reason="incomplete_layout",
-        )
-
-    if not persisted_data_dir.is_dir():
-        return _inert_mark(
-            staging_dir,
-            active_version=active_version,
-            reason="missing_persisted_data_dir",
-        )
-
-    try:
-        env = _env_values(layout_result.layout.env_path)
-        compose = layout_result.layout.compose_path.read_text(encoding="utf-8")
-    except OSError:
-        return _inert_mark(
-            staging_dir,
-            active_version=active_version,
-            reason="config_read_failed",
-        )
-
-    expected_data = str(persisted_data_dir)
-    if env.get("HOMECAM_DATA_DIR") != expected_data:
-        return _inert_mark(
-            staging_dir,
-            active_version=active_version,
-            reason="env_data_dir_mismatch",
-        )
-    if "${HOMECAM_DATA_DIR}" not in compose and expected_data not in compose:
-        return _inert_mark(
-            staging_dir,
-            active_version=active_version,
-            reason="compose_missing_persisted_data_reference",
-        )
-    if ":/data" not in compose:
-        return _inert_mark(
-            staging_dir,
-            active_version=active_version,
-            reason="compose_missing_data_mount",
         )
 
     log.info(

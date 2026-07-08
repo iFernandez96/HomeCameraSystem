@@ -627,6 +627,7 @@ async def system_update(
         artifacts_dir=settings.ota_artifacts_dir,
         staging_root=settings.ota_staging_root,
         persisted_data_dir=settings.ota_root.parent,
+        client_dist_target=settings.ota_client_dist_target,
         active_pointer=settings.ota_active_pointer,
         ledger_path=settings.ota_ledger_path,
         current_version=settings.version,
@@ -650,6 +651,8 @@ async def system_update(
         ota_rollback_module.append_event = original_rollback_append
 
     response = asdict(result)
+    response["applied_components"] = list(result.applied_components)
+    response["host_commands"] = list(result.host_commands)
     response["restart_required"] = bool(result.applied)
     if result.phase == "manifest_gate" and result.reason == "missing":
         response["note"] = "scaffold: update manifest is not present"

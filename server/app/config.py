@@ -168,10 +168,13 @@ class Settings:
     ota_ledger_path: Path = Path(
         os.getenv("OTA_LEDGER_PATH", "/app/secrets/dist-ota/ota-ledger.jsonl")
     )
+    ota_client_dist_target: Path = Path(
+        os.getenv("OTA_CLIENT_DIST_TARGET", "/app/client_dist")
+    )
     ota_restart_command: tuple[str, ...] = tuple(
         part
         for part in os.getenv(
-            "OTA_RESTART_COMMAND", "systemctl restart homecam.service"
+            "OTA_RESTART_COMMAND", "docker restart homecam-server"
         ).split()
         if part
     )

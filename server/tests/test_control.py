@@ -565,6 +565,9 @@ def _patch_ota_paths(tmp_path, monkeypatch):
     staging = ota_root / "staging"
     active_pointer = ota_root / "active-version"
     active_pointer.write_text("1.2.3\n", encoding="utf-8")
+    client_dist_target = tmp_path / "client_dist"
+    client_dist_target.mkdir()
+    (client_dist_target / "index.html").write_text("old client\n", encoding="utf-8")
     monkeypatch.setattr(settings, "version", "1.2.3")
     monkeypatch.setattr(settings, "ota_root", ota_root)
     monkeypatch.setattr(
@@ -574,10 +577,11 @@ def _patch_ota_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "ota_staging_root", staging)
     monkeypatch.setattr(settings, "ota_active_pointer", active_pointer)
     monkeypatch.setattr(settings, "ota_ledger_path", ota_root / "ota-ledger.jsonl")
+    monkeypatch.setattr(settings, "ota_client_dist_target", client_dist_target)
     monkeypatch.setattr(
         settings,
         "ota_restart_command",
-        ("systemctl", "restart", "homecam.service"),
+        ("docker", "restart", "homecam-server"),
     )
     return ota_root
 
@@ -585,15 +589,10 @@ def _patch_ota_paths(tmp_path, monkeypatch):
 def _write_ota_artifact_bundle(ota_root):
     source = ota_root / "source"
     source.mkdir()
-    (source / "compose.yaml").write_text(
-        "services:\n  homecam:\n    volumes:\n      - ${HOMECAM_DATA_DIR}:/data\n",
-        encoding="utf-8",
-    )
-    (source / ".env").write_text(
-        f"HOMECAM_DATA_DIR={ota_root.parent}\n",
-        encoding="utf-8",
-    )
-    (source / "data").mkdir()
+    (source / "client" / "dist").mkdir(parents=True)
+    (source / "client" / "dist" / "index.html").write_text("new client\n", encoding="utf-8")
+    (source / "detection").mkdir()
+    (source / "detection" / "detect.py").write_text("print('detect')\n", encoding="utf-8")
     artifact = ota_root / "artifacts" / "homecam-1.2.4.tar"
     with tarfile.open(artifact, "w") as archive:
         for child in sorted(source.rglob("*")):
@@ -645,8 +644,13 @@ def test_system_update_wires_real_orchestrator_and_records_parity_ledger(
     assert body["version"] == "1.2.4"
     assert body["ledger_id"].startswith("route-")
     assert body["restart_required"] is True
+    assert body["applied_components"] == ["client"]
+    assert body["host_commands"][-1] == "docker restart homecam-server"
     assert "note" not in body
     assert settings.ota_active_pointer.read_text(encoding="utf-8") == "1.2.4\n"
+    assert settings.ota_client_dist_target.joinpath("index.html").read_text(
+        encoding="utf-8"
+    ) == "new client\n"
 
     rows = read_events(settings.ota_ledger_path)
     assert [row["status"] for row in rows] == ["requested", "started", "applied"]
@@ -658,6 +662,8 @@ def test_system_update_wires_real_orchestrator_and_records_parity_ledger(
         assert metadata["artifact_digest"] == artifact_digest
         assert metadata["strategy"] == "rsync-artifact"
     assert rows[-1]["metadata"]["health_result"] == "restart_deferred"
+    assert rows[-1]["metadata"]["applied_components"] == ["client"]
+    assert rows[-1]["metadata"]["host_commands"] == body["host_commands"]
 
 
 # iter-238 (Feature #10/12 follow-up): /api/system/backups listing.

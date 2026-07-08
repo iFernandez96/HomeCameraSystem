@@ -35,40 +35,20 @@ def _tree_sha256(root: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_deploy_clone(root: Path, persisted_data_dir: Path) -> Path:
+def _write_deploy_state(root: Path) -> Path:
     root.mkdir(parents=True)
-    (root / "compose.yaml").write_text(
-        "services:\n  homecam:\n    volumes:\n      - ${HOMECAM_DATA_DIR}:/data\n",
-        encoding="utf-8",
-    )
-    (root / ".env").write_text(
-        f"HOMECAM_VERSION={CURRENT_VERSION}\nHOMECAM_DATA_DIR={persisted_data_dir}\n",
-        encoding="utf-8",
-    )
-    (root / "data").mkdir()
-    (root / "data" / ".keep").write_text("scratch deploy data placeholder\n", encoding="utf-8")
     active_pointer = root / "active-version"
     active_pointer.write_text(f"{CURRENT_VERSION}\n", encoding="utf-8")
     return active_pointer
 
 
-def _write_artifact_source(root: Path, persisted_data_dir: Path) -> None:
+def _write_artifact_source(root: Path) -> None:
     root.mkdir(parents=True)
-    (root / "compose.yaml").write_text(
-        "services:\n"
-        "  homecam:\n"
-        "    image: homecam:test\n"
-        "    volumes:\n"
-        "      - ${HOMECAM_DATA_DIR}:/data\n",
-        encoding="utf-8",
-    )
-    (root / ".env").write_text(
-        f"HOMECAM_VERSION={TARGET_VERSION}\nHOMECAM_DATA_DIR={persisted_data_dir}\n",
-        encoding="utf-8",
-    )
-    (root / "data").mkdir()
-    (root / "app").mkdir()
-    (root / "app" / "server.py").write_text("print('homecam ota artifact')\n", encoding="utf-8")
+    (root / "client" / "dist").mkdir(parents=True)
+    (root / "client" / "dist" / "index.html").write_text("new client\n", encoding="utf-8")
+    (root / "client" / "dist" / "asset.txt").write_text("asset bytes\n", encoding="utf-8")
+    (root / "detection").mkdir()
+    (root / "detection" / "detect.py").write_text("print('detect')\n", encoding="utf-8")
 
 
 def _make_artifact(artifacts_dir: Path, source: Path) -> Path:
@@ -103,10 +83,14 @@ def _offline_request(tmp_path: Path, *, manifest_sha256: str | None = None) -> O
     persisted.mkdir()
     (persisted / "clip.bin").write_bytes(b"persisted camera bytes")
     deploy = tmp_path / "scratch-deploy-clone"
-    active_pointer = _write_deploy_clone(deploy, persisted)
+    active_pointer = _write_deploy_state(deploy)
+    client_dist_target = tmp_path / "client_dist"
+    client_dist_target.mkdir()
+    (client_dist_target / "index.html").write_text("old client\n", encoding="utf-8")
+    (client_dist_target / "old.txt").write_text("old asset\n", encoding="utf-8")
     artifacts = tmp_path / "artifacts"
     source = tmp_path / "artifact-source"
-    _write_artifact_source(source, persisted)
+    _write_artifact_source(source)
     artifact = _make_artifact(artifacts, source)
     manifest = tmp_path / "manifest.json"
     _write_manifest(manifest, artifact, sha256=manifest_sha256)
@@ -117,11 +101,12 @@ def _offline_request(tmp_path: Path, *, manifest_sha256: str | None = None) -> O
         artifacts_dir=artifacts,
         staging_root=tmp_path / "staging",
         persisted_data_dir=persisted,
+        client_dist_target=client_dist_target,
         active_pointer=active_pointer,
         ledger_path=tmp_path / "ota-ledger.jsonl",
         current_version=CURRENT_VERSION,
         expected_artifact_size=artifact.stat().st_size,
-        restart_command=["systemctl", "restart", "homecam.service"],
+        restart_command=["docker", "restart", "homecam-server"],
         env={},
     )
     _assert_inside(
@@ -135,6 +120,7 @@ def _offline_request(tmp_path: Path, *, manifest_sha256: str | None = None) -> O
         request.staging_root,
         request.ledger_path,
         request.active_pointer,
+        request.client_dist_target,
     )
     return request
 
@@ -173,15 +159,19 @@ def test_given_local_manifest_and_artifact_when_full_offline_orchestrator_runs_t
     assert result.ledger_id == "attempt-u17"
     assert result.reason is None
     assert result.phase is None
+    assert result.applied_components == ("client",)
+    assert result.host_commands[-1] == "docker restart homecam-server"
     assert request.active_pointer.read_text(encoding="utf-8") == f"{TARGET_VERSION}\n"
-    assert runner.commands == [("systemctl", "restart", "homecam.service")]
+    assert request.client_dist_target.joinpath("index.html").read_text(
+        encoding="utf-8"
+    ) == "new client\n"
+    assert not request.client_dist_target.joinpath("old.txt").exists()
+    assert runner.commands == [result.host_commands]
     assert health_polls == ["poll"]
 
     staged = request.staging_root / TARGET_VERSION
-    assert (staged / "compose.yaml").is_file()
-    assert (staged / ".env").read_text(encoding="utf-8").startswith(
-        f"HOMECAM_VERSION={TARGET_VERSION}\n"
-    )
+    assert (staged / "client" / "dist" / "index.html").is_file()
+    assert (staged / "detection" / "detect.py").is_file()
     assert (staged / ".ota-stage.json").is_file()
 
     rows = read_events(request.ledger_path)
@@ -189,7 +179,11 @@ def test_given_local_manifest_and_artifact_when_full_offline_orchestrator_runs_t
     assert rows[0]["metadata"] == {"current_version": CURRENT_VERSION}
     assert rows[1]["metadata"] == {"version": TARGET_VERSION}
     assert rows[2]["reason"] == "health_passed"
-    assert rows[2]["metadata"] == {"version": TARGET_VERSION}
+    assert rows[2]["metadata"] == {
+        "version": TARGET_VERSION,
+        "applied_components": ["client"],
+        "host_commands": list(result.host_commands),
+    }
 
 
 def test_given_bad_manifest_checksum_when_full_offline_orchestrator_runs_then_non_applied_and_scratch_roots_match(
@@ -198,6 +192,7 @@ def test_given_bad_manifest_checksum_when_full_offline_orchestrator_runs_then_no
     request = _offline_request(tmp_path, manifest_sha256="0" * 64)
     deploy_root = request.active_pointer.parent
     persisted_root = request.persisted_data_dir
+    client_dist_before = _tree_sha256(request.client_dist_target)
     before_deploy = _tree_sha256(deploy_root)
     before_persisted = _tree_sha256(persisted_root)
     runner = GuardedRecordingRunner()
@@ -220,6 +215,7 @@ def test_given_bad_manifest_checksum_when_full_offline_orchestrator_runs_then_no
     assert not request.staging_root.exists()
     assert _tree_sha256(deploy_root) == before_deploy
     assert _tree_sha256(persisted_root) == before_persisted
+    assert _tree_sha256(request.client_dist_target) == client_dist_before
 
     rows = read_events(request.ledger_path)
     assert [row["status"] for row in rows] == ["requested", "rejected"]

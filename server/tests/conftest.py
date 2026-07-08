@@ -52,6 +52,9 @@ def _auth_setup(tmp_path, monkeypatch):
     # ALWAYS appends a ledger line (U18 invariant), so any test touching it
     # on a dev box needs scratch paths.
     ota_root = tmp_path / "dist-ota"
+    ota_client_dist_target = tmp_path / "client_dist"
+    ota_client_dist_target.mkdir()
+    (ota_client_dist_target / "index.html").write_text("old client\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ota_root", ota_root)
     monkeypatch.setattr(settings, "ota_manifest_path", ota_root / "update-manifest.json")
     monkeypatch.setattr(settings, "ota_artifacts_dir", ota_root / "artifacts")
@@ -61,6 +64,7 @@ def _auth_setup(tmp_path, monkeypatch):
             monkeypatch.setattr(
                 settings, _name, ota_root / getattr(settings, _name).name
             )
+    monkeypatch.setattr(settings, "ota_client_dist_target", ota_client_dist_target)
 
     users_db.init_db(tmp_path / "users.db")
     # Idempotent: a second test under a fresh tmp_path makes a new

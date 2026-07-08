@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.services.ota_apply import switch_active_version_pointer
+from app.services.ota_apply import apply_staged_client_dist, restore_client_dist_backup
 from app.services.ota_compare import compare_available_version
 from app.services.ota_health import HealthPoller, poll_post_restart_health
 from app.services.ota_integrity import verify_local_artifact
@@ -26,6 +26,7 @@ class OtaApplyRequest:
     artifacts_dir: Path
     staging_root: Path
     persisted_data_dir: Path
+    client_dist_target: Path
     active_pointer: Path
     ledger_path: Path
     current_version: str
@@ -42,6 +43,8 @@ class OtaOrchestratorResult:
     ledger_id: str | None = None
     reason: str | None = None
     phase: str | None = None
+    applied_components: tuple[str, ...] = ()
+    host_commands: tuple[str, ...] = ()
 
 
 def _append_terminal_rejected(
@@ -68,6 +71,37 @@ def _append_terminal_rejected(
         applied=False,
         reason=reason,
         phase=phase,
+    )
+
+
+def _rollback_after_partial_apply(
+    request: OtaApplyRequest,
+    apply_result,
+    *,
+    reason: str,
+    metadata: Mapping[str, Any],
+    clock: Callable[[], datetime | str] | None,
+) -> OtaOrchestratorResult:
+    restore_client_dist_backup(
+        target=request.client_dist_target,
+        backup_dir=apply_result.client_backup_dir,
+    )
+    rollback = rollback_active_version_pointer(
+        active_pointer=request.active_pointer,
+        previous_version=apply_result.previous_version,
+        ledger_path=request.ledger_path,
+        attempt_id=request.attempt_id,
+        reason=reason,
+        metadata=metadata,
+        clock=clock,
+    )
+    return OtaOrchestratorResult(
+        status=rollback.status,
+        applied=False,
+        reason=rollback.reason,
+        phase=str(metadata.get("phase")) if metadata.get("phase") else None,
+        applied_components=apply_result.applied_components,
+        host_commands=apply_result.host_commands,
     )
 
 
@@ -152,7 +186,7 @@ def orchestrate_ota_apply(
 
     preflight = preflight_staged_deploy(
         staged.staging_dir,
-        persisted_data_dir=request.persisted_data_dir,
+        client_dist_target=request.client_dist_target,
         active_pointer=request.active_pointer,
     )
     if not preflight.can_apply:
@@ -164,10 +198,12 @@ def orchestrate_ota_apply(
             clock=clock,
         )
 
-    apply_result = switch_active_version_pointer(
+    apply_result = apply_staged_client_dist(
         active_pointer=request.active_pointer,
         version=manifest.version,
         staged_version_dir=staged.staging_dir,
+        client_dist_target=request.client_dist_target,
+        restart_command=tuple(request.restart_command),
     )
     if not apply_result.can_restart:
         return _append_terminal_rejected(
@@ -178,57 +214,48 @@ def orchestrate_ota_apply(
             clock=clock,
         )
 
-    restart = record_restart_handoff(request.restart_command, runner=restart_runner)
+    restart = record_restart_handoff(apply_result.host_commands, runner=restart_runner)
     if not restart.handed_off:
-        rollback = rollback_active_version_pointer(
-            active_pointer=request.active_pointer,
-            previous_version=apply_result.previous_version,
-            ledger_path=request.ledger_path,
-            attempt_id=request.attempt_id,
+        return _rollback_after_partial_apply(
+            request,
+            apply_result,
             reason=restart.reason or "restart_handoff_failed",
-            metadata={"phase": "restart", "version": manifest.version},
+            metadata={
+                "phase": "restart",
+                "version": manifest.version,
+                "applied_components": list(apply_result.applied_components),
+                "host_commands": list(apply_result.host_commands),
+            },
             clock=clock,
-        )
-        return OtaOrchestratorResult(
-            status=rollback.status,
-            applied=False,
-            reason=rollback.reason,
-            phase="restart",
         )
 
     if health_poller is None:
-        rollback = rollback_active_version_pointer(
-            active_pointer=request.active_pointer,
-            previous_version=apply_result.previous_version,
-            ledger_path=request.ledger_path,
-            attempt_id=request.attempt_id,
+        return _rollback_after_partial_apply(
+            request,
+            apply_result,
             reason="health_poller_missing",
-            metadata={"phase": "health", "version": manifest.version},
+            metadata={
+                "phase": "health",
+                "version": manifest.version,
+                "applied_components": list(apply_result.applied_components),
+                "host_commands": list(apply_result.host_commands),
+            },
             clock=clock,
-        )
-        return OtaOrchestratorResult(
-            status=rollback.status,
-            applied=False,
-            reason=rollback.reason,
-            phase="health",
         )
 
     health = poll_post_restart_health(health_poller, attempts=5)
     if not health.healthy:
-        rollback = rollback_active_version_pointer(
-            active_pointer=request.active_pointer,
-            previous_version=apply_result.previous_version,
-            ledger_path=request.ledger_path,
-            attempt_id=request.attempt_id,
+        return _rollback_after_partial_apply(
+            request,
+            apply_result,
             reason=health.reason or "health_failed",
-            metadata={"phase": "health", "version": manifest.version},
+            metadata={
+                "phase": "health",
+                "version": manifest.version,
+                "applied_components": list(apply_result.applied_components),
+                "host_commands": list(apply_result.host_commands),
+            },
             clock=clock,
-        )
-        return OtaOrchestratorResult(
-            status=rollback.status,
-            applied=False,
-            reason=rollback.reason,
-            phase="health",
         )
 
     append_event(
@@ -236,7 +263,11 @@ def orchestrate_ota_apply(
         attempt_id=request.attempt_id,
         status="applied",
         reason="health_passed",
-        metadata={"version": manifest.version},
+        metadata={
+            "version": manifest.version,
+            "applied_components": list(apply_result.applied_components),
+            "host_commands": list(apply_result.host_commands),
+        },
         **append_kwargs,
     )
     return OtaOrchestratorResult(
@@ -244,4 +275,6 @@ def orchestrate_ota_apply(
         applied=True,
         version=manifest.version,
         ledger_id=request.attempt_id,
+        applied_components=apply_result.applied_components,
+        host_commands=apply_result.host_commands,
     )
