@@ -54,6 +54,22 @@ const repoRoot = path.resolve(clientRoot, '..')
 const serverRoot = path.join(repoRoot, 'server')
 const clientDist = path.join(clientRoot, 'dist')
 const pythonBin = '/tmp/homecam-venv/bin/python'
+const hardwareProfilePath = path.join(repoRoot, '.jetson-snapshot', 'hardware-profile.json')
+const defaultPublisherProfile = {
+  width: 320,
+  height: 240,
+  fps: '10',
+  gopFrames: 10,
+}
+
+type PublisherProfile = typeof defaultPublisherProfile
+
+type HardwareProfile = {
+  width?: unknown
+  height?: unknown
+  fps?: unknown
+  gop_frames?: unknown
+}
 
 async function getFreePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -108,6 +124,45 @@ async function execPython(args: string[], env: NodeJS.ProcessEnv): Promise<void>
       },
     )
   })
+}
+
+function positiveInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+    ? value
+    : null
+}
+
+function fpsValue(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return String(value)
+  }
+  if (typeof value !== 'string') return null
+
+  const trimmed = value.trim()
+  const decimalMatch = /^\d+(?:\.\d+)?$/.test(trimmed)
+  if (decimalMatch && Number(trimmed) > 0) return trimmed
+
+  const rationalMatch = trimmed.match(/^(\d+)\/(\d+)$/)
+  if (rationalMatch && Number(rationalMatch[1]) > 0 && Number(rationalMatch[2]) > 0) {
+    return trimmed
+  }
+
+  return null
+}
+
+async function readPublisherProfile(): Promise<PublisherProfile> {
+  try {
+    const raw = await readFile(hardwareProfilePath, 'utf8')
+    const profile = JSON.parse(raw) as HardwareProfile
+    return {
+      width: positiveInteger(profile.width) ?? defaultPublisherProfile.width,
+      height: positiveInteger(profile.height) ?? defaultPublisherProfile.height,
+      fps: fpsValue(profile.fps) ?? defaultPublisherProfile.fps,
+      gopFrames: positiveInteger(profile.gop_frames) ?? defaultPublisherProfile.gopFrames,
+    }
+  } catch {
+    return defaultPublisherProfile
+  }
 }
 
 async function waitForHttp(url: string, logPath: string): Promise<void> {
@@ -352,6 +407,7 @@ export const test = base.extend<
     const webrtcPort = await getFreePort()
     const apiPort = await getFreePort()
     const baseURL = `http://127.0.0.1:${appPort}`
+    const publisherProfile = await readPublisherProfile()
 
     await writeFile(
       mediamtxConfigPath,
@@ -404,7 +460,7 @@ export const test = base.extend<
           '-f',
           'lavfi',
           '-i',
-          'testsrc=size=320x240:rate=10',
+          `testsrc=size=${publisherProfile.width}x${publisherProfile.height}:rate=${publisherProfile.fps}`,
           '-an',
           '-c:v',
           'libx264',
@@ -416,9 +472,9 @@ export const test = base.extend<
           // IDRs, so a WebRTC reader joining mid-GOP can't decode a frame
           // before the test timeout. Match the production camera's short GOP.
           '-g',
-          '10',
+          String(publisherProfile.gopFrames),
           '-keyint_min',
-          '10',
+          String(publisherProfile.gopFrames),
           '-pix_fmt',
           'yuv420p',
           '-f',

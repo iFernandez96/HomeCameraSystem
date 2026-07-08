@@ -1,4 +1,5 @@
 import contextlib
+import json
 import os
 import socket
 import subprocess
@@ -15,6 +16,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVENTS_DB = REPO_ROOT / ".jetson-snapshot" / "db" / "events.sqlite"
+HARDWARE_PROFILE = REPO_ROOT / ".jetson-snapshot" / "hardware-profile.json"
+DEFAULT_PUBLISHER_PROFILE = {
+    "width": 320,
+    "height": 240,
+    "fps": "10",
+    "gop_frames": 10,
+}
 MEDIAMTX_SKIP_REASON = (
     "download a mediamtx release binary and set HOMECAM_MEDIAMTX_BIN"
 )
@@ -95,6 +103,57 @@ def find_ffmpeg_binary() -> str:
 
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
+
+
+def positive_integer(value) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def fps_value(value) -> str | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return str(value)
+    if not isinstance(value, str):
+        return None
+
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    try:
+        if "/" not in trimmed and float(trimmed) > 0:
+            return trimmed
+    except ValueError:
+        pass
+
+    parts = trimmed.split("/")
+    if len(parts) == 2:
+        try:
+            numerator = int(parts[0])
+            denominator = int(parts[1])
+        except ValueError:
+            return None
+        if numerator > 0 and denominator > 0:
+            return trimmed
+
+    return None
+
+
+def publisher_profile() -> dict[str, int | str]:
+    try:
+        profile = json.loads(HARDWARE_PROFILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        profile = {}
+
+    return {
+        "width": positive_integer(profile.get("width"))
+        or DEFAULT_PUBLISHER_PROFILE["width"],
+        "height": positive_integer(profile.get("height"))
+        or DEFAULT_PUBLISHER_PROFILE["height"],
+        "fps": fps_value(profile.get("fps")) or DEFAULT_PUBLISHER_PROFILE["fps"],
+        "gop_frames": positive_integer(profile.get("gop_frames"))
+        or DEFAULT_PUBLISHER_PROFILE["gop_frames"],
+    }
 
 
 def free_tcp_port() -> int:
@@ -190,6 +249,8 @@ def mediamtx_server(tmp_path):
 @pytest.fixture
 def ffmpeg_testsrc_publisher(mediamtx_server):
     ffmpeg = find_ffmpeg_binary()
+    profile = publisher_profile()
+    gop_frames = str(profile["gop_frames"])
     process = subprocess.Popen(
         [
             ffmpeg,
@@ -200,7 +261,7 @@ def ffmpeg_testsrc_publisher(mediamtx_server):
             "-f",
             "lavfi",
             "-i",
-            "testsrc=size=320x240:rate=10",
+            f"testsrc=size={profile['width']}x{profile['height']}:rate={profile['fps']}",
             "-an",
             "-c:v",
             "libx264",
@@ -208,6 +269,10 @@ def ffmpeg_testsrc_publisher(mediamtx_server):
             "ultrafast",
             "-tune",
             "zerolatency",
+            "-g",
+            gop_frames,
+            "-keyint_min",
+            gop_frames,
             "-pix_fmt",
             "yuv420p",
             "-f",
