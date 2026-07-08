@@ -690,9 +690,6 @@ export function VideoTile({
         </div>
       )}
       {showStatusPill && <StatusPill status={status} />}
-      <div className="absolute bottom-3 left-3">
-        <QualityMenu quality={quality} onSelect={onSelectQuality} />
-      </div>
       {/* Control-overlap fix (2026-07-07): single-owner flex row for
           the docked corner. Was three independently absolute-
           positioned pieces (bbox hint at right-28, bbox toggle at
@@ -702,11 +699,23 @@ export function VideoTile({
           with a caller's own overlay (Watch.tsx did exactly that).
           Now ONE positioned row; every child is a plain flex item, so
           new slots (like `actions`) just take their place in the row
-          instead of guessing an unclaimed `right-N`. */}
+          instead of guessing an unclaimed `right-N`.
+          Baseline fix (2026-07-07, user screenshot): the quality pill
+          used to sit in its own `bottom-3 left-3` box while this row
+          carried the safe-area calc — on a phone with a gesture bar
+          the two clusters rode different baselines. The quality menu
+          now lives in the SAME row (justify-between pushes it left),
+          so every bottom overlay shares one baseline in docked AND
+          fullscreen modes. The row itself is pointer-events-none so
+          the strip between the clusters doesn't swallow touches. */}
       <div
-        className="absolute right-3 flex items-center gap-2"
+        className="absolute inset-x-3 flex items-center justify-between gap-2 pointer-events-none"
         style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
       >
+        <div className="pointer-events-auto">
+          <QualityMenu quality={quality} onSelect={onSelectQuality} />
+        </div>
+        <div className="flex items-center gap-2 pointer-events-auto">
         {showBoxHint && (
           // Painfix wave B #2: purely visual reinforcement — the
           // button's aria-label already carries the meaning for
@@ -798,6 +807,7 @@ export function VideoTile({
             )}
           </button>
         )}
+        </div>
       </div>
       {/* iter-259: pill labels in plain English per ux-grandpa.
           Internal state names ("THERMAL", "OFFLINE") replaced with

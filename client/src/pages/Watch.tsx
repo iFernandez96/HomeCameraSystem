@@ -401,19 +401,23 @@ export function Watch() {
             actions={
               full ? undefined : (
                 <>
-                  {/* Overhaul W1 item 4 (mira#5): these render inside
-                      VideoTile's rounded-full w-11 control row —
-                      rounded-2xl squircles next to circles read
-                      unfinished. Pill/circle shapes + the row owner's
-                      exact glass treatment (black/60, white/20 ring). */}
+                  {/* Overhaul W1 item 4 (mira#5) + user screenshot
+                      (2026-07-07): these render inside VideoTile's
+                      rounded-full w-11 control row. Snapshot was a
+                      wide text pill sandwiched between two circles —
+                      circle/pill/circle read disordered. It is now an
+                      icon circle like its siblings (uniform w-11 row);
+                      the labeled Snapshot button still exists on the
+                      fullscreen rail for discoverability. */}
                   <button
                     type="button"
                     onClick={onSnapshot}
                     disabled={busy}
+                    aria-label={busy ? 'Saving snapshot' : 'Snapshot'}
                     onPointerDown={busy ? undefined : ripple}
-                    className="relative overflow-hidden inline-flex items-center gap-1.5 h-11 px-4 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white text-xs font-semibold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
+                    className="relative overflow-hidden inline-flex items-center justify-center w-11 h-11 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
                   >
-                    {busy ? 'Saving…' : 'Snapshot'}
+                    <SnapshotIcon />
                   </button>
                   <button
                     type="button"

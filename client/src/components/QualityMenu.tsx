@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRipple } from '../lib/ripple'
 import type { StreamQuality } from '../lib/streamQuality'
 
@@ -45,6 +46,12 @@ export function QualityMenu({
   const [activeIndex, setActiveIndex] = useState(() =>
     Math.max(0, QUALITY_OPTIONS.findIndex((o) => o.value === quality)),
   )
+  // Anchor rect captured when the menu opens. The popover renders in a
+  // body portal (see below), so it positions itself with `fixed`
+  // coordinates derived from the trigger instead of CSS `bottom-full`.
+  const [anchor, setAnchor] = useState<{ left: number; bottomUp: number } | null>(
+    null,
+  )
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const listRef = useRef<HTMLUListElement | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -74,6 +81,20 @@ export function QualityMenu({
   // extra render entirely.
   const openMenu = () => {
     setActiveIndex(Math.max(0, QUALITY_OPTIONS.findIndex((o) => o.value === quality)))
+    // Clipping fix (2026-07-07, user screenshot): the popover used to be
+    // absolutely positioned inside VideoTile's `overflow-hidden` frame —
+    // opening upward from the bottom-left pill, its top rows were cut
+    // off at the video's edge. It now portals to <body> at a fixed
+    // position above the trigger, clamped to the viewport's left edge.
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (rect) {
+      setAnchor({
+        left: Math.max(8, rect.left),
+        bottomUp: Math.max(8, window.innerHeight - rect.top + 8),
+      })
+    } else {
+      setAnchor(null)
+    }
     setOpen(true)
   }
   const toggleMenu = () => {
@@ -81,16 +102,31 @@ export function QualityMenu({
     else openMenu()
   }
 
-  // Click-outside dismiss.
+  // Click-outside dismiss. The list lives in a body portal, so "inside"
+  // means inside the trigger root OR inside the portaled list.
   useEffect(() => {
     if (!open) return
     const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        close(false)
-      }
+      const t = e.target as Node
+      if (rootRef.current?.contains(t) || listRef.current?.contains(t)) return
+      close(false)
     }
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+
+  // The portaled popover's fixed coordinates go stale if the page
+  // scrolls or the viewport resizes/rotates under it — close instead of
+  // chasing the anchor (matches how transient menus behave elsewhere).
+  useEffect(() => {
+    if (!open) return
+    const onMove = () => close(false)
+    window.addEventListener('scroll', onMove, { capture: true, passive: true })
+    window.addEventListener('resize', onMove)
+    return () => {
+      window.removeEventListener('scroll', onMove, { capture: true })
+      window.removeEventListener('resize', onMove)
+    }
   }, [open])
 
   // Focus the active option whenever the popover is open and the
@@ -173,14 +209,16 @@ export function QualityMenu({
           {currentLabel}
         </span>
       </button>
-      {open && (
+      {open &&
+        createPortal(
         <ul
           ref={listRef}
           role="listbox"
           aria-label="Stream quality options"
           tabIndex={-1}
           onKeyDown={onListKeyDown}
-          className="absolute bottom-full left-0 mb-2 min-w-[9.5rem] bg-black/85 backdrop-blur rounded-[18px] ring-1 ring-white/15 p-1.5 shadow-[var(--shadow-overlay)] z-10"
+          className="fixed min-w-[9.5rem] max-w-[calc(100vw-1rem)] bg-black/85 backdrop-blur rounded-[18px] ring-1 ring-white/15 p-1.5 shadow-[var(--shadow-overlay)] z-50"
+          style={{ left: anchor?.left ?? 8, bottom: anchor?.bottomUp ?? 8 }}
         >
           {QUALITY_OPTIONS.map((o, i) => {
             const selected = o.value === quality
@@ -243,7 +281,8 @@ export function QualityMenu({
               </li>
             )
           })}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   )
