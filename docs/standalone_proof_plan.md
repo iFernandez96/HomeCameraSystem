@@ -169,7 +169,7 @@ network, never the prod registry.
       6583833); ALSO fixed fetch script to capture the docker app-log
       stream (b538c47). REMAINING operator half: cross-deploy server,
       let real events flow, re-fetch snapshot before P14 can run
-- [ ] P14 PARITY: replay real person events from .jetson-snapshot/db/
+- [x] P14 PARITY: replay real person events from .jetson-snapshot/db/
       events.sqlite through the real route + real registry copy; diff
       selected subs, payload fields, and send outcomes against the
       Jetson's own journald send lines for the same events
@@ -305,8 +305,8 @@ Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 - [x] W10 local: non-2xx -> error UI, manual Retry = exactly one POST
 - [x] W11 local: hung POST aborted on unmount/switch, no leak
 - [x] W12 local: invalid SDP -> set-remote-failed, never Live
-- [ ] W13 observability: attempt ledger (id, rung, timings, no SDP/IPs)
-- [ ] W14 parity prep: settled-attempt client logging
+- [x] W13 observability: attempt ledger (id, rung, timings, no SDP/IPs)
+- [x] W14 parity prep: settled-attempt client logging
 - [ ] W15 parity capture: live run + fresh Jetson log fetch
 - [ ] W16 PARITY diff: ledger vs mediamtx/client_log by rung/outcome/window
 - [ ] W17 completion gate: live frames + local errors + parity all green
