@@ -10,9 +10,8 @@
    "tests": "server/tests/harness_retention (9)"
   },
   "2_push_gateway": {
-   "status": "DONE except P14",
-   "remaining": "P14 in flight (codex); fresh snapshot HAS 22 push-fanout lines (fetch script --since bug fixed: docker needs hours not days)",
-   "tests": "server/tests/harness_push_gateway (9 local + 3 live env-gated HOMECAM_LIVE_PUSH=1)"
+   "status": "DONE 10 local + 3 live env-gated",
+   "tests": "server/tests/harness_push_gateway (P14 fanout parity green vs 22 production log lines)"
   },
   "3_auth": {
    "status": "DONE",
@@ -24,9 +23,9 @@
   },
   "5_webrtc_whep": {
    "status": "in_progress",
-   "done": "W1-W8 live-verified vs real Jetson (incl. W7 quality-switch, W8 resume coalescing) + W9-W12 error harness",
-   "in_flight": "W13-14 attempt-ledger observability (codex task by3w1kzpq, client/src lane)",
-   "remaining": "W15 live capture + fresh log fetch, W16 parity diff vs mediamtx/client_log, W17 gate",
+   "done": "W1-W8 live vs real Jetson + W9-W12 error harness + W13-14 attempt ledger (committed, NOT yet deployed)",
+   "in_flight": null,
+   "remaining": "W15-16 BLOCKED on user OK to deploy client (classifier denied rsync); then live run + log fetch + parity diff; W17 gate",
    "findings": "Live-pill playing-vs-rVFC fixed+deployed (57b251b); abort-on-supersede fixed+deployed (8fadee0); starlette BaseHTTPMiddleware swallows http.disconnect (documented in whepErrorHarness stub)"
   },
   "6_sw_cache_update": {
@@ -49,8 +48,8 @@
   "10_multicam": {
    "status": "in_progress",
    "done": "M10.2-4 (bfc4246, mediamtx v1.18.0 amd64 version-matched to production) + M10.11-12",
-   "in_flight": null,
-   "remaining": "M10.5-10 browser switcher/rungs/worker-id/persistence/filter/live-probe",
+   "in_flight": "M10.7 (task bue16sqrz, detection/tests), M10.8 (b8u639fd4, server/tests/harness_multicam), M10.9 (bq257vd2e, client/src Events tests)",
+   "remaining": "M10.5-6 browser switcher/rung e2e, M10.10 live publish probe",
    "note": "mediamtx v1.18.0 binary in session scratchpad (HOMECAM_MEDIAMTX_BIN); 1.15.1 rejects webrtcAllowOrigins plural key"
   },
   "11_rebuild_list": {
@@ -62,7 +61,9 @@
   "deploys_today": "server x2 (TTL fix, fanout INFO logging, WS accept-then-close), client x4 (A8 refresh-before-anon, rVFC pill, abort-on-supersede, SW navigation fallback)",
   "all_verified": "healthz + in-container grep + live browser suites"
  },
- "blocked": [],
- "last_update": "2026-07-08T13:05 post-compaction resume; snapshot refetched (fanout lines + no named rows so R15 stays armed)",
+ "blocked": [
+  "W15 client deploy to Jetson denied by permission classifier \u2014 ask Israel to approve deploying the W13-14 ledger-logging client build"
+ ],
+ "last_update": "2026-07-08T13:15 lanes: M10.7/8/9 in flight; P14+W13-14 committed",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom left for manual thumb test."
 }
