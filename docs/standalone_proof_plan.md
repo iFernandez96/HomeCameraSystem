@@ -595,3 +595,51 @@ restore diff proving users.db rows, auth secret/key files, push subscriptions,
 detection settings/zones, and all declared included files match the Jetson
 ground truth byte-for-byte or row-for-row. If those ledgers are absent, the
 observability steps above are mandatory harness work before parity can run.
+
+## Phase O — Jetson-side observability (Israel: "I want them", 2026-07-08)
+
+Goal: make the standalones' imitation of the Jetson self-calibrating — capture
+decision-level ground truth continuously so every future parity leg has real
+data waiting. Constraints: Nano 2GB (no continuous raw-frame recording), py36
+in detection/, no per-frame log lines, SD-card write budget, no secrets.
+
+### O-A Persistent ground truth (fixes today's docker-log loss)
+- [ ] O1 journald Storage=persistent + SystemMaxUse cap on the Jetson
+      (deploy/ script or install-jetson.sh addition); invariant: unit logs
+      survive reboot AND container recreation.
+- [ ] O2 container log forwarding: compose logging opts (json-file
+      max-size/max-file) so docker logs rotate instead of vanish; fetch
+      script pulls the rotated files too.
+
+### O-B Provenance + hardware profile (fixes stale-fixture surprises)
+- [ ] O3 fetch-jetson-data.sh stamps SNAPSHOT_INFO with: running image
+      digest, HOMECAM_VERSION, detection_config sha256, mediamtx.yml sha256,
+      git rev of the deployed detection/ tree.
+- [ ] O4 hardware-profile exporter in fetch script: measured GOP + fps +
+      resolution from a real recent clip (ffprobe), encoder element names
+      from mediamtx.yml; written to .jetson-snapshot/hardware-profile.json.
+- [ ] O5 local harness fixtures READ the profile when present (multicam
+      publisher GOP/fps/size from profile, not constants); absent profile =
+      today's defaults.
+
+### O-C Worker decision ledgers + flight recorder (py36, gated, sampled)
+- [ ] O6 detection/decision_ledger.py: pure py36 JSONL appender (atomic,
+      size-capped, EPIPE-safe via applog conventions); unit-tested offline.
+- [ ] O7 presence-tracker transitions ledgered (emit/suppress/re-arm/gap
+      with iou + reason) — transitions ONLY, never per-frame.
+- [ ] O8 gear + watchdog transitions ledgered (active/idle, mem/thermal
+      pause, ladder rung climbs with persisted level).
+- [ ] O9 flight recorder (sampled): every Nth processed frame append raw
+      detectNet outputs (boxes/scores/labels/ts) to a capped JSONL ring;
+      DETECT_FLIGHT_SAMPLE_N env (0=off default ON at 10), fetch script
+      pulls it; invariant: byte budget capped, no frames written.
+- [ ] O10 PARITY leg: replay flight-recorder JSONL through the real
+      PresenceTracker offline and diff emit decisions vs the presence
+      ledger lines the worker recorded live — exact.
+
+### O-D Shadow mode (narrowest: presence tracker only) — LAST
+- [ ] O11 shadow PresenceTracker: second instance fed the same detections,
+      decisions ledgered with shadow=true, NEVER acts; env-gated
+      DETECT_SHADOW_PRESENCE=0 default; crash-isolated (exceptions
+      swallowed+counted, never touch the active path).
+- [ ] O12 shadow diff tool: offline diff of shadow vs active ledger lines.
