@@ -604,18 +604,18 @@ data waiting. Constraints: Nano 2GB (no continuous raw-frame recording), py36
 in detection/, no per-frame log lines, SD-card write budget, no secrets.
 
 ### O-A Persistent ground truth (fixes today's docker-log loss)
-- [ ] O1 journald Storage=persistent + SystemMaxUse cap on the Jetson
+- [x] O1 journald Storage=persistent + SystemMaxUse cap on the Jetson
       (deploy/ script or install-jetson.sh addition); invariant: unit logs
       survive reboot AND container recreation.
-- [ ] O2 container log forwarding: compose logging opts (json-file
+- [x] O2 container log forwarding: compose logging opts (json-file
       max-size/max-file) so docker logs rotate instead of vanish; fetch
       script pulls the rotated files too.
 
 ### O-B Provenance + hardware profile (fixes stale-fixture surprises)
-- [ ] O3 fetch-jetson-data.sh stamps SNAPSHOT_INFO with: running image
+- [x] O3 fetch-jetson-data.sh stamps SNAPSHOT_INFO with: running image
       digest, HOMECAM_VERSION, detection_config sha256, mediamtx.yml sha256,
       git rev of the deployed detection/ tree.
-- [ ] O4 hardware-profile exporter in fetch script: measured GOP + fps +
+- [x] O4 hardware-profile exporter in fetch script: measured GOP + fps +
       resolution from a real recent clip (ffprobe), encoder element names
       from mediamtx.yml; written to .jetson-snapshot/hardware-profile.json.
 - [ ] O5 local harness fixtures READ the profile when present (multicam
