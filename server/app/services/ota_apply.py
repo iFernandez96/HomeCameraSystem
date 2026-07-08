@@ -23,6 +23,7 @@ class ApplyTransactionResult:
     client_backup_dir: Path | None = None
     applied_components: tuple[str, ...] = ()
     host_commands: tuple[str, ...] = ()
+    ownership_restored: bool | None = None
 
     @property
     def can_restart(self) -> bool:
@@ -66,10 +67,32 @@ def _clear_children(target: Path) -> None:
             child.unlink()
 
 
+def _restore_tree_owner(target: Path, *, uid: int, gid: int) -> bool:
+    failures: list[tuple[Path, OSError]] = []
+    for path in [target, *sorted(target.rglob("*"))]:
+        try:
+            os.lchown(path, uid, gid)
+        except OSError as exc:
+            failures.append((path, exc))
+
+    if failures:
+        first_path, first_error = failures[0]
+        log.warning(
+            "ota client dist ownership restore incomplete failures=%s first_path=%s reason=%s",
+            len(failures),
+            first_path,
+            first_error,
+        )
+        return False
+    return True
+
+
 def _restore_client_dist(*, target: Path, backup_dir: Path) -> bool:
     try:
+        target_stat = target.stat()
         _clear_children(target)
         _copy_children(backup_dir, target)
+        _restore_tree_owner(target, uid=target_stat.st_uid, gid=target_stat.st_gid)
     except OSError:
         log.warning("rejecting OTA client dist restore reason=%s", "client_restore_failed")
         return False
@@ -122,6 +145,7 @@ def apply_staged_client_dist(
             previous_version=previous,
             reason="missing_client_dist_target",
         )
+    target_stat = client_dist_target.stat()
 
     backup_dir = staged_version_dir / ".ota-client-dist-backup"
     if backup_dir.exists():
@@ -141,6 +165,11 @@ def apply_staged_client_dist(
             reason="client_dist_apply_failed",
             client_backup_dir=backup_dir if backup_dir.is_dir() else None,
         )
+    ownership_restored = _restore_tree_owner(
+        client_dist_target,
+        uid=target_stat.st_uid,
+        gid=target_stat.st_gid,
+    )
 
     pointer_result = switch_active_version_pointer(
         active_pointer=active_pointer,
@@ -149,7 +178,17 @@ def apply_staged_client_dist(
     )
     if not pointer_result.can_restart:
         _restore_client_dist(target=client_dist_target, backup_dir=backup_dir)
-        return pointer_result
+        return ApplyTransactionResult(
+            status=pointer_result.status,
+            active_pointer=pointer_result.active_pointer,
+            active_version=pointer_result.active_version,
+            previous_version=pointer_result.previous_version,
+            reason=pointer_result.reason,
+            client_backup_dir=backup_dir,
+            applied_components=pointer_result.applied_components,
+            host_commands=pointer_result.host_commands,
+            ownership_restored=ownership_restored,
+        )
 
     return ApplyTransactionResult(
         status="applied",
@@ -162,6 +201,7 @@ def apply_staged_client_dist(
             staged_version_dir=staged_version_dir,
             restart_command=restart_command,
         ),
+        ownership_restored=ownership_restored,
     )
 
 

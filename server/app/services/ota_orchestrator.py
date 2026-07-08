@@ -53,17 +53,23 @@ def _append_terminal_rejected(
     reason: str,
     phase: str,
     version: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
     clock: Callable[[], datetime | str] | None = None,
 ) -> OtaOrchestratorResult:
     append_kwargs: dict[str, Any] = {}
     if clock is not None:
         append_kwargs["clock"] = clock
+    event_metadata: dict[str, Any] = (
+        {"phase": phase, "version": version} if version else {"phase": phase}
+    )
+    if metadata:
+        event_metadata.update(metadata)
     append_event(
         request.ledger_path,
         attempt_id=request.attempt_id,
         status="rejected",
         reason=reason,
-        metadata={"phase": phase, "version": version} if version else {"phase": phase},
+        metadata=event_metadata,
         **append_kwargs,
     )
     return OtaOrchestratorResult(
@@ -206,11 +212,15 @@ def orchestrate_ota_apply(
         restart_command=tuple(request.restart_command),
     )
     if not apply_result.can_restart:
+        metadata: dict[str, Any] = {}
+        if apply_result.ownership_restored is not None:
+            metadata["ownership_restored"] = apply_result.ownership_restored
         return _append_terminal_rejected(
             request,
             reason=apply_result.reason or "apply_failed",
             phase="apply",
             version=manifest.version,
+            metadata=metadata,
             clock=clock,
         )
 
@@ -225,6 +235,7 @@ def orchestrate_ota_apply(
                 "version": manifest.version,
                 "applied_components": list(apply_result.applied_components),
                 "host_commands": list(apply_result.host_commands),
+                "ownership_restored": apply_result.ownership_restored,
             },
             clock=clock,
         )
@@ -239,6 +250,7 @@ def orchestrate_ota_apply(
                 "version": manifest.version,
                 "applied_components": list(apply_result.applied_components),
                 "host_commands": list(apply_result.host_commands),
+                "ownership_restored": apply_result.ownership_restored,
             },
             clock=clock,
         )
@@ -254,6 +266,7 @@ def orchestrate_ota_apply(
                 "version": manifest.version,
                 "applied_components": list(apply_result.applied_components),
                 "host_commands": list(apply_result.host_commands),
+                "ownership_restored": apply_result.ownership_restored,
             },
             clock=clock,
         )
@@ -267,6 +280,7 @@ def orchestrate_ota_apply(
             "version": manifest.version,
             "applied_components": list(apply_result.applied_components),
             "host_commands": list(apply_result.host_commands),
+            "ownership_restored": apply_result.ownership_restored,
         },
         **append_kwargs,
     )

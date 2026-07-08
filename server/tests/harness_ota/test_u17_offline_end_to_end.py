@@ -183,6 +183,7 @@ def test_given_local_manifest_and_artifact_when_full_offline_orchestrator_runs_t
         "version": TARGET_VERSION,
         "applied_components": ["client"],
         "host_commands": list(result.host_commands),
+        "ownership_restored": True,
     }
 
 

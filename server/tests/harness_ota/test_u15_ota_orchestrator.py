@@ -100,6 +100,7 @@ def test_given_stage_preflight_apply_and_health_pass_when_orchestrated_then_appl
     assert rows[-1]["reason"] == "health_passed"
     assert rows[-1]["metadata"]["applied_components"] == ["client"]
     assert rows[-1]["metadata"]["host_commands"] == list(result.host_commands)
+    assert rows[-1]["metadata"]["ownership_restored"] is True
 
 
 def test_given_apply_succeeds_but_health_is_stubbed_when_orchestrated_then_rolled_back_without_success_fields(
@@ -128,6 +129,7 @@ def test_given_apply_succeeds_but_health_is_stubbed_when_orchestrated_then_rolle
     assert [row["status"] for row in rows] == ["requested", "started", "rolled_back"]
     assert rows[-1]["reason"] == "health_poller_missing"
     assert rows[-1]["metadata"]["applied_components"] == ["client"]
+    assert rows[-1]["metadata"]["ownership_restored"] is True
 
 
 def test_given_manifest_unavailable_when_orchestrated_then_typed_non_applied_result_has_no_ok_lie(
