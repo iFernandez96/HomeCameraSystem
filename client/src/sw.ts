@@ -16,12 +16,77 @@ import {
 } from './lib/swPushHandler'
 
 declare const self: ServiceWorkerGlobalScope
+type PrecacheManifestEntry = { url: string; revision?: string | null } | string
+
+const precacheManifest = self.__WB_MANIFEST as PrecacheManifestEntry[]
+
+function manifestBuildId(entries: PrecacheManifestEntry[]): string {
+  // H6.13: Workbox injectManifest writes content revisions into
+  // self.__WB_MANIFEST at build time. index.html is the app-shell
+  // revision the operator cares about for SW takeover observability,
+  // so prefer that stable manifest hash. The fallback is a small
+  // deterministic hash of the injected manifest for unusual builds
+  // where index.html is absent or unrevised.
+  const indexEntry = entries.find(
+    (entry) =>
+      typeof entry !== 'string' &&
+      entry.url.replace(/^\.\//, '').replace(/^\//, '') === 'index.html' &&
+      typeof entry.revision === 'string' &&
+      entry.revision.length > 0,
+  )
+  if (typeof indexEntry !== 'string' && indexEntry?.revision) {
+    return indexEntry.revision
+  }
+
+  const normalized = entries
+    .map((entry) =>
+      typeof entry === 'string'
+        ? { url: entry, revision: null }
+        : { url: entry.url, revision: entry.revision ?? null },
+    )
+    .sort((a, b) => a.url.localeCompare(b.url))
+  const json = JSON.stringify(normalized)
+  let hash = 0x811c9dc5
+  for (let i = 0; i < json.length; i += 1) {
+    hash ^= json.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `manifest-${(hash >>> 0).toString(16).padStart(8, '0')}`
+}
+
+const SW_BUILD_ID = manifestBuildId(precacheManifest)
+
+function sendSwActivatedLog(buildId: string): void {
+  try {
+    void fetch('/api/_internal/client_log', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({
+        level: 'info',
+        event: 'sw:activated',
+        fields: { buildId },
+        online: self.navigator.onLine,
+        ua: self.navigator.userAgent.slice(0, 240),
+      }),
+    }).catch(() => {
+      // Offline activation is normal; this observability ping is best-effort.
+    })
+  } catch {
+    // fetch can throw synchronously in constrained SW contexts; ignore.
+  }
+}
 
 self.skipWaiting()
 clientsClaim()
 
 cleanupOutdatedCaches()
-precacheAndRoute(self.__WB_MANIFEST)
+precacheAndRoute(precacheManifest)
+
+self.addEventListener('activate', () => {
+  sendSwActivatedLog(SW_BUILD_ID)
+})
 
 // H6.9 (harness #6): the app shell is precached, but Workbox did
 // not have a navigation fallback. Offline navigations to deep SPA
