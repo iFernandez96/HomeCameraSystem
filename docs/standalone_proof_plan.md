@@ -263,3 +263,24 @@ IDs match events.sqlite rows).
 - [ ] H9.12 failure mid-zip -> 500 + partial cleaned
 - [ ] H9.13 PARITY: manifest rows vs captured DB; members vs captured bytes;
       note absent Jetson export-log ground truth as observability gap
+
+## Harness #7 — event bus + SQLite under real cadence: atomic steps (spec: codex r8, 2026-07-08)
+Fixtures: continuous_capture_fixtures/events_tonight.json + journal cadence,
+events.sqlite, fresh docker app log. Parity target: accepted persisted
+events (F16 ledger separates worker-lost attempts).
+- [ ] F1 fixtures.py + inventory
+- [ ] F2 fixture row normalization (json<->sqlite parity of the fixture itself)
+- [ ] F3 real row -> DetectionPayload conversion
+- [ ] F4 scratch DB replay through real event_bus.publish
+- [ ] F5 route ingest replay with pinned time
+- [ ] F6 lazy-import circular-dep pin
+- [ ] F7 idempotent duplicate stream (rows unchanged pass 2)
+- [ ] F8 duplicate live-fanout contract pinned
+- [ ] F9 slow subscriber never blocks publish
+- [ ] F10 queue overflow drops only the stuck subscriber
+- [ ] F11 overflow warning rate-limited + resets
+- [ ] F12 WS closed-transport unsubscribes cleanly
+- [ ] F13 SQLite lock contention fail-open pinned (may expose busy_timeout gap)
+- [ ] F14 concurrent readers during ingest
+- [ ] F15 PARITY: full night replay diffs vs events_tonight.json AND events.sqlite
+- [ ] F16 app-log acceptance ledger (accepted vs worker-lost)
