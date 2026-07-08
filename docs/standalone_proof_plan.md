@@ -307,9 +307,9 @@ Parity: per-attempt browser ledger diffed vs mediamtx.log + client_log lines.
 - [x] W12 local: invalid SDP -> set-remote-failed, never Live
 - [x] W13 observability: attempt ledger (id, rung, timings, no SDP/IPs)
 - [x] W14 parity prep: settled-attempt client logging
-- [ ] W15 parity capture: live run + fresh Jetson log fetch
-- [ ] W16 PARITY diff: ledger vs mediamtx/client_log by rung/outcome/window
-- [ ] W17 completion gate: live frames + local errors + parity all green
+- [x] W15 parity capture: live run + fresh Jetson log fetch
+- [x] W16 PARITY diff: ledger vs mediamtx/client_log by rung/outcome/window
+- [x] W17 completion gate: live frames + local errors + parity all green
 
 ## Harness #8 — face recognition: atomic steps (spec: codex r10, 2026-07-08)
 FINDING: production has ZERO named person rows — recognition has never
