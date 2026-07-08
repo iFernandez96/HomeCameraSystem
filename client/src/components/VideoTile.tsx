@@ -238,12 +238,15 @@ export function VideoTile({
   // cellular case); making quality a dep would force a redundant reconnect
   // when a `src` override is supplied. The ref always reads current.
   const qualityRef = useRef(quality)
+  const activeWhepAbortRef = useRef<AbortController | null>(null)
   // Sync the ref in an effect (NOT during render — react-hooks/refs) so the
   // connect effect can log the current quality without a reactive dep.
   useEffect(() => {
     qualityRef.current = quality
   }, [quality])
   const onSelectQuality = (q: StreamQuality) => {
+    if (q === qualityRef.current) return
+    activeWhepAbortRef.current?.abort()
     setStreamQuality(q)
     setQuality(q)
   }
@@ -288,7 +291,12 @@ export function VideoTile({
     // so cleanup can actually close an in-flight connectWhep — the old
     // `cancelled` flag alone left a hung WHEP POST's RTCPeerConnection open
     // (nothing to close: `conn` is still null while the fetch is pending).
+    // Abort any still-active attempt before this one supersedes it. React's
+    // passive-effect cleanup also aborts below, but quality/retry transitions
+    // need the old POST cancelled before the replacement attempt can start.
+    activeWhepAbortRef.current?.abort()
     const controller = new AbortController()
+    activeWhepAbortRef.current = controller
     // iter-174: <video>-element-level error / stall observability,
     // companion to iter-162's `connectionstatechange` listener on the
     // peer connection. The pc transitions only on negotiation-layer
@@ -497,6 +505,9 @@ export function VideoTile({
       // closed the pc — a hung request leaked it, and rapid rung changes
       // (e.g. quality switches) could stack several open PeerConnections.
       controller.abort()
+      if (activeWhepAbortRef.current === controller) {
+        activeWhepAbortRef.current = null
+      }
       if (stallTimer !== null) {
         clearTimeout(stallTimer)
         stallTimer = null

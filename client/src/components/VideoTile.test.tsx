@@ -1193,7 +1193,16 @@ describe('VideoTile', () => {
 
   it('given a rung change fires mid-connect, when the previous attempt is superseded, then its AbortSignal is aborted before the new attempt starts (defect 1 — no stacked concurrent sessions)', () => {
     // arrange
-    connectWhep.mockReturnValue(new Promise(() => {}))
+    let firstSignal: AbortSignal | undefined
+    let firstSignalWasAbortedWhenSecondAttemptStarted = false
+    connectWhep.mockImplementation((_url: string, _video: unknown, opts?: { signal?: AbortSignal }) => {
+      if (connectWhep.mock.calls.length === 1) {
+        firstSignal = opts?.signal
+      } else if (connectWhep.mock.calls.length === 2) {
+        firstSignalWasAbortedWhenSecondAttemptStarted = firstSignal?.aborted === true
+      }
+      return new Promise(() => {})
+    })
     window.localStorage.removeItem('homecam:streamQuality')
 
     // act — mount, then switch quality (re-runs the connect effect on the
@@ -1207,9 +1216,11 @@ describe('VideoTile', () => {
     fireEvent.click(screen.getByRole('button', { name: /stream quality/i }))
     fireEvent.click(screen.getByRole('option', { name: /data-saver/i }))
 
-    // assert — the FIRST attempt's signal is aborted once the second
-    // (rung-change) attempt takes over.
+    // assert — the FIRST attempt's signal is already aborted by the time the
+    // second (rung-change) attempt starts, matching the real Chromium harness:
+    // no replacement POST may overlap a still-open hung POST.
     expect(firstOpts!.signal!.aborted).toBe(true)
+    expect(firstSignalWasAbortedWhenSecondAttemptStarted).toBe(true)
   })
 
   it('given the tile unmounts while connecting, when the aborted connectWhep promise later rejects, then no error is logged and status is not flipped (deliberate teardown, not a failure)', async () => {
