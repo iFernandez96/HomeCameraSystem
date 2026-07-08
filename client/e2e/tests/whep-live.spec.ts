@@ -11,6 +11,8 @@ type LiveRung = {
   preseedQuality?: string
 }
 
+type BrowserPcProbe = WhepLiveLedger['pcProbe']
+
 test.skip(
   process.env.HOMECAM_LIVE_WHEP !== '1',
   'Set HOMECAM_LIVE_WHEP=1 to run the live WHEP smoke against the real origin.',
@@ -54,6 +56,41 @@ test.describe('WHEP live smoke', () => {
         },
       )
       .toBe(true)
+  }
+
+  async function getPeerConnectionProbe(page: Page): Promise<BrowserPcProbe> {
+    return await page.evaluate(() => {
+      return (
+        (
+          window as unknown as {
+            __homecamWhepPcProbe?: {
+              constructed: number
+              closed: number
+              active: number
+            }
+          }
+        ).__homecamWhepPcProbe ?? { constructed: 0, closed: 0, active: 0 }
+      )
+    })
+  }
+
+  async function dispatchVisibilityResume(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      const setVisibility = (visibilityState: DocumentVisibilityState) => {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          value: visibilityState,
+        })
+        Object.defineProperty(document, 'hidden', {
+          configurable: true,
+          value: visibilityState !== 'visible',
+        })
+        document.dispatchEvent(new Event('visibilitychange'))
+      }
+
+      setVisibility('hidden')
+      setVisibility('visible')
+    })
   }
 
   async function runLiveRung({
@@ -204,4 +241,98 @@ test.describe('WHEP live smoke', () => {
       await runLiveRung({ page, whepLedger, rung })
     })
   }
+
+  test('W7: live quality switch from HQ to Data-saver closes the old attempt and presents a fresh frame', async ({
+    page,
+    whepLedger,
+  }) => {
+    await page.addInitScript(
+      ({ key, value }) => {
+        window.localStorage.setItem(key, value)
+      },
+      { key: QUALITY_STORAGE_KEY, value: 'sd' },
+    )
+
+    await loginOnRealOrigin(page)
+    await expect(page.getByRole('button', { name: 'Stream quality' })).toBeVisible()
+
+    const hqPostsBefore = whepLedger.whepPosts.length
+    await selectQuality(page, /^HQ\b/)
+    await expect
+      .poll(
+        () =>
+          whepLedger.whepPosts
+            .slice(hqPostsBefore)
+            .some((post) => post.path === '/whep/cam/whep'),
+        {
+          message: 'record initial HQ WHEP POST before live quality switch',
+          timeout: 8_000,
+        },
+      )
+      .toBe(true)
+    await expectNextPresentedFrame(page)
+
+    const beforeSwitchProbe = await getPeerConnectionProbe(page)
+    expect(beforeSwitchProbe.active).toBe(1)
+
+    const postsBeforeSwitch = whepLedger.whepPosts.length
+    await selectQuality(page, /^Data-saver\b/)
+
+    await expect
+      .poll(
+        () =>
+          whepLedger.whepPosts
+            .slice(postsBeforeSwitch)
+            .some((post) => post.path === '/whep/cam_lq/whep'),
+        {
+          message: 'record new Data-saver WHEP POST after quality switch',
+          timeout: 8_000,
+        },
+      )
+      .toBe(true)
+
+    await expect
+      .poll(
+        async () => {
+          const probe = await getPeerConnectionProbe(page)
+          return (
+            probe.closed >= beforeSwitchProbe.closed + 1 &&
+            probe.active === 1
+          )
+        },
+        {
+          message: 'old HQ peer closes and exactly one Data-saver peer remains active',
+          timeout: 8_000,
+        },
+      )
+      .toBe(true)
+
+    const afterSwitchProbe = await getPeerConnectionProbe(page)
+    expect(afterSwitchProbe.constructed).toBeGreaterThanOrEqual(
+      beforeSwitchProbe.constructed + 1,
+    )
+    expect(afterSwitchProbe.closed).toBeGreaterThanOrEqual(
+      beforeSwitchProbe.closed + 1,
+    )
+    expect(afterSwitchProbe.active).toBe(1)
+
+    await expectNextPresentedFrame(page)
+  })
+
+  test('W8: resume while live coalesces reconnects and keeps presenting frames', async ({
+    page,
+    whepLedger,
+  }) => {
+    await loginOnRealOrigin(page)
+    await expect(page.getByRole('button', { name: 'Stream quality' })).toBeVisible()
+    await expectNextPresentedFrame(page)
+
+    const postsBeforeResume = whepLedger.whepPosts.length
+    await dispatchVisibilityResume(page)
+    await page.waitForTimeout(5_000)
+
+    const postsAfterResume = whepLedger.whepPosts.length
+    expect(postsAfterResume - postsBeforeResume).toBeLessThanOrEqual(1)
+    await expectNextPresentedFrame(page)
+  })
 })

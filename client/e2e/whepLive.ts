@@ -28,11 +28,18 @@ type BrowserFrameProbe = {
   }>
 }
 
+type BrowserPcProbe = {
+  constructed: number
+  closed: number
+  active: number
+}
+
 export type WhepLiveLedger = {
   origin: string
   whepPosts: WhepPost[]
   consoleWebrtcMarkers: ConsoleMarker[]
   frameProbe: BrowserFrameProbe
+  pcProbe: BrowserPcProbe
 }
 
 type WhepLiveFixtures = {
@@ -126,6 +133,47 @@ async function installFrameProbe(page: Page): Promise<void> {
   })
 }
 
+async function installPeerConnectionProbe(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    type Probe = {
+      constructed: number
+      closed: number
+      active: number
+    }
+
+    const win = window as unknown as { __homecamWhepPcProbe?: Probe }
+    if (win.__homecamWhepPcProbe) return
+
+    const NativeRTCPeerConnection = window.RTCPeerConnection
+    const probe: Probe = { constructed: 0, closed: 0, active: 0 }
+    win.__homecamWhepPcProbe = probe
+
+    window.RTCPeerConnection = class HomecamE2ERtcPeerConnection extends NativeRTCPeerConnection {
+      constructor(configuration?: RTCConfiguration) {
+        super(configuration)
+        probe.constructed += 1
+        probe.active += 1
+        const nativeClose = this.close.bind(this)
+        let closed = false
+        this.close = () => {
+          if (!closed) {
+            closed = true
+            probe.closed += 1
+            probe.active -= 1
+            console.info(
+              `e2e:whep-pc-close constructed=${probe.constructed} closed=${probe.closed} active=${probe.active}`,
+            )
+          }
+          nativeClose()
+        }
+        console.info(
+          `e2e:whep-pc-open constructed=${probe.constructed} closed=${probe.closed} active=${probe.active}`,
+        )
+      }
+    } as typeof RTCPeerConnection
+  })
+}
+
 export const test = base.extend<WhepLiveFixtures>({
   whepLedger: async ({ baseURL }, use, testInfo) => {
     test.skip(
@@ -142,6 +190,7 @@ export const test = base.extend<WhepLiveFixtures>({
         livePillAt: null,
         samples: [],
       },
+      pcProbe: { constructed: 0, closed: 0, active: 0 },
     }
 
     await use(ledger)
@@ -162,11 +211,12 @@ export const test = base.extend<WhepLiveFixtures>({
   },
 
   page: async ({ page, whepLedger }, use) => {
+    await installPeerConnectionProbe(page)
     await installFrameProbe(page)
 
     page.on('console', (message) => {
       const text = message.text()
-      if (/(webrtc|whep|videoTile)/i.test(text)) {
+      if (/(webrtc|whep|videoTile|e2e:whep)/i.test(text)) {
         whepLedger.consoleWebrtcMarkers.push({
           type: message.type(),
           text,
@@ -212,12 +262,22 @@ export const test = base.extend<WhepLiveFixtures>({
             }
           )
         })
+        whepLedger.pcProbe = await page.evaluate(() => {
+          return (
+            (
+              window as unknown as {
+                __homecamWhepPcProbe?: BrowserPcProbe
+              }
+            ).__homecamWhepPcProbe ?? { constructed: 0, closed: 0, active: 0 }
+          )
+        })
       } catch {
         whepLedger.frameProbe = {
           firstFrameAt: null,
           livePillAt: null,
           samples: [],
         }
+        whepLedger.pcProbe = { constructed: 0, closed: 0, active: 0 }
       }
     }
   },
