@@ -11,8 +11,12 @@ vi.mock('workbox-core', () => ({ clientsClaim: vi.fn() }))
 vi.mock('workbox-precaching', () => ({
   cleanupOutdatedCaches: vi.fn(),
   precacheAndRoute: vi.fn(),
+  createHandlerBoundToURL: vi.fn(),
 }))
-vi.mock('workbox-routing', () => ({ registerRoute: vi.fn() }))
+vi.mock('workbox-routing', () => ({
+  registerRoute: vi.fn(),
+  NavigationRoute: vi.fn(),
+}))
 vi.mock('workbox-strategies', () => ({
   CacheFirst: vi.fn(),
   NetworkFirst: vi.fn(),

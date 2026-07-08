@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
-import { EventsIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
+import { EventsIcon, GodViewIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
 import { useRipple } from '../lib/ripple'
+import { useAuth } from '../lib/auth'
 
 // iter-356.x (Frank P3-6): pre-fix Training and Review queue were
 // only reachable via the People page header link, which non-technical
@@ -36,6 +37,11 @@ const tabs = [
 
 export function BottomNav() {
   const ripple = useRipple()
+  const { user } = useAuth()
+  const visibleTabs =
+    user?.username === 'admin'
+      ? [...tabs, { to: '/god', label: 'God View', icon: GodViewIcon }]
+      : tabs
   return (
     <nav
       aria-label="Bottom navigation"
@@ -106,7 +112,7 @@ export function BottomNav() {
           paddingRight: 'max(0px, env(safe-area-inset-right))',
         }}
       >
-        {tabs.map((t) => (
+        {visibleTabs.map((t) => (
           <NavLink
             key={t.to}
             to={t.to}

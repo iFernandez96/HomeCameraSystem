@@ -846,6 +846,45 @@ export const refresh = () =>
 
 export const getMe = () => req<MeResponse>('/api/auth/me')
 
+export type AdminAuditLogin = {
+  ts: number
+  username: string
+  action: string
+  ua: string
+}
+
+export type AdminAuditView = {
+  ts: number
+  username: string
+  kind: 'page' | 'event'
+  name: string
+  dwell_ms: number
+}
+
+export type AdminAuditUserSummary = {
+  logins: number
+  page_dwell_ms: number
+  event_views: number
+  top: [string, number][]
+}
+
+export type AdminAuditResponse = {
+  v: 1
+  logins: AdminAuditLogin[]
+  views: AdminAuditView[]
+  summary: {
+    by_user: Record<string, AdminAuditUserSummary>
+  }
+}
+
+export const getAdminAudit = (filters: { since?: number; until?: number } = {}) => {
+  const params = new URLSearchParams()
+  if (filters.since != null) params.set('since', String(filters.since))
+  if (filters.until != null) params.set('until', String(filters.until))
+  const qs = params.toString()
+  return req<AdminAuditResponse>(`/api/admin/audit${qs ? '?' + qs : ''}`)
+}
+
 // iter-264: password-change client wrappers (closes the iter-258
 // half-shipped gap surfaced by test-coverage-auditor D2). Both
 // routes return `{ok: true}` on success; the change_password

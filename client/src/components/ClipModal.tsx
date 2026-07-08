@@ -22,6 +22,7 @@ import {
 import { identityOf } from '../lib/identity'
 import { log, errFields } from '../lib/log'
 import { useConfirm } from '../lib/confirm'
+import { useEventViewTelemetry } from '../lib/telemetry'
 import { useReportError, useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
 import { EventRow } from './EventRow'
@@ -126,6 +127,7 @@ export function ClipModal({
   // both.
   const { user } = useAuth()
   const isOwner = user?.role === 'owner' || user?.role === 'admin'
+  useEventViewTelemetry(user?.username, event.id)
   const clipUrl = `/api/events/${event.id}/clip`
   // Track which clip URL has errored. If the prop event changes
   // (parent passed a new event), `clipErrored` naturally becomes

@@ -11,6 +11,7 @@ import { WatchRibbon } from './components/WatchRibbon'
 import { AuthProvider, useAuth } from './lib/auth'
 import { useUnreadBadge } from './lib/badge'
 import { ConfirmProvider } from './lib/confirm'
+import { usePageViewTelemetry } from './lib/telemetry'
 import { ToastProvider } from './lib/toast'
 
 // iter-241: route-level code-split. Pre-iter-241 the production
@@ -33,6 +34,9 @@ const People = lazy(() =>
 )
 const Settings = lazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.Settings })),
+)
+const GodView = lazy(() =>
+  import('./pages/GodView').then((m) => ({ default: m.GodView })),
 )
 // iter-352 (face-capture-for-retraining, Phase 2): /training page
 // for browsing the worker's saved face crops. Lazy because most
@@ -89,10 +93,11 @@ function PageFallback({ pathname }: { pathname: string }) {
 // Bottom nav stays outside the boundary so the user can always
 // navigate away from a crashed page without a hard reload.
 function AppShell() {
-  const { state } = useAuth()
+  const { state, user } = useAuth()
   const location = useLocation()
   // iter-248: home-screen app-icon badge wiring.
   useUnreadBadge()
+  usePageViewTelemetry(state === 'authed' ? user?.username : null, location.pathname)
   // iter-356.58 (layout rebuild): cats only walk on Live. The
   // mobile-architect brief flagged the cat strip overlapping the
   // empty-state cat illustration on People + Settings. Restricting
@@ -301,6 +306,16 @@ function AppShell() {
                 <RequireAuth>
                   <ErrorBoundary label="Settings">
                     <Settings />
+                  </ErrorBoundary>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/god"
+              element={
+                <RequireAuth>
+                  <ErrorBoundary label="God View">
+                    <GodView />
                   </ErrorBoundary>
                 </RequireAuth>
               }

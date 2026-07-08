@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
   EventsIcon,
+  GodViewIcon,
   LiveIcon,
   PeopleIcon,
   SettingsIcon,
@@ -74,13 +75,17 @@ const NAV_ITEMS: NavItem[] = [
 export function SideRail() {
   const { user, logout } = useAuth()
   const ripple = useRipple()
+  const navItems =
+    user?.username === 'admin'
+      ? [...NAV_ITEMS, { to: '/god', label: 'God View', icon: () => <GodViewIcon /> }]
+      : NAV_ITEMS
   return (
     <nav
       aria-label="Main navigation"
       className="hidden lg:flex flex-col fixed top-14 left-0 bottom-0 w-16 bg-[var(--color-surface)] border-r border-[var(--color-border-subtle)] z-10 shadow-[var(--shadow-subtle)]"
     >
       <ul className="flex-1 flex flex-col items-center gap-1 pt-4">
-        {NAV_ITEMS.map((t) => (
+        {navItems.map((t) => (
           <li key={t.to} className="w-full flex justify-center">
             <NavLink
               to={t.to}

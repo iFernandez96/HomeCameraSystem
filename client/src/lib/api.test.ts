@@ -4,6 +4,7 @@ import {
   fetchEvents,
   getCameras,
   getDetectionConfig,
+  getAdminAudit,
   getEventCountsByDay,
   getMe,
   getStatus,
@@ -86,6 +87,55 @@ describe('lib/api', () => {
     mockJson([])
     await fetchEvents()
     expect(asMock()).toHaveBeenCalledWith('/api/events?limit=100', expect.any(Object))
+  })
+
+  it('Given audit bounds, When getAdminAudit runs, Then it GETs the pinned admin audit route with since and until', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      logins: [],
+      views: [],
+      summary: { by_user: {} },
+    })
+
+    // act
+    const r = await getAdminAudit({ since: 1714000000, until: 1714086400 })
+
+    // assert
+    expect(r.v).toBe(1)
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/admin/audit?since=1714000000&until=1714086400',
+      expect.objectContaining({
+        credentials: 'include',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    )
+  })
+
+  it('Given no audit bounds, When getAdminAudit runs, Then it omits the query string', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      logins: [{ ts: 1714000000, username: 'admin', action: 'login', ua: 'Chrome' }],
+      views: [{ ts: 1714000010, username: 'admin', kind: 'page', name: '/', dwell_ms: 1200 }],
+      summary: {
+        by_user: {
+          admin: {
+            logins: 1,
+            page_dwell_ms: 1200,
+            event_views: 0,
+            top: [['/', 1200]],
+          },
+        },
+      },
+    })
+
+    // act
+    const r = await getAdminAudit()
+
+    // assert
+    expect(r.summary.by_user.admin.top[0]).toEqual(['/', 1200])
+    expect(asMock()).toHaveBeenCalledWith('/api/admin/audit', expect.any(Object))
   })
 
   it('captureSnapshot uses POST and returns the URL', async () => {

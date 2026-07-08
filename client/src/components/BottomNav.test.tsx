@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { BottomNav } from './BottomNav'
+
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({
+    user: { username: 'alice', role: 'owner' },
+    logout: vi.fn(),
+  }),
+}))
 
 function renderAt(path: string) {
   return render(
