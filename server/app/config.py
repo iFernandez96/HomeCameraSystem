@@ -30,6 +30,13 @@ class Settings:
     vapid_subject: str = os.getenv("VAPID_SUBJECT", "mailto:admin@example.com")
 
     camera_device: str = os.getenv("CAMERA_DEVICE", "/dev/video0")
+
+    # docs/multicam_contract.md (2026-07-07): camera registry. JSON
+    # array of {"id","name","path"} objects; unset/invalid falls back
+    # to the default single front_door/Front Door/cam entry (see
+    # services/camera_registry.py — invalid values log WHY and never
+    # crash boot).
+    cameras_json: str = os.getenv("HOMECAM_CAMERAS", "")
     client_dist: Path = Path(os.getenv("CLIENT_DIST", "../client/dist"))
     snapshots_dir: Path = Path(os.getenv("SNAPSHOTS_DIR", "./snapshots"))
     # iter-201 (Feature #1 Event clip recording, slice 1): the dir

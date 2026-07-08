@@ -1829,3 +1829,124 @@ def test_given_burst_over_cap_when_posting_client_log_then_excess_dropped(
     # cleanup — leave the bucket clear for any later test in this process.
     _internal._client_log_bucket["ts"] = 0.0
     _internal._client_log_bucket["count"] = 0
+
+
+# --- docs/multicam_contract.md (2026-07-07): camera_id dimension -----
+
+
+def test_given_payload_without_camera_id_when_posted_then_front_door_default(
+    client: TestClient,
+):
+    """A pre-multicam worker omits camera_id; the server defaults it to
+    the registry default so every event row carries a real camera."""
+    # arrange
+    from app.services.event_bus import event_bus
+
+    payload = _payload()
+    del payload["camera_id"]
+
+    # act
+    r = client.post("/api/_internal/event", json=payload)
+
+    # assert
+    assert r.status_code == 200, r.text
+    evt = event_bus.recent(1)[0]
+    assert evt["camera_id"] == "front_door"
+
+
+def test_given_payload_with_valid_camera_id_when_posted_then_persisted(
+    client: TestClient,
+):
+    # arrange / act
+    r = client.post(
+        "/api/_internal/event", json=_payload(camera_id="back_yard")
+    )
+
+    # assert — the id survives through the bus/db to the events listing.
+    assert r.status_code == 200, r.text
+    listed = client.get("/api/events?limit=1").json()
+    assert listed[0]["camera_id"] == "back_yard"
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "Front_Door",  # uppercase outside ^[a-z0-9_]{1,32}$
+        "a" * 33,  # over the 32-char bound
+        "cam/1",  # path-ish separator
+        "",  # empty
+        "front door",  # whitespace
+    ],
+)
+def test_given_payload_with_invalid_camera_id_when_posted_then_422(
+    client: TestClient, bad_id: str,
+):
+    # act
+    r = client.post("/api/_internal/event", json=_payload(camera_id=bad_id))
+
+    # assert
+    assert r.status_code == 422, r.text
+
+
+async def test_given_single_camera_registry_when_push_sent_then_body_is_front_door(
+    client: TestClient,
+):
+    """Contract pin: with ONE configured camera the push body stays
+    BYTE-IDENTICAL to the pre-multicam copy."""
+    # arrange
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    captured = AsyncMock(return_value=0)
+
+    # act
+    with patch(
+        "app.services.push_service.push_service.send_matching", captured
+    ):
+        client.post("/api/_internal/event", json=_payload())
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+        assert captured.called
+
+    # assert — exact bytes, not startswith.
+    payload = captured.call_args.args[1]
+    assert payload["body"] == "Front Door · 91%"
+
+
+async def test_given_multi_camera_registry_when_push_sent_then_body_names_the_camera(
+    client: TestClient, monkeypatch,
+):
+    """With >1 configured cameras the lock-screen copy answers WHERE
+    by using the event camera's display name."""
+    # arrange
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "cameras_json",
+        '[{"id": "front_door", "name": "Front Door", "path": "cam"},'
+        ' {"id": "back_yard", "name": "Back Yard", "path": "cam2"}]',
+    )
+    captured = AsyncMock(return_value=0)
+
+    # act
+    with patch(
+        "app.services.push_service.push_service.send_matching", captured
+    ):
+        client.post(
+            "/api/_internal/event", json=_payload(camera_id="back_yard")
+        )
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+        assert captured.called
+
+    # assert
+    payload = captured.call_args.args[1]
+    assert payload["body"] == "Back Yard · 91%"

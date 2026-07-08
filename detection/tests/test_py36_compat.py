@@ -48,6 +48,7 @@ _GUARDED_MODULES = (
     "detection/detect.py",
     "detection/applog.py",
     "detection/box_norm.py",
+    "detection/camera_ident.py",
     "detection/memory_guard.py",
     "detection/thermal_guard.py",
     "detection/schedule.py",

@@ -123,6 +123,31 @@ def _ensure_person_names_column(conn: sqlite3.Connection) -> None:
         )
 
 
+# docs/multicam_contract.md (2026-07-07): defensive idempotent
+# migration for the camera dimension. Every DB minted since iter-216
+# already has `camera_id` in the base CREATE TABLE, so this is a no-op
+# on real installs — but the multicam contract pins the column as
+# `NOT NULL DEFAULT 'front_door'`, and a hypothetical pre-iter-216
+# table (or a hand-restored backup) must gain it before `_SCHEMA`'s
+# `events_camera_ts` index references it. PRAGMA-guard shape matches
+# `_ensure_seen_column`; runs BEFORE `_SCHEMA` (see init_db) so the
+# index creation can't hit "no such column: camera_id" on a legacy
+# table.
+def _ensure_camera_id_column(conn: sqlite3.Connection) -> None:
+    exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='events'"
+    ).fetchone()
+    if exists is None:
+        # Fresh DB — _SCHEMA creates the table with the column.
+        return
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "camera_id" not in cols:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN camera_id "
+            "TEXT NOT NULL DEFAULT 'front_door'"
+        )
+
+
 # iter-248: schema migration for installs that pre-date the `seen`
 # column. SQLite's `ALTER TABLE ... ADD COLUMN` is idempotent only
 # via a PRAGMA-driven check; do that check explicitly so reads on
@@ -166,6 +191,10 @@ def init_db(path: Path) -> None:
         os.close(fd)
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
+        # Must run BEFORE _SCHEMA: on a legacy table without the
+        # column, _SCHEMA's `events_camera_ts` index would otherwise
+        # fail with "no such column: camera_id".
+        _ensure_camera_id_column(conn)
         conn.executescript(_SCHEMA)
         _ensure_seen_column(conn)
         _ensure_person_names_column(conn)

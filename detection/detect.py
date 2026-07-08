@@ -37,7 +37,9 @@ Environment variables (all optional):
     DETECT_THUMB_MAX    keep this many most-recent thumbnails (default 100)
     DETECT_THUMB_QUALITY  JPEG quality 1-100 (default 70)
     EVENT_URL           server endpoint (default http://127.0.0.1:8000/api/_internal/event)
-    CAMERA_ID           id sent in events (default cam1)
+    DETECT_CAMERA_ID    camera id stamped into events (default front_door;
+                        must match ^[a-z0-9_]{1,32}$ — invalid values WARN
+                        and fall back to the default, never crash)
     PERSON_CLASS_ID     COCO id for the person class (default 1)
 
 Why an idle gear: SSD-MobileNet-v2 on the Nano 2GB runs at ~22 fps if you
@@ -179,6 +181,7 @@ _PERSON_DEDUP_IOU = 0.5
 _PRESENCE_GAP_S = 20.0
 
 from box_norm import normalize_box  # noqa: E402
+import camera_ident  # noqa: E402  (multicam: DETECT_CAMERA_ID resolution)
 from mediamtx_watchdog import (  # noqa: E402
     ACTION_REBOOT,
     ACTION_RESTART_MEDIAMTX,
@@ -1283,7 +1286,9 @@ def main():
                 _event_host, ", ".join(_allowed_event_hosts),
             )
         )
-    camera_id = _env("CAMERA_ID", "cam1")
+    # Multicam contract (docs/multicam_contract.md): read DETECT_CAMERA_ID
+    # once at startup; invalid values WARN + fall back inside the helper.
+    camera_id = camera_ident.camera_id_from_env()
     model = _env("DETECT_MODEL", "ssd-mobilenet-v2")
     person_class_id = _env("PERSON_CLASS_ID", 1, int)
     active_fps = _env("DETECT_ACTIVE_FPS", 5.0, float)
@@ -1518,7 +1523,7 @@ def main():
     # cooldown so a `dog` detection at t=0 doesn't suppress a `person`
     # event at t=2s under a 5 s cooldown. Pre-iter-272 a single
     # `last_emit: float` gated all classes globally — fine while
-    # camera_id is hardcoded "cam1" + only one label is interesting,
+    # camera_id is a fixed single-camera default + only one label matters,
     # but the multi-camera Phase 1+ work (iter-186+ in flight) and
     # multi-class detection (person + dog + car) make this a real
     # bug. Key shape: "{label}:{camera_id}". Bounded by label

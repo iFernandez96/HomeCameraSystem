@@ -254,7 +254,11 @@ def make_detection_event(
     label: str,
     score: float,
     boxes: list[dict[str, Any]],
-    camera_id: str = "cam1",
+    # docs/multicam_contract.md: default camera id matches the
+    # registry default (`camera_registry.DEFAULT_CAMERAS`) and the
+    # DetectionPayload default — a legacy caller that never names a
+    # camera lands on the single configured one.
+    camera_id: str = "front_door",
     thumb_url: str | None = None,
     person_name: str | None = None,
     person_names: list[str] | None = None,

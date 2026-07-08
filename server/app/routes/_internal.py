@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dataclasses import asdict
 
+from ..services.camera_registry import camera_registry
 from ..services.detection import detection_service
 from ..services.detection_config import detection_config
 from ..services.event_bus import event_bus, make_detection_event
@@ -259,7 +260,12 @@ class DetectionPayload(BaseModel):
     label: str = Field(min_length=1, max_length=64)
     score: float = Field(ge=0, le=1)
     boxes: list[Box] = Field(min_length=1, max_length=32)
-    camera_id: str = Field(default="cam1", min_length=1, max_length=64)
+    # docs/multicam_contract.md (2026-07-07): camera dimension. The
+    # worker sets this from DETECT_CAMERA_ID; a pre-multicam worker
+    # omits it and gets the default. Regex mirrors the registry pin
+    # (`camera_registry.CAMERA_ID_RE`) — the pattern also enforces the
+    # 1..32 length bound.
+    camera_id: str = Field(default="front_door", pattern=r"^[a-z0-9_]{1,32}$")
     # iter-193 (iter-169 Minor S3 closure): regex-validate the thumb
     # URL. The worker (detect.py:114) emits `/snapshots/thumb_<ts>.jpg`
     # only — pin that format strictly. Pre-iter-193 a buggy or
@@ -641,9 +647,23 @@ async def _send_push(evt: dict) -> None:
     # signature minimal (passing image: undefined vs not passing the
     # key are equivalent at the spec level, but absent-key reads
     # cleaner in DevTools).
+    # docs/multicam_contract.md: with ONE configured camera the body
+    # stays byte-identical to the pre-multicam copy ("Front Door ·
+    # NN%" — pinned by test_internal.py). With >1 cameras the copy
+    # uses the event camera's display name so a lock-screen glance
+    # answers WHERE; an event carrying an id the registry doesn't know
+    # falls back to the raw id (still more informative than a wrong
+    # "Front Door").
+    if camera_registry.multi():
+        camera_label = (
+            camera_registry.name_for(evt.get("camera_id"))
+            or str(evt.get("camera_id") or "Front Door")
+        )
+    else:
+        camera_label = "Front Door"
     push_payload: dict[str, object] = {
         "title": title,
-        "body": "Front Door · {}%".format(int(score * 100)),
+        "body": "{} · {}%".format(camera_label, int(score * 100)),
         "tag": "detection",
         "url": "/events",
         # iter-276 (widget-usability-auditor C1 server side): include

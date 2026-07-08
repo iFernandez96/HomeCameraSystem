@@ -951,3 +951,66 @@ def test_given_chmod_oserror_when_init_db_then_warns_privacy(
         if "world-readable" in r.getMessage() and str(path) in r.getMessage()
     ]
     assert warns, "expected a privacy WARN on chmod failure"
+
+
+# --- docs/multicam_contract.md (2026-07-07): camera_id migration -----
+
+
+def test_given_legacy_table_without_camera_id_when_init_db_then_column_added(
+    tmp_path,
+):
+    """Idempotent PRAGMA-guarded migration (same shape as the `seen`
+    and `person_names_json` migrations). A hypothetical pre-iter-216
+    table gains `camera_id TEXT NOT NULL DEFAULT 'front_door'` and
+    existing rows backfill to the default."""
+    # arrange — a legacy events table lacking the camera_id column.
+    path = tmp_path / "events.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE events ("
+            " id TEXT PRIMARY KEY,"
+            " ts REAL NOT NULL,"
+            " label TEXT NOT NULL,"
+            " score REAL NOT NULL,"
+            " person_name TEXT,"
+            " thumb_url TEXT,"
+            " clip_url TEXT,"
+            " boxes_json TEXT NOT NULL DEFAULT '[]',"
+            " v INTEGER NOT NULL DEFAULT 1,"
+            " type TEXT NOT NULL DEFAULT 'detection')"
+        )
+        conn.execute(
+            "INSERT INTO events (id, ts, label, score) "
+            "VALUES ('legacy1', 1000.0, 'person', 0.9)"
+        )
+        conn.commit()
+
+    # act
+    events_db.init_db(path)
+
+    # assert — column exists, legacy row backfilled to the default.
+    with sqlite3.connect(path) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+        assert "camera_id" in cols
+        row = conn.execute(
+            "SELECT camera_id FROM events WHERE id='legacy1'"
+        ).fetchone()
+        assert row[0] == "front_door"
+
+    # idempotency — a second init_db is a no-op, not an error.
+    events_db.init_db(path)
+
+
+def test_given_migrated_legacy_db_when_reading_events_then_camera_id_present(
+    tmp_path,
+):
+    # arrange
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+    events_db.insert_event(path, _make_event(camera_id="front_door"))
+
+    # act
+    items = events_db.recent(path)
+
+    # assert
+    assert items[0]["camera_id"] == "front_door"

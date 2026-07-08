@@ -12,7 +12,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, clips, control, events, face, healthz, metrics_prom, push, training, training_admin
+from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -472,6 +472,11 @@ def _build_status() -> dict[str, object]:
 _PROTECTED_DEPS = [Depends(get_current_user)]
 app.include_router(control.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 app.include_router(events.router, prefix="/api")
+# docs/multicam_contract.md: camera registry for the client. The auth
+# gate also lives per-route inside cameras.py (mirrors events.py
+# style); the router-wide dep here is belt-and-braces consistency with
+# the other pure-REST routers.
+app.include_router(cameras.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 app.include_router(push.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 # iter-201 (Feature #1 slice 1): per-event clip fetch. Auth-gated
 # (any authenticated user); per-camera ACLs would land at iter-? if

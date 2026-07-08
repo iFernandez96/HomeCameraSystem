@@ -173,7 +173,10 @@ def test_make_detection_event_default_fields():
     assert evt["type"] == "detection"
     assert evt["label"] == "person"
     assert evt["score"] == 0.9
-    assert evt["camera_id"] == "cam1"
+    # docs/multicam_contract.md: default camera id matches the
+    # registry default (front_door) so a camera-less caller lands
+    # on the single configured camera.
+    assert evt["camera_id"] == "front_door"
     assert evt["thumb_url"] is None
     assert isinstance(evt["id"], str) and len(evt["id"]) >= 16
     assert isinstance(evt["ts"], float)

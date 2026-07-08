@@ -71,6 +71,13 @@ async def search_events(
     # All filters optional; the (camera_id, ts) and (person_name,
     # ts) iter-216 indexes back the common single-filter shapes.
     camera_id: str | None = Query(default=None, max_length=64),
+    # docs/multicam_contract.md (2026-07-07): `camera=<id>` is the
+    # contract-blessed spelling of the camera filter (what the client
+    # sends). `camera_id` above predates the contract and stays for
+    # back-compat; when both are sent, `camera` wins. Strict equality
+    # against the stored camera_id — an unknown id simply matches
+    # zero rows.
+    camera: str | None = Query(default=None, max_length=64),
     person_name: str | None = Query(default=None, max_length=64),
     label: str | None = Query(default=None, max_length=64),
     since_ts: float | None = Query(default=None, ge=0),
@@ -96,6 +103,9 @@ async def search_events(
     # cheap; events_db only needs to be reached when a search hits.
     from ..services import events_db
 
+    # Contract alias resolution — see the `camera` Query param above.
+    effective_camera_id = camera if camera is not None else camera_id
+
     # iter-273 (perf-auditor #1 / Eli H#3): wrap the sync sqlite
     # call in asyncio.to_thread so it runs on the FastAPI thread
     # pool instead of blocking the asyncio event loop. SQLite read
@@ -109,7 +119,7 @@ async def search_events(
         items = await asyncio.to_thread(
             events_db.search,
             settings.events_db_path,
-            camera_id=camera_id,
+            camera_id=effective_camera_id,
             person_name=person_name,
             label=label,
             since_ts=since_ts,
@@ -129,7 +139,7 @@ async def search_events(
             "camera_id=%r person_name=%r label=%r since_ts=%r "
             "until_ts=%r before_ts=%r limit=%r face_unrecognized=%r",
             settings.events_db_path,
-            camera_id,
+            effective_camera_id,
             person_name,
             label,
             since_ts,

@@ -22,7 +22,8 @@ def _stub_prompt(values: list[str]):
 
 def test_creates_user_in_db(tmp_path, monkeypatch):
     """Happy path: prompt twice with matching password, user lands
-    in the DB with role='admin'."""
+    in the DB with the least-privilege default role (security audit
+    C1 flipped the omitted --role default from admin to viewer)."""
     db = tmp_path / "users.db"
     monkeypatch.setattr(
         gen_admin, "_read_password",
@@ -32,7 +33,7 @@ def test_creates_user_in_db(tmp_path, monkeypatch):
     assert code == 0
     user = users_db.get_user(db, "alice")
     assert user is not None
-    assert user["role"] == "admin"
+    assert user["role"] == "viewer"
     assert user["password_hash"].startswith("$argon2id$")
 
 
@@ -135,11 +136,11 @@ def test_role_flag_creates_user_with_specified_role(tmp_path, monkeypatch):
     assert user["role"] == "owner"
 
 
-def test_role_flag_defaults_to_admin_for_legacy_compat(tmp_path, monkeypatch):
-    """No `--role` arg → role defaults to admin (iter-178/179
-    backwards compat). The iter-192 JWT decoder fallback also
-    treats `admin` as owner-equivalent so existing seeded users
-    keep working through the iter-196 deploy."""
+def test_role_flag_defaults_to_viewer_least_privilege(tmp_path, monkeypatch):
+    """No `--role` arg → role defaults to viewer (security audit C1,
+    commit 745be93). Pre-fix the omitted flag silently minted an
+    admin-equivalent-of-owner account; the operator must now opt IN
+    to elevated roles via --role=owner/family."""
     db = tmp_path / "users.db"
     monkeypatch.setattr(
         gen_admin, "_read_password",
@@ -147,7 +148,7 @@ def test_role_flag_defaults_to_admin_for_legacy_compat(tmp_path, monkeypatch):
     )
     code = gen_admin.main(["alice", "--db", str(db)])
     assert code == 0
-    assert users_db.get_user(db, "alice")["role"] == "admin"
+    assert users_db.get_user(db, "alice")["role"] == "viewer"
 
 
 def test_role_flag_rejects_unknown_value_via_argparse(tmp_path):

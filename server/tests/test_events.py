@@ -1210,3 +1210,75 @@ def test_given_db_read_fails_when_search_called_then_reraises_and_logs_op_and_pa
     assert records[0].exc_info is not None
     # guardrail §4: no cookie header value should appear in the log.
     assert "homecam_access" not in msg
+
+
+# --- docs/multicam_contract.md (2026-07-07): camera dimension --------
+
+
+def test_given_event_when_listed_then_row_includes_camera_id(
+    client: TestClient,
+):
+    # arrange
+    _post_event(client, camera_id="back_yard", label="person")
+
+    # act
+    items = client.get("/api/events?limit=1").json()
+
+    # assert
+    assert items[0]["camera_id"] == "back_yard"
+
+
+def test_given_camera_filter_when_searching_then_only_matching_rows(
+    client: TestClient,
+):
+    # arrange
+    _post_event(client, camera_id="front_door", label="person")
+    _post_event(client, camera_id="back_yard", label="person")
+
+    # act — the contract-blessed `camera=` spelling.
+    r = client.get("/api/events/search?camera=back_yard")
+
+    # assert
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert len(items) == 1
+    assert items[0]["camera_id"] == "back_yard"
+
+
+def test_given_unknown_camera_filter_when_searching_then_zero_rows(
+    client: TestClient,
+):
+    """Strict equality — an id the registry (or the DB) has never seen
+    matches nothing; that is fine, not an error."""
+    # arrange
+    _post_event(client, camera_id="front_door", label="person")
+
+    # act
+    r = client.get("/api/events/search?camera=garage")
+
+    # assert
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["items"] == []
+    assert body["next_cursor"] is None
+
+
+def test_given_both_camera_params_when_searching_then_camera_wins(
+    client: TestClient,
+):
+    """`camera=` is the contract spelling; the legacy `camera_id=`
+    stays for back-compat, and when both arrive the contract one is
+    authoritative."""
+    # arrange
+    _post_event(client, camera_id="front_door", label="person")
+    _post_event(client, camera_id="back_yard", label="person")
+
+    # act
+    r = client.get(
+        "/api/events/search?camera=front_door&camera_id=back_yard"
+    )
+
+    # assert
+    items = r.json()["items"]
+    assert len(items) == 1
+    assert items[0]["camera_id"] == "front_door"
