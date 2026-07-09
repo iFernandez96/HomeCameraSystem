@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 // docs/logging_plan.md §2 (Auth/RBAC client) + §4 guardrails:
@@ -131,5 +131,33 @@ describe('UserMgmt — create-user failure logging (docs/logging_plan.md §2 + �
         expect.objectContaining({ username: 'bob', status: 500 }),
       ),
     )
+  })
+
+  it("Given owner/admin peer rows, When rendered, Then their Delete is disabled and only family/viewer stay deletable", async () => {
+    // 2026-07-09 policy: admin/owner accounts can't be deleted via the UI.
+    // arrange — a peer owner, a legacy admin, and a deletable family member.
+    adminListUsers.mockResolvedValue({
+      users: [
+        { username: 'owner1', role: 'owner' }, // self
+        { username: 'boss2', role: 'owner' }, // peer owner → protected
+        { username: 'legacy', role: 'admin' }, // legacy admin → protected
+        { username: 'kid', role: 'family' }, // family → deletable
+      ],
+    })
+    render(<ManageUsersPanel />)
+    await screen.findByText('kid')
+
+    const rowOf = (name: string) =>
+      screen.getByText(name).closest('li') as HTMLElement
+    const deleteIn = (name: string) =>
+      within(rowOf(name)).getByRole('button', { name: /^delete$/i })
+
+    // assert — privileged peers disabled with the protected hint; family enabled.
+    expect(deleteIn('boss2')).toBeDisabled()
+    expect(deleteIn('legacy')).toBeDisabled()
+    expect(deleteIn('kid')).toBeEnabled()
+    expect(
+      within(rowOf('boss2')).getByText(/can't be deleted/i),
+    ).toBeInTheDocument()
   })
 })

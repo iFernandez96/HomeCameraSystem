@@ -622,13 +622,14 @@ async def admin_delete_user(
 ) -> dict:
     """iter-265: delete a user, owner-only.
 
-    Two safety guards beyond the role check:
+    Safety guards beyond the role check:
     - You can't delete YOURSELF (would lock you out the next time
       your access cookie expires; the refresh would fail because
       the user row is gone).
-    - You can't delete the LAST owner (would leave the deployment
-      with no admin-capable account; recovery requires SSH + the
-      operator-side `gen_admin --reset` recipe).
+    - You can't delete any OWNER/ADMIN-tier account (2026-07-09 policy,
+      user "users shouldn't be able to delete admin"). Only family/viewer
+      users are removable via the API; removing an owner is an operator-side
+      SSH + `gen_admin` operation. This subsumes the old last-owner guard.
     """
     if body.username == caller:
         # Near-miss: the safety guard fired. WARN so an operator who
@@ -650,6 +651,20 @@ async def admin_delete_user(
     try:
         deleted = users_db.delete_user_atomic(
             settings.users_db_path, body.username
+        )
+    except users_db.CannotDeletePrivilegedUser:
+        # Policy (2026-07-09, user "users shouldn't be able to delete admin"):
+        # owner/admin-tier accounts are protected — only family/viewer users
+        # are removable via the API. WARN so an attempt to delete a privileged
+        # account is in the audit trail.
+        log.warning(
+            "admin_delete_user: caller=%r attempted to delete a privileged "
+            "(owner/admin) account user=%r — refused 400",
+            caller, body.username,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="cannot delete an admin or owner account",
         )
     except users_db.CannotDeleteLastOwner:
         # Last-owner near-miss: the deployment was one delete away from

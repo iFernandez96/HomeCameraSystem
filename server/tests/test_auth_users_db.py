@@ -214,41 +214,43 @@ def test_init_db_enables_wal(tmp_path):
 # iter-267 (security-auditor D follow-up): atomic last-owner guard.
 # BDD-lite: name encodes Given/When/Then; body is AAA-shaped.
 
-def test_given_two_owners_when_atomic_delete_one_then_returns_true(tmp_path):
+def test_given_two_owners_when_atomic_delete_one_then_refused(tmp_path):
+    # 2026-07-09 policy ("users shouldn't be able to delete admin"):
+    # owner/admin accounts are protected even when OTHER owners exist —
+    # not just the last one. Deleting either owner is refused.
+
     # arrange
     db = tmp_path / "users.db"
     users_db.init_db(db)
     users_db.create_user(db, "owner1", "$argon2id$h1", role="owner")
     users_db.create_user(db, "owner2", "$argon2id$h2", role="owner")
 
-    # act
-    result = users_db.delete_user_atomic(db, "owner2")
-
-    # assert
-    assert result is True
-    assert users_db.get_user(db, "owner2") is None
+    # act + assert
+    with pytest.raises(users_db.CannotDeletePrivilegedUser):
+        users_db.delete_user_atomic(db, "owner2")
+    # Both rows survive the refused delete.
+    assert users_db.get_user(db, "owner2") is not None
     assert users_db.get_user(db, "owner1") is not None
 
 
-def test_given_one_owner_when_atomic_delete_them_then_raises(tmp_path):
+def test_given_one_owner_when_atomic_delete_them_then_refused(tmp_path):
     # arrange
     db = tmp_path / "users.db"
     users_db.init_db(db)
     users_db.create_user(db, "soleowner", "$argon2id$h", role="owner")
     users_db.create_user(db, "kid", "$argon2id$h2", role="family")
 
-    # act + assert
-    with pytest.raises(users_db.CannotDeleteLastOwner):
+    # act + assert — an owner is un-deletable via the API.
+    with pytest.raises(users_db.CannotDeletePrivilegedUser):
         users_db.delete_user_atomic(db, "soleowner")
     # Row STILL exists post-rollback.
     assert users_db.get_user(db, "soleowner") is not None
 
 
-def test_given_legacy_admin_is_only_owner_tier_when_delete_then_raises(tmp_path):
-    # iter-197 transitional carve-out: a deployment whose only
-    # owner-tier account is a legacy `admin` user (pre-iter-196
-    # seed) must STILL refuse to delete that account. Drop this
-    # test together with the carve-out.
+def test_given_legacy_admin_when_atomic_delete_then_refused(tmp_path):
+    # iter-197 transitional carve-out: a legacy `admin` account is
+    # owner-tier, so the 2026-07-09 protect-privileged policy refuses to
+    # delete it. Drop this test together with the carve-out.
 
     # arrange
     db = tmp_path / "users.db"
@@ -257,8 +259,9 @@ def test_given_legacy_admin_is_only_owner_tier_when_delete_then_raises(tmp_path)
     users_db.create_user(db, "kid", "$argon2id$h2", role="family")
 
     # act + assert
-    with pytest.raises(users_db.CannotDeleteLastOwner):
+    with pytest.raises(users_db.CannotDeletePrivilegedUser):
         users_db.delete_user_atomic(db, "legacy")
+    assert users_db.get_user(db, "legacy") is not None
 
 
 def test_given_unknown_user_when_atomic_delete_then_returns_false(tmp_path):
@@ -294,15 +297,13 @@ def test_given_non_owner_user_when_atomic_delete_then_no_owner_check(tmp_path):
     assert users_db.get_user(db, "soleowner") is not None
 
 
-def test_given_concurrent_owner_deletes_when_serialized_then_one_succeeds_one_blocks(
+def test_given_concurrent_owner_deletes_when_both_run_then_both_refused(
     tmp_path,
 ):
-    # iter-267: pin the BEGIN IMMEDIATE serialization. Two parallel
-    # threads each try to delete one of two owners. Without the
-    # iter-267 atomic transaction both could pass the COUNT check
-    # and leave the deployment with zero owners. With BEGIN
-    # IMMEDIATE, SQLite serializes the transactions: the second
-    # transaction's COUNT observes the first's DELETE and raises.
+    # 2026-07-09 policy: owner/admin accounts are un-deletable, so two
+    # parallel owner-delete attempts BOTH fail — zero succeed, both rows
+    # survive. (Under the old last-owner guard exactly one would have
+    # succeeded; now neither can.)
     import threading
 
     db = tmp_path / "users.db"
@@ -316,7 +317,7 @@ def test_given_concurrent_owner_deletes_when_serialized_then_one_succeeds_one_bl
     def worker(target):
         try:
             results.append(users_db.delete_user_atomic(db, target))
-        except users_db.CannotDeleteLastOwner as e:
+        except users_db.CannotDeletePrivilegedUser as e:
             errors.append(e)
 
     t1 = threading.Thread(target=worker, args=("owner1",))
@@ -326,14 +327,9 @@ def test_given_concurrent_owner_deletes_when_serialized_then_one_succeeds_one_bl
     t1.join()
     t2.join()
 
-    # assert: exactly one delete succeeded, exactly one was refused
-    # by the last-owner guard. NEVER zero owners.
+    # assert: neither delete succeeded; both were refused; both rows remain.
     succeeded = sum(1 for r in results if r is True)
-    raised = len(errors)
-    assert succeeded == 1, (
-        f"expected 1 success, got {succeeded} (results={results}, errors={errors})"
-    )
-    assert raised == 1, f"expected 1 last-owner error, got {raised}"
-    # Exactly one owner row remains.
+    assert succeeded == 0, f"expected 0 successes, got {succeeded} ({results})"
+    assert len(errors) == 2, f"expected 2 refusals, got {len(errors)}"
     rows = users_db.list_users(db)
-    assert len([r for r in rows if r["role"] == "owner"]) == 1
+    assert len([r for r in rows if r["role"] == "owner"]) == 2

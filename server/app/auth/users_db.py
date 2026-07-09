@@ -258,7 +258,21 @@ class CannotDeleteLastOwner(Exception):
     the same UX intent as the iter-265 route-side check; lifting the
     check into the SQL transaction closes the iter-266 D race window
     where two owner deletes could each pass a separate check and both
-    proceed."""
+    proceed.
+
+    SUPERSEDED 2026-07-09 by `CannotDeletePrivilegedUser`: owner/admin-tier
+    accounts are now un-deletable via the API entirely (not just the last
+    one), so the last-owner race can't occur. Kept for backwards-compat with
+    any caller that still catches it."""
+
+
+class CannotDeletePrivilegedUser(Exception):
+    """Raised by `delete_user_atomic` when the TARGET is an owner/admin-tier
+    account. Policy (2026-07-09, user "users shouldn't be able to delete
+    admin"): the API only removes non-privileged (family/viewer) users;
+    owner/admin accounts are protected — removing one is an operator-side
+    SSH + `gen_admin` operation. Strictly stronger than the old last-owner
+    guard, which it subsumes (the last owner is an owner → refused)."""
 
 
 def delete_user_atomic(path: Path, username: str) -> bool:
@@ -267,20 +281,21 @@ def delete_user_atomic(path: Path, username: str) -> bool:
     ``BEGIN IMMEDIATE`` so two concurrent admin/delete_user POSTs
     can't BOTH read 2 owners, BOTH proceed, and leave 0 owners.
 
-    Semantics:
-    - Returns True on successful delete (target existed, last-owner
-      check passed).
+    Semantics (2026-07-09 policy update — "users shouldn't be able to
+    delete admin"):
+    - Returns True on successful delete (target existed AND is a
+      non-privileged family/viewer account).
     - Returns False when the target row didn't exist.
-    - Raises ``CannotDeleteLastOwner`` when the target IS an
-      owner-tier account AND removing them would drop the
-      owner-or-admin count to 0.
+    - Raises ``CannotDeletePrivilegedUser`` when the target IS an
+      owner/admin-tier account — those are protected entirely, not just
+      the last one. Removing an owner is an operator-side SSH + gen_admin
+      operation.
 
-    The ``admin`` role is intentionally counted as owner-tier per
-    the iter-197 transitional carve-out — a deployment whose ONLY
-    owner-tier account is a legacy ``admin`` user must still be
-    refused. Drop the carve-out together with `dependencies.require_role`'s
-    legacy-admin handling when the eventual cleanup iter migrates
-    seeded users.
+    The ``admin`` role is intentionally treated as owner-tier per the
+    iter-197 transitional carve-out, so a legacy ``admin`` account is
+    protected too. Drop the carve-out together with
+    `dependencies.require_role`'s legacy-admin handling when the eventual
+    cleanup iter migrates seeded users.
     """
     with _connect(path) as conn:
         # BEGIN IMMEDIATE acquires the write lock NOW (instead of at
@@ -300,19 +315,19 @@ def delete_user_atomic(path: Path, username: str) -> bool:
                 return False
             target_role = row["role"]
             if target_role in ("owner", "admin"):
-                count_row = conn.execute(
-                    "SELECT COUNT(*) AS n FROM users "
-                    "WHERE role IN ('owner', 'admin')"
-                ).fetchone()
-                if int(count_row["n"]) <= 1:
-                    conn.execute("ROLLBACK")
-                    raise CannotDeleteLastOwner(
-                        "cannot delete the last owner-tier user"
-                    )
+                # New policy (2026-07-09): owner/admin-tier accounts are NOT
+                # deletable via the API at all — not just the last one. Only
+                # family/viewer users can be removed here; owner removal is an
+                # operator-side SSH + gen_admin op. Subsumes the old
+                # last-owner guard (the last owner is an owner → refused too).
+                conn.execute("ROLLBACK")
+                raise CannotDeletePrivilegedUser(
+                    "cannot delete an owner/admin-tier account"
+                )
             conn.execute("DELETE FROM users WHERE username = ?", (username,))
             conn.execute("COMMIT")
             return True
-        except CannotDeleteLastOwner:
+        except (CannotDeletePrivilegedUser, CannotDeleteLastOwner):
             raise
         except Exception:
             conn.execute("ROLLBACK")

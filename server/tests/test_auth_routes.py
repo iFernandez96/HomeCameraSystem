@@ -621,6 +621,66 @@ def test_given_owner_when_deleting_other_user_then_user_gone(client, auth_env):
     assert r2.status_code == 401
 
 
+def test_given_owner_when_deleting_another_owner_then_400(client, auth_env):
+    # 2026-07-09 policy ("users shouldn't be able to delete admin"): an
+    # owner cannot delete a DIFFERENT owner/admin account — not just the
+    # last one. Only family/viewer users are removable via the API.
+    users_db.create_user(
+        auth_env / "users.db",
+        "boss",
+        passwords.hash_password("bosspass"),
+        role="owner",
+    )
+    users_db.create_user(
+        auth_env / "users.db",
+        "boss2",
+        passwords.hash_password("boss2pass"),
+        role="owner",
+    )
+    client.post("/api/auth/login", json={"username": "boss", "password": "bosspass"})
+
+    # When: owner tries to delete the OTHER owner.
+    r = client.post(
+        "/api/auth/admin/delete_user",
+        json={"username": "boss2"},
+    )
+
+    # Then: 400 — privileged accounts are protected...
+    assert r.status_code == 400
+    assert "admin or owner" in r.json()["detail"].lower()
+    # ...and boss2 still exists (their login still works).
+    r2 = client.post(
+        "/api/auth/login",
+        json={"username": "boss2", "password": "boss2pass"},
+    )
+    assert r2.status_code == 200
+
+
+def test_given_owner_when_deleting_legacy_admin_then_400(client, auth_env):
+    # A legacy `admin`-role account is owner-tier, so it's protected too.
+    users_db.create_user(
+        auth_env / "users.db",
+        "boss",
+        passwords.hash_password("bosspass"),
+        role="owner",
+    )
+    users_db.create_user(
+        auth_env / "users.db",
+        "legacy",
+        passwords.hash_password("legacypass"),
+        role="admin",
+    )
+    client.post("/api/auth/login", json={"username": "boss", "password": "bosspass"})
+
+    r = client.post(
+        "/api/auth/admin/delete_user",
+        json={"username": "legacy"},
+    )
+
+    assert r.status_code == 400
+    assert "admin or owner" in r.json()["detail"].lower()
+
+
 def test_given_owner_when_deleting_self_then_400(client, auth_env):
     # Given: an owner.
     users_db.create_user(

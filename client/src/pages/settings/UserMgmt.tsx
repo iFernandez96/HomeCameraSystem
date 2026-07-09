@@ -289,8 +289,12 @@ export function ManageUsersPanel() {
         <ul className="space-y-2" aria-label="User accounts">
           {users.map((u) => {
             const isSelf = u.username === user?.username
-            const ownerCount = users.filter((r) => isOwnerRole(r.role)).length
-            const isLastOwner = isOwnerRole(u.role) && ownerCount <= 1
+            // 2026-07-09 policy ("users shouldn't be able to delete admin"):
+            // owner/admin-tier accounts are protected entirely — only
+            // family/viewer users are deletable. Mirrors the server guard
+            // (users_db.CannotDeletePrivilegedUser). Subsumes the old
+            // last-owner-only disable.
+            const isPrivileged = isOwnerRole(u.role)
             const resetOpen = resetOpenFor === u.username
             return (
               <li
@@ -342,17 +346,17 @@ export function ManageUsersPanel() {
                       variant="destructive"
                       size="sm"
                       onClick={() => void onDelete(u)}
-                      disabled={isSelf || isLastOwner}
+                      disabled={isSelf || isPrivileged}
                       aria-describedby={
-                        isSelf || isLastOwner
+                        isSelf || isPrivileged
                           ? `delete-disabled-${u.username}`
                           : undefined
                       }
                       title={
                         isSelf
                           ? "You can't delete your own account"
-                          : isLastOwner
-                            ? "You can't delete the last owner"
+                          : isPrivileged
+                            ? "Admin and owner accounts can't be deleted"
                             : undefined
                       }
                     >
@@ -363,14 +367,14 @@ export function ManageUsersPanel() {
                 {/* iter-266 (UX-auditor #3): `title=` tooltips never
                     show on touch. Inline hint mirrors the disabled
                     reason on every form factor. */}
-                {(isSelf || isLastOwner) ? (
+                {(isSelf || isPrivileged) ? (
                   <p
                     id={`delete-disabled-${u.username}`}
                     className="text-[11px] text-[var(--color-text-tertiary)]"
                   >
                     {isSelf
                       ? "You can't delete your own account."
-                      : 'Last owner — promote someone else first.'}
+                      : "Admin and owner accounts can't be deleted."}
                   </p>
                 ) : null}
                 {resetOpen ? (
