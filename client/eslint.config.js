@@ -24,7 +24,12 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['**/*.{ts,tsx}'],
+    // React rule surface: the app source ONLY. e2e harnesses and node
+    // scripts are not React code — scoping here (rather than carving
+    // exceptions out of a repo-wide block) is the conventional flat-
+    // config shape and means Playwright's fixture API (`use`, empty-
+    // pattern destructures) never meets the react-hooks plugin at all.
+    files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -61,18 +66,24 @@ export default tseslint.config(
   },
   {
     // Playwright e2e harnesses + node runner scripts (proof program,
-    // 2026-07-08). These run under Node, and Playwright's fixture API
-    // is a false positive for two browser-centric rules: fixtures are
-    // `async ({}, use) => {...}` — the empty destructure is the
-    // documented signature, and `use` is Playwright's fixture
-    // callback, not a React hook.
+    // 2026-07-08). Node environment; browser globals appear inside
+    // page.evaluate() strings the harnesses build. React plugins are
+    // deliberately NOT applied here (see the src/** scope above) —
+    // Playwright fixtures (`async ({}, use) => {}`) are the documented
+    // API, and `no-empty-pattern` is the one core rule it collides
+    // with.
     files: ['e2e/**/*.{ts,mjs}'],
     languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
       globals: { ...globals.node, ...globals.browser },
     },
     rules: {
       'no-empty-pattern': 'off',
-      'react-hooks/rules-of-hooks': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
     },
   },
 )
