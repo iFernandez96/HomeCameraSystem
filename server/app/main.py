@@ -12,7 +12,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, telemetry, training, training_admin
+from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, sessions, telemetry, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -127,6 +127,23 @@ async def lifespan(_app: FastAPI):
             "lifespan: init audit_db failed at %s (operator audit "
             "trail unusable) — aborting boot",
             settings.audit_db_path, exc_info=True,
+        )
+        raise
+    from .sessions import sessions_db
+    try:
+        sessions_db.init_db(settings.sessions_db_path)
+        sessions_db.prune(
+            settings.sessions_db_path,
+            now=time.time(),
+            access_ttl_s=settings.access_token_ttl_s,
+            refresh_ttl_s=settings.refresh_token_ttl_s,
+        )
+    except Exception:
+        log.error(
+            "lifespan: init sessions_db failed at %s (session revoke "
+            "state unusable) — aborting boot",
+            settings.sessions_db_path,
+            exc_info=True,
         )
         raise
     # iter (S4.5 / blocker B2): retention catch-up. Runs the time-based
@@ -516,6 +533,7 @@ app.include_router(telemetry.router, prefix="/api")
 # read cookies directly). `/api/_internal/*` is loopback-trusted —
 # Charter lock-in, NEVER gate.
 app.include_router(auth.router, prefix="/api")
+app.include_router(sessions.router, prefix="/api")
 app.include_router(_internal.router, prefix="/api")
 # iter-189 (Feature #11): Prometheus /metrics at root, NOT under
 # /api/*. Scrapers don't speak browser cookies; operator-side

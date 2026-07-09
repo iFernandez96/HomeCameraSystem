@@ -28,6 +28,8 @@ Claims:
              versa).
 - ``iat``  — issued-at (int unix seconds)
 - ``exp``  — expires-at (int unix seconds)
+- ``jti``  — opaque unique token id used by the sessions store; the
+             JWT bytes themselves are never stored.
 
 A wrong-kind token decodes successfully at the PyJWT level (its
 signature is valid), so ``decode`` re-checks ``kind`` itself and
@@ -43,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Literal
 
 import jwt
@@ -74,6 +77,7 @@ def issue(
     *,
     role: str = "admin",
     now: float | None = None,
+    jti: str | None = None,
 ) -> str:
     """Mint a token with the configured TTL for its kind. ``now`` is
     a test seam — production callers omit it and we use ``time.time()``.
@@ -103,6 +107,7 @@ def issue(
         "role": role,
         "iat": iat,
         "exp": iat + ttl,
+        "jti": jti if jti is not None else uuid.uuid4().hex,
     }
     return jwt.encode(payload, _get_secret(), algorithm=_ALGORITHM)
 

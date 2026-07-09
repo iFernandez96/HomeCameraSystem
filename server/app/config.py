@@ -151,6 +151,9 @@ class Settings:
     audit_db_path: Path = Path(
         os.getenv("AUDIT_DB_PATH", "/app/secrets/audit.db")
     )
+    sessions_db_path: Path = Path(
+        os.getenv("SESSIONS_DB_PATH", "/app/secrets/sessions.db")
+    )
 
     # OTA artifact-bundle apply paths. Defaults live under the existing
     # persistent server data volume (`homecam-secrets` mounts at /app/secrets

@@ -45,6 +45,7 @@ def _auth_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "detection_config_path", tmp_path / "detection_config.json")
     monkeypatch.setattr(settings, "events_db_path", tmp_path / "events.db")
     monkeypatch.setattr(settings, "audit_db_path", tmp_path / "audit.db")
+    monkeypatch.setattr(settings, "sessions_db_path", tmp_path / "sessions.db")
     monkeypatch.setattr(settings, "backup_target_dir", tmp_path / "backups")
     monkeypatch.setattr(settings, "backup_ledger_path", tmp_path / "backup-ledger.jsonl")
     # TestClient runs over HTTP; Secure cookies wouldn't propagate.

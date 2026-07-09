@@ -1,2 +1,1 @@
-"""Dependency-free session decision cores."""
-
+"""Session helpers: pure decision cores plus the sqlite session store."""

@@ -18,12 +18,14 @@ in either spot from silently breaking auth sessions.
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import Cookie, HTTPException, Request
 
 from . import tokens, users_db
 from ..config import settings
 from ..log import auth_rejected
+from ..sessions import revocation, sessions_db
 
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,8 @@ log = logging.getLogger(__name__)
 
 COOKIE_ACCESS = "homecam_access"
 COOKIE_REFRESH = "homecam_refresh"
+_last_seen_write_warned = False
+_session_read_warned = False
 
 
 def _req(request: Request | None):
@@ -40,6 +44,75 @@ def _req(request: Request | None):
     if request is None:
         return ("?", "?")
     return (request.method, request.url.path)
+
+
+def _enforce_session_not_revoked(
+    *,
+    claims: dict,
+    sub: str,
+    method: str,
+    path: str,
+) -> None:
+    """Apply session revocation for jti-bearing access tokens.
+
+    This intentionally fails open when the token has no ``jti`` or no sessions
+    row: those are legacy/pre-update sessions or rows pruned/reset under a
+    still-valid signed JWT. The only fail-closed case is an explicit
+    ``revoked_ts`` on an existing row. Last-seen writes are throttled and also
+    fail open so auth does not depend on a best-effort telemetry update.
+    """
+    global _last_seen_write_warned, _session_read_warned
+    jti = claims.get("jti")
+    if not isinstance(jti, str) or not jti:
+        return
+    now = time.time()
+    try:
+        row = sessions_db.get_session(settings.sessions_db_path, jti)
+    except Exception:
+        if not _session_read_warned:
+            _session_read_warned = True
+            log.warning(
+                "session read failed on %s %s for sub=%r jti=%r; "
+                "allowing valid signed token because only explicit "
+                "revoked_ts fails closed",
+                method,
+                path,
+                sub,
+                jti,
+                exc_info=True,
+            )
+        return
+    if row is None:
+        return
+    if revocation.is_revoked(jti, row.get("revoked_ts"), now):
+        auth_rejected(
+            log,
+            method,
+            path,
+            "session revoked",
+            sub=sub,
+            cookie_present=True,
+        )
+        raise HTTPException(status_code=401, detail="session revoked")
+    if revocation.should_write_last_seen(
+        float(row.get("last_seen_ts", 0.0)),
+        now,
+        revocation.DEFAULT_LAST_SEEN_THROTTLE_S,
+    ):
+        try:
+            sessions_db.touch_last_seen(settings.sessions_db_path, jti, now)
+        except Exception:
+            if not _last_seen_write_warned:
+                _last_seen_write_warned = True
+                log.warning(
+                    "session last_seen write failed on %s %s for sub=%r "
+                    "jti=%r; continuing auth",
+                    method,
+                    path,
+                    sub,
+                    jti,
+                    exc_info=True,
+                )
 
 
 async def get_current_user_optional(
@@ -150,6 +223,12 @@ async def get_current_user(
             sub=sub, cookie_present=True,
         )
         raise HTTPException(status_code=401, detail="user no longer exists")
+    _enforce_session_not_revoked(
+        claims=claims,
+        sub=sub,
+        method=method,
+        path=path,
+    )
     return sub
 
 
@@ -202,6 +281,12 @@ async def get_current_user_role(
             sub=sub, cookie_present=True,
         )
         raise HTTPException(status_code=401, detail="user no longer exists")
+    _enforce_session_not_revoked(
+        claims=claims,
+        sub=sub,
+        method=method,
+        path=path,
+    )
     # iter-266: prefer DB row's role over JWT claim. Falls through
     # to claim-or-admin for tokens that pre-date the iter-192 role
     # claim AND somehow have a row missing the role column (won't

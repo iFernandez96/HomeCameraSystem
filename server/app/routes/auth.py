@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response
@@ -52,6 +53,7 @@ from ..auth.dependencies import (
 from ..config import settings
 from ..log import auth_rejected
 from ..services import audit_db
+from ..sessions import device_parse, ip_class as ip_class_mod, revocation, sessions_db
 
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _ua(request: Request) -> str:
     return (request.headers.get("user-agent") or "")[:256]
+
+
+def _remote_addr(request: Request) -> str | None:
+    client = request.client
+    return client.host if client else None
 
 
 def _record_auth_event(
@@ -114,7 +121,11 @@ class MeOut(BaseModel):
     user: UserOut
 
 
-def _set_session_cookies(response: Response, username: str, role: str) -> None:
+def _set_session_cookies(
+    response: Response,
+    username: str,
+    role: str,
+) -> tuple[str, str]:
     """Mint access + refresh tokens for ``username`` (with ``role``
     encoded into the claims, iter-192) and set both as HttpOnly
     cookies on the outbound response. Both rotate on every login
@@ -128,8 +139,10 @@ def _set_session_cookies(response: Response, username: str, role: str) -> None:
     that includes ``Set-Cookie``; otherwise a second user's login
     could receive the first user's tokens.
     """
-    access = tokens.issue(username, "access", role=role)
-    refresh = tokens.issue(username, "refresh", role=role)
+    access_jti = uuid.uuid4().hex
+    refresh_jti = uuid.uuid4().hex
+    access = tokens.issue(username, "access", role=role, jti=access_jti)
+    refresh = tokens.issue(username, "refresh", role=role, jti=refresh_jti)
     response.set_cookie(
         COOKIE_ACCESS,
         access,
@@ -148,6 +161,55 @@ def _set_session_cookies(response: Response, username: str, role: str) -> None:
         samesite="strict",
         path="/api",
     )
+    return access_jti, refresh_jti
+
+
+def _create_session_row(
+    *,
+    request: Request,
+    username: str,
+    access_jti: str,
+    refresh_jti: str,
+    now: float,
+) -> None:
+    ua = _ua(request)
+    sessions_db.create_session(
+        settings.sessions_db_path,
+        jti=access_jti,
+        refresh_jti=refresh_jti,
+        username=username,
+        device_ua_raw=ua,
+        device_label=device_parse.device_label(ua),
+        ip_class=ip_class_mod.ip_class(_remote_addr(request)),
+        now=now,
+    )
+
+
+def _try_create_session_row(
+    *,
+    request: Request,
+    username: str,
+    access_jti: str,
+    refresh_jti: str,
+    now: float,
+    action: str,
+) -> None:
+    try:
+        _create_session_row(
+            request=request,
+            username=username,
+            access_jti=access_jti,
+            refresh_jti=refresh_jti,
+            now=now,
+        )
+    except Exception:
+        log.warning(
+            "session create failed during %s for user=%r; cookies already "
+            "minted, continuing auth",
+            action,
+            username,
+            exc_info=True,
+        )
 
 
 def _clear_session_cookies(response: Response) -> None:
@@ -185,7 +247,18 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
         raise HTTPException(status_code=401, detail="invalid credentials")
-    _set_session_cookies(response, user["username"], user["role"])
+    now = time.time()
+    access_jti, refresh_jti = _set_session_cookies(
+        response, user["username"], user["role"]
+    )
+    _try_create_session_row(
+        request=request,
+        username=user["username"],
+        access_jti=access_jti,
+        refresh_jti=refresh_jti,
+        now=now,
+        action="login",
+    )
     _record_auth_event(username=user["username"], action="login_ok", ua=_ua(request))
     log.info(
         "login ok: user=%r role=%r", user["username"], user["role"],
@@ -244,7 +317,64 @@ async def refresh(
             sub=sub, cookie_present=True,
         )
         raise HTTPException(status_code=401, detail="session expired")
-    _set_session_cookies(response, user["username"], user["role"])
+    old_refresh_jti = claims.get("jti")
+    session_row = None
+    if isinstance(old_refresh_jti, str) and old_refresh_jti:
+        try:
+            session_row = sessions_db.get_session_by_refresh_jti(
+                settings.sessions_db_path,
+                old_refresh_jti,
+            )
+        except Exception:
+            log.warning(
+                "refresh: session lookup failed for sub=%r; treating as "
+                "legacy/missing session and continuing valid refresh",
+                sub,
+                exc_info=True,
+            )
+    now = time.time()
+    if session_row is not None and revocation.is_revoked(
+        str(session_row["jti"]),
+        session_row.get("revoked_ts"),
+        now,
+    ):
+        auth_rejected(
+            log,
+            "POST",
+            "/api/auth/refresh",
+            "refresh: session revoked",
+            sub=sub,
+            cookie_present=True,
+        )
+        raise HTTPException(status_code=401, detail="session expired")
+    access_jti, refresh_jti = _set_session_cookies(
+        response, user["username"], user["role"]
+    )
+    if session_row is not None and isinstance(old_refresh_jti, str):
+        try:
+            sessions_db.rotate_session(
+                settings.sessions_db_path,
+                old_refresh_jti=old_refresh_jti,
+                new_access_jti=access_jti,
+                new_refresh_jti=refresh_jti,
+                now=now,
+            )
+        except Exception:
+            log.warning(
+                "refresh: session rotation write failed for sub=%r; "
+                "continuing valid refresh",
+                sub,
+                exc_info=True,
+            )
+    else:
+        _try_create_session_row(
+            request=request,
+            username=user["username"],
+            access_jti=access_jti,
+            refresh_jti=refresh_jti,
+            now=now,
+            action="refresh",
+        )
     _record_auth_event(username=user["username"], action="refresh", ua=_ua(request))
     return RefreshOut(user=UserOut(username=user["username"], role=user["role"]))
 

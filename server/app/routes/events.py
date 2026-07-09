@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from urllib.parse import urlparse
 
 import hashlib
@@ -14,6 +15,7 @@ from ..auth.dependencies import get_current_user, require_role
 from ..config import settings
 from ..log import auth_rejected
 from ..services.event_bus import SubscriberCapReached, event_bus
+from ..sessions import revocation, sessions_db
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -590,6 +592,49 @@ async def events_ws(ws: WebSocket) -> None:
         )
         await ws.close(code=1008, reason="auth required")
         return
+    jti = claims.get("jti")
+    if isinstance(jti, str) and jti:
+        now = time.time()
+        try:
+            session_row = sessions_db.get_session(settings.sessions_db_path, jti)
+        except Exception:
+            log.warning(
+                "ws session lookup failed for sub=%r jti=%r; allowing valid "
+                "signed token because only explicit revoked_ts fails closed",
+                sub,
+                jti,
+                exc_info=True,
+            )
+            session_row = None
+        if session_row is not None and revocation.is_revoked(
+            jti,
+            session_row.get("revoked_ts"),
+            now,
+        ):
+            auth_rejected(
+                log,
+                "WS",
+                "/api/events/ws",
+                "session revoked",
+                sub=sub,
+                cookie_present=True,
+            )
+            await ws.close(code=1008, reason="session revoked")
+            return
+        if session_row is not None and revocation.should_write_last_seen(
+            float(session_row.get("last_seen_ts", 0.0)),
+            now,
+            revocation.DEFAULT_LAST_SEEN_THROTTLE_S,
+        ):
+            try:
+                sessions_db.touch_last_seen(settings.sessions_db_path, jti, now)
+            except Exception:
+                log.warning(
+                    "ws last_seen write failed for sub=%r jti=%r; continuing",
+                    sub,
+                    jti,
+                    exc_info=True,
+                )
     # iter-263 (security-auditor F1): bus-level subscriber cap. Close
     # code 1013 (Try Again Later) tells the iter-158 client reconnect
     # logic to back off — distinct from the 1008 policy-violation
@@ -600,7 +645,10 @@ async def events_ws(ws: WebSocket) -> None:
     # None behind some proxies.
     client = ws.client.host if ws.client else None
     try:
-        queue = event_bus.subscribe()
+        queue = event_bus.subscribe(
+            jti=jti if isinstance(jti, str) and jti else None,
+            username=sub,
+        )
     except SubscriberCapReached as exc:
         # iter-logging: name the count/cap (carried in the exception
         # message as "(N/MAX)") + who got turned away so an operator can

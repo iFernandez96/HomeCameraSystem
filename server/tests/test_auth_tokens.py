@@ -41,6 +41,31 @@ def test_issue_refresh_has_expected_claims():
     assert claims["exp"] == int(now) + settings.refresh_token_ttl_s
 
 
+def test_issue_embeds_jti():
+    token = tokens.issue("alice", "access")
+    claims = tokens.decode(token, kind="access")
+    assert isinstance(claims["jti"], str)
+    assert claims["jti"]
+
+
+def test_issue_jti_is_unique_per_call():
+    first = tokens.decode(tokens.issue("alice", "access"), kind="access")
+    second = tokens.decode(tokens.issue("alice", "access"), kind="access")
+    assert first["jti"] != second["jti"]
+
+
+def test_issue_accepts_explicit_jti():
+    token = tokens.issue("alice", "access", jti="abc")
+    claims = tokens.decode(token, kind="access")
+    assert claims["jti"] == "abc"
+
+
+def test_decode_returns_jti():
+    token = tokens.issue("alice", "refresh", jti="refresh123")
+    claims = tokens.decode(token, kind="refresh")
+    assert claims["jti"] == "refresh123"
+
+
 def test_decode_round_trip_preserves_sub():
     token = tokens.issue("alice", "access")
     claims = tokens.decode(token, kind="access")
