@@ -179,14 +179,61 @@ def test_given_config_patch_when_applied_then_audits_keys_not_zone_values(
     assert str(sentinel) not in msg
 
 
-def test_system_reboot_returns_ok_with_scaffold_note(client: TestClient):
-    r = client.post("/api/system/reboot")
+def test_system_reboot_queues_reboot_host_action(client: TestClient):
+    from app.services import audit_db, host_bridge
+    from app.config import settings
+
+    r = client.post("/api/system/reboot", json={"confirm": True})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    # Scaffold returns a note flagging that this is stubbed; remove this assertion
-    # once the route is wired to actually call systemctl.
-    assert "note" in body
+    assert body["request_id"]
+    assert body["status"] == "pending"
+    rec = host_bridge.get(body["request_id"])
+    assert rec["kind"] == "reboot"
+    rows = audit_db.host_action_events_between(
+        settings.audit_db_path, since=0, until=9999999999
+    )
+    assert rows[0]["phase"] == "requested"
+    assert rows[0]["action"] == "reboot"
+
+
+def test_given_owner_recover_without_confirm_when_posted_then_rejected(
+    client: TestClient,
+):
+    r = client.post(
+        "/api/system/recover",
+        json={"action": "mediamtx", "confirm": False},
+    )
+    assert r.status_code == 400
+
+
+def test_given_owner_recover_when_posted_then_status_reflects_worker_result(
+    client: TestClient,
+):
+    from app.services import host_bridge
+
+    r = client.post(
+        "/api/system/recover",
+        json={"action": "nvargus", "confirm": True},
+    )
+    assert r.status_code == 200, r.text
+    request_id = r.json()["request_id"]
+    status = client.get(
+        "/api/system/recover/status", params={"request_id": request_id}
+    )
+    assert status.status_code == 200
+    assert status.json()["status"] == "pending"
+
+    assert host_bridge.claim(request_id, now=101.0) == "claimed"
+    assert host_bridge.record_result(
+        request_id, "done", "nvargus restart requested", None, now=102.0
+    )
+    status = client.get(
+        "/api/system/recover/status", params={"request_id": request_id}
+    )
+    assert status.json()["status"] == "done"
+    assert status.json()["detail"] == "nvargus restart requested"
 
 
 def _write_backup_route_state():

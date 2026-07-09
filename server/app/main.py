@@ -129,6 +129,16 @@ async def lifespan(_app: FastAPI):
             settings.audit_db_path, exc_info=True,
         )
         raise
+    from .services import host_bridge
+    try:
+        host_bridge.load(settings.host_action_state_path)
+    except Exception:
+        log.error(
+            "lifespan: load host_action state failed at %s — aborting boot",
+            settings.host_action_state_path,
+            exc_info=True,
+        )
+        raise
     from .sessions import sessions_db
     try:
         sessions_db.init_db(settings.sessions_db_path)

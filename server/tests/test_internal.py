@@ -2038,3 +2038,64 @@ async def test_given_multi_camera_registry_when_push_sent_then_body_names_the_ca
     # assert
     payload = captured.call_args.args[1]
     assert payload["body"] == "Back Yard · 91%"
+
+
+def test_given_anon_worker_when_poll_claim_result_then_host_action_loop_is_unauthenticated(
+    client_anon: TestClient,
+):
+    import time
+
+    from app.services import host_bridge
+
+    # enqueue with the real clock so the poll route's time.time() staleness
+    # check (max_pending_age_s=120) doesn't instantly expire a now=100.0 record
+    rec = host_bridge.enqueue("mediamtx", {}, "owner", now=time.time())
+
+    polled = client_anon.get("/api/_internal/host_action")
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["action"]["id"] == rec["id"]
+
+    claimed = client_anon.post(
+        "/api/_internal/host_action/claim",
+        json={"id": rec["id"]},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json() == {"result": "claimed"}
+
+    result = client_anon.post(
+        "/api/_internal/host_action/result",
+        json={
+            "id": rec["id"],
+            "status": "done",
+            "detail": "mediamtx restart requested",
+            "result": None,
+        },
+    )
+    assert result.status_code == 200, result.text
+    assert result.json() == {"ok": True}
+    assert host_bridge.get(rec["id"])["status"] == "done"
+
+
+def test_given_extra_field_when_claiming_host_action_then_rejected(
+    client_anon: TestClient,
+):
+    r = client_anon.post(
+        "/api/_internal/host_action/claim",
+        json={"id": "req", "extra": True},
+    )
+    assert r.status_code == 422
+
+
+def test_given_oversized_result_when_posting_host_action_result_then_rejected(
+    client_anon: TestClient,
+):
+    r = client_anon.post(
+        "/api/_internal/host_action/result",
+        json={
+            "id": "req",
+            "status": "done",
+            "detail": None,
+            "result": {"lines": ["x" * 65000]},
+        },
+    )
+    assert r.status_code == 422

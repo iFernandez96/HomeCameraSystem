@@ -154,6 +154,9 @@ class Settings:
     sessions_db_path: Path = Path(
         os.getenv("SESSIONS_DB_PATH", "/app/secrets/sessions.db")
     )
+    host_action_state_path: Path = Path(
+        os.getenv("HOST_ACTION_STATE_PATH", "/app/secrets/host_action.json")
+    )
 
     # OTA artifact-bundle apply paths. Defaults live under the existing
     # persistent server data volume (`homecam-secrets` mounts at /app/secrets

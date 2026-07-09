@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { getAdminAudit, type AdminAuditResponse } from '../lib/api'
+import {
+  getAdminAudit,
+  getRecoverStatus,
+  recoverHost,
+  type AdminAuditResponse,
+  type RecoverAction,
+  type RecoverStatus,
+} from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { useConfirm } from '../lib/confirm'
 import { formatError } from '../lib/format'
 import { isGodModeUser } from '../lib/roles'
 import { useStatus } from '../lib/useStatus'
@@ -46,6 +54,163 @@ function defaultSince(): string {
 
 function defaultUntil(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+const RECOVERY_ACTIONS: {
+  action: RecoverAction
+  label: string
+  title: string
+  body: string
+  destructive?: boolean
+}[] = [
+  {
+    action: 'mediamtx',
+    label: 'Restart camera feed',
+    title: 'Restart camera feed?',
+    body: 'The live feed may drop for a few seconds while MediaMTX restarts.',
+  },
+  {
+    action: 'nvargus',
+    label: 'Reset camera daemon',
+    title: 'Reset camera daemon?',
+    body: 'This restarts nvargus and the camera feed. Use it when the feed stays stuck after a feed restart.',
+  },
+  {
+    action: 'reboot',
+    label: 'Reboot Jetson',
+    title: 'Reboot Jetson?',
+    body: 'The camera and app will go offline while the Jetson reboots. Use this only as the last recovery step.',
+    destructive: true,
+  },
+]
+
+function recoveryCopy(status: RecoverStatus | null): string {
+  if (!status) return 'Ready'
+  if (status.status === 'none') return 'No recovery request'
+  if (status.status === 'pending') {
+    return status.worker_online ? 'Queued' : 'Worker offline, queued'
+  }
+  if (status.status === 'running') {
+    if (status.action === 'nvargus') return 'Restarting nvargus'
+    if (status.action === 'mediamtx') return 'Restarting camera feed'
+    return 'Rebooting Jetson'
+  }
+  if (status.status === 'done') return 'Done'
+  if (status.status === 'expired') return 'Timed out. Worker never picked it up.'
+  return status.detail ? `Failed: ${status.detail}` : 'Failed'
+}
+
+function RecoveryPanel() {
+  const confirm = useConfirm()
+  const [requestId, setRequestId] = useState<string | null>(null)
+  const [status, setStatus] = useState<RecoverStatus | null>(null)
+  const [busyAction, setBusyAction] = useState<RecoverAction | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const terminal =
+    status?.status === 'done' ||
+    status?.status === 'failed' ||
+    status?.status === 'expired'
+
+  useEffect(() => {
+    if (!requestId || terminal) return
+    let cancelled = false
+    const poll = () => {
+      getRecoverStatus(requestId)
+        .then((next) => {
+          if (cancelled) return
+          setStatus(next)
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setError(formatError(e))
+        })
+    }
+    poll()
+    const id = window.setInterval(poll, 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [requestId, terminal])
+
+  const startRecovery = (entry: (typeof RECOVERY_ACTIONS)[number]) => {
+    confirm({
+      title: entry.title,
+      body: entry.body,
+      confirmLabel: entry.destructive ? 'Reboot Jetson' : 'Start recovery',
+      destructive: entry.destructive,
+    }).then((ok) => {
+      if (!ok) return
+      setBusyAction(entry.action)
+      setError(null)
+      recoverHost(entry.action)
+        .then((res) => {
+          setRequestId(res.request_id)
+          setStatus({
+            request_id: res.request_id,
+            action: entry.action,
+            status: res.status,
+            detail: null,
+            requested_by: '',
+            requested_at: Date.now() / 1000,
+            result_at: null,
+            worker_online: res.worker_online,
+          })
+        })
+        .catch((e) => setError(formatError(e)))
+        .finally(() => setBusyAction(null))
+    })
+  }
+
+  const isFailure = status?.status === 'failed'
+
+  return (
+    <section
+      aria-labelledby="recovery-heading"
+      className="rounded-lg border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-subtle)]"
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 id="recovery-heading" className="text-lg font-semibold text-[var(--color-text-primary)]">
+            Recovery
+          </h2>
+          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+            Manual ladder for host-side camera recovery.
+          </p>
+        </div>
+        <div
+          role="status"
+          aria-label="Recovery status"
+          className={`inline-flex min-h-9 items-center rounded-full border-[1.5px] px-3 text-sm font-semibold ${
+            isFailure
+              ? 'border-[var(--color-danger)] bg-[var(--color-danger-muted)] text-[var(--color-danger)]'
+              : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)]'
+          }`}
+        >
+          {recoveryCopy(status)}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {RECOVERY_ACTIONS.map((entry) => (
+          <Button
+            key={entry.action}
+            type="button"
+            variant={entry.destructive ? 'destructive' : 'secondary'}
+            onClick={() => startRecovery(entry)}
+            disabled={busyAction !== null}
+          >
+            {busyAction === entry.action ? 'Queuing' : entry.label}
+          </Button>
+        ))}
+      </div>
+      {error && (
+        <p className="mt-3 text-sm font-medium text-[var(--color-danger)]">
+          {error}
+        </p>
+      )}
+    </section>
+  )
 }
 
 export function GodView() {
@@ -154,6 +319,7 @@ export function GodView() {
 
       <CrashCartPanels status={status} />
       <WedgePanel metrics={status?.worker_metrics ?? null} />
+      <RecoveryPanel />
       <SessionsPanel user={user} />
 
       {error ? (

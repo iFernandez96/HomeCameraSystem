@@ -235,6 +235,18 @@ def _isolate_audit_db(_audit_db_session_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_host_bridge(tmp_path, monkeypatch):
+    from app.config import settings
+    from app.services import host_bridge
+
+    path = tmp_path / "host_action.json"
+    monkeypatch.setattr(settings, "host_action_state_path", path)
+    host_bridge.reset_for_tests(path)
+    yield
+    host_bridge.reset_for_tests(path)
+
+
+@pytest.fixture(autouse=True)
 def _reset_detection_config(tmp_path):
     """Each test starts from defaults, persistence redirected to tmp."""
     from app.services.detection_config import (

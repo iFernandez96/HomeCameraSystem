@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from dataclasses import asdict
 from uuid import uuid4
 from typing import Annotated
@@ -40,6 +41,7 @@ from ..services.detection_config import (
 )
 from ..services import ota_orchestrator as ota_orchestrator_module
 from ..services import ota_rollback as ota_rollback_module
+from ..services import audit_db, host_bridge
 from ..services.backup_orchestrator import (
     BackupOrchestratorRequest,
     orchestrate_backup,
@@ -52,6 +54,7 @@ from ..services.backup_restore import (
 from ..services.ota_ledger import append_event
 from ..services.ota_manifest import read_local_manifest
 from ..services.ota_orchestrator import OtaApplyRequest, orchestrate_ota_apply
+from ..services.health import worker_health
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -138,6 +141,71 @@ class DetectionConfigPatch(BaseModel):
     )
 
 
+class _ConfirmBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: bool
+
+
+class _RecoverBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str = Field(pattern=r"^(mediamtx|nvargus|reboot)$")
+    confirm: bool
+
+
+def _require_confirm(confirm: bool) -> None:
+    if not confirm:
+        raise HTTPException(status_code=400, detail="confirm must be true")
+
+
+def _audit_host_action_requested(action: str, request_id: str, username: str) -> None:
+    try:
+        audit_db.insert_host_action_event(
+            settings.audit_db_path,
+            ts=time.time(),
+            username=username,
+            action=action,
+            request_id=request_id,
+            phase="requested",
+            status=None,
+            detail=None,
+        )
+    except Exception:
+        log.warning(
+            "host_action request audit failed for action=%s id=%s",
+            action,
+            request_id,
+            exc_info=True,
+        )
+
+
+def _recover_note(action: str, alive: bool) -> str:
+    labels = {
+        "mediamtx": "Camera feed restart",
+        "nvargus": "Camera daemon reset",
+        "reboot": "Reboot",
+    }
+    label = labels.get(action, "Recovery action")
+    if alive:
+        if action == "reboot":
+            return "Reboot queued. The Jetson will go down shortly."
+        return "{} queued.".format(label)
+    return (
+        "{} queued, but the detection worker is offline; it will run when "
+        "the worker reconnects or expire in 2 minutes."
+    ).format(label)
+
+
+def _recover_response(rec: dict, action: str) -> dict[str, object]:
+    alive = worker_health.is_alive()
+    return {
+        "ok": True,
+        "request_id": rec["id"],
+        "status": rec["status"],
+        "worker_online": alive,
+        "note": _recover_note(action, alive),
+    }
+
+
 @router.post("/capture")
 async def capture() -> dict[str, str]:
     snap = await camera_service.capture()
@@ -198,16 +266,57 @@ async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, obj
     "/system/reboot",
     dependencies=[Depends(require_role("owner"))],
 )
-async def system_reboot() -> dict[str, object]:
+async def system_reboot(
+    body: _ConfirmBody,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
     # iter-197 (Feature #3 slice 3): owner-only — Charter-most-
     # destructive operation. A stray family-account user shouldn't
     # be able to reboot the Jetson via the Settings button.
-    # Wire to the real Jetson before exposing this:
-    #   import subprocess
-    #   subprocess.Popen(['sudo', 'systemctl', 'reboot'])
-    # The service user must have NOPASSWD sudo for /sbin/reboot.
-    log.warning("reboot requested (stubbed)")
-    return {"ok": True, "note": "scaffold: reboot is stubbed"}
+    _require_confirm(body.confirm)
+    rec = host_bridge.enqueue("reboot", {}, requested_by=user, now=time.time())
+    _audit_host_action_requested(rec["kind"], rec["id"], user)
+    log.warning("reboot queued through host bridge request_id=%s", rec["id"])
+    return _recover_response(rec, rec["kind"])
+
+
+@router.post(
+    "/system/recover",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def system_recover(
+    body: _RecoverBody,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
+    _require_confirm(body.confirm)
+    rec = host_bridge.enqueue(body.action, {}, requested_by=user, now=time.time())
+    _audit_host_action_requested(rec["kind"], rec["id"], user)
+    log.warning(
+        "host recovery queued action=%s request_id=%s", rec["kind"], rec["id"]
+    )
+    return _recover_response(rec, rec["kind"])
+
+
+@router.get(
+    "/system/recover/status",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def system_recover_status(
+    request_id: str | None = Query(default=None, min_length=1, max_length=128),
+) -> dict[str, object]:
+    rec = host_bridge.get(request_id) if request_id else host_bridge.latest()
+    if rec is None:
+        return {"status": "none", "worker_online": worker_health.is_alive()}
+    return {
+        "request_id": rec["id"],
+        "action": rec["kind"],
+        "status": rec["status"],
+        "detail": rec.get("detail"),
+        "requested_by": rec.get("requested_by"),
+        "requested_at": rec.get("requested_at"),
+        "result_at": rec.get("result_at"),
+        "worker_online": worker_health.is_alive(),
+    }
 
 
 # iter-210 (Feature #10 slice 1): operator-triggered backup. Owner-

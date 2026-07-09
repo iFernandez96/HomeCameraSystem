@@ -153,3 +153,34 @@ def test_given_returned_records_when_mutated_then_store_is_not_mutated():
 
     # assert
     assert stored["args"] == {"unit": "mediamtx"}
+
+
+def test_given_state_file_when_loaded_then_current_and_history_restore(tmp_path):
+    # arrange
+    path = tmp_path / "host_action.json"
+    host_bridge.reset_for_tests(path)
+    rec = host_bridge.enqueue("mediamtx", {}, "owner", now=100.0)
+    assert host_bridge.record_result(rec["id"], "done", "ok", None, now=101.0)
+    live = host_bridge.enqueue("reboot", {}, "owner", now=102.0)
+
+    # act
+    host_bridge.reset_for_tests(path)
+    host_bridge.load(path)
+
+    # assert
+    assert host_bridge.latest()["id"] == live["id"]
+    assert host_bridge.history()[0]["id"] == rec["id"]
+
+
+def test_given_corrupt_state_file_when_loaded_then_store_starts_empty(tmp_path):
+    # arrange
+    path = tmp_path / "host_action.json"
+    path.write_text("{not-json", encoding="utf-8")
+
+    # act
+    host_bridge.reset_for_tests(path)
+    host_bridge.load(path)
+
+    # assert
+    assert host_bridge.latest() is None
+    assert host_bridge.history() == []

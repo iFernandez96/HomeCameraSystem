@@ -1,12 +1,17 @@
-"""Pure in-process host-action request state machine.
-
-This slice intentionally contains only decision/state-transition logic. Disk
-persistence, FastAPI routes, and worker polling are wired in later slices.
-"""
+"""Persisted in-process host-action request state machine."""
 from __future__ import annotations
 
 import copy
+import json
+import logging
+import os
 import uuid
+from pathlib import Path
+
+from ..config import settings
+
+
+log = logging.getLogger(__name__)
 
 
 TERMINAL_STATUSES = {"done", "failed", "expired"}
@@ -15,12 +20,37 @@ HISTORY_LIMIT = 20
 
 _current = None
 _history = []
+_state_path: Path | None = None
 
 
-def reset_for_tests() -> None:
-    global _current, _history
+def _path() -> Path:
+    return _state_path or settings.host_action_state_path
+
+
+def reset_for_tests(path: Path | None = None) -> None:
+    global _current, _history, _state_path
     _current = None
     _history = []
+    _state_path = path
+
+
+def load(path: Path | None = None) -> None:
+    """Best-effort sidecar restore. Corrupt/missing state starts empty."""
+    global _current, _history, _state_path
+    if path is not None:
+        _state_path = path
+    try:
+        with _path().open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        current = data.get("current")
+        history = data.get("history")
+        _current = current if isinstance(current, dict) else None
+        _history = history[:HISTORY_LIMIT] if isinstance(history, list) else []
+    except (OSError, ValueError, TypeError) as exc:
+        if not isinstance(exc, FileNotFoundError):
+            log.warning("host_bridge: state load failed from %s: %s", _path(), exc)
+        _current = None
+        _history = []
 
 
 def enqueue(
@@ -39,6 +69,7 @@ def enqueue(
             _current["detail"] = "expired before replacement"
             _current["result_at"] = float(now)
             _push_history(_current)
+            _persist()
         else:
             return copy.deepcopy(_current)
     if _current is not None and _current.get("status") == "running":
@@ -56,6 +87,7 @@ def enqueue(
         "claimed_at": None,
         "result_at": None,
     }
+    _persist()
     return copy.deepcopy(_current)
 
 
@@ -69,6 +101,7 @@ def peek(now: float, *, max_pending_age_s: float) -> dict | None:
         _current["detail"] = "expired before worker claim"
         _current["result_at"] = float(now)
         _push_history(_current)
+        _persist()
         return None
     return copy.deepcopy(_current)
 
@@ -82,6 +115,7 @@ def claim(record_id: str, now: float) -> str:
         return "conflict"
     _current["status"] = "running"
     _current["claimed_at"] = float(now)
+    _persist()
     return "claimed"
 
 
@@ -105,6 +139,7 @@ def record_result(
     _current["result"] = copy.deepcopy(result)
     _current["result_at"] = float(now)
     _push_history(_current)
+    _persist()
     return True
 
 
@@ -143,3 +178,23 @@ def _push_history(record: dict) -> None:
     _history = [r for r in _history if r.get("id") != copied.get("id")]
     _history.insert(0, copied)
     del _history[HISTORY_LIMIT:]
+
+
+def _persist() -> None:
+    path = _path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump({"current": _current, "history": _history}, f)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        log.exception("host_bridge: state persist failed at %s", path)

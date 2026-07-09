@@ -59,6 +59,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections import namedtuple
 
 import jetson_inference
 import jetson_utils
@@ -184,6 +185,7 @@ _PRESENCE_GAP_S = 20.0
 from box_norm import normalize_box  # noqa: E402
 import camera_ident  # noqa: E402  (multicam: DETECT_CAMERA_ID resolution)
 from decision_ledger import DecisionLedger  # noqa: E402
+import host_action  # noqa: E402
 from mediamtx_watchdog import (  # noqa: E402
     ACTION_REBOOT,
     ACTION_RESTART_MEDIAMTX,
@@ -339,6 +341,123 @@ def post_event(url, payload, timeout=2.0, metrics=None):
         )
         if metrics is not None:
             metrics.event_post_failures += 1
+
+
+def _request_json(url, method="GET", payload=None, timeout=2.0):
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method=method)
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _load_host_action_seen(path):
+    try:
+        with open(str(path)) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(str(x) for x in data[-50:] if x)
+    except (OSError, ValueError, TypeError):
+        pass
+    return set()
+
+
+def _save_host_action_seen(path, seen_ids):
+    if path is None:
+        return
+    try:
+        ids = list(seen_ids)[-50:]
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(ids, f)
+        os.replace(tmp, str(path))
+    except OSError as e:
+        print("[detect] host-action seen save failed: {}".format(e), flush=True)
+
+
+def _mark_host_action_seen(record_id):
+    global _HOST_ACTION_SEEN_IDS
+    _HOST_ACTION_SEEN_IDS.add(record_id)
+    if len(_HOST_ACTION_SEEN_IDS) > 50:
+        _HOST_ACTION_SEEN_IDS = set(list(_HOST_ACTION_SEEN_IDS)[-50:])
+    _save_host_action_seen(_HOST_ACTION_SEEN_PATH, _HOST_ACTION_SEEN_IDS)
+
+
+def start_host_action_poll(base_url, deps, interval_s=4.0):
+    poll_url = base_url.rstrip("/") + "/host_action"
+    claim_url = base_url.rstrip("/") + "/host_action/claim"
+    result_url = base_url.rstrip("/") + "/host_action/result"
+
+    def post_result(record_id, status, detail, result):
+        return _request_json(
+            result_url,
+            method="POST",
+            payload={
+                "id": record_id,
+                "status": status,
+                "detail": detail,
+                "result": result,
+            },
+            timeout=3.0,
+        )
+
+    def loop():
+        backoff = 1.0
+        warned = False
+        while True:
+            try:
+                data = _request_json(poll_url, timeout=2.0)
+                action = data.get("action") if isinstance(data, dict) else None
+                if not action:
+                    backoff = 1.0
+                    warned = False
+                    time.sleep(interval_s)
+                    continue
+
+                record_id = action.get("id")
+                plan = host_action.plan_action(
+                    action, deps.now(), _HOST_ACTION_SEEN_IDS
+                )
+                if plan != host_action.PLAN_EXECUTE:
+                    if plan == host_action.PLAN_SKIP_SEEN and record_id:
+                        post_result(record_id, "done", "already executed (post-restart)", None)
+                    elif record_id:
+                        post_result(record_id, "failed", "skipped: {}".format(plan), None)
+                    time.sleep(interval_s)
+                    continue
+
+                claimed = _request_json(
+                    claim_url,
+                    method="POST",
+                    payload={"id": record_id},
+                    timeout=3.0,
+                )
+                if claimed.get("result") != "claimed":
+                    time.sleep(interval_s)
+                    continue
+
+                _mark_host_action_seen(record_id)
+                with _RECOVERY_LOCK:
+                    status, detail, result = host_action.execute_action(action, deps)
+                post_result(record_id, status, detail, result)
+                backoff = 1.0
+                warned = False
+            except Exception as e:
+                if not warned:
+                    log.warning(
+                        "host-action poll failed: %s: %s",
+                        type(e).__name__, e,
+                    )
+                    warned = True
+                backoff = min(backoff * 2, 60.0)
+            time.sleep(interval_s if backoff <= 1.0 else min(backoff, 60.0))
+
+    t = threading.Thread(target=loop, daemon=True, name="host-action-poll")
+    t.start()
+    return t
 
 
 class RuntimeConfig:
@@ -879,6 +998,13 @@ _WATCHDOG_STATE = {}          # type: ignore[var-annotated]
 _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_state.json
 _LAST_WEDGE_DIAG = {}         # type: ignore[var-annotated]
 _DECISION_LEDGER = None       # set in main() to <recordings_dir>/decision.jsonl
+_RECOVERY_LOCK = threading.Lock()
+_HOST_ACTION_SEEN_IDS = set()
+_HOST_ACTION_SEEN_PATH = None
+_HostActionDeps = namedtuple(
+    "_HostActionDeps",
+    "restart_mediamtx restart_nvargus do_reboot tail_journal allow_reboot now",
+)
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
 # capture-failure handler reads it to finalize any open visit at last_seen
@@ -1360,14 +1486,15 @@ def _handle_capture_failure(
                     "[detect] WATCHDOG: visit finalize-on-escalation failed: "
                     "{}: {}".format(type(e).__name__, e), flush=True,
                 )
-        if action == ACTION_RESTART_MEDIAMTX:
-            if restart_mediamtx():
-                metrics.mediamtx_restarts += 1
-        elif action == ACTION_RESTART_NVARGUS:
-            if escalate_argus_recovery():
-                metrics.argus_restarts += 1
-        elif action == ACTION_REBOOT:
-            _do_reboot()
+        with _RECOVERY_LOCK:
+            if action == ACTION_RESTART_MEDIAMTX:
+                if restart_mediamtx():
+                    metrics.mediamtx_restarts += 1
+            elif action == ACTION_RESTART_NVARGUS:
+                if escalate_argus_recovery():
+                    metrics.argus_restarts += 1
+            elif action == ACTION_REBOOT:
+                _do_reboot()
         _persist_watchdog_level(mediamtx_watchdog)
     _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
     if consecutive_failures > 100:
@@ -1862,8 +1989,11 @@ def main():
     # restarts — the old in-memory restart_count reset every restart, so the
     # nvargus rung was unreachable and it flapped on mediamtx forever.
     global _WATCHDOG_STATE, _WATCHDOG_STATE_PATH
+    global _HOST_ACTION_SEEN_IDS, _HOST_ACTION_SEEN_PATH
     _WATCHDOG_STATE_PATH = os.path.join(str(recordings_dir), ".watchdog_state.json")
     _WATCHDOG_STATE = _load_watchdog_state(_WATCHDOG_STATE_PATH)
+    _HOST_ACTION_SEEN_PATH = os.path.join(str(recordings_dir), ".host_action_seen.json")
+    _HOST_ACTION_SEEN_IDS = _load_host_action_seen(_HOST_ACTION_SEEN_PATH)
     _allow_reboot = _env("DETECT_WATCHDOG_ALLOW_REBOOT", "1") not in (
         "0", "false", "False", "no", "off",
     )
@@ -1876,6 +2006,18 @@ def main():
         _WATCHDOG_STATE.get("last_action_at"),
         now=time.time(),
     )
+    start_host_action_poll(
+        event_url.rsplit("/", 1)[0],
+        _HostActionDeps(
+            restart_mediamtx=restart_mediamtx,
+            restart_nvargus=escalate_argus_recovery,
+            do_reboot=_do_reboot,
+            tail_journal=host_action.tail_journal,
+            allow_reboot=_allow_reboot,
+            now=time.time,
+        ),
+    )
+    log.info("host-action poll -> %s", event_url.rsplit("/", 1)[0] + "/host_action")
     # Memory guard: pauses inference (not capture) when the host runs
     # critically low on RAM. Worker keeps draining frames so the RTSP
     # pipeline doesn't back up, and metrics keep flowing — the user can

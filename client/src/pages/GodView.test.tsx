@@ -1,9 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAdminAudit = vi.fn()
+const getRecoverStatus = vi.fn()
 const listSessions = vi.fn()
+const recoverHost = vi.fn()
 const useStatus = vi.fn()
 let authUser: { username: string; role: string } | null = {
   username: 'owner-user',
@@ -12,7 +15,9 @@ let authUser: { username: string; role: string } | null = {
 
 vi.mock('../lib/api', () => ({
   getAdminAudit: (...a: unknown[]) => getAdminAudit(...a),
+  getRecoverStatus: (...a: unknown[]) => getRecoverStatus(...a),
   listSessions: () => listSessions(),
+  recoverHost: (...a: unknown[]) => recoverHost(...a),
   revokeSession: (jti: string) => Promise.resolve({ ok: true, jti }),
 }))
 
@@ -30,11 +35,14 @@ vi.mock('../lib/useStatus', () => ({
 }))
 
 import { GodView } from './GodView'
+import { ConfirmProvider } from '../lib/confirm'
 
 function renderGodView() {
   return render(
     <MemoryRouter initialEntries={['/god']}>
-      <GodView />
+      <ConfirmProvider>
+        <GodView />
+      </ConfirmProvider>
     </MemoryRouter>,
   )
 }
@@ -43,6 +51,23 @@ describe('GodView page', () => {
   beforeEach(() => {
     authUser = { username: 'owner-user', role: 'owner' }
     useStatus.mockReturnValue(null)
+    recoverHost.mockReset().mockResolvedValue({
+      ok: true,
+      request_id: 'req-1',
+      status: 'pending',
+      worker_online: true,
+      note: 'Queued.',
+    })
+    getRecoverStatus.mockReset().mockResolvedValue({
+      request_id: 'req-1',
+      action: 'nvargus',
+      status: 'done',
+      detail: null,
+      requested_by: 'owner-user',
+      requested_at: 1714000000,
+      result_at: 1714000004,
+      worker_online: true,
+    })
     listSessions.mockReset().mockResolvedValue({ v: 1, sessions: [] })
     getAdminAudit.mockReset().mockResolvedValue({
       v: 1,
@@ -85,6 +110,7 @@ describe('GodView page', () => {
     expect(screen.getByRole('heading', { name: /crash cart/i })).toBeInTheDocument()
     expect(screen.getByRole('status', { name: /can't reach the jetson/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /active sessions/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /recovery/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /sessions timeline/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /per user/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /^views$/i })).toBeInTheDocument()
@@ -106,5 +132,22 @@ describe('GodView page', () => {
     expect(screen.queryByRole('heading', { name: /god view/i })).not.toBeInTheDocument()
     expect(getAdminAudit).not.toHaveBeenCalled()
     expect(listSessions).not.toHaveBeenCalled()
+  })
+
+  it('Given an owner confirms camera daemon reset, When the request settles, Then status polls to done', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderGodView()
+    await screen.findByRole('heading', { level: 1, name: /god view/i })
+
+    // act
+    await user.click(screen.getByRole('button', { name: /reset camera daemon/i }))
+    expect(recoverHost).not.toHaveBeenCalled()
+    await user.click(await screen.findByRole('button', { name: /start recovery/i }))
+
+    // assert
+    await waitFor(() => expect(recoverHost).toHaveBeenCalledWith('nvargus'))
+    await waitFor(() => expect(getRecoverStatus).toHaveBeenCalledWith('req-1'))
+    expect(await screen.findByRole('status', { name: /recovery status/i })).toHaveTextContent(/done/i)
   })
 })

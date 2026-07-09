@@ -7,6 +7,7 @@ import {
   getAdminAudit,
   getEventCountsByDay,
   getMe,
+  getRecoverStatus,
   getStatus,
   getTimelapseManifest,
   getVapidPublicKey,
@@ -17,6 +18,7 @@ import {
   logout,
   patchDetectionConfig,
   rebootJetson,
+  recoverHost,
   refresh,
   refreshSession,
   revokeSession,
@@ -220,11 +222,59 @@ describe('lib/api', () => {
   })
 
   it('rebootJetson POSTs', async () => {
-    mockJson({ ok: true })
-    await rebootJetson()
+    mockJson({
+      ok: true,
+      request_id: 'req-1',
+      status: 'pending',
+      worker_online: true,
+      note: 'Reboot queued.',
+    })
+    const r = await rebootJetson()
+    expect(r.request_id).toBe('req-1')
     expect(asMock()).toHaveBeenCalledWith(
       '/api/system/reboot',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      }),
+    )
+  })
+
+  it('Given a recovery action, When recoverHost runs, Then it POSTs confirm true', async () => {
+    mockJson({
+      ok: true,
+      request_id: 'req-2',
+      status: 'pending',
+      worker_online: false,
+      note: 'Camera daemon reset queued.',
+    })
+    const r = await recoverHost('nvargus')
+    expect(r.request_id).toBe('req-2')
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/recover',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ action: 'nvargus', confirm: true }),
+      }),
+    )
+  })
+
+  it('Given a recovery request id, When getRecoverStatus runs, Then it encodes the query', async () => {
+    mockJson({
+      request_id: 'req/2',
+      action: 'mediamtx',
+      status: 'done',
+      detail: null,
+      requested_by: 'owner',
+      requested_at: 1714000000,
+      result_at: 1714000004,
+      worker_online: true,
+    })
+    const r = await getRecoverStatus('req/2')
+    expect(r.status).toBe('done')
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/recover/status?request_id=req%2F2',
+      expect.any(Object),
     )
   })
 

@@ -18,6 +18,8 @@ log = logging.getLogger(__name__)
 
 AuthAction = Literal["login_ok", "login_fail", "refresh", "logout"]
 ViewKind = Literal["page", "event"]
+HostAction = Literal["mediamtx", "nvargus", "reboot", "logs"]
+HostActionPhase = Literal["requested", "result"]
 
 
 class AuthEvent(TypedDict):
@@ -33,6 +35,16 @@ class ViewEvent(TypedDict):
     kind: ViewKind
     name: str
     dwell_ms: int
+
+
+class HostActionEvent(TypedDict):
+    ts: float
+    username: str
+    action: HostAction
+    request_id: str
+    phase: HostActionPhase
+    status: str | None
+    detail: str | None
 
 
 _SCHEMA = """
@@ -54,6 +66,18 @@ CREATE TABLE IF NOT EXISTS view_events (
     dwell_ms  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS view_events_ts ON view_events(ts DESC);
+
+CREATE TABLE IF NOT EXISTS host_action_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        REAL NOT NULL,
+    username  TEXT NOT NULL,
+    action    TEXT NOT NULL CHECK(action IN ('mediamtx','nvargus','reboot','logs')),
+    request_id TEXT NOT NULL,
+    phase     TEXT NOT NULL CHECK(phase IN ('requested','result')),
+    status    TEXT,
+    detail    TEXT
+);
+CREATE INDEX IF NOT EXISTS host_action_events_ts ON host_action_events(ts DESC);
 """
 
 
@@ -126,6 +150,37 @@ def insert_view_event(
         conn.commit()
 
 
+def insert_host_action_event(
+    path: Path,
+    *,
+    ts: float,
+    username: str,
+    action: HostAction,
+    request_id: str,
+    phase: HostActionPhase,
+    status: str | None,
+    detail: str | None,
+) -> None:
+    with _connect(path) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO host_action_events
+              (ts, username, action, request_id, phase, status, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                username,
+                action,
+                request_id,
+                phase,
+                status,
+                detail[:512] if detail else None,
+            ),
+        )
+        conn.commit()
+
+
 def auth_events_between(
     path: Path,
     *,
@@ -185,9 +240,42 @@ def view_events_between(
     ]
 
 
+def host_action_events_between(
+    path: Path,
+    *,
+    since: float,
+    until: float,
+    limit: int = 5000,
+) -> list[HostActionEvent]:
+    with _connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT ts, username, action, request_id, phase, status, detail
+            FROM host_action_events
+            WHERE ts >= ? AND ts <= ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (since, until, limit),
+        ).fetchall()
+    return [
+        {
+            "ts": float(row["ts"]),
+            "username": str(row["username"]),
+            "action": row["action"],
+            "request_id": str(row["request_id"]),
+            "phase": row["phase"],
+            "status": row["status"],
+            "detail": row["detail"],
+        }
+        for row in rows
+    ]
+
+
 def reset(path: Path) -> None:
     init_db(path)
     with _connect(path) as conn:
         conn.execute("DELETE FROM auth_events")
         conn.execute("DELETE FROM view_events")
+        conn.execute("DELETE FROM host_action_events")
         conn.commit()

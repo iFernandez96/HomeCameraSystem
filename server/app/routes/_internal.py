@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -21,6 +22,8 @@ from ..services.detection import detection_service
 from ..services.detection_config import detection_config
 from ..services.event_bus import event_bus, make_detection_event
 from ..services.health import worker_health
+from ..services import audit_db, host_bridge
+from ..config import settings
 from ..services.push_service import push_service
 
 router = APIRouter(prefix="/_internal", tags=["internal"])
@@ -198,6 +201,84 @@ class ClientLog(BaseModel):
             except (TypeError, ValueError):
                 object.__setattr__(self, "fields", {"_unserializable": True})
         return self
+
+
+class _ClaimBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+
+
+class _ResultBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+    status: str = Field(pattern=r"^(done|failed)$")
+    detail: str | None = Field(default=None, max_length=512)
+    result: dict | None = None
+
+    @model_validator(mode="after")
+    def _bound_result(self) -> "_ResultBody":
+        if self.result is not None:
+            try:
+                if len(json.dumps(self.result)) > 64_000:
+                    raise ValueError("result payload too large")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("result payload too large") from exc
+        return self
+
+
+@router.get("/host_action")
+async def host_action_poll() -> dict[str, object]:
+    rec = host_bridge.peek(time.time(), max_pending_age_s=120.0)
+    if rec is None:
+        return {"action": None}
+    return {
+        "action": {
+            "id": rec["id"],
+            "kind": rec["kind"],
+            "args": rec.get("args") or {},
+            "requested_at": rec["requested_at"],
+        }
+    }
+
+
+@router.post("/host_action/claim")
+async def host_action_claim(body: _ClaimBody) -> dict[str, str]:
+    return {"result": host_bridge.claim(body.id, time.time())}
+
+
+@router.post("/host_action/result")
+async def host_action_result(body: _ResultBody) -> dict[str, bool]:
+    now = time.time()
+    rec = host_bridge.get(body.id)
+    ok = host_bridge.record_result(
+        body.id,
+        body.status,
+        body.detail,
+        body.result,
+        now=now,
+    )
+    if ok:
+        action = (rec or host_bridge.get(body.id) or {}).get("kind", "")
+        username = (rec or host_bridge.get(body.id) or {}).get("requested_by", "worker")
+        try:
+            audit_db.insert_host_action_event(
+                settings.audit_db_path,
+                ts=now,
+                username=username,
+                action=action,
+                request_id=body.id,
+                phase="result",
+                status=body.status,
+                detail=body.detail,
+            )
+        except Exception:
+            log.warning(
+                "host_action result audit failed for id=%s status=%s",
+                body.id,
+                body.status,
+                exc_info=True,
+            )
+    return {"ok": ok}
 
 
 def _coerce_metric(key: str, value):
