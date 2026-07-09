@@ -1329,7 +1329,7 @@ function HourScrubber({ onJumpHistory }: { onJumpHistory: () => void }) {
         if (cancelled) return
         const bins = _emptyBuckets()
         const start = localMidnightTs()
-        const span = Math.max(Date.now() / 1000 - start, 1)
+        const span = 24 * 60 * 60
         for (const e of r.items) {
           const i = Math.min(15, Math.floor(((e.ts - start) / span) * 16))
           if (i < 0) continue
