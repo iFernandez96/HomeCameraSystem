@@ -56,17 +56,17 @@
   "all_verified": "healthz + bundle hash + live suite 6/6"
  },
  "blocked": [],
- "last_update": "2026-07-08T17:15 pre-compact: god view fully committed, deploy+admin-user+live-verify remain",
+ "last_update": "2026-07-08T18:00 god view DEPLOYED + LIVE-VERIFIED end to end; program has no in-flight lanes",
  "device_leg_2026_07_08": "Phone validations DONE via adb 100.107.247.98:36413 (reconnect if offered again): subscribe flow, push tray display w/ icon under DND, tap deep-link to exact event, live view authed w/ honest pill. Synthetic events cleaned from prod (events DB is /app/secrets/events.db in-container). Phone sub now ACTIVE (9 devices). Pinch-zoom on the LIVE FEED user-confirmed working (2026-07-08 ~13:15); clips-modal pinch not explicitly confirmed.",
  "open_product_bugs": [
   "REGRESSION 1 (worker): events carry NO thumb_url since continuous-capture cutover 2026-07-07 ~21:00 \u2014 visit runner _post_event omits it though save_thumb still writes files; fix in detection/ after O6-9 lane frees the dir",
   "REGRESSION 2 (push images): notification hero images are never fetched by ANY device (phone Chrome shows notification w/o image, desktop Chrome running also 0 GETs; server unauth path verified 200) \u2014 needs dedicated debug; blocks H4 thumb-fetch ground-truth regeneration"
  ],
- "live_creds_note": "Creds in .jetson-snapshot/proof_fixtures/live-creds.env (gitignored 0600). JWT rotated 16:30 \u2014 all old sessions dead. admin user NOT created yet.",
+ "live_creds_note": "Creds in .jetson-snapshot/proof_fixtures/live-creds.env (gitignored 0600). JWT rotated 16:30. admin audit user CREATED on device 2026-07-08 ~18:00 (role=owner).",
  "god_view": {
-  "status": "BOTH halves committed (client 806b1a2, server 93510cb; full suites green 1165 server + 1201 client; ASGI shim rejected+reverted, TestClient fine outside sandbox). NOT deployed yet.",
+  "status": "DEPLOYED + LIVE-VERIFIED 2026-07-08 ~18:00: server cross-deployed (healthy in 3 checks), client dist rsynced (GodView chunk present in deployed assets), admin audit account created on device (role=owner, creds in live-creds.env only). Live API verification: Israel login 200, telemetry page+event views 200 (server-stamped identity), Israel-as-owner gets 403 on /api/admin/audit, admin login 200, audit returns logins+views+per-user summary. audit.db on device at /app/secrets/audit.db mode 0600. Synthetic verify view rows deleted from audit.db (auth rows kept - real logins).",
   "wire_contract": "POST /api/telemetry/view {v:1,kind:'page'|'event',name<=128,dwell_ms:0..86400000,ts:number} username stamped SERVER-side; GET /api/admin/audit?since&until -> {v:1,logins:[{ts,username,action,ua}],views:[{ts,username,kind,name,dwell_ms}],summary:{by_user:{u:{logins,page_dwell_ms,event_views,top:[[name,ms]x<=10]}}}} gate: require_role owner AND username=='admin' exactly (other owners 403)",
-  "deploy_sequence": "1) DONE; 2) cross-deploy server (bash deploy/cross-deploy-server.sh) + client dist rsync TOGETHER; 3) create admin user ON DEVICE via docker exec users_db.create_user(role='owner') \u2014 username and password are in .jetson-snapshot/proof_fixtures/live-creds.env (HOMECAM_ADMIN_AUDIT_*), NEVER in this file; 4) live-verify: browse as Israel on 2 surfaces, then login as the audit account, /god shows logins+views+dwell; 5) confirm telemetry rows land in audit.db"
+  "deploy_sequence": "COMPLETE - all 5 steps done 2026-07-08"
  },
  "open_items": [
   "push-image regression: sw:push-received telemetry deployed + armed on phone SW (build 7b433938); next received push names the failing link (payload-sans-image vs delivery); check journald when user reports a notification",
