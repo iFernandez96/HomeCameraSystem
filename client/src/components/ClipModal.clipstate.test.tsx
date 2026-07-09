@@ -137,6 +137,21 @@ describe('ClipModal honest clip states', () => {
     expect(screen.queryByText(/still recording/i)).not.toBeInTheDocument()
   })
 
+  it('given a coalesced event (clip_url null, worker says no clip by design), when the modal opens, then the covering-recording copy shows instantly and nothing is probed', async () => {
+    // arrange — worker marked this event clipless at emit time
+    probeEventClip.mockResolvedValue(true)
+
+    // act
+    render(
+      <ClipModal event={makeEvent({ clip_url: null })} onClose={() => {}} />,
+    )
+
+    // assert — instant honest state: no player, no probe, no poll
+    expect(screen.getByText(/no video of its own/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/clip of person event/i)).not.toBeInTheDocument()
+    expect(probeEventClip).not.toHaveBeenCalled()
+  })
+
   it('given the clip probe errors (network blip), when the modal opens, then the optimistic player stays mounted', async () => {
     // arrange
     probeEventClip.mockRejectedValue(new Error('offline'))

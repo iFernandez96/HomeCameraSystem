@@ -141,6 +141,16 @@ export function ClipModal({
   const isOwner = user?.role === 'owner' || user?.role === 'admin'
   useEventViewTelemetry(user?.username, event.id)
   const clipUrl = `/api/events/${event.id}/clip`
+  // Event-view jank fix round 2 (2026-07-08): the worker marks
+  // coalesced events — emitted while another visit's clip was already
+  // recording — with clip_url=null (8 of 145 events in a production
+  // day). Their footage lives in the COVERING visit's clip; a clip
+  // for their own id will never exist. Pre-fix the modal ignored the
+  // field, built its own URL, 404'd, and promised a video forever.
+  // `undefined` (field absent, e.g. a live WS payload) stays
+  // optimistic — only an explicit null is the worker saying "no clip
+  // of its own, by design".
+  const hasOwnClip = event.clip_url !== null
   // Track which clip URL has errored. If the prop event changes
   // (parent passed a new event), `clipErrored` naturally becomes
   // false because `erroredClipUrl !== clipUrl`.
@@ -157,9 +167,12 @@ export function ClipModal({
   // closes" vs "no video was ever saved for this event" (the old copy
   // said "check back in a few seconds" for BOTH, forever).
   const [missingClipUrl, setMissingClipUrl] = useState<string | null>(null)
-  const clipMissing = missingClipUrl === clipUrl
+  const clipMissing = !hasOwnClip || missingClipUrl === clipUrl
   useEffect(() => {
     let cancelled = false
+    // clip_url=null events never get a standalone clip — nothing to
+    // probe, and probing would just 404-spam the server log.
+    if (!hasOwnClip) return undefined
     probeEventClip(event.id)
       .then((exists) => {
         if (cancelled || exists) return
@@ -176,7 +189,7 @@ export function ClipModal({
     return () => {
       cancelled = true
     }
-  }, [event.id])
+  }, [event.id, hasOwnClip])
 
   // While the visit is plausibly still recording, keep probing so the
   // player swaps in BY ITSELF the moment the file lands — pre-fix the
@@ -185,6 +198,9 @@ export function ClipModal({
   const clipGone = clipMissing || clipErrored
   useEffect(() => {
     if (!clipGone) return
+    // No standalone clip will ever exist for a clip_url=null event —
+    // polling would spin for the whole still-writing window for nothing.
+    if (!hasOwnClip) return
     if (Date.now() / 1000 - event.ts >= CLIP_STILL_WRITING_WINDOW_S) return
     let cancelled = false
     const id = setInterval(() => {
@@ -206,7 +222,7 @@ export function ClipModal({
       cancelled = true
       clearInterval(id)
     }
-  }, [clipGone, event.id, event.ts])
+  }, [clipGone, hasOwnClip, event.id, event.ts])
 
   // Bug fix (real-device Firefox Android, phone-verified): the clip
   // pane went completely blank on both fresh AND minutes-old events —
@@ -1058,9 +1074,11 @@ export function ClipModal({
             window the modal is actively polling and will swap the
             player in on its own; past it, no false promise. */}
         <p role="status" className="text-sm text-white/85 max-w-xs">
-          {clipStillWriting
-            ? 'Still recording: the video will appear here on its own once it finishes saving.'
-            : 'No video was saved for this event. Here’s the photo it captured.'}
+          {!hasOwnClip
+            ? 'This event has no video of its own: it happened while a nearby event was already recording. Its footage is in that event, under "More from tonight".'
+            : clipStillWriting
+              ? 'Still recording: the video will appear here on its own once it finishes saving.'
+              : 'No video was saved for this event. Here’s the photo it captured.'}
         </p>
         <img
           src={event.thumb_url}

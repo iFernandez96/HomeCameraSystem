@@ -1837,12 +1837,15 @@ describe('Events page — notification deep-link (?event=)', () => {
   })
 
   it('given /events?event=<id> for an event in the fetched list, when the list loads, then the ClipModal auto-opens on that event', async () => {
-    // arrange
+    // arrange — clip_url set: a clip-less (clip_url null) event would
+    // legitimately render the no-video frame instead of the player
+    // (jank fix 2026-07-08), and this test pins the PLAYER opening.
     fetchEvents.mockResolvedValue([
       _personEvent({
         id: 'evt-1',
         ts: Date.now() / 1000,
         thumb_url: '/snapshots/thumb_1.jpg',
+        clip_url: '/api/events/evt-1/clip',
       }),
     ])
 
