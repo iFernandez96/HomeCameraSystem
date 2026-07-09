@@ -759,6 +759,67 @@ def test_when_delete_events_by_day_called_then_only_target_day_removed(client):
     assert r.json() == {"deleted": 2}
 
 
+def test_when_delete_event_then_clip_file_is_unlinked(client, tmp_path, monkeypatch):
+    """2026-07-09: the delete route must unlink the clip, not just the DB row.
+    Before this fix every manual delete orphaned its `.mp4` on disk."""
+    # arrange — event row + its clip file on disk under a tmp recordings dir.
+    from app.config import settings as _settings
+    from app.services import events_db, recording_service
+    from app.services.event_bus import make_detection_event
+    rec_dir = tmp_path / "recordings"
+    rec_dir.mkdir()
+    monkeypatch.setattr(_settings, "recordings_dir", rec_dir)
+    e = make_detection_event(label="person", score=0.9, boxes=[])
+    events_db.insert_event(_settings.events_db_path, e)
+    clip = recording_service.clip_path(e["id"])
+    clip.write_bytes(b"fake mp4 bytes")
+    assert clip.is_file()
+
+    # act
+    r = client.delete(f"/api/events/{e['id']}")
+
+    # assert — row deleted AND the clip is gone (no orphan).
+    assert r.status_code == 200
+    assert r.json() == {"deleted": True}
+    assert not clip.exists()
+
+
+def test_when_delete_events_by_day_then_target_clips_unlinked_others_kept(
+    client, tmp_path, monkeypatch
+):
+    # arrange — 2 clips on the target day + 1 on another day, all on disk.
+    import time as _time
+    from app.config import settings as _settings
+    from app.services import events_db, recording_service
+    from app.services.event_bus import make_detection_event
+    rec_dir = tmp_path / "recordings"
+    rec_dir.mkdir()
+    monkeypatch.setattr(_settings, "recordings_dir", rec_dir)
+    apr_base = _time.mktime((2026, 4, 30, 12, 0, 0, 0, 0, -1))
+    target_clips = []
+    for ts in (apr_base, apr_base + 60):
+        e = make_detection_event(label="person", score=0.9, boxes=[])
+        e["ts"] = ts
+        events_db.insert_event(_settings.events_db_path, e)
+        clip = recording_service.clip_path(e["id"])
+        clip.write_bytes(b"fake mp4")
+        target_clips.append(clip)
+    survivor = make_detection_event(label="person", score=0.9, boxes=[])
+    survivor["ts"] = _time.mktime((2026, 5, 1, 12, 0, 0, 0, 0, -1))
+    events_db.insert_event(_settings.events_db_path, survivor)
+    survivor_clip = recording_service.clip_path(survivor["id"])
+    survivor_clip.write_bytes(b"fake mp4")
+
+    # act
+    r = client.delete("/api/events?day=2026-04-30")
+
+    # assert — both target-day clips unlinked; the other day's clip survives.
+    assert r.status_code == 200
+    assert r.json() == {"deleted": 2}
+    assert all(not c.exists() for c in target_clips)
+    assert survivor_clip.is_file()
+
+
 def test_when_delete_events_by_day_called_with_malformed_date_then_returns_422(client):
     # arrange
 

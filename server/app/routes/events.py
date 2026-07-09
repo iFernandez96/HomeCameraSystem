@@ -341,7 +341,7 @@ async def events_delete_one(
             actor,
         )
         raise HTTPException(status_code=422, detail="invalid event id")
-    from ..services import events_db
+    from ..services import events_db, recording_service
 
     try:
         deleted = await asyncio.to_thread(
@@ -358,12 +358,24 @@ async def events_delete_one(
             actor,
         )
         raise
+    # delete_clip wiring (2026-07-09): the DELETE above only drops the DB row.
+    # Historically the `<id>.mp4` + `.tracks.json` sidecar were left orphaned on
+    # disk (reclaimed only later by the age-based retention sweep) — every
+    # manual delete leaked ~10MB. Unlink the clip now so the delete actually
+    # frees the space. Best-effort + off-loop; delete_clip swallows + logs its
+    # own errors and never raises, so it can't fail the delete.
+    clip_removed = False
+    if deleted:
+        clip_removed = await asyncio.to_thread(
+            recording_service.delete_clip, event_id
+        )
     # iter-logging: INFO audit for the destructive boundary — who
-    # deleted what, and whether a row actually went away.
+    # deleted what, whether a row went away, and whether the clip was freed.
     log.info(
-        "event deleted: event_id=%r deleted=%s actor=%r",
+        "event deleted: event_id=%r deleted=%s clip_removed=%s actor=%r",
         event_id,
         deleted,
+        clip_removed,
         actor,
     )
     return {"deleted": deleted}
@@ -388,9 +400,14 @@ async def events_delete_by_day(
 
     Returns `{"deleted": N}` so the UI can toast "Removed N events".
     """
-    from ..services import events_db
+    from ..services import events_db, recording_service
 
     try:
+        # Capture the day's event ids BEFORE the delete so we can unlink their
+        # clips — delete_by_day only drops DB rows (2026-07-09 orphan fix).
+        event_ids = await asyncio.to_thread(
+            events_db.event_ids_for_day, settings.events_db_path, day
+        )
         n = await asyncio.to_thread(
             events_db.delete_by_day, settings.events_db_path, day
         )
@@ -405,11 +422,26 @@ async def events_delete_by_day(
             actor,
         )
         raise
-    # iter-logging: INFO audit — actor + day + how many rows were removed.
+
+    # Unlink each deleted event's `.mp4` + `.tracks.json` off-loop, in one
+    # thread hop. Without this a bulk "delete all N events for <day>" left
+    # every clip orphaned on disk (reclaimed only later by the retention
+    # sweep). Best-effort — delete_clip swallows + logs its own errors.
+    def _remove_clips(ids):
+        removed = 0
+        for eid in ids:
+            if recording_service.delete_clip(eid):
+                removed += 1
+        return removed
+
+    clips_removed = await asyncio.to_thread(_remove_clips, event_ids)
+
+    # iter-logging: INFO audit — actor + day + rows removed + clips freed.
     log.info(
-        "events deleted by day: day=%r deleted=%s actor=%r",
+        "events deleted by day: day=%r deleted=%s clips_removed=%s actor=%r",
         day,
         n,
+        clips_removed,
         actor,
     )
     return {"deleted": n}

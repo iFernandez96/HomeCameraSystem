@@ -700,6 +700,40 @@ def test_given_three_events_on_two_days_when_delete_by_day_then_only_target_day_
     assert len(survivors) == 1
 
 
+def test_given_events_on_two_days_when_event_ids_for_day_then_only_target_day_ids(
+    tmp_path,
+):
+    """The delete-by-day route calls this BEFORE delete_by_day to unlink each
+    clip (2026-07-09 orphan fix). The id set must match exactly the rows the
+    delete removes — same local-time bucketing."""
+    # arrange — 2 events on 2026-04-30 + 1 on 2026-05-01.
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+    apr_base = time.mktime((2026, 4, 30, 12, 0, 0, 0, 0, -1))
+    may_base = time.mktime((2026, 5, 1, 12, 0, 0, 0, 0, -1))
+    e1 = _make_event(ts=apr_base)
+    e2 = _make_event(ts=apr_base + 60)
+    e3 = _make_event(ts=may_base)
+    for e in (e1, e2, e3):
+        events_db.insert_event(path, e)
+
+    # act
+    ids = events_db.event_ids_for_day(path, "2026-04-30")
+
+    # assert — exactly the two Apr 30 ids, never the May 1 one.
+    assert set(ids) == {e1["id"], e2["id"]}
+    assert e3["id"] not in ids
+
+
+def test_given_no_events_for_day_when_event_ids_for_day_then_empty_list(tmp_path):
+    # arrange
+    path = tmp_path / "events.db"
+    events_db.init_db(path)
+
+    # act + assert — empty day → empty list (route then unlinks nothing).
+    assert events_db.event_ids_for_day(path, "2026-04-30") == []
+
+
 def test_given_no_events_for_day_when_delete_by_day_then_returns_zero(tmp_path):
     # arrange
     path = tmp_path / "events.db"

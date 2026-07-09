@@ -828,6 +828,23 @@ def delete_by_day(path: Path, day: str) -> int:
         return cur.rowcount
 
 
+def event_ids_for_day(path: Path, day: str) -> list:
+    """Return the ids of every event whose local-time date matches `day`
+    (YYYY-MM-DD). The delete-by-day ROUTE calls this BEFORE `delete_by_day`
+    so it can unlink each clip file — the DELETE only drops DB rows, and
+    without this every bulk delete orphaned its `.mp4` on disk (reclaimed
+    only later by the age-based retention sweep). Bucketing matches
+    `delete_by_day` / `count_by_day` so the id set is exactly the rows the
+    delete will remove."""
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM events WHERE "
+            "date(ts, 'unixepoch', 'localtime') = ?",
+            (day,),
+        ).fetchall()
+    return [row["id"] for row in rows]
+
+
 def reset(path: Path) -> None:
     """Truncate the events table. NOT called by production code;
     used by tests to give each one a clean baseline. The fixture
