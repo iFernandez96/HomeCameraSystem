@@ -79,7 +79,13 @@ export function usePageViewTelemetry(
 ): void {
   const spanRef = useRef<Span | null>(null)
   const usernameRef = useRef(username)
-  usernameRef.current = username
+  // React 19 react-hooks/refs: ref writes belong in effects, not the
+  // render body. Declared FIRST so it runs before the span effects
+  // below (effects fire in declaration order) and they always read
+  // the freshest username.
+  useEffect(() => {
+    usernameRef.current = username
+  }, [username])
 
   useEffect(() => {
     if (spanRef.current) finishSpan(usernameRef.current, spanRef.current)
@@ -121,7 +127,9 @@ export function useEventViewTelemetry(
   eventId: string | null | undefined,
 ): void {
   const usernameRef = useRef(username)
-  usernameRef.current = username
+  useEffect(() => {
+    usernameRef.current = username
+  }, [username])
 
   useEffect(() => {
     if (!eventId) return

@@ -59,4 +59,20 @@ export default tseslint.config(
       'jsx-a11y/no-autofocus': 'off',
     },
   },
+  {
+    // Playwright e2e harnesses + node runner scripts (proof program,
+    // 2026-07-08). These run under Node, and Playwright's fixture API
+    // is a false positive for two browser-centric rules: fixtures are
+    // `async ({}, use) => {...}` — the empty destructure is the
+    // documented signature, and `use` is Playwright's fixture
+    // callback, not a React hook.
+    files: ['e2e/**/*.{ts,mjs}'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: {
+      'no-empty-pattern': 'off',
+      'react-hooks/rules-of-hooks': 'off',
+    },
+  },
 )

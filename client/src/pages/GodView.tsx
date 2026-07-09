@@ -65,7 +65,13 @@ export function GodView() {
   useEffect(() => {
     if (!isAdmin) return
     let cancelled = false
-    setLoading(true)
+    // React 19 set-state-in-effect discipline: defer the loading flip
+    // out of the synchronous effect body (same microtask idiom as
+    // Events.tsx's deep-link open). The microtask always runs before
+    // the network response resolves, so ordering is safe.
+    void Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true)
+    })
     getAdminAudit(bounds)
       .then((res) => {
         if (cancelled) return
