@@ -184,3 +184,52 @@ def test_given_corrupt_state_file_when_loaded_then_store_starts_empty(tmp_path):
     # assert
     assert host_bridge.latest() is None
     assert host_bridge.history() == []
+
+
+def test_given_fresh_running_when_enqueue_again_then_in_flight_action_honored():
+    # arrange — a claimed (running) record still within the running window.
+    rec = host_bridge.enqueue("nvargus", {}, "owner", now=100.0)
+    assert host_bridge.claim(rec["id"], now=101.0) == "claimed"
+
+    # act — a second request arrives 30 s into the action (< 120 s window).
+    second = host_bridge.enqueue("mediamtx", {}, "owner", now=131.0)
+
+    # assert — the in-flight recovery is honored, not double-fired.
+    assert second["id"] == rec["id"]
+    assert second["status"] == "running"
+
+
+def test_given_orphaned_running_when_enqueue_again_then_expired_and_new_created():
+    """2026-07-09: a worker that dies between claim and result leaves a stuck
+    `running` record. It must expire so the bridge isn't jammed forever
+    (observed live: a mediamtx recovery restarted the worker mid-action, and
+    the orphan blocked every later recovery + logs request)."""
+    # arrange — claimed at t=101, then the worker "dies" (no result posted).
+    rec = host_bridge.enqueue("mediamtx", {}, "owner", now=100.0)
+    assert host_bridge.claim(rec["id"], now=101.0) == "claimed"
+
+    # act — a new request well past the running window (claimed_at + 120 s).
+    second = host_bridge.enqueue(
+        "nvargus", {}, "owner", now=300.0, max_running_age_s=120.0
+    )
+
+    # assert — the orphan expired to history; the new request is live.
+    assert second["id"] != rec["id"]
+    assert second["kind"] == "nvargus"
+    orphan = host_bridge.get(rec["id"])
+    assert orphan["status"] == "expired"
+    assert "died mid-action" in (orphan["detail"] or "")
+
+
+def test_given_orphaned_running_when_peek_then_self_heals_to_expired():
+    # arrange — a claimed record whose worker never reports back.
+    rec = host_bridge.enqueue("nvargus", {}, "owner", now=100.0)
+    assert host_bridge.claim(rec["id"], now=101.0) == "claimed"
+
+    # act — the worker's own poll (peek) past the running window.
+    peeked = host_bridge.peek(300.0, max_pending_age_s=120.0, max_running_age_s=120.0)
+
+    # assert — nothing to hand out, and the orphan self-healed to expired so
+    # the status route stops reporting a phantom `running`.
+    assert peeked is None
+    assert host_bridge.get(rec["id"])["status"] == "expired"
