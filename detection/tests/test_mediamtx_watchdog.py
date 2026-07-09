@@ -69,10 +69,13 @@ def test_given_sustained_wedge_when_cooldown_expires_then_escalates_the_ladder()
     # arrange
     w = MediaMtxWatchdog(fail_threshold=2, cooldown_s=10.0)
     seen = []
-    # act — drive five escalations, each past the cooldown.
+    # act — drive five escalations. Step `now` by a wide margin (100 s) each
+    # time so the per-rung dwell is always satisfied regardless of which rung
+    # we're on — this test pins the ladder SEQUENCE, not the timing (the
+    # per-rung dwell has its own test below).
     for i in range(5):
         _wedge(w)
-        seen.append(w.next_action(now=i * 10.0))
+        seen.append(w.next_action(now=i * 100.0))
     # assert — the full ladder, in order.
     assert seen == [
         ACTION_RESTART_MEDIAMTX,
@@ -83,16 +86,37 @@ def test_given_sustained_wedge_when_cooldown_expires_then_escalates_the_ladder()
     ]
 
 
+def test_given_nvargus_rung_when_only_short_cooldown_elapsed_then_holds_before_reboot():
+    """2026-07-09 fix: a nvargus restart needs a long dwell to actually recover
+    the libargus session before the ladder advances. Live bug: with a flat
+    cooldown the ladder over-ran to reboot while nvargus was still recovering.
+    Pin that after a nvargus rung fires, a gap only as long as the (shorter)
+    mediamtx dwell does NOT escalate — reboot waits for the full nvargus dwell,
+    giving `on_capture_ok` a chance to de-escalate first."""
+    # arrange — climb to the first nvargus rung (level 2 fires nvargus).
+    w = MediaMtxWatchdog(fail_threshold=1, cooldown_s=10.0)
+    _wedge(w); assert w.next_action(now=0.0) == ACTION_RESTART_MEDIAMTX
+    _wedge(w); assert w.next_action(now=100.0) == ACTION_RESTART_MEDIAMTX
+    _wedge(w); assert w.next_action(now=200.0) == ACTION_RESTART_NVARGUS
+    # act — only a mediamtx-length dwell (0.75 * 10 = 7.5 s) after the nvargus
+    # kick. The nvargus dwell is 2.5 * 10 = 25 s, so it must NOT fire yet.
+    _wedge(w)
+    assert w.next_action(now=210.0) is None
+    # assert — once the full nvargus dwell elapses, it advances (2nd nvargus).
+    assert w.next_action(now=226.0) == ACTION_RESTART_NVARGUS
+
+
 def test_given_top_of_ladder_when_still_wedged_then_keeps_retrying_reboot():
-    # arrange — climb to the top, then keep failing.
+    # arrange — climb to the top, then keep failing. Wide `now` steps so every
+    # per-rung dwell is satisfied (this test pins the top-clamp, not timing).
     w = MediaMtxWatchdog(fail_threshold=1, cooldown_s=10.0)
     for i in range(5):
         _wedge(w)
-        w.next_action(now=i * 10.0)
+        w.next_action(now=i * 100.0)
     # act — one more past cooldown.
     _wedge(w)
     # assert — clamps at the reboot rung, doesn't fall off the end.
-    assert w.next_action(now=60.0) == ACTION_REBOOT
+    assert w.next_action(now=600.0) == ACTION_REBOOT
 
 
 def test_given_recovery_when_on_capture_ok_then_de_escalates_to_bottom():

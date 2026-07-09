@@ -66,6 +66,24 @@ _DEFAULT_LADDER = (
     ACTION_REBOOT,
 )
 
+# Per-action dwell BEFORE escalating to the next rung (2026-07-09 fix),
+# expressed as MULTIPLES of `cooldown_s` so it scales with the configured base.
+# The cooldown that gates the next escalation is governed by the action we LAST
+# fired, because different remedies need different time to actually take
+# effect: a cheap mediamtx restart recovers in seconds, but a nvargus-daemon
+# restart re-negotiates the whole libargus/camera session and needs ~90 s to
+# bring frames back. Live finding: with a flat 60 s cooldown the ladder
+# escalated again while a nvargus restart was still recovering, over-running
+# straight to the reboot rung instead of letting nvargus succeed. Giving the
+# nvargus rungs a long dwell (2.5x = 150 s at the default 60 s base) lets
+# `on_capture_ok` de-escalate first, so reboot stays a genuine last resort.
+# Actions not listed fall back to a 1.0x (`cooldown_s`) dwell.
+_DEFAULT_ACTION_COOLDOWN_MULT = {
+    ACTION_RESTART_MEDIAMTX: 0.75,
+    ACTION_RESTART_NVARGUS: 2.5,
+    ACTION_REBOOT: 2.5,
+}
+
 
 class MediaMtxWatchdog:
     """Escalating recovery decision-maker for a wedged camera feed.
@@ -81,11 +99,21 @@ class MediaMtxWatchdog:
     """
 
     def __init__(self, fail_threshold=30, cooldown_s=60.0, ladder=None,
-                 allow_reboot=True):
+                 allow_reboot=True, action_cooldowns=None):
         self.fail_threshold = fail_threshold
         self.cooldown_s = cooldown_s
         self.ladder = tuple(ladder) if ladder is not None else _DEFAULT_LADDER
         self.allow_reboot = allow_reboot
+        # Per-action dwell before the NEXT rung; falls back to cooldown_s.
+        # Default derives from cooldown_s via the multiplier table so it scales
+        # with the configured base (and with tests that inject a small base).
+        if action_cooldowns is not None:
+            self.action_cooldowns = dict(action_cooldowns)
+        else:
+            self.action_cooldowns = dict(
+                (action, mult * cooldown_s)
+                for action, mult in _DEFAULT_ACTION_COOLDOWN_MULT.items()
+            )
         self.failures = 0
         # `-inf` so the first action is never blocked by the cooldown check.
         self.last_action_at = float("-inf")
@@ -123,10 +151,11 @@ class MediaMtxWatchdog:
         if self.failures < self.fail_threshold:
             return None
         elapsed = now - self.last_action_at
+        required = self._required_cooldown()
         if elapsed < 0:
             log.warning("watchdog:clock-anomaly delta=%s", elapsed)
             self.last_action_at = now
-        elif elapsed < self.cooldown_s:
+        elif elapsed < required:
             return None
         action = self._resolve_action(self.level)
         prev_level = self.level
@@ -146,6 +175,18 @@ class MediaMtxWatchdog:
             self.fail_threshold,
         )
         return action
+
+    def _required_cooldown(self):
+        """Dwell required before firing the CURRENT rung, governed by the
+        action we last fired (the previous rung). `level` was already bumped
+        past the last-fired rung and is persisted across restarts, so this
+        needs no extra persisted field. At level 0 (nothing fired yet) the
+        flat `cooldown_s` applies — moot anyway since `last_action_at` starts
+        at -inf so the first action never blocks."""
+        if self.level <= 0:
+            return self.cooldown_s
+        last_action = self.ladder[min(self.level - 1, len(self.ladder) - 1)]
+        return self.action_cooldowns.get(last_action, self.cooldown_s)
 
     def _resolve_action(self, level):
         """Map a ladder index to an action, honoring `allow_reboot`."""
