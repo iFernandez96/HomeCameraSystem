@@ -8,6 +8,18 @@ export type DetectionBox = {
   score: number
 }
 
+export type Session = {
+  jti: string
+  username: string
+  device_label: string
+  ip_class: 'lan' | 'tailscale' | 'cellular' | 'other'
+  created_ts: number
+  last_seen_ts: number
+  is_current: boolean
+  watching_now: boolean
+  revoked: boolean
+}
+
 /**
  * iter-356.53 — bbox-track sidecar (per-event). The detection
  * worker writes this JSON file at clip-window expiry; the server

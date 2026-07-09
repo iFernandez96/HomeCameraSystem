@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAdminAudit = vi.fn()
+const listSessions = vi.fn()
 const useStatus = vi.fn()
 let authUser: { username: string; role: string } | null = {
   username: 'owner-user',
@@ -11,6 +12,8 @@ let authUser: { username: string; role: string } | null = {
 
 vi.mock('../lib/api', () => ({
   getAdminAudit: (...a: unknown[]) => getAdminAudit(...a),
+  listSessions: () => listSessions(),
+  revokeSession: (jti: string) => Promise.resolve({ ok: true, jti }),
 }))
 
 vi.mock('../lib/auth', () => ({
@@ -40,6 +43,7 @@ describe('GodView page', () => {
   beforeEach(() => {
     authUser = { username: 'owner-user', role: 'owner' }
     useStatus.mockReturnValue(null)
+    listSessions.mockReset().mockResolvedValue({ v: 1, sessions: [] })
     getAdminAudit.mockReset().mockResolvedValue({
       v: 1,
       logins: [
@@ -80,6 +84,7 @@ describe('GodView page', () => {
     expect(screen.getByRole('form', { name: /audit date filters/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /crash cart/i })).toBeInTheDocument()
     expect(screen.getByRole('status', { name: /can't reach the jetson/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /active sessions/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /sessions timeline/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /per user/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /^views$/i })).toBeInTheDocument()
@@ -100,5 +105,6 @@ describe('GodView page', () => {
     // assert
     expect(screen.queryByRole('heading', { name: /god view/i })).not.toBeInTheDocument()
     expect(getAdminAudit).not.toHaveBeenCalled()
+    expect(listSessions).not.toHaveBeenCalled()
   })
 })

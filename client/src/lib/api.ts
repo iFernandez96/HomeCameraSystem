@@ -7,6 +7,7 @@ import type {
   LoginResponse,
   MeResponse,
   PushFilters,
+  Session,
   ServerStatus,
 } from './types'
 
@@ -913,6 +914,15 @@ export const getAdminAudit = (filters: { since?: number; until?: number } = {}) 
   const qs = params.toString()
   return req<AdminAuditResponse>(`/api/admin/audit${qs ? '?' + qs : ''}`)
 }
+
+export const listSessions = () =>
+  req<{ v: 1; sessions: Session[] }>('/api/admin/sessions')
+
+export const revokeSession = (jti: string) =>
+  req<{ ok: boolean }>(
+    `/api/admin/sessions/${encodeURIComponent(jti)}/revoke`,
+    { method: 'POST' },
+  )
 
 // iter-264: password-change client wrappers (closes the iter-258
 // half-shipped gap surfaced by test-coverage-auditor D2). Both

@@ -6,6 +6,7 @@ import { formatError } from '../lib/format'
 import { isGodModeUser } from '../lib/roles'
 import { useStatus } from '../lib/useStatus'
 import { CrashCartPanels } from '../components/godview/CrashCartPanels'
+import { SessionsPanel } from '../components/godview/SessionsPanel'
 import { WedgePanel } from '../components/godview/WedgePanel'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
@@ -153,6 +154,7 @@ export function GodView() {
 
       <CrashCartPanels status={status} />
       <WedgePanel metrics={status?.worker_metrics ?? null} />
+      <SessionsPanel user={user} />
 
       {error ? (
         <ErrorState

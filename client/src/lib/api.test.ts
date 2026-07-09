@@ -11,6 +11,7 @@ import {
   getTimelapseManifest,
   getVapidPublicKey,
   HttpError,
+  listSessions,
   listTimelapses,
   login,
   logout,
@@ -18,6 +19,7 @@ import {
   rebootJetson,
   refresh,
   refreshSession,
+  revokeSession,
   searchEvents,
   sendTestPushReq,
   subscribePush,
@@ -150,6 +152,61 @@ describe('lib/api', () => {
     // assert
     expect(r.summary.by_user.admin.top[0]).toEqual(['/', 1200])
     expect(asMock()).toHaveBeenCalledWith('/api/admin/audit', expect.any(Object))
+  })
+
+  it('Given the sessions endpoint returns rows, When listSessions runs, Then it GETs the pinned admin sessions route and preserves the wire shape', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      sessions: [
+        {
+          jti: 'jti-current',
+          username: 'israel',
+          device_label: 'Chrome on Pixel',
+          ip_class: 'tailscale',
+          created_ts: 1714000000,
+          last_seen_ts: 1714000300,
+          is_current: true,
+          watching_now: true,
+          revoked: false,
+        },
+      ],
+    })
+
+    // act
+    const r = await listSessions()
+
+    // assert
+    expect(r.sessions[0]).toMatchObject({
+      username: 'israel',
+      device_label: 'Chrome on Pixel',
+      ip_class: 'tailscale',
+      is_current: true,
+      watching_now: true,
+      revoked: false,
+    })
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/admin/sessions',
+      expect.objectContaining({
+        credentials: 'include',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    )
+  })
+
+  it('Given a session id, When revokeSession runs, Then it POSTs the encoded revoke route', async () => {
+    // arrange
+    mockJson({ ok: true })
+
+    // act
+    const r = await revokeSession('abc+123')
+
+    // assert
+    expect(r.ok).toBe(true)
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/admin/sessions/abc%2B123/revoke',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('captureSnapshot uses POST and returns the URL', async () => {
