@@ -1488,10 +1488,10 @@ describe('lib/api', () => {
       audio_enabled: false,
       face_capture_enabled: true,
       face_capture_retention_days: 30,
-      // S5: continuous-capture (visit) knobs — defaults OFF.
-      continuous_capture: false,
+      // S5: continuous-capture (visit) knobs — defaults ON.
+      continuous_capture: true,
       max_visit_s: 150,
-      absence_finalize_s: 10,
+      absence_finalize_s: 30,
     }
     mockJson(cfg)
     const { getDetectionConfig } = await import('./api')
@@ -1522,9 +1522,9 @@ describe('lib/api', () => {
       audio_enabled: false,
       face_capture_enabled: true,
       face_capture_retention_days: 30,
-      continuous_capture: false,
+      continuous_capture: true,
       max_visit_s: 150,
-      absence_finalize_s: 10,
+      absence_finalize_s: 30,
     }
     mockJson(cfg)
     const { getDetectionConfig } = await import('./api')
@@ -1533,9 +1533,9 @@ describe('lib/api', () => {
     const r = await getDetectionConfig()
 
     // assert — the worker reads these names verbatim off the poll.
-    expect(r.continuous_capture).toBe(false)
+    expect(r.continuous_capture).toBe(true)
     expect(r.max_visit_s).toBe(150)
-    expect(r.absence_finalize_s).toBe(10)
+    expect(r.absence_finalize_s).toBe(30)
   })
 
   it('Given a stored clip, When probeEventClip runs, Then it sends a 2-byte Range GET and resolves true on 206', async () => {

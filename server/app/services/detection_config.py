@@ -99,8 +99,8 @@ FACE_CAPTURE_RETENTION_DEFAULT = 30
 # The worker reads these verbatim off the config-poll
 # (detection/visit_runtime.py::resolve_continuous_config):
 #   continuous_capture (bool), max_visit_s (float), absence_finalize_s (float).
-# Feature defaults OFF — `continuous_capture=False` keeps the legacy
-# per-event clip path until the operator opts in (S7 live bake).
+# Feature defaults ON — `continuous_capture=True` is the baked-live
+# 2026-07-07 default; legacy per-event re-arm is no longer the reset path.
 # `max_visit_s` is the HARD CAP on a single visit's duration (caps
 # stuck-detection disk fill); plan B2/R3 default 150s (between the
 # 120-180s band). `absence_finalize_s` is the post-roll grace window
@@ -111,7 +111,7 @@ MAX_VISIT_MAX = 600.0
 MAX_VISIT_DEFAULT = 150.0
 ABSENCE_FINALIZE_MIN = 3.0
 ABSENCE_FINALIZE_MAX = 60.0
-ABSENCE_FINALIZE_DEFAULT = 10.0
+ABSENCE_FINALIZE_DEFAULT = 30.0
 
 CLASSES_MAX = 30  # cap to keep config files sane and validation cheap
 # Cap the length of any individual class name. Longest real COCO label
@@ -233,9 +233,9 @@ class DetectionConfig:
     face_capture_retention_days: int = FACE_CAPTURE_RETENTION_DEFAULT
     # Continuous-capture (visit) feature — Slice 5. The worker reads
     # these off the unauth config-poll (visit_runtime.py). Feature
-    # defaults OFF; `clip_post_roll_s` above stays for the legacy
+    # defaults ON; `clip_post_roll_s` above stays for the legacy
     # per-event path and is NOT repurposed (plan R3).
-    continuous_capture: bool = False
+    continuous_capture: bool = True
     # Hard cap on a single visit's duration (seconds). Clamped
     # [MAX_VISIT_MIN, MAX_VISIT_MAX] on PATCH + disk-load.
     max_visit_s: float = MAX_VISIT_DEFAULT

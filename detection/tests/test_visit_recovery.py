@@ -31,12 +31,12 @@ from visit import VisitTracker  # noqa: E402
 # 1. Flag / knob resolution (pure)                                            #
 # --------------------------------------------------------------------------- #
 
-def test_given_no_env_or_config_when_resolved_then_flag_off_and_defaults():
+def test_given_no_env_or_config_when_resolved_then_flag_on_and_defaults():
     # arrange / act
     cfg = visit_runtime.resolve_continuous_config(env={}, config={})
 
-    # assert — feature is OFF by default; knobs at plan defaults.
-    assert cfg["enabled"] is False
+    # assert — feature is ON by default; knobs at plan defaults.
+    assert cfg["enabled"] is True
     assert cfg["max_visit_s"] == visit_runtime.DEFAULT_MAX_VISIT_S
     assert cfg["absence_finalize_s"] == visit_runtime.DEFAULT_ABSENCE_FINALIZE_S
 
@@ -96,7 +96,9 @@ def _write_open_visit(rec_dir, visit_id, **fields):
         "last_extend": fields.get("last_extend", 110.0),
         "last_seen": fields.get("last_seen", 110.0),
         "segment_index": 0,
-        "absence_finalize_s": fields.get("absence_finalize_s", 10.0),
+        "absence_finalize_s": fields.get(
+            "absence_finalize_s", visit_runtime.DEFAULT_ABSENCE_FINALIZE_S,
+        ),
     }
     rec.update(fields)
     visits = visit_runtime.read_open_visits(rec_dir)

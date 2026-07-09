@@ -382,15 +382,15 @@ class RuntimeConfig:
         # ring live when `clip_pre_roll_s` grows.
         self.clip_post_roll_s = 8.0
         self.clip_pre_roll_s = 0.0
-        # Continuous-capture (person-following) feature, plan S4. Default OFF
+        # Continuous-capture (person-following) feature, plan S4. Default ON
         # (hard XOR with the legacy start_clip path). The flag + knobs are
         # resolved from env + this polled config via
         # `visit_runtime.resolve_continuous_config`; the loop reads them live
         # so an operator can flip the toggle / drag the sliders without a
         # worker restart. Seeded from env at construction in main().
-        self.continuous_capture = False
+        self.continuous_capture = True
         self.max_visit_s = 150.0
-        self.absence_finalize_s = 10.0
+        self.absence_finalize_s = 30.0
 
     def schedule_says_off(self):
         """True if the current local time is inside the off-window.
@@ -1606,7 +1606,7 @@ def main():
     runtime = RuntimeConfig(threshold=threshold, cooldown_s=cooldown)
     # Seed the continuous-capture flag + knobs from env (plan S4). The
     # config-poll later overrides these live; resolving here means a boot-time
-    # env override is honored before the server has spoken. Default OFF.
+    # env override is honored before the server has spoken. Default ON.
     _cc = visit_runtime.resolve_continuous_config(env=os.environ)
     runtime.continuous_capture = _cc["enabled"]
     runtime.max_visit_s = _cc["max_visit_s"]
