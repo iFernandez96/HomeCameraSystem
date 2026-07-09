@@ -102,6 +102,20 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         # floor (S4.5/B2). Both go through the numeric path below.
         "visits_finalized",
         "clips_dropped_disk_floor",
+        # Watchdog escalation + wedge diagnostics. Flat metric keys keep the
+        # worker/server/client heartbeat contract explicit and preserve the
+        # existing numeric-hardening path. watchdog_last_action is the lone
+        # human-readable rung string; empty string means no action yet.
+        "watchdog_level",
+        "watchdog_last_action",
+        "watchdog_last_action_at",
+        "watchdog_last_reboot_at",
+        "watchdog_action_count",
+        "wedge_diag_at",
+        "wedge_diag_nvargus_rss_kb",
+        "wedge_diag_gpu_temp_c",
+        "wedge_diag_mem_avail_mb",
+        "wedge_diag_argus_pending",
     }
 )
 
@@ -110,7 +124,11 @@ _ALLOWED_METRIC_FIELDS = frozenset(
 # these as a string would silently leak garbage to the UI; this lets
 # us drop non-numeric values per-field rather than poisoning the
 # whole snapshot.
-_NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {"gear", "face_recog_names"}
+_NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {
+    "gear",
+    "face_recog_names",
+    "watchdog_last_action",
+}
 
 # Bounds for the `gear` string. Today's documented values are
 # {active, idle, off, scheduled-off, low-memory, thermal-throttled} —
@@ -119,6 +137,7 @@ _NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {"gear", "face_recog_names"}
 # strip) rejects empty / whitespace-only strings that would render
 # as a blank pill in the UI.
 _GEAR_MAX = 32
+_WATCHDOG_ACTION_MAX = 24
 
 # Bounds for the `face_recog_names` list. Realistic encodings.pkl
 # files have 1-10 entries with names like "israel" / "sheenal"
@@ -212,6 +231,13 @@ def _coerce_metric(key: str, value):
         stripped = value.strip()
         if not stripped or len(stripped) > _GEAR_MAX:
             return None
+        return stripped
+    if key == "watchdog_last_action":
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        if len(stripped) > _WATCHDOG_ACTION_MAX:
+            stripped = stripped[:_WATCHDOG_ACTION_MAX]
         return stripped
     if key == "face_recog_names":
         if not isinstance(value, list):

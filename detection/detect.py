@@ -51,6 +51,7 @@ idle keeps the GPU cool enough to leave headroom for the encoder.
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -876,6 +877,7 @@ def escalate_argus_recovery():
 # reboot didn't clear the wedge, we must NOT reboot again immediately.
 _WATCHDOG_STATE = {}          # type: ignore[var-annotated]
 _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_state.json
+_LAST_WEDGE_DIAG = {}         # type: ignore[var-annotated]
 _DECISION_LEDGER = None       # set in main() to <recordings_dir>/decision.jsonl
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
@@ -958,6 +960,68 @@ def _clear_watchdog_escalation():
         _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
 
 
+def _parse_nvargus_rss_kb(text):
+    """Best-effort RSS parser for `ps -o pid=,rss=,etime=,cmd=` output."""
+    best = 0.0
+    for line in text.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 2:
+            continue
+        try:
+            rss = float(parts[1])
+        except (TypeError, ValueError):
+            continue
+        best = max(best, rss)
+    return best
+
+
+def _parse_free_available_mb(text):
+    """Return the Mem: available column from `free -m` output."""
+    for line in text.splitlines():
+        if not line.startswith("Mem:"):
+            continue
+        parts = line.split()
+        if len(parts) >= 7:
+            try:
+                return float(parts[6])
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+def _count_argus_pending(text):
+    """Count the known libargus pending/overflow signatures in dmesg."""
+    if not text:
+        return 0.0
+    return float(len(re.findall(
+        r"(Argus OverFlow|too many pending events)",
+        text,
+        flags=re.IGNORECASE,
+    )))
+
+
+def _mirror_watchdog_metrics(metrics, mediamtx_watchdog):
+    """Copy live watchdog state onto the heartbeat metrics object."""
+    now = time.time()
+    snap = mediamtx_watchdog.snapshot()
+    metrics.watchdog_level = snap.get("level", 0)
+    metrics.watchdog_last_action_at = _coerce_watchdog_timestamp(
+        snap.get("last_action_at"), now, reject_future_after_s=60.0,
+    )
+    metrics.watchdog_last_reboot_at = _coerce_watchdog_timestamp(
+        _WATCHDOG_STATE.get("last_reboot_at"), now, reject_future_after_s=60.0,
+    )
+    metrics.watchdog_action_count = mediamtx_watchdog.action_count
+    metrics.watchdog_last_action = _WATCHDOG_STATE.get("last_action") or ""
+    diag = _LAST_WEDGE_DIAG
+    if diag:
+        metrics.wedge_diag_at = diag.get("at", 0.0)
+        metrics.wedge_diag_nvargus_rss_kb = diag.get("nvargus_rss_kb", 0.0)
+        metrics.wedge_diag_gpu_temp_c = diag.get("gpu_temp_c", 0.0)
+        metrics.wedge_diag_mem_avail_mb = diag.get("mem_avail_mb", 0.0)
+        metrics.wedge_diag_argus_pending = diag.get("argus_pending", 0.0)
+
+
 def _capture_wedge_diagnostics(action):
     """Snapshot thermal / power / memory / nvargus / kernel state when the
     watchdog escalates, so the (still-undiagnosed) ROOT cause of the libargus
@@ -976,6 +1040,8 @@ def _capture_wedge_diagnostics(action):
                      "for z in /sys/class/thermal/thermal_zone*/temp; do "
                      "echo \"$z=$(cat $z 2>/dev/null)\"; done"]),
     )
+    global _LAST_WEDGE_DIAG
+    captured = {}
     for name, cmd in probes:
         try:
             out = subprocess.run(
@@ -983,9 +1049,17 @@ def _capture_wedge_diagnostics(action):
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             text = out.stdout.decode("utf-8", "replace").strip()[:1500]
+            captured[name] = text
             print("[detect] [diag:{}]\n{}".format(name, text), flush=True)
         except Exception as e:
             print("[detect] [diag:{}] probe failed: {}".format(name, e), flush=True)
+    _LAST_WEDGE_DIAG = {
+        "at": time.time(),
+        "nvargus_rss_kb": _parse_nvargus_rss_kb(captured.get("nvargus", "")),
+        "gpu_temp_c": read_gpu_temp_c() or 0.0,
+        "mem_avail_mb": _parse_free_available_mb(captured.get("memory", "")),
+        "argus_pending": _count_argus_pending(captured.get("dmesg-tail", "")),
+    }
 
 
 def _do_reboot():
@@ -1273,6 +1347,7 @@ def _handle_capture_failure(
         # worker-restart RESUMES the ladder instead of resetting to
         # mediamtx-only (the 2026-06-20 reachability fix).
         _capture_wedge_diagnostics(action)
+        _WATCHDOG_STATE["last_action"] = action
         # plan R5: finalize any open continuous-capture visit at last_seen and
         # persist .open_visits.json BEFORE the recovery action (esp. reboot) —
         # a short valid clip, not one spanning the wedge gap. No-op when the
@@ -1294,6 +1369,7 @@ def _handle_capture_failure(
         elif action == ACTION_REBOOT:
             _do_reboot()
         _persist_watchdog_level(mediamtx_watchdog)
+    _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
     if consecutive_failures > 100:
         print(
             "[detect] giving up after 100 consecutive capture failures "
@@ -1893,6 +1969,7 @@ def main():
         metrics.last_frame_ts = time.time()
         metrics.frames += 1
         liveness.bump()
+        _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
 
         # iter-172: sample thermal + memory pressure every N frames
         # BEFORE the early-continue ladder (manual-off / scheduled-off /

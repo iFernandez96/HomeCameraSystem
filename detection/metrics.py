@@ -120,6 +120,23 @@ class Metrics:
         #    below the worker disk floor (S4.5/B2) — the clip was skipped.
         self.visits_finalized = 0
         self.clips_dropped_disk_floor = 0
+        # Watchdog escalation telemetry for the God View wedge panel.
+        # The mediamtx watchdog climbs a persisted recovery ladder when
+        # Capture() wedges. Most fields are numeric so they survive the
+        # server's hardened metric coercion; watchdog_last_action is the
+        # single human-readable rung string.
+        self.watchdog_level = 0
+        self.watchdog_last_action = ""
+        self.watchdog_last_action_at = 0.0
+        self.watchdog_last_reboot_at = 0.0
+        self.watchdog_action_count = 0
+        # Last bounded wedge diagnostic snapshot captured immediately before
+        # a watchdog escalation action. 0 means no wedge/parseable value yet.
+        self.wedge_diag_at = 0.0
+        self.wedge_diag_nvargus_rss_kb = 0.0
+        self.wedge_diag_gpu_temp_c = 0.0
+        self.wedge_diag_mem_avail_mb = 0.0
+        self.wedge_diag_argus_pending = 0.0
         self.started = time.time()
 
     def fps(self):
@@ -199,4 +216,14 @@ class Metrics:
             "thumb_save_failures": self.thumb_save_failures,
             "visits_finalized": self.visits_finalized,
             "clips_dropped_disk_floor": self.clips_dropped_disk_floor,
+            "watchdog_level": self.watchdog_level,
+            "watchdog_last_action": self.watchdog_last_action,
+            "watchdog_last_action_at": round(self.watchdog_last_action_at, 1),
+            "watchdog_last_reboot_at": round(self.watchdog_last_reboot_at, 1),
+            "watchdog_action_count": self.watchdog_action_count,
+            "wedge_diag_at": round(self.wedge_diag_at, 1),
+            "wedge_diag_nvargus_rss_kb": round(self.wedge_diag_nvargus_rss_kb, 1),
+            "wedge_diag_gpu_temp_c": round(self.wedge_diag_gpu_temp_c, 1),
+            "wedge_diag_mem_avail_mb": round(self.wedge_diag_mem_avail_mb, 1),
+            "wedge_diag_argus_pending": round(self.wedge_diag_argus_pending, 1),
         }

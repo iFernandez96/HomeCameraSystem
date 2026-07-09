@@ -66,9 +66,23 @@ describe('lib/api', () => {
       detection_active: false,
       cpu_temp_c: null,
       fps: 0,
+      worker_metrics: {
+        watchdog_level: 2,
+        watchdog_last_action: 'restart_nvargus',
+        watchdog_last_action_at: 1700000100,
+        watchdog_last_reboot_at: 0,
+        watchdog_action_count: 3,
+        wedge_diag_at: 1700000110,
+        wedge_diag_nvargus_rss_kb: 42112,
+        wedge_diag_gpu_temp_c: 67.5,
+        wedge_diag_mem_avail_mb: 384,
+        wedge_diag_argus_pending: 2,
+      },
     })
     const s = await getStatus()
     expect(s.ok).toBe(true)
+    expect(s.worker_metrics?.watchdog_last_action).toBe('restart_nvargus')
+    expect(s.worker_metrics?.wedge_diag_mem_avail_mb).toBe(384)
     expect(asMock()).toHaveBeenCalledWith(
       '/api/status',
       expect.objectContaining({

@@ -396,6 +396,32 @@ export type WorkerMetrics = {
   visits_finalized?: number
   /** Opens refused because free disk fell below the worker floor (S4.5). A rising value means the card is filling faster than eviction reclaims. */
   clips_dropped_disk_floor?: number
+  /**
+   * Watchdog escalation state for camera capture wedges. The worker climbs
+   * restart_mediamtx -> restart_nvargus -> reboot when libargus/RTSP stops
+   * producing frames while the process is still alive.
+   */
+  /** Current persisted ladder index. 0 means healthy / bottom rung. */
+  watchdog_level?: number
+  /** Last watchdog rung name; empty string means no action has fired yet. */
+  watchdog_last_action?: string
+  /** Unix-epoch seconds of the last watchdog action. 0 means never. */
+  watchdog_last_action_at?: number
+  /** Unix-epoch seconds of the last guarded reboot attempt. 0 means never. */
+  watchdog_last_reboot_at?: number
+  /** Total watchdog escalations this worker session. */
+  watchdog_action_count?: number
+  /**
+   * Last bounded wedge diagnostic snapshot captured immediately before a
+   * watchdog escalation. Values correlate the "Failed to create
+   * CaptureSession" / "Argus OverFlow" moment with nvargus RSS, GPU temp,
+   * memory, and pending-event count. 0 means never or not parseable.
+   */
+  wedge_diag_at?: number
+  wedge_diag_nvargus_rss_kb?: number
+  wedge_diag_gpu_temp_c?: number
+  wedge_diag_mem_avail_mb?: number
+  wedge_diag_argus_pending?: number
 }
 
 /**

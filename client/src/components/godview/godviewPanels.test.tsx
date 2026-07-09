@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ServerStatus } from '../../lib/types'
 import { PipelinePanel } from './PipelinePanel'
 import { VitalsPanel } from './VitalsPanel'
+import { WedgePanel } from './WedgePanel'
 import { WorkerLivenessPanel } from './WorkerLivenessPanel'
 
 function status(overrides: Partial<ServerStatus> = {}): ServerStatus {
@@ -74,5 +75,46 @@ describe('God View crash-cart panels', () => {
 
     // assert
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('Given watchdog escalation metrics, When WedgePanel renders, Then it shows rung, guard, and diagnostics', () => {
+    // arrange / act
+    render(
+      <WedgePanel
+        now={1_700_002_000_000}
+        metrics={{
+          watchdog_level: 3,
+          watchdog_last_action: 'restart_nvargus',
+          watchdog_last_action_at: 1_700_001_700,
+          watchdog_last_reboot_at: 1_700_001_200,
+          watchdog_action_count: 4,
+          wedge_diag_at: 1_700_001_940,
+          wedge_diag_nvargus_rss_kb: 51200,
+          wedge_diag_gpu_temp_c: 71,
+          wedge_diag_mem_avail_mb: 384,
+          wedge_diag_argus_pending: 2,
+        }}
+      />,
+    )
+
+    // assert
+    expect(
+      screen.getByRole('heading', { name: /capture wedge/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Rung 3 of 5 - nvargus-daemon restart/i)).toBeInTheDocument()
+    expect(screen.getByText(/nvargus-daemon restart - 5m ago/i)).toBeInTheDocument()
+    expect(screen.getByText(/boot-loop guard active/i)).toBeInTheDocument()
+    expect(screen.getByText('50.0 MB')).toBeInTheDocument()
+    expect(screen.getByText('384 MB')).toBeInTheDocument()
+  })
+
+  it('Given no wedge diagnostics, When WedgePanel renders, Then CatEmptyState announces the healthy empty state', () => {
+    // arrange / act
+    render(<WedgePanel metrics={{ watchdog_level: 0, wedge_diag_at: 0 }} />)
+
+    // assert
+    expect(
+      screen.getByRole('status', { name: /no camera wedges this session/i }),
+    ).toBeInTheDocument()
   })
 })

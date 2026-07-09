@@ -1087,6 +1087,49 @@ def test_heartbeat_strips_whitespace_around_gear(client: TestClient):
     assert metrics["gear"] == "active"
 
 
+def test_given_heartbeat_with_watchdog_last_action_when_posted_then_string_is_capped_and_kept(
+    client: TestClient,
+):
+    """Given a long watchdog action string, When heartbeat records it, Then
+    the server strips and caps it instead of dropping sibling metrics."""
+    from app.services.health import worker_health
+
+    # arrange / act
+    client.post(
+        "/api/_internal/heartbeat",
+        json={
+            "fps": 4.0,
+            "watchdog_last_action": "  restart_mediamtx" + ("x" * 100),
+        },
+    )
+
+    # assert
+    metrics = worker_health.metrics()
+    assert metrics is not None
+    assert metrics["fps"] == 4.0
+    assert metrics["watchdog_last_action"] == "restart_mediamtxxxxxxxxx"
+
+
+def test_given_empty_watchdog_last_action_when_posted_then_empty_string_is_kept(
+    client: TestClient,
+):
+    """Given no watchdog action yet, When heartbeat sends the empty sentinel,
+    Then the status wire keeps it as a legitimate string value."""
+    from app.services.health import worker_health
+
+    # arrange / act
+    client.post(
+        "/api/_internal/heartbeat",
+        json={"watchdog_last_action": "   ", "watchdog_level": 0},
+    )
+
+    # assert
+    metrics = worker_health.metrics()
+    assert metrics is not None
+    assert metrics["watchdog_last_action"] == ""
+    assert metrics["watchdog_level"] == 0
+
+
 def test_heartbeat_drops_non_str_face_recog_names(client: TestClient):
     from app.services.health import worker_health
 
@@ -1401,6 +1444,17 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         # plan S6: continuous-capture observability counters.
         "visits_finalized": 0,
         "clips_dropped_disk_floor": 0,
+        # Slice B: watchdog escalation + last wedge diagnostic snapshot.
+        "watchdog_level": 2,
+        "watchdog_last_action": "restart_nvargus",
+        "watchdog_last_action_at": 1700000100.0,
+        "watchdog_last_reboot_at": 0.0,
+        "watchdog_action_count": 3,
+        "wedge_diag_at": 1700000101.0,
+        "wedge_diag_nvargus_rss_kb": 42112.0,
+        "wedge_diag_gpu_temp_c": 67.5,
+        "wedge_diag_mem_avail_mb": 384.0,
+        "wedge_diag_argus_pending": 2.0,
     }
     # If this assertion fires, _ALLOWED_METRIC_FIELDS has grown a key
     # the test doesn't know about — add it to `payload` above.
