@@ -503,6 +503,28 @@ class PrerollBuffer(object):
         candidates.sort(key=lambda t: t[0])
         return [path for _m, path in candidates]
 
+    def _ring_newest_mtime(self):
+        """Newest mtime across ALL ring slots, or None on an empty /
+        unreadable ring. The slot carrying this mtime is the only one
+        ffmpeg could still be writing (slots close strictly in
+        sequence), so `copy_new_segments` withholds it until a newer
+        slot proves it closed."""
+        try:
+            entries = os.listdir(self.buffer_dir)
+        except OSError:
+            return None
+        newest = None
+        for name in entries:
+            if not (name.startswith("seg_") and name.endswith(".mp4")):
+                continue
+            try:
+                m = os.path.getmtime(os.path.join(self.buffer_dir, name))
+            except OSError:
+                continue
+            if newest is None or m > newest:
+                newest = m
+        return newest
+
     def copy_new_segments(self, start_ts, until_ts, scratch_dir,
                           already_copied=None):
         """Incremental copy-on-extend (plan B3 / iter-356.51 defense).
@@ -580,6 +602,23 @@ class PrerollBuffer(object):
 
         import shutil
 
+        # Torn-copy guard (2026-07-08, the "dropped N broken segment(s)"
+        # WARN storm at every finalize): the slot ffmpeg is CURRENTLY
+        # writing sits on disk as a 48-byte ftyp stub until the muxer
+        # writes mdat+moov at close — so a copy of it is always torn,
+        # and since its mtime then changes at close, the healed
+        # generation was re-copied under a NEW identity one tick later.
+        # No footage was lost, but every visit accumulated torn scratch
+        # files that finalize had to ffprobe-reject. stat-based checks
+        # can't catch this (the stub is byte-stable while open), so use
+        # the one clock-free signal a sequential segment writer gives:
+        # a slot is provably CLOSED once a strictly newer slot exists.
+        # Withhold candidates carrying the ring-wide newest mtime; the
+        # next tick copies them with their final identity. On the very
+        # last (finalize) tick this forfeits at most one segment_s of
+        # tail — absence-padding footage by definition.
+        ring_newest = self._ring_newest_mtime()
+
         newly_copied = []
         for src in self.segments_in_range(start_ts, until_ts):
             try:
@@ -590,6 +629,10 @@ class PrerollBuffer(object):
                 continue
             ident = (os.path.basename(src), mtime)
             if ident in seen:
+                continue
+            if ring_newest is not None and mtime >= ring_newest:
+                # Possibly still being written — don't mark seen, so the
+                # next tick picks it up once a newer slot supersedes it.
                 continue
             # Unique, chronologically-sortable dest name. segments_in_range
             # yields chronological order and we only ever append, so the

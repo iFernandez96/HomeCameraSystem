@@ -230,6 +230,11 @@ def test_given_repeated_ticks_when_copy_new_segments_then_idempotent(tmp_path):
         _write_seg(buf, i, base + i * GOP_S)
     scratch = tmp_path / "_visits" / "visit_xyz"
 
+    # (torn-copy guard 2026-07-08: a newer slot proves s0..s3 are all
+    # CLOSED — without it the ring-newest s3 would be withheld as
+    # possibly-in-progress, which the dedicated withholding tests pin.)
+    _write_seg(buf, 4, base + 4 * GOP_S)
+
     # When tick 1 copies the first part of the band
     newly1, seen = pb.copy_new_segments(
         base, base + 1.0 * GOP_S, str(scratch), already_copied=None,
@@ -270,6 +275,8 @@ def test_given_ring_wrapped_slot_when_copy_new_segments_then_skips_gracefully(
     base = 3000.0
     for i in range(3):
         _write_seg(buf, i, base + i * GOP_S)
+    # torn-copy guard 2026-07-08: newer slot proves the candidates closed.
+    _write_seg(buf, 3, base + 3 * GOP_S)
     scratch = tmp_path / "_visits" / "visit_wrap"
 
     import shutil as _shutil
@@ -315,8 +322,11 @@ def test_given_wrapped_slot_reused_when_copy_then_new_generation_copied(tmp_path
     pb = _make_buffer(buf)
     scratch = tmp_path / "_visits" / "visit_reuse"
 
-    # arrange — first generation of seg_000 at t0
+    # arrange — first generation of seg_000 at t0 (plus a newer sibling
+    # slot so seg_000 is provably closed under the 2026-07-08 torn-copy
+    # guard; it sits outside the copy band so it's never a candidate)
     _write_seg(buf, 0, 3000.0)
+    _write_seg(buf, 1, 3005.0)
     newly1, seen = pb.copy_new_segments(
         2999.0, 3000.0, str(scratch), already_copied=None,
     )
@@ -324,7 +334,9 @@ def test_given_wrapped_slot_reused_when_copy_then_new_generation_copied(tmp_path
     assert _basenames(seen) == {"seg_000.mp4"}
 
     # act — ring wraps: seg_000 overwritten with new content + new mtime
+    # (sibling advances too, proving the new generation closed)
     _write_seg(buf, 0, 3100.0)
+    _write_seg(buf, 1, 3105.0)
     newly2, seen2 = pb.copy_new_segments(
         2999.0, 3100.0, str(scratch), already_copied=seen,
     )
@@ -367,3 +379,86 @@ def test_given_list_already_copied_when_copy_new_segments_then_returns_set(tmp_p
     assert isinstance(seen2, set)
     assert newly2 == []
     assert seen2 == seen1
+
+
+# --------------------------------------------------------------------------
+# torn-copy guard (2026-07-08): withhold the possibly-in-progress slot
+# --------------------------------------------------------------------------
+
+def test_given_band_reaching_ring_newest_when_copy_then_newest_withheld(tmp_path):
+    # Given a live tick whose band reaches the ring-newest slot — the one
+    # ffmpeg could still be writing (on disk it is a 48-byte ftyp stub
+    # until the muxer writes mdat+moov at close).
+    buf = tmp_path / "preroll"
+    buf.mkdir()
+    pb = _make_buffer(buf)
+    base = 5000.0
+    for i in range(3):
+        _write_seg(buf, i, base + i * GOP_S)
+    scratch = tmp_path / "_visits" / "visit_live"
+
+    # When we copy a band covering ALL slots including the newest
+    newly, seen = pb.copy_new_segments(
+        base, base + 2.0 * GOP_S, str(scratch), already_copied=None,
+    )
+
+    # Then the newest slot is withheld (not copied, NOT marked seen) so a
+    # later tick can pick it up once it is provably closed.
+    assert _basenames(seen) == {"seg_000.mp4", "seg_001.mp4"}
+    assert "seg_002.mp4" not in _basenames(seen)
+    assert len(newly) == 2
+
+
+def test_given_withheld_slot_superseded_when_next_tick_then_copied_once(tmp_path):
+    # Given tick 1 withheld the ring-newest slot
+    buf = tmp_path / "preroll"
+    buf.mkdir()
+    pb = _make_buffer(buf)
+    base = 6000.0
+    for i in range(3):
+        _write_seg(buf, i, base + i * GOP_S)
+    scratch = tmp_path / "_visits" / "visit_supersede"
+    _newly1, seen = pb.copy_new_segments(
+        base, base + 2.0 * GOP_S, str(scratch), already_copied=None,
+    )
+    assert "seg_002.mp4" not in _basenames(seen)
+
+    # When the ring closes that slot (a newer slot appears) and the next
+    # tick extends the band
+    _write_seg(buf, 3, base + 3 * GOP_S)
+    newly2, seen2 = pb.copy_new_segments(
+        base, base + 2.0 * GOP_S, str(scratch), already_copied=seen,
+    )
+
+    # Then the previously-withheld slot is copied exactly once, with its
+    # final identity — and no torn generation ever landed in scratch.
+    assert [os.path.basename(p) for p in newly2] == ["000002.mp4"]
+    assert "seg_002.mp4" in _basenames(seen2)
+    assert sorted(os.listdir(str(scratch))) == [
+        "000000.mp4", "000001.mp4", "000002.mp4",
+    ]
+
+
+def test_given_historical_band_when_copy_then_no_withholding(tmp_path):
+    # Given a crash-recovery re-copy over an OLD band while the ring has
+    # since moved on (newer slots exist beyond the band)
+    buf = tmp_path / "preroll"
+    buf.mkdir()
+    pb = _make_buffer(buf)
+    base = 7000.0
+    for i in range(5):
+        _write_seg(buf, i, base + i * GOP_S)
+    scratch = tmp_path / "_visits" / "visit_recovery"
+
+    # When we copy a band that ends well before the ring-newest slot
+    newly, seen = pb.copy_new_segments(
+        base, base + 2.0 * GOP_S, str(scratch), already_copied=None,
+    )
+
+    # Then every band slot copies (s3's window touches the band edge, so
+    # closed-band overlap includes it) — withholding only ever applies to
+    # the ring-wide newest slot (s4), which a historical band cannot reach.
+    assert _basenames(seen) == {
+        "seg_000.mp4", "seg_001.mp4", "seg_002.mp4", "seg_003.mp4",
+    }
+    assert len(newly) == 4
