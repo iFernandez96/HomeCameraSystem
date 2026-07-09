@@ -6,18 +6,24 @@ import {
   getDetectionConfig,
   getAdminAudit,
   getEventCountsByDay,
+  fetchLogs,
+  getLogsResult,
   getMe,
+  getRecoverStatus,
   getStatus,
   getTimelapseManifest,
   getVapidPublicKey,
   HttpError,
+  listSessions,
   listTimelapses,
   login,
   logout,
   patchDetectionConfig,
   rebootJetson,
+  recoverHost,
   refresh,
   refreshSession,
+  revokeSession,
   searchEvents,
   sendTestPushReq,
   subscribePush,
@@ -66,9 +72,23 @@ describe('lib/api', () => {
       detection_active: false,
       cpu_temp_c: null,
       fps: 0,
+      worker_metrics: {
+        watchdog_level: 2,
+        watchdog_last_action: 'restart_nvargus',
+        watchdog_last_action_at: 1700000100,
+        watchdog_last_reboot_at: 0,
+        watchdog_action_count: 3,
+        wedge_diag_at: 1700000110,
+        wedge_diag_nvargus_rss_kb: 42112,
+        wedge_diag_gpu_temp_c: 67.5,
+        wedge_diag_mem_avail_mb: 384,
+        wedge_diag_argus_pending: 2,
+      },
     })
     const s = await getStatus()
     expect(s.ok).toBe(true)
+    expect(s.worker_metrics?.watchdog_last_action).toBe('restart_nvargus')
+    expect(s.worker_metrics?.wedge_diag_mem_avail_mb).toBe(384)
     expect(asMock()).toHaveBeenCalledWith(
       '/api/status',
       expect.objectContaining({
@@ -138,6 +158,61 @@ describe('lib/api', () => {
     expect(asMock()).toHaveBeenCalledWith('/api/admin/audit', expect.any(Object))
   })
 
+  it('Given the sessions endpoint returns rows, When listSessions runs, Then it GETs the pinned admin sessions route and preserves the wire shape', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      sessions: [
+        {
+          jti: 'jti-current',
+          username: 'israel',
+          device_label: 'Chrome on Pixel',
+          ip_class: 'tailscale',
+          created_ts: 1714000000,
+          last_seen_ts: 1714000300,
+          is_current: true,
+          watching_now: true,
+          revoked: false,
+        },
+      ],
+    })
+
+    // act
+    const r = await listSessions()
+
+    // assert
+    expect(r.sessions[0]).toMatchObject({
+      username: 'israel',
+      device_label: 'Chrome on Pixel',
+      ip_class: 'tailscale',
+      is_current: true,
+      watching_now: true,
+      revoked: false,
+    })
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/admin/sessions',
+      expect.objectContaining({
+        credentials: 'include',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    )
+  })
+
+  it('Given a session id, When revokeSession runs, Then it POSTs the encoded revoke route', async () => {
+    // arrange
+    mockJson({ ok: true })
+
+    // act
+    const r = await revokeSession('abc+123')
+
+    // assert
+    expect(r.ok).toBe(true)
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/admin/sessions/abc%2B123/revoke',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('captureSnapshot uses POST and returns the URL', async () => {
     mockJson({ url: '/snapshots/snap_1.txt' })
     const r = await captureSnapshot()
@@ -149,11 +224,92 @@ describe('lib/api', () => {
   })
 
   it('rebootJetson POSTs', async () => {
-    mockJson({ ok: true })
-    await rebootJetson()
+    mockJson({
+      ok: true,
+      request_id: 'req-1',
+      status: 'pending',
+      worker_online: true,
+      note: 'Reboot queued.',
+    })
+    const r = await rebootJetson()
+    expect(r.request_id).toBe('req-1')
     expect(asMock()).toHaveBeenCalledWith(
       '/api/system/reboot',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      }),
+    )
+  })
+
+  it('Given a recovery action, When recoverHost runs, Then it POSTs confirm true', async () => {
+    mockJson({
+      ok: true,
+      request_id: 'req-2',
+      status: 'pending',
+      worker_online: false,
+      note: 'Camera daemon reset queued.',
+    })
+    const r = await recoverHost('nvargus')
+    expect(r.request_id).toBe('req-2')
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/recover',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ action: 'nvargus', confirm: true }),
+      }),
+    )
+  })
+
+  it('Given a recovery request id, When getRecoverStatus runs, Then it encodes the query', async () => {
+    mockJson({
+      request_id: 'req/2',
+      action: 'mediamtx',
+      status: 'done',
+      detail: null,
+      requested_by: 'owner',
+      requested_at: 1714000000,
+      result_at: 1714000004,
+      worker_online: true,
+    })
+    const r = await getRecoverStatus('req/2')
+    expect(r.status).toBe('done')
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/recover/status?request_id=req%2F2',
+      expect.any(Object),
+    )
+  })
+
+  it('Given log options, When fetchLogs runs, Then it encodes the bounded query', async () => {
+    mockJson({
+      request_id: 'logs-1',
+      status: 'pending',
+      worker_online: true,
+    })
+    const r = await fetchLogs('homecam-detect', {
+      since: '30 minutes ago',
+      lines: 500,
+    })
+    expect(r.request_id).toBe('logs-1')
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/logs?unit=homecam-detect&since=30+minutes+ago&lines=500',
+      expect.any(Object),
+    )
+  })
+
+  it('Given a log request id, When getLogsResult runs, Then it encodes the poll URL', async () => {
+    mockJson({
+      request_id: 'logs/1',
+      unit: 'mediamtx',
+      status: 'done',
+      lines: ['ready'],
+      detail: null,
+    })
+    const r = await getLogsResult('logs/1')
+    expect(r.lines).toEqual(['ready'])
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/logs/result?request_id=logs%2F1',
+      expect.any(Object),
     )
   })
 
@@ -1488,10 +1644,10 @@ describe('lib/api', () => {
       audio_enabled: false,
       face_capture_enabled: true,
       face_capture_retention_days: 30,
-      // S5: continuous-capture (visit) knobs — defaults OFF.
-      continuous_capture: false,
+      // S5: continuous-capture (visit) knobs — defaults ON.
+      continuous_capture: true,
       max_visit_s: 150,
-      absence_finalize_s: 10,
+      absence_finalize_s: 30,
     }
     mockJson(cfg)
     const { getDetectionConfig } = await import('./api')
@@ -1522,9 +1678,9 @@ describe('lib/api', () => {
       audio_enabled: false,
       face_capture_enabled: true,
       face_capture_retention_days: 30,
-      continuous_capture: false,
+      continuous_capture: true,
       max_visit_s: 150,
-      absence_finalize_s: 10,
+      absence_finalize_s: 30,
     }
     mockJson(cfg)
     const { getDetectionConfig } = await import('./api')
@@ -1533,9 +1689,9 @@ describe('lib/api', () => {
     const r = await getDetectionConfig()
 
     // assert — the worker reads these names verbatim off the poll.
-    expect(r.continuous_capture).toBe(false)
+    expect(r.continuous_capture).toBe(true)
     expect(r.max_visit_s).toBe(150)
-    expect(r.absence_finalize_s).toBe(10)
+    expect(r.absence_finalize_s).toBe(30)
   })
 
   it('Given a stored clip, When probeEventClip runs, Then it sends a 2-byte Range GET and resolves true on 206', async () => {

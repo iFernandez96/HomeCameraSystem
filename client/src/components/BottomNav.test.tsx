@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { BottomNav } from './BottomNav'
 
+let authUser: { username: string; role: string } = { username: 'alice', role: 'viewer' }
+
 vi.mock('../lib/auth', () => ({
   useAuth: () => ({
-    user: { username: 'alice', role: 'owner' },
+    user: authUser,
     logout: vi.fn(),
   }),
 }))
@@ -19,6 +21,10 @@ function renderAt(path: string) {
 }
 
 describe('BottomNav', () => {
+  beforeEach(() => {
+    authUser = { username: 'alice', role: 'viewer' }
+  })
+
   it('when rendered, then a nav landmark with "Bottom navigation" label is announced to screen readers (iter-338: BDD-lite migration on touch)', () => {
     // arrange
     renderAt('/live')
@@ -80,6 +86,17 @@ describe('BottomNav', () => {
       faces: '/people',
       settings: '/settings',
     })
+  })
+
+  it('Given an owner user, When BottomNav renders, Then God View is visible from the role-based gate', () => {
+    // arrange
+    authUser = { username: 'not-admin', role: 'owner' }
+
+    // act
+    renderAt('/')
+
+    // assert
+    expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
   })
 
   it('GIVEN the docked landscape-phone rail WHEN BottomNav renders THEN tab labels use the 11px landscape size, not the sub-readable 9px (UI/UX overhaul 2026-07-07, frank B3)', () => {

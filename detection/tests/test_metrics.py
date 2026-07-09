@@ -44,6 +44,18 @@ def test_snapshot_returns_all_documented_fields():
         # plan S6: continuous-capture observability counters.
         "visits_finalized",
         "clips_dropped_disk_floor",
+        # slice B: watchdog escalation + capture-wedge diagnostics surfaced
+        # over the heartbeat for the god-mode wedge panel.
+        "watchdog_level",
+        "watchdog_last_action",
+        "watchdog_last_action_at",
+        "watchdog_last_reboot_at",
+        "watchdog_action_count",
+        "wedge_diag_at",
+        "wedge_diag_argus_pending",
+        "wedge_diag_gpu_temp_c",
+        "wedge_diag_mem_avail_mb",
+        "wedge_diag_nvargus_rss_kb",
     }
 
 

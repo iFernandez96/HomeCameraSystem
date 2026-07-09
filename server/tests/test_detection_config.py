@@ -137,11 +137,11 @@ def test_get_returns_current_config(client: TestClient):
         # operator opt-out + TTL.
         "face_capture_enabled": True,
         "face_capture_retention_days": 30,
-        # S5: continuous-capture (visit) feature. Defaults OFF; the
+        # S5: continuous-capture (visit) feature. Defaults ON; the
         # worker reads these off the config-poll verbatim.
-        "continuous_capture": False,
+        "continuous_capture": True,
         "max_visit_s": 150.0,
-        "absence_finalize_s": 10.0,
+        "absence_finalize_s": 30.0,
     }
 
 
@@ -915,16 +915,16 @@ def test_given_internal_config_endpoint_when_get_then_face_capture_fields_presen
 # --- Slice 5: continuous-capture (visit) config knobs --------------------
 
 
-def test_when_loaded_default_then_continuous_capture_off_with_visit_defaults(
+def test_when_loaded_default_then_continuous_capture_on_with_visit_defaults(
     client: TestClient,
 ):
     # arrange / act
     body = client.get("/api/detection/config").json()
 
-    # assert — feature ships OFF; the worker reads these names verbatim.
-    assert body["continuous_capture"] is False
+    # assert — feature ships ON; the worker reads these names verbatim.
+    assert body["continuous_capture"] is True
     assert body["max_visit_s"] == 150.0
-    assert body["absence_finalize_s"] == 10.0
+    assert body["absence_finalize_s"] == 30.0
 
 
 def test_given_continuous_capture_patch_when_get_then_round_trips(

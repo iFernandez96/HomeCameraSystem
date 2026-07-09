@@ -81,6 +81,24 @@ async def test_unsubscribe_unknown_queue_does_not_raise(bus: EventBus):
     bus.unsubscribe(foreign)
 
 
+async def test_given_subscriber_metadata_when_active_watchers_then_returns_presence(
+    bus: EventBus,
+):
+    # arrange
+    q = bus.subscribe(jti="access1", username="alice")
+
+    # act
+    watchers = bus.active_watchers()
+
+    # assert
+    assert len(watchers) == 1
+    assert watchers[0]["jti"] == "access1"
+    assert watchers[0]["username"] == "alice"
+    assert isinstance(watchers[0]["since"], float)
+    bus.unsubscribe(q)
+    assert bus.active_watchers() == []
+
+
 async def test_full_subscriber_queue_drops_event_for_slow_consumer(bus: EventBus):
     q = bus.subscribe()
     # Subscriber queue is bounded (maxsize=64); push beyond capacity.

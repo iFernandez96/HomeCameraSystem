@@ -7,6 +7,7 @@ import type {
   LoginResponse,
   MeResponse,
   PushFilters,
+  Session,
   ServerStatus,
 } from './types'
 
@@ -315,11 +316,78 @@ export const markAllEventsSeen = () =>
 
 export const captureSnapshot = () =>
   req<{ url: string }>('/api/capture', { method: 'POST' })
-// `note` is set when the server endpoint is still in scaffold mode —
-// see `routes/control.py::system_reboot`. Surface it so the user
-// isn't told "Reboot requested" when nothing actually rebooted.
+
+export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot'
+export type LogUnit =
+  | 'homecam-detect'
+  | 'mediamtx'
+  | 'nvargus-daemon'
+  | 'homecam-server'
+export type RecoverHandle = {
+  ok: true
+  request_id: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  worker_online: boolean
+  note: string
+}
+export type RecoverStatus =
+  | {
+      status: 'none'
+      worker_online: boolean
+    }
+  | {
+      request_id: string
+      action: RecoverAction
+      status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+      detail: string | null
+      requested_by: string
+      requested_at: number
+      result_at: number | null
+      worker_online: boolean
+    }
+
 export const rebootJetson = () =>
-  req<{ ok: boolean; note?: string }>('/api/system/reboot', { method: 'POST' })
+  req<RecoverHandle>('/api/system/reboot', {
+    method: 'POST',
+    body: JSON.stringify({ confirm: true }),
+  })
+export const recoverHost = (action: RecoverAction) =>
+  req<RecoverHandle>('/api/system/recover', {
+    method: 'POST',
+    body: JSON.stringify({ action, confirm: true }),
+  })
+export const getRecoverStatus = (requestId?: string) =>
+  req<RecoverStatus>(
+    `/api/system/recover/status${
+      requestId ? `?request_id=${encodeURIComponent(requestId)}` : ''
+    }`,
+  )
+
+export type LogHandle = {
+  request_id: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  worker_online: boolean
+}
+export type LogResult = {
+  request_id: string
+  unit: LogUnit
+  status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  lines: string[] | null
+  detail: string | null
+}
+export const fetchLogs = (
+  unit: LogUnit,
+  opts: { since?: string; lines?: number } = {},
+) => {
+  const params = new URLSearchParams({ unit })
+  if (opts.since) params.set('since', opts.since)
+  if (opts.lines != null) params.set('lines', String(opts.lines))
+  return req<LogHandle>(`/api/system/logs?${params.toString()}`)
+}
+export const getLogsResult = (requestId: string) =>
+  req<LogResult>(
+    `/api/system/logs/result?request_id=${encodeURIComponent(requestId)}`,
+  )
 // iter-211 (Feature #10 slice 2): mirror of rebootJetson — owner-
 // only POST that returns `note` while the host-helper is stubbed.
 // When operator wires the helper, the response loses `note` and
@@ -913,6 +981,15 @@ export const getAdminAudit = (filters: { since?: number; until?: number } = {}) 
   const qs = params.toString()
   return req<AdminAuditResponse>(`/api/admin/audit${qs ? '?' + qs : ''}`)
 }
+
+export const listSessions = () =>
+  req<{ v: 1; sessions: Session[] }>('/api/admin/sessions')
+
+export const revokeSession = (jti: string) =>
+  req<{ ok: boolean }>(
+    `/api/admin/sessions/${encodeURIComponent(jti)}/revoke`,
+    { method: 'POST' },
+  )
 
 // iter-264: password-change client wrappers (closes the iter-258
 // half-shipped gap surfaced by test-coverage-auditor D2). Both

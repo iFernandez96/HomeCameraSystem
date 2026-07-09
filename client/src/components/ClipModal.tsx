@@ -10,6 +10,7 @@ import {
 } from '../lib/pinchZoom'
 import { deleteEvent, exportEvents, fetchEventTracks, probeEventClip, searchEvents } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { isOwner } from '../lib/roles'
 import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
 import {
   absoluteTime,
@@ -138,7 +139,7 @@ export function ClipModal({
   // context, and reading it locally avoids plumbing a prop through
   // both.
   const { user } = useAuth()
-  const isOwner = user?.role === 'owner' || user?.role === 'admin'
+  const canDelete = isOwner(user)
   useEventViewTelemetry(user?.username, event.id)
   const clipUrl = `/api/events/${event.id}/clip`
   // Event-view jank fix round 2 (2026-07-08): the worker marks
@@ -699,7 +700,7 @@ export function ClipModal({
 
   const [deleting, setDeleting] = useState(false)
   const onDelete = async () => {
-    if (!isOwner || deleting) return
+    if (!canDelete || deleting) return
     const ok = await confirm({
       title: 'Delete this event?',
       body: `Delete the ${clockTime(event.ts)} ${personLabel ?? event.label} event? The clip will be removed. This cannot be undone.`,
@@ -1409,7 +1410,7 @@ export function ClipModal({
             delete affordances entirely for non-owners (isOwner gating
             around lines 704/1384) rather than just disabling the handler.
             Delete must not render for non-owner sessions. */}
-        {isOwner && (
+        {canDelete && (
           <Button
             variant="destructive"
             size="md"

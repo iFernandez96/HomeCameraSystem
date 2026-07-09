@@ -22,6 +22,7 @@ import pytest
 
 from app.auth import passwords, tokens, users_db
 from app.config import settings
+from app.sessions import sessions_db
 
 
 @pytest.fixture
@@ -31,8 +32,10 @@ def auth_env(tmp_path, monkeypatch):
     cookies on subsequent requests within the same session."""
     monkeypatch.setattr(settings, "users_db_path", tmp_path / "users.db")
     monkeypatch.setattr(settings, "jwt_secret_path", tmp_path / "jwt.bin")
+    monkeypatch.setattr(settings, "sessions_db_path", tmp_path / "sessions.db")
     monkeypatch.setattr(settings, "cookie_secure", False)
     users_db.init_db(tmp_path / "users.db")
+    sessions_db.init_db(tmp_path / "sessions.db")
     yield tmp_path
 
 
@@ -61,6 +64,23 @@ def test_login_with_valid_creds_returns_user_and_sets_cookies(client, seeded_use
     assert res.json() == {"user": {"username": "alice", "role": "admin"}}
     assert "homecam_access" in res.cookies
     assert "homecam_refresh" in res.cookies
+
+
+def test_given_login_when_successful_then_session_row_is_stored(client, seeded_user):
+    # arrange / act
+    res = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "hunter2"},
+    )
+
+    # assert
+    assert res.status_code == 200
+    access_claims = tokens.decode(res.cookies["homecam_access"], kind="access")
+    refresh_claims = tokens.decode(res.cookies["homecam_refresh"], kind="refresh")
+    row = sessions_db.get_session(settings.sessions_db_path, access_claims["jti"])
+    assert row is not None
+    assert row["username"] == "alice"
+    assert row["refresh_jti"] == refresh_claims["jti"]
 
 
 def test_login_wrong_password_returns_401_no_cookies(client, seeded_user):
@@ -188,6 +208,50 @@ def test_refresh_with_valid_cookie_returns_user_and_rotates_cookies(
     # Both cookies re-issued — sliding window per the plan.
     assert "homecam_access" in res.cookies
     assert "homecam_refresh" in res.cookies
+
+
+def test_given_refresh_when_session_row_exists_then_it_rotates_same_session(
+    client, seeded_user
+):
+    # arrange
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "hunter2"},
+    )
+    old_access = tokens.decode(login.cookies["homecam_access"], kind="access")["jti"]
+    old_refresh = tokens.decode(login.cookies["homecam_refresh"], kind="refresh")["jti"]
+    old_row = sessions_db.get_session(settings.sessions_db_path, old_access)
+
+    # act
+    res = client.post("/api/auth/refresh", json={})
+
+    # assert
+    assert res.status_code == 200
+    new_access = tokens.decode(res.cookies["homecam_access"], kind="access")["jti"]
+    new_refresh = tokens.decode(res.cookies["homecam_refresh"], kind="refresh")["jti"]
+    assert new_access != old_access
+    assert new_refresh != old_refresh
+    assert sessions_db.get_session(settings.sessions_db_path, old_access) is None
+    new_row = sessions_db.get_session(settings.sessions_db_path, new_access)
+    assert new_row is not None
+    assert new_row["refresh_jti"] == new_refresh
+    assert new_row["created_ts"] == old_row["created_ts"]
+
+
+def test_given_revoked_session_when_refreshing_then_401(client, seeded_user):
+    # arrange
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "hunter2"},
+    )
+    access_jti = tokens.decode(login.cookies["homecam_access"], kind="access")["jti"]
+    sessions_db.revoke_by_jti(settings.sessions_db_path, access_jti, 123.0)
+
+    # act
+    res = client.post("/api/auth/refresh", json={})
+
+    # assert
+    assert res.status_code == 401
 
 
 def test_refresh_with_access_token_in_refresh_slot_returns_401(

@@ -3,6 +3,7 @@ import { getServerVersion } from '../../lib/api'
 import { log, errFields } from '../../lib/log'
 import { useAuth } from '../../lib/auth'
 import { useConfirm } from '../../lib/confirm'
+import { isOwner } from '../../lib/roles'
 import { Mono, Row, Section } from './parts'
 import { ChangePasswordRow, ManageUsersPanel } from './UserMgmt'
 
@@ -15,7 +16,7 @@ import { ChangePasswordRow, ManageUsersPanel } from './UserMgmt'
 export function AccountSection() {
   const { user, logout } = useAuth()
   const confirm = useConfirm()
-  const isOwner = user?.role === 'owner' || user?.role === 'admin'
+  const canManageUsers = isOwner(user)
 
   // iter-356.12 (Frank Round-2 #7): wife accidentally tapped Sign Out
   // and locked out the household until Frank entered the password.
@@ -91,7 +92,7 @@ export function AccountSection() {
           with real floor space. */}
       {/* iter-265: owner-only Manage Users panel. Family/viewer
           roles never see this. */}
-      {isOwner ? <ManageUsersPanel /> : null}
+      {canManageUsers ? <ManageUsersPanel /> : null}
       {/* iter-355ac (Maya Major): Sign out from someone else's
           session is destructive-adjacent on a shared device.
           iter-356.56 (Frank S4 + light-theme contrast): swept from

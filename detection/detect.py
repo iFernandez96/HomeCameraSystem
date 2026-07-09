@@ -51,6 +51,7 @@ idle keeps the GPU cool enough to leave headroom for the encoder.
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -58,6 +59,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections import namedtuple
 
 import jetson_inference
 import jetson_utils
@@ -183,6 +185,7 @@ _PRESENCE_GAP_S = 20.0
 from box_norm import normalize_box  # noqa: E402
 import camera_ident  # noqa: E402  (multicam: DETECT_CAMERA_ID resolution)
 from decision_ledger import DecisionLedger  # noqa: E402
+import host_action  # noqa: E402
 from mediamtx_watchdog import (  # noqa: E402
     ACTION_REBOOT,
     ACTION_RESTART_MEDIAMTX,
@@ -340,6 +343,123 @@ def post_event(url, payload, timeout=2.0, metrics=None):
             metrics.event_post_failures += 1
 
 
+def _request_json(url, method="GET", payload=None, timeout=2.0):
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method=method)
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _load_host_action_seen(path):
+    try:
+        with open(str(path)) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(str(x) for x in data[-50:] if x)
+    except (OSError, ValueError, TypeError):
+        pass
+    return set()
+
+
+def _save_host_action_seen(path, seen_ids):
+    if path is None:
+        return
+    try:
+        ids = list(seen_ids)[-50:]
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(ids, f)
+        os.replace(tmp, str(path))
+    except OSError as e:
+        print("[detect] host-action seen save failed: {}".format(e), flush=True)
+
+
+def _mark_host_action_seen(record_id):
+    global _HOST_ACTION_SEEN_IDS
+    _HOST_ACTION_SEEN_IDS.add(record_id)
+    if len(_HOST_ACTION_SEEN_IDS) > 50:
+        _HOST_ACTION_SEEN_IDS = set(list(_HOST_ACTION_SEEN_IDS)[-50:])
+    _save_host_action_seen(_HOST_ACTION_SEEN_PATH, _HOST_ACTION_SEEN_IDS)
+
+
+def start_host_action_poll(base_url, deps, interval_s=4.0):
+    poll_url = base_url.rstrip("/") + "/host_action"
+    claim_url = base_url.rstrip("/") + "/host_action/claim"
+    result_url = base_url.rstrip("/") + "/host_action/result"
+
+    def post_result(record_id, status, detail, result):
+        return _request_json(
+            result_url,
+            method="POST",
+            payload={
+                "id": record_id,
+                "status": status,
+                "detail": detail,
+                "result": result,
+            },
+            timeout=3.0,
+        )
+
+    def loop():
+        backoff = 1.0
+        warned = False
+        while True:
+            try:
+                data = _request_json(poll_url, timeout=2.0)
+                action = data.get("action") if isinstance(data, dict) else None
+                if not action:
+                    backoff = 1.0
+                    warned = False
+                    time.sleep(interval_s)
+                    continue
+
+                record_id = action.get("id")
+                plan = host_action.plan_action(
+                    action, deps.now(), _HOST_ACTION_SEEN_IDS
+                )
+                if plan != host_action.PLAN_EXECUTE:
+                    if plan == host_action.PLAN_SKIP_SEEN and record_id:
+                        post_result(record_id, "done", "already executed (post-restart)", None)
+                    elif record_id:
+                        post_result(record_id, "failed", "skipped: {}".format(plan), None)
+                    time.sleep(interval_s)
+                    continue
+
+                claimed = _request_json(
+                    claim_url,
+                    method="POST",
+                    payload={"id": record_id},
+                    timeout=3.0,
+                )
+                if claimed.get("result") != "claimed":
+                    time.sleep(interval_s)
+                    continue
+
+                _mark_host_action_seen(record_id)
+                with _RECOVERY_LOCK:
+                    status, detail, result = host_action.execute_action(action, deps)
+                post_result(record_id, status, detail, result)
+                backoff = 1.0
+                warned = False
+            except Exception as e:
+                if not warned:
+                    log.warning(
+                        "host-action poll failed: %s: %s",
+                        type(e).__name__, e,
+                    )
+                    warned = True
+                backoff = min(backoff * 2, 60.0)
+            time.sleep(interval_s if backoff <= 1.0 else min(backoff, 60.0))
+
+    t = threading.Thread(target=loop, daemon=True, name="host-action-poll")
+    t.start()
+    return t
+
+
 class RuntimeConfig:
     """Live-tunable knobs polled from /api/detection/config.
 
@@ -382,15 +502,15 @@ class RuntimeConfig:
         # ring live when `clip_pre_roll_s` grows.
         self.clip_post_roll_s = 8.0
         self.clip_pre_roll_s = 0.0
-        # Continuous-capture (person-following) feature, plan S4. Default OFF
+        # Continuous-capture (person-following) feature, plan S4. Default ON
         # (hard XOR with the legacy start_clip path). The flag + knobs are
         # resolved from env + this polled config via
         # `visit_runtime.resolve_continuous_config`; the loop reads them live
         # so an operator can flip the toggle / drag the sliders without a
         # worker restart. Seeded from env at construction in main().
-        self.continuous_capture = False
+        self.continuous_capture = True
         self.max_visit_s = 150.0
-        self.absence_finalize_s = 10.0
+        self.absence_finalize_s = 30.0
 
     def schedule_says_off(self):
         """True if the current local time is inside the off-window.
@@ -876,7 +996,15 @@ def escalate_argus_recovery():
 # reboot didn't clear the wedge, we must NOT reboot again immediately.
 _WATCHDOG_STATE = {}          # type: ignore[var-annotated]
 _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_state.json
+_LAST_WEDGE_DIAG = {}         # type: ignore[var-annotated]
 _DECISION_LEDGER = None       # set in main() to <recordings_dir>/decision.jsonl
+_RECOVERY_LOCK = threading.Lock()
+_HOST_ACTION_SEEN_IDS = set()
+_HOST_ACTION_SEEN_PATH = None
+_HostActionDeps = namedtuple(
+    "_HostActionDeps",
+    "restart_mediamtx restart_nvargus do_reboot tail_journal allow_reboot now",
+)
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
 # capture-failure handler reads it to finalize any open visit at last_seen
@@ -958,6 +1086,68 @@ def _clear_watchdog_escalation():
         _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
 
 
+def _parse_nvargus_rss_kb(text):
+    """Best-effort RSS parser for `ps -o pid=,rss=,etime=,cmd=` output."""
+    best = 0.0
+    for line in text.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 2:
+            continue
+        try:
+            rss = float(parts[1])
+        except (TypeError, ValueError):
+            continue
+        best = max(best, rss)
+    return best
+
+
+def _parse_free_available_mb(text):
+    """Return the Mem: available column from `free -m` output."""
+    for line in text.splitlines():
+        if not line.startswith("Mem:"):
+            continue
+        parts = line.split()
+        if len(parts) >= 7:
+            try:
+                return float(parts[6])
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+def _count_argus_pending(text):
+    """Count the known libargus pending/overflow signatures in dmesg."""
+    if not text:
+        return 0.0
+    return float(len(re.findall(
+        r"(Argus OverFlow|too many pending events)",
+        text,
+        flags=re.IGNORECASE,
+    )))
+
+
+def _mirror_watchdog_metrics(metrics, mediamtx_watchdog):
+    """Copy live watchdog state onto the heartbeat metrics object."""
+    now = time.time()
+    snap = mediamtx_watchdog.snapshot()
+    metrics.watchdog_level = snap.get("level", 0)
+    metrics.watchdog_last_action_at = _coerce_watchdog_timestamp(
+        snap.get("last_action_at"), now, reject_future_after_s=60.0,
+    )
+    metrics.watchdog_last_reboot_at = _coerce_watchdog_timestamp(
+        _WATCHDOG_STATE.get("last_reboot_at"), now, reject_future_after_s=60.0,
+    )
+    metrics.watchdog_action_count = mediamtx_watchdog.action_count
+    metrics.watchdog_last_action = _WATCHDOG_STATE.get("last_action") or ""
+    diag = _LAST_WEDGE_DIAG
+    if diag:
+        metrics.wedge_diag_at = diag.get("at", 0.0)
+        metrics.wedge_diag_nvargus_rss_kb = diag.get("nvargus_rss_kb", 0.0)
+        metrics.wedge_diag_gpu_temp_c = diag.get("gpu_temp_c", 0.0)
+        metrics.wedge_diag_mem_avail_mb = diag.get("mem_avail_mb", 0.0)
+        metrics.wedge_diag_argus_pending = diag.get("argus_pending", 0.0)
+
+
 def _capture_wedge_diagnostics(action):
     """Snapshot thermal / power / memory / nvargus / kernel state when the
     watchdog escalates, so the (still-undiagnosed) ROOT cause of the libargus
@@ -976,6 +1166,8 @@ def _capture_wedge_diagnostics(action):
                      "for z in /sys/class/thermal/thermal_zone*/temp; do "
                      "echo \"$z=$(cat $z 2>/dev/null)\"; done"]),
     )
+    global _LAST_WEDGE_DIAG
+    captured = {}
     for name, cmd in probes:
         try:
             out = subprocess.run(
@@ -983,9 +1175,17 @@ def _capture_wedge_diagnostics(action):
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             text = out.stdout.decode("utf-8", "replace").strip()[:1500]
+            captured[name] = text
             print("[detect] [diag:{}]\n{}".format(name, text), flush=True)
         except Exception as e:
             print("[detect] [diag:{}] probe failed: {}".format(name, e), flush=True)
+    _LAST_WEDGE_DIAG = {
+        "at": time.time(),
+        "nvargus_rss_kb": _parse_nvargus_rss_kb(captured.get("nvargus", "")),
+        "gpu_temp_c": read_gpu_temp_c() or 0.0,
+        "mem_avail_mb": _parse_free_available_mb(captured.get("memory", "")),
+        "argus_pending": _count_argus_pending(captured.get("dmesg-tail", "")),
+    }
 
 
 def _do_reboot():
@@ -1273,6 +1473,7 @@ def _handle_capture_failure(
         # worker-restart RESUMES the ladder instead of resetting to
         # mediamtx-only (the 2026-06-20 reachability fix).
         _capture_wedge_diagnostics(action)
+        _WATCHDOG_STATE["last_action"] = action
         # plan R5: finalize any open continuous-capture visit at last_seen and
         # persist .open_visits.json BEFORE the recovery action (esp. reboot) —
         # a short valid clip, not one spanning the wedge gap. No-op when the
@@ -1285,15 +1486,17 @@ def _handle_capture_failure(
                     "[detect] WATCHDOG: visit finalize-on-escalation failed: "
                     "{}: {}".format(type(e).__name__, e), flush=True,
                 )
-        if action == ACTION_RESTART_MEDIAMTX:
-            if restart_mediamtx():
-                metrics.mediamtx_restarts += 1
-        elif action == ACTION_RESTART_NVARGUS:
-            if escalate_argus_recovery():
-                metrics.argus_restarts += 1
-        elif action == ACTION_REBOOT:
-            _do_reboot()
+        with _RECOVERY_LOCK:
+            if action == ACTION_RESTART_MEDIAMTX:
+                if restart_mediamtx():
+                    metrics.mediamtx_restarts += 1
+            elif action == ACTION_RESTART_NVARGUS:
+                if escalate_argus_recovery():
+                    metrics.argus_restarts += 1
+            elif action == ACTION_REBOOT:
+                _do_reboot()
         _persist_watchdog_level(mediamtx_watchdog)
+    _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
     if consecutive_failures > 100:
         print(
             "[detect] giving up after 100 consecutive capture failures "
@@ -1606,7 +1809,7 @@ def main():
     runtime = RuntimeConfig(threshold=threshold, cooldown_s=cooldown)
     # Seed the continuous-capture flag + knobs from env (plan S4). The
     # config-poll later overrides these live; resolving here means a boot-time
-    # env override is honored before the server has spoken. Default OFF.
+    # env override is honored before the server has spoken. Default ON.
     _cc = visit_runtime.resolve_continuous_config(env=os.environ)
     runtime.continuous_capture = _cc["enabled"]
     runtime.max_visit_s = _cc["max_visit_s"]
@@ -1786,8 +1989,11 @@ def main():
     # restarts — the old in-memory restart_count reset every restart, so the
     # nvargus rung was unreachable and it flapped on mediamtx forever.
     global _WATCHDOG_STATE, _WATCHDOG_STATE_PATH
+    global _HOST_ACTION_SEEN_IDS, _HOST_ACTION_SEEN_PATH
     _WATCHDOG_STATE_PATH = os.path.join(str(recordings_dir), ".watchdog_state.json")
     _WATCHDOG_STATE = _load_watchdog_state(_WATCHDOG_STATE_PATH)
+    _HOST_ACTION_SEEN_PATH = os.path.join(str(recordings_dir), ".host_action_seen.json")
+    _HOST_ACTION_SEEN_IDS = _load_host_action_seen(_HOST_ACTION_SEEN_PATH)
     _allow_reboot = _env("DETECT_WATCHDOG_ALLOW_REBOOT", "1") not in (
         "0", "false", "False", "no", "off",
     )
@@ -1800,6 +2006,18 @@ def main():
         _WATCHDOG_STATE.get("last_action_at"),
         now=time.time(),
     )
+    start_host_action_poll(
+        event_url.rsplit("/", 1)[0],
+        _HostActionDeps(
+            restart_mediamtx=restart_mediamtx,
+            restart_nvargus=escalate_argus_recovery,
+            do_reboot=_do_reboot,
+            tail_journal=host_action.tail_journal,
+            allow_reboot=_allow_reboot,
+            now=time.time,
+        ),
+    )
+    log.info("host-action poll -> %s", event_url.rsplit("/", 1)[0] + "/host_action")
     # Memory guard: pauses inference (not capture) when the host runs
     # critically low on RAM. Worker keeps draining frames so the RTSP
     # pipeline doesn't back up, and metrics keep flowing — the user can
@@ -1893,6 +2111,7 @@ def main():
         metrics.last_frame_ts = time.time()
         metrics.frames += 1
         liveness.bump()
+        _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
 
         # iter-172: sample thermal + memory pressure every N frames
         # BEFORE the early-continue ladder (manual-off / scheduled-off /

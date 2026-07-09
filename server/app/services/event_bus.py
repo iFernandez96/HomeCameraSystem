@@ -104,6 +104,7 @@ class EventBus:
         # by docs/logging_plan.md §1 (mirrored by
         # push_service._persist_warned).
         self._sub_overflow_warned: dict[int, bool] = {}
+        self._sub_meta: dict[int, dict[str, object]] = {}
         # iter (logging-plan §2): the persist-fail path used to log
         # ONCE per process and then go fully silent under a SUSTAINED
         # failure (disk stayed full → operator saw a single line then
@@ -114,7 +115,12 @@ class EventBus:
         # would otherwise log on every poll. Rate-limit to once/60s.
         self._recent_fail_gate = RateLimitedLog(60.0)
 
-    def subscribe(self) -> asyncio.Queue[ServerEvent]:
+    def subscribe(
+        self,
+        *,
+        jti: str | None = None,
+        username: str | None = None,
+    ) -> asyncio.Queue[ServerEvent]:
         # iter-263: hard cap to defend against authed-DoS. Caller
         # MUST handle SubscriberCapReached and close the WS with
         # code 1013 (Try Again Later) — see events.py:events_ws.
@@ -124,6 +130,11 @@ class EventBus:
             )
         q: asyncio.Queue[ServerEvent] = asyncio.Queue(maxsize=64)
         self._subs.append(q)
+        self._sub_meta[id(q)] = {
+            "jti": jti,
+            "username": username,
+            "since": time.time(),
+        }
         return q
 
     def unsubscribe(self, q: asyncio.Queue[ServerEvent]) -> None:
@@ -132,6 +143,10 @@ class EventBus:
         except ValueError:
             pass
         self._sub_overflow_warned.pop(id(q), None)
+        self._sub_meta.pop(id(q), None)
+
+    def active_watchers(self) -> list[dict[str, object]]:
+        return [dict(meta) for meta in self._sub_meta.values()]
 
     async def publish(self, event: ServerEvent) -> None:
         # iter-217 (Feature #6 slice 2): write-through to SQLite is
@@ -244,6 +259,8 @@ class EventBus:
         iter wants to truncate events_db here, call
         `events_db.reset(settings.events_db_path)` — but for now,
         the per-test tmp file IS the cleanup."""
+        self._sub_meta.clear()
+        self._sub_overflow_warned.clear()
         return None
 
 

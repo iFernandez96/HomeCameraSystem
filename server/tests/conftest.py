@@ -45,6 +45,7 @@ def _auth_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "detection_config_path", tmp_path / "detection_config.json")
     monkeypatch.setattr(settings, "events_db_path", tmp_path / "events.db")
     monkeypatch.setattr(settings, "audit_db_path", tmp_path / "audit.db")
+    monkeypatch.setattr(settings, "sessions_db_path", tmp_path / "sessions.db")
     monkeypatch.setattr(settings, "backup_target_dir", tmp_path / "backups")
     monkeypatch.setattr(settings, "backup_ledger_path", tmp_path / "backup-ledger.jsonl")
     # TestClient runs over HTTP; Secure cookies wouldn't propagate.
@@ -231,6 +232,18 @@ def _isolate_audit_db(_audit_db_session_path, monkeypatch):
     monkeypatch.setattr(settings, "audit_db_path", _audit_db_session_path)
     audit_db.reset(_audit_db_session_path)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_host_bridge(tmp_path, monkeypatch):
+    from app.config import settings
+    from app.services import host_bridge
+
+    path = tmp_path / "host_action.json"
+    monkeypatch.setattr(settings, "host_action_state_path", path)
+    host_bridge.reset_for_tests(path)
+    yield
+    host_bridge.reset_for_tests(path)
 
 
 @pytest.fixture(autouse=True)

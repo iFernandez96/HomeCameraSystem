@@ -9,6 +9,7 @@ import {
   type AdminRole,
   type AdminUserRow,
 } from '../../lib/api'
+import { isOwnerRole } from '../../lib/roles'
 
 // iter-279 (code-scalability-auditor T2): replace 4 inline
 // `as { status?: number }` casts in this file with a typed
@@ -288,11 +289,8 @@ export function ManageUsersPanel() {
         <ul className="space-y-2" aria-label="User accounts">
           {users.map((u) => {
             const isSelf = u.username === user?.username
-            const ownerCount = users.filter(
-              (r) => r.role === 'owner' || r.role === 'admin',
-            ).length
-            const isLastOwner =
-              (u.role === 'owner' || u.role === 'admin') && ownerCount <= 1
+            const ownerCount = users.filter((r) => isOwnerRole(r.role)).length
+            const isLastOwner = isOwnerRole(u.role) && ownerCount <= 1
             const resetOpen = resetOpenFor === u.username
             return (
               <li

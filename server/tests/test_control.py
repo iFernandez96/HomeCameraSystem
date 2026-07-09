@@ -179,14 +179,136 @@ def test_given_config_patch_when_applied_then_audits_keys_not_zone_values(
     assert str(sentinel) not in msg
 
 
-def test_system_reboot_returns_ok_with_scaffold_note(client: TestClient):
-    r = client.post("/api/system/reboot")
+def test_system_reboot_queues_reboot_host_action(client: TestClient):
+    from app.services import audit_db, host_bridge
+    from app.config import settings
+
+    r = client.post("/api/system/reboot", json={"confirm": True})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    # Scaffold returns a note flagging that this is stubbed; remove this assertion
-    # once the route is wired to actually call systemctl.
-    assert "note" in body
+    assert body["request_id"]
+    assert body["status"] == "pending"
+    rec = host_bridge.get(body["request_id"])
+    assert rec["kind"] == "reboot"
+    rows = audit_db.host_action_events_between(
+        settings.audit_db_path, since=0, until=9999999999
+    )
+    assert rows[0]["phase"] == "requested"
+    assert rows[0]["action"] == "reboot"
+
+
+def test_given_owner_recover_without_confirm_when_posted_then_rejected(
+    client: TestClient,
+):
+    r = client.post(
+        "/api/system/recover",
+        json={"action": "mediamtx", "confirm": False},
+    )
+    assert r.status_code == 400
+
+
+def test_given_owner_recover_when_posted_then_status_reflects_worker_result(
+    client: TestClient,
+):
+    from app.services import host_bridge
+
+    r = client.post(
+        "/api/system/recover",
+        json={"action": "nvargus", "confirm": True},
+    )
+    assert r.status_code == 200, r.text
+    request_id = r.json()["request_id"]
+    status = client.get(
+        "/api/system/recover/status", params={"request_id": request_id}
+    )
+    assert status.status_code == 200
+    assert status.json()["status"] == "pending"
+
+    assert host_bridge.claim(request_id, now=101.0) == "claimed"
+    assert host_bridge.record_result(
+        request_id, "done", "nvargus restart requested", None, now=102.0
+    )
+    status = client.get(
+        "/api/system/recover/status", params={"request_id": request_id}
+    )
+    assert status.json()["status"] == "done"
+    assert status.json()["detail"] == "nvargus restart requested"
+
+
+def test_given_anon_when_fetching_system_logs_then_401(client_anon: TestClient):
+    r = client_anon.get("/api/system/logs", params={"unit": "mediamtx"})
+    assert r.status_code == 401
+
+
+def test_given_bad_log_unit_when_fetching_system_logs_then_422(client: TestClient):
+    r = client.get("/api/system/logs", params={"unit": "mediamtx;reboot"})
+    assert r.status_code == 422
+
+
+def test_given_owner_logs_request_when_enqueued_then_args_bounded_and_audited(
+    client: TestClient,
+):
+    from app.config import settings
+    from app.services import audit_db, host_bridge
+
+    r = client.get(
+        "/api/system/logs",
+        params={
+            "unit": "homecam-detect",
+            "since": "30 minutes ago",
+            "lines": 5000,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["request_id"]
+    assert body["status"] == "pending"
+
+    rec = host_bridge.get(body["request_id"])
+    assert rec["kind"] == "logs"
+    assert rec["args"] == {
+        "unit": "homecam-detect",
+        "since": "30 minutes ago",
+        "lines": 1000,
+    }
+    rows = audit_db.host_action_events_between(
+        settings.audit_db_path, since=0, until=9999999999
+    )
+    assert rows[0]["action"] == "logs"
+    assert rows[0]["phase"] == "requested"
+    assert rows[0]["request_id"] == body["request_id"]
+    assert rows[0]["detail"] == "unit=homecam-detect"
+    assert "secret" not in json.dumps(rows[0]).lower()
+
+
+def test_given_logs_result_when_worker_returns_lines_then_route_returns_scrubbed_payload(
+    client: TestClient,
+):
+    from app.services import host_bridge
+
+    r = client.get("/api/system/logs", params={"unit": "mediamtx", "lines": 10})
+    assert r.status_code == 200, r.text
+    request_id = r.json()["request_id"]
+    assert host_bridge.claim(request_id, now=101.0) == "claimed"
+    assert host_bridge.record_result(
+        request_id,
+        "done",
+        "logs fetched",
+        {"lines": ["normal line", "password=***"]},
+        now=102.0,
+    )
+
+    result = client.get(
+        "/api/system/logs/result", params={"request_id": request_id}
+    )
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["request_id"] == request_id
+    assert body["unit"] == "mediamtx"
+    assert body["status"] == "done"
+    assert body["lines"] == ["normal line", "password=***"]
+    assert body["detail"] == "logs fetched"
 
 
 def _write_backup_route_state():

@@ -163,6 +163,7 @@ def test_reboot_owner_passes(client_anon):
     token = _seed_and_token("owner")
     res = client_anon.post(
         "/api/system/reboot",
+        json={"confirm": True},
         cookies={COOKIE_ACCESS: token},
     )
     assert res.status_code == 200
@@ -174,6 +175,7 @@ def test_reboot_legacy_admin_passes(client_anon):
     token = _seed_and_token("admin")
     res = client_anon.post(
         "/api/system/reboot",
+        json={"confirm": True},
         cookies={COOKIE_ACCESS: token},
     )
     assert res.status_code == 200
@@ -185,6 +187,7 @@ def test_reboot_family_403s(client_anon):
     token = _seed_and_token("family")
     res = client_anon.post(
         "/api/system/reboot",
+        json={"confirm": True},
         cookies={COOKIE_ACCESS: token},
     )
     assert res.status_code == 403
@@ -194,6 +197,7 @@ def test_reboot_viewer_403s(client_anon):
     token = _seed_and_token("viewer")
     res = client_anon.post(
         "/api/system/reboot",
+        json={"confirm": True},
         cookies={COOKIE_ACCESS: token},
     )
     assert res.status_code == 403

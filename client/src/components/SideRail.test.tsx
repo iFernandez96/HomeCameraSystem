@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 // SideRail reads the session for the avatar chip + sign-out button;
 // a static authed user keeps the test about nav structure.
+let authUser: { username: string; role: string } = { username: 'alice', role: 'viewer' }
+
 vi.mock('../lib/auth', () => ({
   useAuth: () => ({
-    user: { username: 'alice', role: 'owner' },
+    user: authUser,
     logout: vi.fn(),
   }),
 }))
@@ -22,6 +24,10 @@ function renderRail() {
 }
 
 describe('SideRail', () => {
+  beforeEach(() => {
+    authUser = { username: 'alice', role: 'viewer' }
+  })
+
   it('GIVEN the desktop rail WHEN it renders THEN it exposes all 5 destinations including Review (UI/UX overhaul 2026-07-07 NAV-1: the phone BottomNav dropped to 4 in every orientation; the desktop rail DELIBERATELY keeps 5 — cross-device difference is fine, cross-orientation was the bug)', () => {
     // arrange / act
     renderRail()
@@ -47,6 +53,17 @@ describe('SideRail', () => {
       review: '/training/review',
       settings: '/settings',
     })
+  })
+
+  it('Given an owner user, When SideRail renders, Then God View is visible from the role-based gate', () => {
+    // arrange
+    authUser = { username: 'not-admin', role: 'owner' }
+
+    // act
+    renderRail()
+
+    // assert
+    expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
   })
 
   it('GIVEN the rail renders WHEN screen readers walk the landmarks THEN a "Main navigation" nav landmark is announced and every icon is aria-hidden (shared NavIcons module keeps the Dana #2 treatment on both nav surfaces)', () => {

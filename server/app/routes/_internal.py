@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -21,6 +22,8 @@ from ..services.detection import detection_service
 from ..services.detection_config import detection_config
 from ..services.event_bus import event_bus, make_detection_event
 from ..services.health import worker_health
+from ..services import audit_db, host_bridge
+from ..config import settings
 from ..services.push_service import push_service
 
 router = APIRouter(prefix="/_internal", tags=["internal"])
@@ -102,6 +105,20 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         # floor (S4.5/B2). Both go through the numeric path below.
         "visits_finalized",
         "clips_dropped_disk_floor",
+        # Watchdog escalation + wedge diagnostics. Flat metric keys keep the
+        # worker/server/client heartbeat contract explicit and preserve the
+        # existing numeric-hardening path. watchdog_last_action is the lone
+        # human-readable rung string; empty string means no action yet.
+        "watchdog_level",
+        "watchdog_last_action",
+        "watchdog_last_action_at",
+        "watchdog_last_reboot_at",
+        "watchdog_action_count",
+        "wedge_diag_at",
+        "wedge_diag_nvargus_rss_kb",
+        "wedge_diag_gpu_temp_c",
+        "wedge_diag_mem_avail_mb",
+        "wedge_diag_argus_pending",
     }
 )
 
@@ -110,7 +127,11 @@ _ALLOWED_METRIC_FIELDS = frozenset(
 # these as a string would silently leak garbage to the UI; this lets
 # us drop non-numeric values per-field rather than poisoning the
 # whole snapshot.
-_NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {"gear", "face_recog_names"}
+_NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {
+    "gear",
+    "face_recog_names",
+    "watchdog_last_action",
+}
 
 # Bounds for the `gear` string. Today's documented values are
 # {active, idle, off, scheduled-off, low-memory, thermal-throttled} —
@@ -119,6 +140,7 @@ _NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {"gear", "face_recog_names"}
 # strip) rejects empty / whitespace-only strings that would render
 # as a blank pill in the UI.
 _GEAR_MAX = 32
+_WATCHDOG_ACTION_MAX = 24
 
 # Bounds for the `face_recog_names` list. Realistic encodings.pkl
 # files have 1-10 entries with names like "israel" / "sheenal"
@@ -181,6 +203,84 @@ class ClientLog(BaseModel):
         return self
 
 
+class _ClaimBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+
+
+class _ResultBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+    status: str = Field(pattern=r"^(done|failed)$")
+    detail: str | None = Field(default=None, max_length=512)
+    result: dict | None = None
+
+    @model_validator(mode="after")
+    def _bound_result(self) -> "_ResultBody":
+        if self.result is not None:
+            try:
+                if len(json.dumps(self.result)) > 64_000:
+                    raise ValueError("result payload too large")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("result payload too large") from exc
+        return self
+
+
+@router.get("/host_action")
+async def host_action_poll() -> dict[str, object]:
+    rec = host_bridge.peek(time.time(), max_pending_age_s=120.0)
+    if rec is None:
+        return {"action": None}
+    return {
+        "action": {
+            "id": rec["id"],
+            "kind": rec["kind"],
+            "args": rec.get("args") or {},
+            "requested_at": rec["requested_at"],
+        }
+    }
+
+
+@router.post("/host_action/claim")
+async def host_action_claim(body: _ClaimBody) -> dict[str, str]:
+    return {"result": host_bridge.claim(body.id, time.time())}
+
+
+@router.post("/host_action/result")
+async def host_action_result(body: _ResultBody) -> dict[str, bool]:
+    now = time.time()
+    rec = host_bridge.get(body.id)
+    ok = host_bridge.record_result(
+        body.id,
+        body.status,
+        body.detail,
+        body.result,
+        now=now,
+    )
+    if ok:
+        action = (rec or host_bridge.get(body.id) or {}).get("kind", "")
+        username = (rec or host_bridge.get(body.id) or {}).get("requested_by", "worker")
+        try:
+            audit_db.insert_host_action_event(
+                settings.audit_db_path,
+                ts=now,
+                username=username,
+                action=action,
+                request_id=body.id,
+                phase="result",
+                status=body.status,
+                detail=body.detail,
+            )
+        except Exception:
+            log.warning(
+                "host_action result audit failed for id=%s status=%s",
+                body.id,
+                body.status,
+                exc_info=True,
+            )
+    return {"ok": ok}
+
+
 def _coerce_metric(key: str, value):
     """Return `value` if it's the right type for `key`, else None.
     Numeric fields: booleans excluded (Python's `isinstance(True,
@@ -212,6 +312,13 @@ def _coerce_metric(key: str, value):
         stripped = value.strip()
         if not stripped or len(stripped) > _GEAR_MAX:
             return None
+        return stripped
+    if key == "watchdog_last_action":
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        if len(stripped) > _WATCHDOG_ACTION_MAX:
+            stripped = stripped[:_WATCHDOG_ACTION_MAX]
         return stripped
     if key == "face_recog_names":
         if not isinstance(value, list):

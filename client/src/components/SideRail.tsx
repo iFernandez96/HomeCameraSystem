@@ -9,6 +9,7 @@ import {
   TrainingIcon,
 } from './NavIcons'
 import { useRipple } from '../lib/ripple'
+import { isGodModeUser } from '../lib/roles'
 
 /**
  * iter-356.58 (layout rebuild) — SideRail replaces SideNav.
@@ -76,7 +77,7 @@ export function SideRail() {
   const { user, logout } = useAuth()
   const ripple = useRipple()
   const navItems =
-    user?.username === 'admin'
+    isGodModeUser(user)
       ? [...NAV_ITEMS, { to: '/god', label: 'God View', icon: () => <GodViewIcon /> }]
       : NAV_ITEMS
   return (

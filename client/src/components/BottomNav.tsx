@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { EventsIcon, GodViewIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
 import { useRipple } from '../lib/ripple'
 import { useAuth } from '../lib/auth'
+import { isGodModeUser } from '../lib/roles'
 
 // iter-356.x (Frank P3-6): pre-fix Training and Review queue were
 // only reachable via the People page header link, which non-technical
@@ -39,7 +40,7 @@ export function BottomNav() {
   const ripple = useRipple()
   const { user } = useAuth()
   const visibleTabs =
-    user?.username === 'admin'
+    isGodModeUser(user)
       ? [...tabs, { to: '/god', label: 'God View', icon: GodViewIcon }]
       : tabs
   return (
