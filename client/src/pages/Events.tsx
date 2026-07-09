@@ -32,6 +32,7 @@ import { useAuth } from '../lib/auth'
 import { useConfirm } from '../lib/confirm'
 import { formatError } from '../lib/format'
 import { useStatus } from '../lib/useStatus'
+import { isOwner } from '../lib/roles'
 import { useReportError, useToast } from '../lib/toast'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
@@ -60,7 +61,7 @@ type PersonFilter = 'all' | '__unknown__' | string
 
 export function Events() {
   const { user } = useAuth()
-  const isOwner = user?.role === 'owner' || user?.role === 'admin'
+  const canManageEvents = isOwner(user)
   const confirm = useConfirm()
   const { showToast } = useToast()
   // docs/logging_plan.md §1.3: pair destructive/export error-toasts
@@ -820,7 +821,7 @@ export function Events() {
   // `events` + `selectedEvent` via setState callback / ref, so the
   // dep array can stay narrow.
   const onDeleteOne = useCallback(async (e: DetectionEvent) => {
-    if (!isOwner) return
+    if (!canManageEvents) return
     // iter-356.C (mobile-redesign Slice C — security clarity):
     // confirm body identifies WHICH event will be deleted. Pre-356.C
     // body said "The event and its recorded clip…" — generic enough
@@ -854,10 +855,10 @@ export function Events() {
         { eventId: e.id, ...errFields(err) },
       )
     }
-  }, [isOwner, confirm, showToast, reportError])
+  }, [canManageEvents, confirm, showToast, reportError])
 
   const onBulkDelete = async () => {
-    if (!isOwner || selectedIds.size === 0 || bulkDeleting) return
+    if (!canManageEvents || selectedIds.size === 0 || bulkDeleting) return
     const ids = Array.from(selectedIds)
     const count = ids.length
     const ok = await confirm({
@@ -925,7 +926,7 @@ export function Events() {
   }
 
   const onDeleteDay = async () => {
-    if (!isOwner || !selectedDay) return
+    if (!canManageEvents || !selectedDay) return
     const count = events.length
     const ok = await confirm({
       title: `Delete ${count} event${count === 1 ? '' : 's'} for ${selectedDay}?`,
@@ -1111,7 +1112,7 @@ export function Events() {
                 renders for owners with at least one event; rest of the
                 roles never see the affordance. The bulk-delete bar
                 below replaces the count text when active. */}
-            {isOwner && !loading && !error && events.length > 0 && !selectionMode && (
+            {canManageEvents && !loading && !error && events.length > 0 && !selectionMode && (
               <button
                 type="button"
                 onClick={() => setSelectionMode(true)}
@@ -1320,7 +1321,7 @@ export function Events() {
                     Download ({Math.min(filtered.length, 50)})
                   </Button>
                 )}
-                {isOwner && events.length > 0 && (
+                {canManageEvents && events.length > 0 && (
                   // iter-356.C (mobile-redesign Slice C — security
                   // clarity): when a person or label filter is
                   // active, the "Delete day" wording is dishonest —
@@ -1573,7 +1574,7 @@ export function Events() {
                 // iter-312: handler refs (`onDeleteOne`, `onSelectEvent`)
                 // are useCallback'd so EventCard's React.memo equality
                 // check sees stable refs across parent re-renders.
-                onDelete={isOwner ? onDeleteOne : undefined}
+                onDelete={canManageEvents ? onDeleteOne : undefined}
                 onSelect={onSelectEvent}
                 selectionMode={selectionMode}
                 selectedIds={selectedIds}

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { HttpError } from './api'
-import { formatAge, formatBytes, formatError, formatUptime } from './format'
+import {
+  formatAge,
+  formatBytes,
+  formatError,
+  formatSecondsAgo,
+  formatTemp,
+  formatUptime,
+} from './format'
 
 describe('formatUptime', () => {
   it('renders a 0-second uptime as "0s"', () => {
@@ -56,6 +63,30 @@ describe('formatAge', () => {
     // need a day-level breakdown; the OFFLINE pill is the actionable
     // signal.
     expect(formatAge(86400 * 2)).toBe('48h')
+  })
+})
+
+describe('formatSecondsAgo', () => {
+  it('Given a null age, When formatSecondsAgo runs, Then it returns never', () => {
+    // arrange / act / assert
+    expect(formatSecondsAgo(null)).toBe('never')
+  })
+
+  it('Given a numeric age, When formatSecondsAgo runs, Then it appends ago', () => {
+    // arrange / act / assert
+    expect(formatSecondsAgo(60)).toBe('1m ago')
+  })
+})
+
+describe('formatTemp', () => {
+  it('Given null temperature, When formatTemp runs, Then it returns an em-dash', () => {
+    // arrange / act / assert
+    expect(formatTemp(null)).toBe('—')
+  })
+
+  it('Given a numeric temperature, When formatTemp runs, Then it rounds and adds Celsius', () => {
+    // arrange / act / assert
+    expect(formatTemp(70.4)).toBe('70 °C')
   })
 })
 

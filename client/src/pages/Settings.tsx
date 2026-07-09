@@ -12,6 +12,7 @@ import { NotificationsSection } from './settings/NotificationsSection'
 import { TimelapsesSection } from './settings/TimelapsesSection'
 import { useAuth } from '../lib/auth'
 import { useStatus } from '../lib/useStatus'
+import { isOwner } from '../lib/roles'
 
 // iter-278 (ui-redesign-architect #1): 3-tab IA mapping. Pre-iter-278
 // Settings was a flat scroll of 11 sections — family/viewer users
@@ -79,7 +80,7 @@ export function Settings() {
   // is belt-and-braces. The `admin` carve-out mirrors iter-197 +
   // iter-292 — drop when seeded users migrate to explicit `owner`.
   const { user } = useAuth()
-  const isOwner = user?.role === 'owner' || user?.role === 'admin'
+  const canManageOwnerSettings = isOwner(user)
 
   // iter-278 (ui-redesign-architect #1): tab state. Initial value
   // pulled from localStorage with owner-gated fallback so a family
@@ -90,10 +91,10 @@ export function Settings() {
   // inside-useEffect (CLAUDE.md sharp edge) for the role-transition
   // case — pure derivation handles it.
   const [storedTab, setStoredTab] = useState<SettingsTab>(() =>
-    _readInitialTab(isOwner),
+    _readInitialTab(canManageOwnerSettings),
   )
   const activeTab: SettingsTab =
-    storedTab === 'camera' && !isOwner ? 'notifications' : storedTab
+    storedTab === 'camera' && !canManageOwnerSettings ? 'notifications' : storedTab
   const onTabChange = (next: SettingsTab) => {
     setStoredTab(next)
     if (typeof window !== 'undefined') {
@@ -162,11 +163,11 @@ export function Settings() {
       <SettingsTabs
         active={activeTab}
         onChange={onTabChange}
-        showCamera={isOwner}
+        showCamera={canManageOwnerSettings}
       />
 
       <div className="flex-1 min-w-0 space-y-6 px-4 pb-8 pt-4 lg:px-0 lg:pt-0">
-        {showCameraPanel && isOwner && (
+        {showCameraPanel && canManageOwnerSettings && (
           <div
             role="tabpanel"
             id="settings-panel-camera"
@@ -206,9 +207,9 @@ export function Settings() {
             <AppearanceSection />
             <AccountSection />
             <JetsonSection status={status} />
-            {isOwner && <TimelapsesSection />}
+            {canManageOwnerSettings && <TimelapsesSection />}
             <DebugSection />
-            {isOwner && <DangerZone />}
+            {canManageOwnerSettings && <DangerZone />}
           </div>
         )}
       </div>

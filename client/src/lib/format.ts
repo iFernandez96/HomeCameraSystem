@@ -32,6 +32,16 @@ export function formatAge(s: number): string {
   return `${Math.floor(s / 3600)}h`
 }
 
+export function formatSecondsAgo(s: number | null | undefined): string {
+  if (s == null) return 'never'
+  return `${formatAge(s)} ago`
+}
+
+export function formatTemp(c: number | null | undefined): string {
+  if (c == null) return '—'
+  return `${Math.round(c)} °C`
+}
+
 /**
  * Render an unknown thrown value (Error, HttpError, anything) as a short
  * user-facing string. Prefers `Error.message` over the JS default

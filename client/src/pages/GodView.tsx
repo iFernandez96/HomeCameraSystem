@@ -3,6 +3,9 @@ import { Navigate } from 'react-router-dom'
 import { getAdminAudit, type AdminAuditResponse } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { formatError } from '../lib/format'
+import { isGodModeUser } from '../lib/roles'
+import { useStatus } from '../lib/useStatus'
+import { CrashCartPanels } from '../components/godview/CrashCartPanels'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { Button } from '../components/primitives/Button'
@@ -23,7 +26,7 @@ function formatDateTime(ts: number): string {
   })
 }
 
-function formatDuration(ms: number): string {
+function formatDwell(ms: number): string {
   const totalSeconds = Math.max(0, Math.round(ms / 1000))
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
@@ -61,7 +64,8 @@ export function GodView() {
   } | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
 
-  const isAdmin = user?.username === 'admin'
+  const canView = isGodModeUser(user)
+  const status = useStatus()
 
   const bounds = useMemo(
     () => ({
@@ -73,7 +77,7 @@ export function GodView() {
   const requestKey = `${bounds.since}:${bounds.until}:${reloadNonce}`
 
   useEffect(() => {
-    if (!isAdmin) return
+    if (!canView) return
     let cancelled = false
     getAdminAudit(bounds)
       .then((res) => {
@@ -87,13 +91,13 @@ export function GodView() {
     return () => {
       cancelled = true
     }
-  }, [bounds, requestKey, isAdmin])
+  }, [bounds, requestKey, canView])
 
   const loading = result?.key !== requestKey
   const audit = loading ? null : result?.audit ?? null
   const error = loading ? null : result?.error ?? null
 
-  if (!isAdmin) return <Navigate to="/" replace />
+  if (!canView) return <Navigate to="/" replace />
 
   const byUser = audit?.summary.by_user ?? {}
   const userEntries = Object.entries(byUser).sort(([a], [b]) =>
@@ -145,6 +149,8 @@ export function GodView() {
           <Button type="submit">Refresh</Button>
         </form>
       </header>
+
+      <CrashCartPanels status={status} />
 
       {error ? (
         <ErrorState
@@ -207,7 +213,7 @@ export function GodView() {
                     </div>
                     <div>
                       <dt className="text-[var(--color-text-secondary)]">Page dwell</dt>
-                      <dd className="font-semibold text-[var(--color-text-primary)]">{formatDuration(summary.page_dwell_ms)}</dd>
+                      <dd className="font-semibold text-[var(--color-text-primary)]">{formatDwell(summary.page_dwell_ms)}</dd>
                     </div>
                     <div>
                       <dt className="text-[var(--color-text-secondary)]">Events</dt>
@@ -220,7 +226,7 @@ export function GodView() {
                       {summary.top.slice(0, 10).map(([name, dwell]) => (
                         <li key={name} className="flex justify-between gap-3">
                           <span className="truncate">{name}</span>
-                          <span className="font-medium whitespace-nowrap">{formatDuration(dwell)}</span>
+                          <span className="font-medium whitespace-nowrap">{formatDwell(dwell)}</span>
                         </li>
                       ))}
                     </ol>
@@ -253,7 +259,7 @@ export function GodView() {
                       <td className="px-4 py-3 font-medium">{row.username}</td>
                       <td className="px-4 py-3">{row.kind}</td>
                       <td className="px-4 py-3 max-w-md truncate">{row.name}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">{formatDuration(row.dwell_ms)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">{formatDwell(row.dwell_ms)}</td>
                     </tr>
                   ))}
                 </tbody>

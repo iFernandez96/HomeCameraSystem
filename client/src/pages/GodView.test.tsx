@@ -3,9 +3,10 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAdminAudit = vi.fn()
+const useStatus = vi.fn()
 let authUser: { username: string; role: string } | null = {
-  username: 'admin',
-  role: 'admin',
+  username: 'owner-user',
+  role: 'owner',
 }
 
 vi.mock('../lib/api', () => ({
@@ -21,6 +22,10 @@ vi.mock('../lib/auth', () => ({
   }),
 }))
 
+vi.mock('../lib/useStatus', () => ({
+  useStatus: () => useStatus(),
+}))
+
 import { GodView } from './GodView'
 
 function renderGodView() {
@@ -33,7 +38,8 @@ function renderGodView() {
 
 describe('GodView page', () => {
   beforeEach(() => {
-    authUser = { username: 'admin', role: 'admin' }
+    authUser = { username: 'owner-user', role: 'owner' }
+    useStatus.mockReturnValue(null)
     getAdminAudit.mockReset().mockResolvedValue({
       v: 1,
       logins: [
@@ -63,7 +69,7 @@ describe('GodView page', () => {
     })
   })
 
-  it('Given the admin user, When the audit wrapper returns data, Then aggregates, sessions, and views render', async () => {
+  it('Given an owner user, When the audit wrapper returns data, Then crash-cart, aggregates, sessions, and views render', async () => {
     // arrange / act
     renderGodView()
 
@@ -72,6 +78,8 @@ describe('GodView page', () => {
       await screen.findByRole('heading', { level: 1, name: /god view/i }),
     ).toBeInTheDocument()
     expect(screen.getByRole('form', { name: /audit date filters/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /crash cart/i })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: /can't reach the jetson/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /sessions timeline/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /per user/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /^views$/i })).toBeInTheDocument()
@@ -82,9 +90,9 @@ describe('GodView page', () => {
     await waitFor(() => expect(getAdminAudit).toHaveBeenCalledTimes(1))
   })
 
-  it('Given a non-admin user, When the page is visited directly, Then the page stays hidden and does not fetch audit data', () => {
+  it('Given a viewer user, When the page is visited directly, Then the page stays hidden and does not fetch audit data', () => {
     // arrange
-    authUser = { username: 'alice', role: 'owner' }
+    authUser = { username: 'alice', role: 'viewer' }
 
     // act
     renderGodView()
