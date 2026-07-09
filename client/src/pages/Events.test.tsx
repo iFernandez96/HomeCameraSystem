@@ -58,6 +58,11 @@ vi.mock('../lib/api', () => ({
   getDetectionConfig: (...a: unknown[]) => getDetectionConfigM(...a),
   getCameras: (...a: unknown[]) => getCamerasM(...a),
   fetchEventTracks: () => Promise.resolve(null),
+  // Event-view jank fix (2026-07-08): ClipModal probes clip existence
+  // on open. Resolve true so these page-level tests keep exercising
+  // the player branch; the probe's own state machine is pinned in
+  // ClipModal.clipstate.test.tsx.
+  probeEventClip: () => Promise.resolve(true),
   getStatus: (...a: unknown[]) => getStatusM(...a),
 }))
 vi.mock('../lib/ws', () => ({

@@ -114,11 +114,13 @@ describe('ClipModal', () => {
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
     const video = screen.getByLabelText(/clip of person event/i)
     fireEvent.error(video)
-    // Snapshot fallback img + the explanatory amber notice render.
+    // Snapshot fallback img + the honest explanatory notice render.
+    // makeEvent()'s ts is far in the past, so the copy must NOT
+    // promise a video that will never arrive (jank fix 2026-07-08).
     expect(
       screen.getByAltText(/snapshot of person event/i),
     ).toHaveAttribute('src', '/snapshots/thumb_1.jpg')
-    expect(screen.getByText(/video not ready yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/no video was saved/i)).toBeInTheDocument()
   })
 
   it('shows "Clip unavailable" when both video and snapshot error', () => {
@@ -211,8 +213,9 @@ describe('ClipModal', () => {
       <ClipModal event={makeEvent()} onClose={() => {}} />,
     )
     fireEvent.error(screen.getByLabelText(/clip of person event/i))
-    // Snapshot fallback should be visible now.
-    expect(screen.getByText(/video not ready yet/i)).toBeInTheDocument()
+    // Snapshot fallback should be visible now (old event → honest
+    // "no video was saved" copy, jank fix 2026-07-08).
+    expect(screen.getByText(/no video was saved/i)).toBeInTheDocument()
     // New event → fallback clears, video re-renders.
     rerender(
       <ClipModal
@@ -220,7 +223,7 @@ describe('ClipModal', () => {
         onClose={() => {}}
       />,
     )
-    expect(screen.queryByText(/video not ready yet/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/no video was saved/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText(/clip of car event/i)).toBeInTheDocument()
   })
 

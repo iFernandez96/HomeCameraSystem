@@ -192,6 +192,35 @@ export async function fetchEventTracks(
   }
   return (await res.json()) as EventTracks
 }
+/**
+ * Event-view jank fix (2026-07-08): ask the clip route whether the
+ * MP4 exists WITHOUT streaming it. With the continuous recorder a
+ * visit's clip only lands when the visit closes, so the modal needs
+ * to distinguish "still writing, re-check soon" from "will never
+ * exist" instead of waiting for `<video>` to error on the 404.
+ * FastAPI's GET-only route has no HEAD, so a 2-byte Range GET is the
+ * cheapest existence probe (206/200 → true, 404 → false). Other
+ * non-2xx throw `HttpError` so a real outage isn't read as "no clip".
+ */
+export async function probeEventClip(eventId: string): Promise<boolean> {
+  const path = `/api/events/${encodeURIComponent(eventId)}/clip`
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { Range: 'bytes=0-1' },
+  })
+  if (res.status === 404) return false
+  if (!res.ok && res.status !== 206) {
+    throw new HttpError(path, res.status, res.statusText)
+  }
+  // Drain/cancel the tiny body so the connection is reusable.
+  try {
+    await res.body?.cancel()
+  } catch {
+    /* best-effort cleanup */
+  }
+  return true
+}
+
 // iter-220 (Feature #6 slice 6): cursor-paginated event search. Wraps
 // the iter-219 `GET /api/events/search` route. All filters optional;
 // `before_ts` is the cursor passed back from `next_cursor` on the

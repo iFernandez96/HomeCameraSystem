@@ -1538,6 +1538,40 @@ describe('lib/api', () => {
     expect(r.absence_finalize_s).toBe(10)
   })
 
+  it('Given a stored clip, When probeEventClip runs, Then it sends a 2-byte Range GET and resolves true on 206', async () => {
+    // arrange
+    asMock().mockResolvedValueOnce(new Response('xx', { status: 206 }))
+    const { probeEventClip } = await import('./api')
+
+    // act
+    const exists = await probeEventClip('evt-9')
+
+    // assert — wire pin: the probe must stay a Range request so it
+    // never streams the whole MP4 just to check existence.
+    expect(exists).toBe(true)
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/events/evt-9/clip')
+    expect((init as RequestInit).headers).toMatchObject({ Range: 'bytes=0-1' })
+  })
+
+  it('Given no clip on disk, When probeEventClip gets a 404, Then it resolves false without throwing', async () => {
+    // arrange
+    mockStatus(404)
+    const { probeEventClip } = await import('./api')
+
+    // act / assert
+    await expect(probeEventClip('evt-9')).resolves.toBe(false)
+  })
+
+  it('Given a server outage, When probeEventClip gets a 500, Then it throws HttpError (outage must not read as "no clip")', async () => {
+    // arrange
+    mockStatus(500)
+    const { probeEventClip } = await import('./api')
+
+    // act / assert
+    await expect(probeEventClip('evt-9')).rejects.toBeInstanceOf(HttpError)
+  })
+
   it('test_detection_limits_expose_visit_bounds', async () => {
     // arrange / act — DETECTION_LIMITS mirrors the server MIN/MAX
     // consts; the S6 slider binds its min/max props to these.

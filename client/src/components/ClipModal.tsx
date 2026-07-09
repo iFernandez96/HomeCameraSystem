@@ -8,7 +8,7 @@ import {
   toTransform,
   type ZoomState,
 } from '../lib/pinchZoom'
-import { deleteEvent, exportEvents, fetchEventTracks, searchEvents } from '../lib/api'
+import { deleteEvent, exportEvents, fetchEventTracks, probeEventClip, searchEvents } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
 import {
@@ -49,6 +49,18 @@ const SWIPE_RUBBER_MAX_PX = 20
  *  scrubber — a horizontal drag there is a seek, never a clip swipe. The
  *  guard is skipped when the pane has no layout box (jsdom). */
 const SWIPE_CONTROLS_GUARD_PX = 64
+
+/** Event-view jank fix (2026-07-08): how long after the event a missing
+ *  clip is treated as "the visit is still recording" rather than "no
+ *  video was ever saved". The continuous recorder finalizes a visit's
+ *  clip when the visit closes — production data shows the file landing
+ *  within ~3 minutes of the event for open visits, while genuinely
+ *  clipless events (~8%% of rows) never get one. Inside this window the
+ *  modal keeps probing and swaps the player in on its own; past it, the
+ *  copy stops promising a video that will never arrive. */
+const CLIP_STILL_WRITING_WINDOW_S = 10 * 60
+/** Re-probe cadence while a fresh visit's clip is still being written. */
+const CLIP_PROBE_INTERVAL_MS = 8000
 
 /** Content dedupe pass (Frank phone-round finding): the "More from
  * tonight" rows used to show the current camera's location on EVERY
@@ -137,6 +149,65 @@ export function ClipModal({
   const clipErrored = erroredClipUrl === clipUrl
   const imgErrored = !!event.thumb_url && erroredImgUrl === event.thumb_url
 
+  // Event-view jank fix (2026-07-08): probe the clip route directly
+  // instead of waiting for <video> to error on a 404. Same URL-keyed
+  // shape as erroredClipUrl so switching events auto-clears it. The
+  // probe distinguishes the two honest states the old error path
+  // conflated: "the visit is still recording, the file lands when it
+  // closes" vs "no video was ever saved for this event" (the old copy
+  // said "check back in a few seconds" for BOTH, forever).
+  const [missingClipUrl, setMissingClipUrl] = useState<string | null>(null)
+  const clipMissing = missingClipUrl === clipUrl
+  useEffect(() => {
+    let cancelled = false
+    probeEventClip(event.id)
+      .then((exists) => {
+        if (cancelled || exists) return
+        setMissingClipUrl(`/api/events/${event.id}/clip`)
+      })
+      .catch((e) => {
+        // Network/auth blip: keep the optimistic player mounted — the
+        // <video> element's own error path still covers a real failure.
+        log.warn('clipModal:clip-probe-failed', {
+          eventId: event.id,
+          ...errFields(e),
+        })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [event.id])
+
+  // While the visit is plausibly still recording, keep probing so the
+  // player swaps in BY ITSELF the moment the file lands — pre-fix the
+  // user had to close and reopen the modal to see a clip that
+  // finalized seconds after they opened it.
+  const clipGone = clipMissing || clipErrored
+  useEffect(() => {
+    if (!clipGone) return
+    if (Date.now() / 1000 - event.ts >= CLIP_STILL_WRITING_WINDOW_S) return
+    let cancelled = false
+    const id = setInterval(() => {
+      if (Date.now() / 1000 - event.ts >= CLIP_STILL_WRITING_WINDOW_S) {
+        clearInterval(id)
+        return
+      }
+      probeEventClip(event.id)
+        .then((exists) => {
+          if (cancelled || !exists) return
+          setMissingClipUrl(null)
+          setErroredClipUrl(null)
+        })
+        .catch(() => {
+          // Probe is best-effort while polling; next tick retries.
+        })
+    }, CLIP_PROBE_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [clipGone, event.id, event.ts])
+
   // Bug fix (real-device Firefox Android, phone-verified): the clip
   // pane went completely blank on both fresh AND minutes-old events —
   // no player, no error, no thumb, no action row. Root cause was two
@@ -172,6 +243,12 @@ export function ClipModal({
   // that, an unplayable clip almost certainly just isn't written yet
   // rather than actually broken.
   const clipLikelyWriting = nowMs / 1000 - event.ts < 100
+  // Wider window than clipLikelyWriting: a continuous-capture visit
+  // keeps its clip open until the visit ends, so "missing" stays
+  // plausible-in-progress for minutes, not seconds. Derived from the
+  // same 5s nowMs tick so an open modal flips to the honest "no video
+  // was saved" copy on its own once the window closes.
+  const clipStillWriting = nowMs / 1000 - event.ts < CLIP_STILL_WRITING_WINDOW_S
 
   // iter-270 (accessibility-auditor A): stash the element that had
   // focus when the modal opened so we can restore it on close.
@@ -872,7 +949,7 @@ export function ClipModal({
   // it mounts; `fillHeight` makes VideoPlayer stretch into the frame
   // instead of sizing to content.
   let body: React.ReactNode
-  if (!clipErrored) {
+  if (!clipErrored && !clipMissing) {
     // jsx-a11y/media-has-caption requires a `<track>` child. Detection
     // clips have no captions (single-camera home-security context, no
     // dialogue or narration to caption); the empty `<track>` element
@@ -973,16 +1050,17 @@ export function ClipModal({
   } else if (event.thumb_url && !imgErrored) {
     body = (
       <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4 text-center">
-        {/* iter-347 (Frank B1): bumped to text-sm + clearer copy.
-            Pre-iter-347 the amber-on-black 12px text was barely
-            readable AND ambiguous about user action ("loading?
-            broken? wait?"). */}
-        {/* redesign/warm-boutique: raw `text-amber-200` dropped — this
-            note sits on the dark video pane, so plain soft white reads
-            better than an off-palette amber. */}
-        <p className="text-sm text-white/85 max-w-xs">
-          Video not ready yet: here&apos;s a still photo from the event.
-          Check back in a few seconds.
+        {/* Event-view jank fix (2026-07-08): the old copy ("Video not
+            ready yet... check back in a few seconds") rendered for
+            EVERY missing/errored clip regardless of age — including
+            events that will never get a video — and never re-checked.
+            Now the copy is honest per state: inside the still-writing
+            window the modal is actively polling and will swap the
+            player in on its own; past it, no false promise. */}
+        <p role="status" className="text-sm text-white/85 max-w-xs">
+          {clipStillWriting
+            ? 'Still recording: the video will appear here on its own once it finishes saving.'
+            : 'No video was saved for this event. Here’s the photo it captured.'}
         </p>
         <img
           src={event.thumb_url}
@@ -1229,7 +1307,14 @@ export function ClipModal({
         onTouchMove={onPaneTouchMove}
         onTouchEnd={onPaneTouchEnd}
         onTouchCancel={onPaneTouchCancel}
-        className="relative w-full aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden touch-pan-y bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1"
+        // Event-view jank fix (2026-07-08): NO w-full here. w-full +
+        // mx-4 is width:100% PLUS margins — the pane ran 16px past the
+        // right screen edge on phones, clipping the video, the bbox
+        // overlay and the boxes-toggle button, and giving the whole
+        // modal a horizontal scrollbar. The flex-column parent's
+        // default stretch already sizes the pane to full width MINUS
+        // the margins.
+        className="relative aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden touch-pan-y bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1"
       >
         {/* Zoom layer: pinch scales/pans THIS wrapper (video + its
             overlays together) while the pane above keeps translateX
