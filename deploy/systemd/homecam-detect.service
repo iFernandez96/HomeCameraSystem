@@ -1,6 +1,18 @@
 [Unit]
 Description=Home Camera detection worker (jetson-inference)
-Requires=mediamtx.service
+# NOT `Requires=mediamtx.service` (2026-07-09 root-cause fix). The worker's
+# mediamtx_watchdog RESTARTS mediamtx itself as the first recovery rung. With a
+# hard `Requires=`, systemd propagates that restart back to THIS unit and stops
+# the worker ~2.8 s into its own escalation — BEFORE it persists the ladder
+# level or climbs to the nvargus rung that actually clears the libargus
+# "Failed to create CaptureSession" wedge. Result: every restart reset the
+# escalation to level 0 and it flapped on mediamtx forever, never auto-
+# recovering (observed live 2026-07-09: 5 consecutive level-0->1 climbs, worker
+# stopped each time, `.watchdog_state.json` never written). `Wants=` keeps boot
+# ordering (via After=) and pulls mediamtx in, but does NOT make the worker
+# suicide when it restarts its own dependency — which is the whole point of the
+# escalation ladder. Pairs with detect.py persisting the level BEFORE the action.
+Wants=mediamtx.service
 After=mediamtx.service homecam-server.service
 Wants=homecam-server.service
 # Restart-storm guard: if the worker fails 5 times within 60 s (i.e. an

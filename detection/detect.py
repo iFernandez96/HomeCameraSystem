@@ -1467,13 +1467,20 @@ def _handle_capture_failure(
             "failures": consecutive_failures,
             "watchdog_fail_threshold": mediamtx_watchdog.fail_threshold,
         })
-        # The watchdog chose a recovery rung (mediamtx -> nvargus -> reboot).
-        # Capture diagnostics FIRST (the wedge's root cause is still unknown),
-        # then execute, then persist the new escalation level so a systemd
-        # worker-restart RESUMES the ladder instead of resetting to
-        # mediamtx-only (the 2026-06-20 reachability fix).
-        _capture_wedge_diagnostics(action)
+        # Persist the new escalation level BEFORE anything disruptive
+        # (2026-07-09 root-cause fix). `next_action` already bumped the
+        # in-memory level; restarting mediamtx can get THIS worker stopped by
+        # systemd (dependency propagation) or the process can die at the
+        # SystemExit(100) floor mid-action. Persisting AFTER the action (the
+        # old order) meant the level was never written when the worker died
+        # during that window, so every restart reset to level 0 and the ladder
+        # never reached the nvargus rung that clears the libargus wedge
+        # (observed live 2026-07-09). Write it first; a systemd/SystemExit
+        # restart then RESUMES the climb instead of flapping on mediamtx.
         _WATCHDOG_STATE["last_action"] = action
+        _persist_watchdog_level(mediamtx_watchdog)
+        # Diagnostics next (the wedge's root cause is still unknown), then act.
+        _capture_wedge_diagnostics(action)
         # plan R5: finalize any open continuous-capture visit at last_seen and
         # persist .open_visits.json BEFORE the recovery action (esp. reboot) —
         # a short valid clip, not one spanning the wedge gap. No-op when the
@@ -1495,7 +1502,6 @@ def _handle_capture_failure(
                     metrics.argus_restarts += 1
             elif action == ACTION_REBOOT:
                 _do_reboot()
-        _persist_watchdog_level(mediamtx_watchdog)
     _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
     if consecutive_failures > 100:
         print(

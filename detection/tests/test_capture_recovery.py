@@ -128,6 +128,62 @@ def test_given_30_consecutive_capture_failures_when_handler_runs_then_watchdog_a
     assert consecutive_failures == 30
 
 
+def test_given_escalation_when_handler_runs_then_level_persisted_before_action(
+    monkeypatch,
+):
+    """2026-07-09 root-cause fix: the escalation level MUST be persisted
+    BEFORE the disruptive recovery action runs.
+
+    Live finding: the worker unit had `Requires=mediamtx.service`, so when the
+    watchdog escalated and ran `systemctl restart mediamtx`, systemd propagated
+    that restart back and STOPPED the worker ~2.8 s later — before the old
+    post-action `_persist_watchdog_level` could write `.watchdog_state.json`.
+    Every restart then restored level 0, so the ladder re-fired mediamtx forever
+    and never reached the nvargus rung that clears the libargus wedge. The unit
+    now uses `Wants=`, and the persist moved ahead of the action so the level
+    survives ANY mid-action death (systemd stop OR the SystemExit(100) floor).
+
+    Pin the order: persist THEN diagnostics THEN act."""
+    # arrange — record the order of the three escalation side effects.
+    calls = []
+    monkeypatch.setattr(
+        detect, "_persist_watchdog_level", lambda wd: calls.append("persist")
+    )
+    monkeypatch.setattr(
+        detect, "_capture_wedge_diagnostics", lambda action: calls.append("diag")
+    )
+
+    def _fake_restart():
+        calls.append("restart_mediamtx")
+        return True
+
+    monkeypatch.setattr(detect, "restart_mediamtx", _fake_restart)
+    watchdog = MediaMtxWatchdog(fail_threshold=30, cooldown_s=60.0)
+    metrics = Metrics()
+    liveness = _FakeLiveness()
+    consecutive_failures = 0
+
+    # act — drive to the first escalation (the 30th failure trips it).
+    for _ in range(30):
+        consecutive_failures = detect._handle_capture_failure(
+            "timeout (None)",
+            consecutive_failures,
+            metrics,
+            watchdog,
+            liveness,
+        )
+
+    # assert — persist ran, and it ran BEFORE the mediamtx restart (the bug was
+    # persist-after-action never landing when systemd killed the worker).
+    assert "persist" in calls, calls
+    assert "restart_mediamtx" in calls, calls
+    assert (
+        calls.index("persist")
+        < calls.index("diag")
+        < calls.index("restart_mediamtx")
+    ), calls
+
+
 def test_given_real_frame_after_failures_when_loop_resets_then_watchdog_clears(
     monkeypatch,
 ):
