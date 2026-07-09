@@ -43,7 +43,7 @@ ENV_MAX_VISIT_S = "DETECT_MAX_VISIT_S"
 ENV_ABSENCE_FINALIZE_S = "DETECT_ABSENCE_FINALIZE_S"
 
 DEFAULT_MAX_VISIT_S = 150.0
-DEFAULT_ABSENCE_FINALIZE_S = 10.0
+DEFAULT_ABSENCE_FINALIZE_S = 30.0
 
 # --- worker disk floor (plan S4.5 / blocker B2) ---
 #
@@ -86,7 +86,7 @@ _OPEN_VISITS_FILE = ".open_visits.json"
 
 
 def _as_bool(raw):
-    """Parse a truthy env string. ``None``/empty -> False (flag default OFF)."""
+    """Parse a truthy env string. ``None``/empty -> False."""
     if raw is None:
         return False
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
@@ -116,7 +116,9 @@ def resolve_continuous_config(env=None, config=None):
     if "continuous_capture" in config:
         enabled = bool(config.get("continuous_capture"))
     else:
-        enabled = _as_bool(env.get(ENV_FLAG))
+        enabled = (
+            True if env.get(ENV_FLAG) is None else _as_bool(env.get(ENV_FLAG))
+        )
 
     max_visit_s = _resolve_float(
         config.get("max_visit_s"), env.get(ENV_MAX_VISIT_S),

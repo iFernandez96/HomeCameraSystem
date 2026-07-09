@@ -57,6 +57,7 @@ _GUARDED_MODULES = (
     "detection/schedule.py",
     "detection/metrics.py",
     "detection/mediamtx_watchdog.py",
+    "detection/host_action.py",
     "detection/zones.py",
     "detection/recording.py",
     "detection/preroll.py",
