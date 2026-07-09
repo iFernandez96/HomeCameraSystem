@@ -318,6 +318,11 @@ export const captureSnapshot = () =>
   req<{ url: string }>('/api/capture', { method: 'POST' })
 
 export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot'
+export type LogUnit =
+  | 'homecam-detect'
+  | 'mediamtx'
+  | 'nvargus-daemon'
+  | 'homecam-server'
 export type RecoverHandle = {
   ok: true
   request_id: string
@@ -356,6 +361,32 @@ export const getRecoverStatus = (requestId?: string) =>
     `/api/system/recover/status${
       requestId ? `?request_id=${encodeURIComponent(requestId)}` : ''
     }`,
+  )
+
+export type LogHandle = {
+  request_id: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  worker_online: boolean
+}
+export type LogResult = {
+  request_id: string
+  unit: LogUnit
+  status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  lines: string[] | null
+  detail: string | null
+}
+export const fetchLogs = (
+  unit: LogUnit,
+  opts: { since?: string; lines?: number } = {},
+) => {
+  const params = new URLSearchParams({ unit })
+  if (opts.since) params.set('since', opts.since)
+  if (opts.lines != null) params.set('lines', String(opts.lines))
+  return req<LogHandle>(`/api/system/logs?${params.toString()}`)
+}
+export const getLogsResult = (requestId: string) =>
+  req<LogResult>(
+    `/api/system/logs/result?request_id=${encodeURIComponent(requestId)}`,
   )
 // iter-211 (Feature #10 slice 2): mirror of rebootJetson — owner-
 // only POST that returns `note` while the host-helper is stubbed.

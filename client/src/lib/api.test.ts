@@ -6,6 +6,8 @@ import {
   getDetectionConfig,
   getAdminAudit,
   getEventCountsByDay,
+  fetchLogs,
+  getLogsResult,
   getMe,
   getRecoverStatus,
   getStatus,
@@ -274,6 +276,39 @@ describe('lib/api', () => {
     expect(r.status).toBe('done')
     expect(asMock()).toHaveBeenCalledWith(
       '/api/system/recover/status?request_id=req%2F2',
+      expect.any(Object),
+    )
+  })
+
+  it('Given log options, When fetchLogs runs, Then it encodes the bounded query', async () => {
+    mockJson({
+      request_id: 'logs-1',
+      status: 'pending',
+      worker_online: true,
+    })
+    const r = await fetchLogs('homecam-detect', {
+      since: '30 minutes ago',
+      lines: 500,
+    })
+    expect(r.request_id).toBe('logs-1')
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/logs?unit=homecam-detect&since=30+minutes+ago&lines=500',
+      expect.any(Object),
+    )
+  })
+
+  it('Given a log request id, When getLogsResult runs, Then it encodes the poll URL', async () => {
+    mockJson({
+      request_id: 'logs/1',
+      unit: 'mediamtx',
+      status: 'done',
+      lines: ['ready'],
+      detail: null,
+    })
+    const r = await getLogsResult('logs/1')
+    expect(r.lines).toEqual(['ready'])
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/system/logs/result?request_id=logs%2F1',
       expect.any(Object),
     )
   })

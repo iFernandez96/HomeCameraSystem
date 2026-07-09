@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import {
   getAdminAudit,
+  fetchLogs,
+  getLogsResult,
   getRecoverStatus,
   recoverHost,
   type AdminAuditResponse,
+  type LogResult,
+  type LogUnit,
   type RecoverAction,
   type RecoverStatus,
 } from '../lib/api'
@@ -16,6 +20,7 @@ import { useStatus } from '../lib/useStatus'
 import { CrashCartPanels } from '../components/godview/CrashCartPanels'
 import { SessionsPanel } from '../components/godview/SessionsPanel'
 import { WedgePanel } from '../components/godview/WedgePanel'
+import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { Button } from '../components/primitives/Button'
@@ -213,6 +218,162 @@ function RecoveryPanel() {
   )
 }
 
+const LOG_UNITS: { unit: LogUnit; label: string }[] = [
+  { unit: 'homecam-detect', label: 'Detection worker' },
+  { unit: 'mediamtx', label: 'Camera server (MediaMTX)' },
+  { unit: 'nvargus-daemon', label: 'Camera daemon (nvargus)' },
+  { unit: 'homecam-server', label: 'API server' },
+]
+
+function LogViewerPanel() {
+  const [unit, setUnit] = useState<LogUnit>('homecam-detect')
+  const [lineCount, setLineCount] = useState(200)
+  const [requestId, setRequestId] = useState<string | null>(null)
+  const [result, setResult] = useState<LogResult | null>(null)
+  const [fetching, setFetching] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const logRef = useRef<HTMLPreElement | null>(null)
+
+  const terminal =
+    result?.status === 'done' ||
+    result?.status === 'failed' ||
+    result?.status === 'expired'
+
+  useEffect(() => {
+    if (!requestId || terminal) return
+    let cancelled = false
+    const poll = () => {
+      getLogsResult(requestId)
+        .then((next) => {
+          if (cancelled) return
+          setResult(next)
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setError(formatError(e))
+        })
+    }
+    poll()
+    const id = window.setInterval(poll, 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [requestId, terminal])
+
+  useEffect(() => {
+    const el = logRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [result?.lines])
+
+  const refresh = () => {
+    setFetching(true)
+    setError(null)
+    setResult(null)
+    fetchLogs(unit, { lines: lineCount })
+      .then((res) => {
+        setRequestId(res.request_id)
+        setResult({
+          request_id: res.request_id,
+          unit,
+          status: res.status,
+          lines: null,
+          detail: null,
+        })
+      })
+      .catch((e) => setError(formatError(e)))
+      .finally(() => setFetching(false))
+  }
+
+  const lines = result?.lines ?? []
+  const statusText = result
+    ? result.status === 'done'
+      ? `${lines.length} lines`
+      : result.status
+    : 'Not loaded'
+
+  return (
+    <section
+      aria-labelledby="logs-heading"
+      className="rounded-lg border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-subtle)]"
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 id="logs-heading" className="text-lg font-semibold text-[var(--color-text-primary)]">
+            Logs
+          </h2>
+          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+            Read-only host journal tail.
+          </p>
+        </div>
+        <form
+          aria-label="Log controls"
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            refresh()
+          }}
+        >
+          <label className="grid gap-1 text-sm font-medium text-[var(--color-text-secondary)]">
+            Unit
+            <select
+              value={unit}
+              onChange={(e) => setUnit(e.currentTarget.value as LogUnit)}
+              className="min-h-[44px] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-bg)] px-4 text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            >
+              {LOG_UNITS.map((entry) => (
+                <option key={entry.unit} value={entry.unit}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-[var(--color-text-secondary)]">
+            Lines
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={lineCount}
+              onChange={(e) => setLineCount(Number(e.currentTarget.value))}
+              className="min-h-[44px] w-28 rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-bg)] px-4 text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+            />
+          </label>
+          <Button type="submit" disabled={fetching || (!!result && !terminal)}>
+            {fetching || (!!result && !terminal) ? 'Loading' : 'Refresh'}
+          </Button>
+        </form>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3 text-sm text-[var(--color-text-secondary)]">
+        <span>{statusText}</span>
+        {result?.detail && <span className="text-[var(--color-danger)]">{result.detail}</span>}
+      </div>
+      {error && (
+        <p className="mt-3 text-sm font-medium text-[var(--color-danger)]">
+          {error}
+        </p>
+      )}
+      <div className="mt-4 rounded-lg border-[1.5px] border-[var(--color-border)] bg-[var(--color-bg)]">
+        {lines.length === 0 ? (
+          <CatEmptyState
+            heading="No logs loaded"
+            body="Fetch a unit to read recent host journal lines."
+          />
+        ) : (
+          <pre
+            ref={logRef}
+            aria-label="System logs"
+            className="max-h-96 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-[var(--color-text-primary)]"
+          >
+            {lines.join('\n')}
+          </pre>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function GodView() {
   const { user } = useAuth()
   const [sinceDay, setSinceDay] = useState(defaultSince)
@@ -320,6 +481,7 @@ export function GodView() {
       <CrashCartPanels status={status} />
       <WedgePanel metrics={status?.worker_metrics ?? null} />
       <RecoveryPanel />
+      <LogViewerPanel />
       <SessionsPanel user={user} />
 
       {error ? (

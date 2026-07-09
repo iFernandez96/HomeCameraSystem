@@ -1,9 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAdminAudit = vi.fn()
+const fetchLogs = vi.fn()
+const getLogsResult = vi.fn()
 const getRecoverStatus = vi.fn()
 const listSessions = vi.fn()
 const recoverHost = vi.fn()
@@ -14,7 +16,9 @@ let authUser: { username: string; role: string } | null = {
 }
 
 vi.mock('../lib/api', () => ({
+  fetchLogs: (...a: unknown[]) => fetchLogs(...a),
   getAdminAudit: (...a: unknown[]) => getAdminAudit(...a),
+  getLogsResult: (...a: unknown[]) => getLogsResult(...a),
   getRecoverStatus: (...a: unknown[]) => getRecoverStatus(...a),
   listSessions: () => listSessions(),
   recoverHost: (...a: unknown[]) => recoverHost(...a),
@@ -68,6 +72,18 @@ describe('GodView page', () => {
       result_at: 1714000004,
       worker_online: true,
     })
+    fetchLogs.mockReset().mockResolvedValue({
+      request_id: 'logs-1',
+      status: 'pending',
+      worker_online: true,
+    })
+    getLogsResult.mockReset().mockResolvedValue({
+      request_id: 'logs-1',
+      unit: 'homecam-detect',
+      status: 'done',
+      lines: ['2026-07-08 worker ready', '2026-07-08 password=***'],
+      detail: null,
+    })
     listSessions.mockReset().mockResolvedValue({ v: 1, sessions: [] })
     getAdminAudit.mockReset().mockResolvedValue({
       v: 1,
@@ -111,6 +127,8 @@ describe('GodView page', () => {
     expect(screen.getByRole('status', { name: /can't reach the jetson/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /active sessions/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /recovery/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /logs/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/unit/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /sessions timeline/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /per user/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /^views$/i })).toBeInTheDocument()
@@ -149,5 +167,23 @@ describe('GodView page', () => {
     await waitFor(() => expect(recoverHost).toHaveBeenCalledWith('nvargus'))
     await waitFor(() => expect(getRecoverStatus).toHaveBeenCalledWith('req-1'))
     expect(await screen.findByRole('status', { name: /recovery status/i })).toHaveTextContent(/done/i)
+  })
+
+  it('Given an owner refreshes logs, When polling completes, Then the read-only log region renders monospace lines', async () => {
+    const user = userEvent.setup()
+    renderGodView()
+    await screen.findByRole('heading', { level: 1, name: /god view/i })
+
+    const controls = screen.getByRole('form', { name: /log controls/i })
+    await user.click(within(controls).getByRole('button', { name: /^refresh$/i }))
+
+    await waitFor(() =>
+      expect(fetchLogs).toHaveBeenCalledWith('homecam-detect', { lines: 200 }),
+    )
+    await waitFor(() => expect(getLogsResult).toHaveBeenCalledWith('logs-1'))
+    const logs = await screen.findByLabelText(/system logs/i)
+    expect(logs.tagName).toBe('PRE')
+    expect(logs).toHaveTextContent('worker ready')
+    expect(logs).toHaveTextContent('password=***')
   })
 })

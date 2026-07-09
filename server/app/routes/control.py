@@ -152,6 +152,9 @@ class _RecoverBody(BaseModel):
     confirm: bool
 
 
+_LOG_UNITS = ("homecam-detect", "mediamtx", "nvargus-daemon", "homecam-server")
+
+
 def _require_confirm(confirm: bool) -> None:
     if not confirm:
         raise HTTPException(status_code=400, detail="confirm must be true")
@@ -173,6 +176,27 @@ def _audit_host_action_requested(action: str, request_id: str, username: str) ->
         log.warning(
             "host_action request audit failed for action=%s id=%s",
             action,
+            request_id,
+            exc_info=True,
+        )
+
+
+def _audit_log_request(request_id: str, username: str, unit: str) -> None:
+    try:
+        audit_db.insert_host_action_event(
+            settings.audit_db_path,
+            ts=time.time(),
+            username=username,
+            action="logs",
+            request_id=request_id,
+            phase="requested",
+            status=None,
+            detail="unit={}".format(unit),
+        )
+    except Exception:
+        log.warning(
+            "host log request audit failed for unit=%s id=%s",
+            unit,
             request_id,
             exc_info=True,
         )
@@ -316,6 +340,60 @@ async def system_recover_status(
         "requested_at": rec.get("requested_at"),
         "result_at": rec.get("result_at"),
         "worker_online": worker_health.is_alive(),
+    }
+
+
+@router.get(
+    "/system/logs",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def system_logs(
+    unit: Annotated[
+        str,
+        Query(pattern=r"^(homecam-detect|mediamtx|nvargus-daemon|homecam-server)$"),
+    ],
+    since: Annotated[str | None, Query(max_length=64)] = None,
+    lines: int = 200,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
+    # The worker scrubs secrets before returning lines. The route still keeps
+    # request args bounded so logs cannot become a bulk data exfil path.
+    if unit not in _LOG_UNITS:
+        raise HTTPException(status_code=422, detail="unsupported log unit")
+    bounded_lines = max(1, min(int(lines or 200), 1000))
+    rec = host_bridge.enqueue(
+        "logs",
+        {"unit": unit, "since": since, "lines": bounded_lines},
+        requested_by=user,
+        now=time.time(),
+    )
+    _audit_log_request(rec["id"], user, unit)
+    return {
+        "request_id": rec["id"],
+        "status": rec["status"],
+        "worker_online": worker_health.is_alive(),
+    }
+
+
+@router.get(
+    "/system/logs/result",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def system_logs_result(
+    request_id: Annotated[str, Query(min_length=1, max_length=128)],
+) -> dict[str, object]:
+    rec = host_bridge.get(request_id)
+    if rec is None or rec.get("kind") != "logs":
+        raise HTTPException(status_code=404, detail="log request not found")
+    result = rec.get("result") if isinstance(rec.get("result"), dict) else None
+    args = rec.get("args") if isinstance(rec.get("args"), dict) else {}
+    lines = result.get("lines") if result and isinstance(result.get("lines"), list) else None
+    return {
+        "request_id": rec["id"],
+        "unit": args.get("unit"),
+        "status": rec["status"],
+        "lines": lines,
+        "detail": rec.get("detail"),
     }
 
 
