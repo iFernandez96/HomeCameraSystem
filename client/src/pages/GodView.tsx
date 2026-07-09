@@ -47,9 +47,18 @@ export function GodView() {
   const { user } = useAuth()
   const [sinceDay, setSinceDay] = useState(defaultSince)
   const [untilDay, setUntilDay] = useState(defaultUntil)
-  const [audit, setAudit] = useState<AdminAuditResponse | null>(null)
-  const [error, setError] = useState<unknown>(null)
-  const [loading, setLoading] = useState(true)
+  // Request-lifecycle state (the textbook shape, replacing an earlier
+  // boolean-loading + microtask-defer version): the ONLY state is the
+  // last settled result, tagged with the request key it answered.
+  // `loading` is DERIVED — true whenever the settled result doesn't
+  // match the current key — so nothing ever needs a synchronous
+  // setState inside the effect, and a stale response can't be mistaken
+  // for the current one.
+  const [result, setResult] = useState<{
+    key: string
+    audit: AdminAuditResponse | null
+    error: unknown
+  } | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
 
   const isAdmin = user?.username === 'admin'
@@ -61,34 +70,28 @@ export function GodView() {
     }),
     [sinceDay, untilDay],
   )
+  const requestKey = `${bounds.since}:${bounds.until}:${reloadNonce}`
 
   useEffect(() => {
     if (!isAdmin) return
     let cancelled = false
-    // React 19 set-state-in-effect discipline: defer the loading flip
-    // out of the synchronous effect body (same microtask idiom as
-    // Events.tsx's deep-link open). The microtask always runs before
-    // the network response resolves, so ordering is safe.
-    void Promise.resolve().then(() => {
-      if (!cancelled) setLoading(true)
-    })
     getAdminAudit(bounds)
       .then((res) => {
         if (cancelled) return
-        setAudit(res)
-        setError(null)
+        setResult({ key: requestKey, audit: res, error: null })
       })
       .catch((e) => {
         if (cancelled) return
-        setError(e)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
+        setResult({ key: requestKey, audit: null, error: e })
       })
     return () => {
       cancelled = true
     }
-  }, [bounds, isAdmin, reloadNonce])
+  }, [bounds, requestKey, isAdmin])
+
+  const loading = result?.key !== requestKey
+  const audit = loading ? null : result?.audit ?? null
+  const error = loading ? null : result?.error ?? null
 
   if (!isAdmin) return <Navigate to="/" replace />
 
