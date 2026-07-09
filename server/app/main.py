@@ -12,7 +12,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, training, training_admin
+from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, telemetry, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -117,6 +117,16 @@ async def lifespan(_app: FastAPI):
             "lifespan: init events_db failed at %s (events store "
             "unusable) — aborting boot",
             settings.events_db_path, exc_info=True,
+        )
+        raise
+    from .services.audit_db import init_db as _audit_init_db
+    try:
+        _audit_init_db(settings.audit_db_path)
+    except Exception:
+        log.error(
+            "lifespan: init audit_db failed at %s (operator audit "
+            "trail unusable) — aborting boot",
+            settings.audit_db_path, exc_info=True,
         )
         raise
     # iter (S4.5 / blocker B2): retention catch-up. Runs the time-based
@@ -501,6 +511,7 @@ settings.person_captures_dir.mkdir(parents=True, exist_ok=True)
 app.include_router(training_admin.router, prefix="/api")
 app.include_router(face.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
+app.include_router(telemetry.router, prefix="/api")
 # `/api/auth/*` gates itself (login is the way IN; me/refresh/logout
 # read cookies directly). `/api/_internal/*` is loopback-trusted —
 # Charter lock-in, NEVER gate.

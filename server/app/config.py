@@ -148,6 +148,9 @@ class Settings:
     events_db_path: Path = Path(
         os.getenv("EVENTS_DB_PATH", "./events.db")
     )
+    audit_db_path: Path = Path(
+        os.getenv("AUDIT_DB_PATH", "/app/secrets/audit.db")
+    )
 
     # OTA artifact-bundle apply paths. Defaults live under the existing
     # persistent server data volume (`homecam-secrets` mounts at /app/secrets

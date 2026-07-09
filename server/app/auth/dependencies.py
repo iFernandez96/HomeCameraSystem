@@ -42,7 +42,7 @@ def _req(request: Request | None):
     return (request.method, request.url.path)
 
 
-def get_current_user_optional(
+async def get_current_user_optional(
     request: Request = None,  # type: ignore[assignment]
     homecam_access: str | None = Cookie(default=None),
 ) -> str | None:
@@ -96,7 +96,7 @@ def get_current_user_optional(
     return sub
 
 
-def get_current_user(
+async def get_current_user(
     request: Request = None,  # type: ignore[assignment]
     homecam_access: str | None = Cookie(default=None),
 ) -> str:
@@ -153,7 +153,7 @@ def get_current_user(
     return sub
 
 
-def get_current_user_role(
+async def get_current_user_role(
     request: Request = None,  # type: ignore[assignment]
     homecam_access: str | None = Cookie(default=None),
 ) -> tuple[str, str]:
@@ -251,7 +251,7 @@ def require_role(required: str):
     # resolves `get_current_user_role` and passes the tuple in.
     from fastapi import Depends
 
-    def _dep(
+    async def _dep(
         request: Request = None,  # type: ignore[assignment]
         user_and_role: tuple[str, str] = Depends(get_current_user_role),
     ) -> str:

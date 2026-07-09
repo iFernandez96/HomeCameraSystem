@@ -33,9 +33,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, HTTPException, Response
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import Depends
@@ -44,17 +45,46 @@ from ..auth import passwords, tokens, users_db
 from ..auth.dependencies import (
     COOKIE_ACCESS,
     COOKIE_REFRESH,
+    get_current_user_optional,
     get_current_user,
     require_role,
 )
 from ..config import settings
 from ..log import auth_rejected
+from ..services import audit_db
 
 
 log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _ua(request: Request) -> str:
+    return (request.headers.get("user-agent") or "")[:256]
+
+
+def _record_auth_event(
+    *,
+    username: str,
+    action: audit_db.AuthAction,
+    ua: str,
+) -> None:
+    try:
+        audit_db.insert_auth_event(
+            settings.audit_db_path,
+            ts=time.time(),
+            username=username,
+            action=action,
+            ua=ua,
+        )
+    except Exception:
+        log.warning(
+            "auth audit write failed for user=%r action=%s — continuing auth",
+            username,
+            action,
+            exc_info=True,
+        )
 
 
 class LoginIn(BaseModel):
@@ -131,7 +161,7 @@ def _clear_session_cookies(response: Response) -> None:
 
 
 @router.post("/login", response_model=LoginOut)
-def login(body: LoginIn, response: Response) -> LoginOut:
+async def login(body: LoginIn, response: Response, request: Request) -> LoginOut:
     user = users_db.get_user(settings.users_db_path, body.username)
     if user is None:
         # Timing-oracle defense: spend the same ~120 ms verifying
@@ -146,14 +176,17 @@ def login(body: LoginIn, response: Response) -> LoginOut:
             log, "POST", "/api/auth/login", "login failed: no such user",
             sub=body.username, cookie_present=False,
         )
+        _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
         raise HTTPException(status_code=401, detail="invalid credentials")
     if not passwords.verify_password(body.password, user["password_hash"]):
         auth_rejected(
             log, "POST", "/api/auth/login", "login failed: bad password",
             sub=body.username, cookie_present=False,
         )
+        _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
         raise HTTPException(status_code=401, detail="invalid credentials")
     _set_session_cookies(response, user["username"], user["role"])
+    _record_auth_event(username=user["username"], action="login_ok", ua=_ua(request))
     log.info(
         "login ok: user=%r role=%r", user["username"], user["role"],
     )
@@ -161,8 +194,9 @@ def login(body: LoginIn, response: Response) -> LoginOut:
 
 
 @router.post("/refresh", response_model=RefreshOut)
-def refresh(
+async def refresh(
     response: Response,
+    request: Request,
     homecam_refresh: Optional[str] = Cookie(default=None),
 ) -> RefreshOut:
     # iter-186 (Auth Plan Phase 7): every failure path returns 401
@@ -211,11 +245,18 @@ def refresh(
         )
         raise HTTPException(status_code=401, detail="session expired")
     _set_session_cookies(response, user["username"], user["role"])
+    _record_auth_event(username=user["username"], action="refresh", ua=_ua(request))
     return RefreshOut(user=UserOut(username=user["username"], role=user["role"]))
 
 
 @router.post("/logout")
-def logout(response: Response) -> dict:
+async def logout(
+    response: Response,
+    request: Request,
+    user: str | None = Depends(get_current_user_optional),
+) -> dict:
+    if user:
+        _record_auth_event(username=user, action="logout", ua=_ua(request))
     _clear_session_cookies(response)
     return {"ok": True}
 
@@ -240,7 +281,7 @@ class AdminResetPasswordIn(BaseModel):
 
 
 @router.post("/change_password")
-def change_password(
+async def change_password(
     body: ChangePasswordIn,
     user: str = Depends(get_current_user),
 ) -> dict:
@@ -281,7 +322,7 @@ def change_password(
 @router.post(
     "/admin/reset_password",
 )
-def admin_reset_password(
+async def admin_reset_password(
     body: AdminResetPasswordIn,
     caller: str = Depends(require_role("owner")),
 ) -> dict:
@@ -353,7 +394,7 @@ class ListUsersOut(BaseModel):
     response_model=ListUsersOut,
     dependencies=[Depends(require_role("owner"))],
 )
-def admin_list_users() -> ListUsersOut:
+async def admin_list_users() -> ListUsersOut:
     """iter-265: list every user, owner-only. Returns username +
     role + created_at — never the password hash. Used by the
     Settings "Manage users" panel."""
@@ -384,7 +425,7 @@ def admin_list_users() -> ListUsersOut:
     "/admin/users",
     status_code=201,
 )
-def admin_create_user(
+async def admin_create_user(
     body: CreateUserIn,
     caller: str = Depends(require_role("owner")),
 ) -> dict:
@@ -445,7 +486,7 @@ class DeleteUserIn(BaseModel):
     "/admin/delete_user",
     dependencies=[Depends(require_role("owner"))],
 )
-def admin_delete_user(
+async def admin_delete_user(
     body: DeleteUserIn,
     caller: str = Depends(get_current_user),
 ) -> dict:
@@ -506,7 +547,7 @@ def admin_delete_user(
 
 
 @router.get("/me", response_model=MeOut)
-def me(homecam_access: Optional[str] = Cookie(default=None)) -> MeOut:
+async def me(homecam_access: Optional[str] = Cookie(default=None)) -> MeOut:
     # iter-264 (D1): Cache-Control: no-store applied via the
     # middleware path-prefix branch in main.py — covers the 401
     # paths below that build a fresh JSONResponse from HTTPException
