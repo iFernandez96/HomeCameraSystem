@@ -1,0 +1,55 @@
+[
+  {
+    "ip": "100.101.102.103",
+    "expect": "tailscale"
+  },
+  {
+    "ip": "fd7a:115c:a1e0::1",
+    "expect": "tailscale"
+  },
+  {
+    "ip": "192.168.1.5",
+    "expect": "lan"
+  },
+  {
+    "ip": "10.0.0.42",
+    "expect": "lan"
+  },
+  {
+    "ip": "172.16.4.9",
+    "expect": "lan"
+  },
+  {
+    "ip": "127.0.0.1",
+    "expect": "lan"
+  },
+  {
+    "ip": "::1",
+    "expect": "lan"
+  },
+  {
+    "ip": "169.254.10.20",
+    "expect": "lan"
+  },
+  {
+    "ip": "fe80::1",
+    "expect": "lan"
+  },
+  {
+    "ip": "8.8.8.8",
+    "expect": "cellular"
+  },
+  {
+    "ip": "2606:4700:4700::1111",
+    "expect": "cellular"
+  },
+  {
+    "ip": "",
+    "expect": "other"
+  },
+  {
+    "ip": "not-an-ip",
+    "expect": "other"
+  }
+]
+
