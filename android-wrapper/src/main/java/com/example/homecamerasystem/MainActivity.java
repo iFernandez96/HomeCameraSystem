@@ -2,10 +2,14 @@ package com.example.homecamerasystem;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.graphics.Color;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.http.SslError;
 import android.os.Bundle;
 import android.view.View;
@@ -33,6 +37,11 @@ public final class MainActivity extends Activity {
     private WebChromeClient.CustomViewCallback fullscreenCallback;
     private String activeUrl = BuildConfig.HOMECAM_URL;
     private boolean triedLanFallback = false;
+    private boolean tailscaleLaunchPending = false;
+    private boolean showingRecovery = false;
+    private final android.os.Handler mainHandler =
+        new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean activityResumed = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -148,6 +157,19 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        activityResumed = true;
+        ensureVpnConnected();
+    }
+
+    @Override
+    protected void onPause() {
+        activityResumed = false;
+        super.onPause();
+    }
+
+    @Override
     public void onBackPressed() {
         handleBack();
     }
@@ -184,10 +206,12 @@ public final class MainActivity extends Activity {
             loadLan();
             return;
         }
+        showingRecovery = true;
         setContentView(recoveryView);
     }
 
     private void showWebView() {
+        showingRecovery = false;
         if (rootView == null) return;
         if (webView.getParent() == null) {
             rootView.addView(webView, new FrameLayout.LayoutParams(
@@ -232,6 +256,59 @@ public final class MainActivity extends Activity {
                 + "}catch(e){}"
                 + "})();";
         view.evaluateJavascript(js, null);
+    }
+
+    private boolean isVpnActive() {
+        ConnectivityManager connectivityManager =
+            (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) return false;
+        Network activeNetwork = connectivityManager.getActiveNetwork();
+        if (activeNetwork == null) return false;
+        NetworkCapabilities capabilities =
+            connectivityManager.getNetworkCapabilities(activeNetwork);
+        return capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+    }
+
+    private boolean isTailscaleInstalled() {
+        return getPackageManager().getLaunchIntentForPackage("com.tailscale.ipn") != null;
+    }
+
+    private void ensureVpnConnected() {
+        boolean vpn = isVpnActive();
+        if (vpn) {
+            boolean wasWaiting = tailscaleLaunchPending || showingRecovery;
+            tailscaleLaunchPending = false;
+            if (wasWaiting) loadTailnet();
+            return;
+        }
+        if (!tailscaleLaunchPending && isTailscaleInstalled()) {
+            tailscaleLaunchPending = true;
+            requestTailscaleConnect();
+            // Fall back after both silent broadcast attempts if the tunnel is
+            // still down and the wrapper remains in the foreground.
+            mainHandler.postDelayed(() -> {
+                if (activityResumed && !isVpnActive()) {
+                    openTailscale();
+                }
+            }, 5000);
+        }
+    }
+
+    private void requestTailscaleConnect() {
+        Intent intent = new Intent("com.tailscale.ipn.CONNECT_VPN");
+        intent.setClassName("com.tailscale.ipn", "com.tailscale.ipn.IPNReceiver");
+        try {
+            sendBroadcast(intent);
+        } catch (Exception ignored) {
+            // The delayed app-launch fallback covers a missing or changed receiver.
+        }
+        mainHandler.postDelayed(() -> {
+            try {
+                sendBroadcast(intent);
+            } catch (Exception ignored) {
+                // The delayed app-launch fallback covers a missing or changed receiver.
+            }
+        }, 2000);
     }
 
     private LinearLayout buildRecoveryView() {
