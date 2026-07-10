@@ -70,6 +70,8 @@ type Activity =
   | 'chase' // running fast at someone
   | 'flee' // running fast away
   | 'play' // happy hopping in place
+  | 'pounce' // login: spring toward a toy
+  | 'in_box' // login: peek from the cardboard box
 
 type CatState = {
   id: CatId
@@ -523,6 +525,46 @@ function rollSolo(c: CatState, now: number, w: number): CatState {
   return c
 }
 
+// Login is a tiny household vignette, not the app's quiet ambient mascot.
+// Events are intentionally short and toy/prop-led so a new beat begins every
+// few seconds without changing the calm app pool above.
+function rollLoginSolo(c: CatState, now: number, w: number): CatState {
+  const roll = Math.random()
+  if (c.id === 'panther' && roll < 0.28) {
+    let next = setActivity(c, 'on_post', 3200, now)
+    next = setMood(next, '😾', 1900, now, '💢')
+    next.x = catTreeX(w)
+    next.direction = 'L'
+    return next
+  }
+  if (c.id === 'coco' && roll < 0.24) {
+    let next = setActivity(c, 'in_box', 2600, now)
+    next = setMood(next, '😻', 1800, now, '✨')
+    next.x = Math.max(8, w * 0.91 - SPRITE_WIDTH / 2)
+    next.direction = 'L'
+    return next
+  }
+  if (c.id !== 'panther' && roll < 0.56) {
+    let next = setActivity(c, 'pounce', 1900, now)
+    next = setMood(next, c.id === 'mushu' ? '😹' : '😻', 1700, now, c.id === 'mushu' ? '✨' : '💕')
+    next.targetX = Math.max(8, w * 0.12 - SPRITE_WIDTH / 2)
+    next.direction = c.x < next.targetX ? 'R' : 'L'
+    return next
+  }
+  if (c.id === 'mushu' && roll < 0.82) {
+    let next = setActivity(c, 'play', 1700, now)
+    next = setMood(next, '🐾', 1600, now, '⚡')
+    next.direction = c.x < w / 2 ? 'R' : 'L'
+    return next
+  }
+  let next = setActivity(c, 'walk', rand(1700, 2900), now)
+  next.direction = Math.random() < 0.5 ? 'L' : 'R'
+  if (Math.random() < 0.7) {
+    next = setMood(next, c.id === 'panther' ? '😼' : c.id === 'mushu' ? '😹' : '✨', 1500, now)
+  }
+  return next
+}
+
 // === Personality knobs (movement only — emotional outcomes are above) ========
 
 // iter-356.13 (user directive: less walking): per-cat base speeds
@@ -592,6 +634,7 @@ const LAYER_BOTTOM_OFFSET = 80 // mobile (above BottomNav)
 const LAYER_BOTTOM_OFFSET_LG = 8 // desktop
 const INTERACTION_DISTANCE = 50
 const INTERACTION_COOLDOWN_MS = 5000
+const LOGIN_INTERACTION_COOLDOWN_MS = 2800
 
 function rand(min: number, max: number) {
   return Math.random() * (max - min) + min
@@ -615,7 +658,7 @@ export interface CatLayerProps {
 }
 
 export function CatLayer({ placement = 'app' }: CatLayerProps) {
-  const [cats, setCats] = useState<CatState[]>(() => initialCats())
+  const [cats, setCats] = useState<CatState[]>(() => initialCats(placement))
   const lastGlobalInteractionRef = useRef<number>(0)
   const reducedMotion = usePrefersReducedMotion()
   // iter-356-E (Slice E): two more perf gates besides reduced-motion.
@@ -654,19 +697,21 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
       const dt = Math.min(now - lastTs, 33)
       lastTs = now
       if (!visible) return
-      setCats((prev) => stepCats(prev, now, dt, lastGlobalInteractionRef))
+      setCats((prev) => stepCats(prev, now, dt, lastGlobalInteractionRef, placement))
     }
     raf = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(raf)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [animationsPaused])
+  }, [animationsPaused, placement])
 
   return (
     <div
       aria-hidden="true"
       data-testid="ambient-cat-layer"
+      data-scene-tempo={placement === 'login' ? 'playful' : 'calm'}
+      data-motion={animationsPaused ? 'static' : 'animated'}
       // iter-356.66 (round 2 — user "where are my little kitten
       // animations? why are they all gone?"): the previous -z-10 fix
       // hid the cats entirely behind <main>'s stacking context (the
@@ -775,9 +820,17 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
           slice 2 adds movement zones that target the bed / ledge /
           box positions). All objects are aria-hidden via the parent
           `<div aria-hidden="true">` so SR users never hear them. */}
-      <HabitatBackground />
+      <HabitatBackground
+        playful={placement === 'login' && !animationsPaused}
+        yarnActive={cats.some((cat) => cat.activity === 'pounce')}
+        boxActive={cats.some((cat) => cat.activity === 'in_box')}
+      />
       {cats.map((cat) => (
-        <CatRender key={cat.id} cat={cat} />
+        <CatRender
+          key={cat.id}
+          cat={cat}
+          playful={placement === 'login' && !animationsPaused}
+        />
       ))}
     </div>
   )
@@ -800,7 +853,15 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
 //
 // All positions are PERCENTAGES of layer width — auto-recompute on
 // layout via CSS, no JS resize hook needed.
-function HabitatBackground() {
+function HabitatBackground({
+  playful,
+  yarnActive,
+  boxActive,
+}: {
+  playful: boolean
+  yarnActive: boolean
+  boxActive: boolean
+}) {
   // Tuck the ledge near the top of the layer rather than the bottom.
   // Layer is `SPRITE_HEIGHT + 56` tall; ledge needs ~14 px and a
   // visual gap from the cats below it.
@@ -835,6 +896,8 @@ function HabitatBackground() {
       {/* Yarn ball — left third of floor */}
       <div
         data-testid="habitat-yarn"
+        data-active={yarnActive ? 'true' : 'false'}
+        className={playful && yarnActive ? 'cat-yarn-swat' : undefined}
         style={{ position: 'absolute', left: '12%', bottom: 0, opacity: 0.78 }}
       >
         <YarnBall size={Math.max(20, Math.round(SPRITE_WIDTH * 0.6))} />
@@ -856,6 +919,8 @@ function HabitatBackground() {
       {/* Cardboard box — right edge anchor */}
       <div
         data-testid="habitat-box"
+        data-active={boxActive ? 'true' : 'false'}
+        className={playful && boxActive ? 'cat-box-rustle' : undefined}
         style={{ position: 'absolute', right: '6%', bottom: 0, opacity: 0.78 }}
       >
         <CardboardBox size={Math.max(28, Math.round(SPRITE_WIDTH * 0.85))} />
@@ -889,7 +954,7 @@ function HabitatBackground() {
 // Net: 0 evaluations/sec instead of 180/sec during long sleep states.
 const CatRender = memo(CatRenderImpl)
 
-function CatRenderImpl({ cat }: { cat: CatState }) {
+function CatRenderImpl({ cat, playful }: { cat: CatState; playful: boolean }) {
   const Sprite =
     cat.id === 'panther'
       ? BombaySprite
@@ -942,6 +1007,22 @@ function CatRenderImpl({ cat }: { cat: CatState }) {
       }}
     >
       <div
+        data-testid="cat-ground-shadow"
+        style={{
+          position: 'absolute',
+          left: '12%',
+          bottom: 1,
+          width: '76%',
+          height: 7,
+          borderRadius: '50%',
+          background: 'rgba(43,34,19,0.16)',
+          filter: 'blur(1.5px)',
+          transform: cat.activity === 'pounce' ? 'scaleX(0.72)' : 'scaleX(1)',
+          transformOrigin: 'center',
+        }}
+      />
+      <div
+        className={playful ? `cat-micro-life cat-entrance-${cat.id}` : undefined}
         style={{
           width: '100%',
           height: '100%',
@@ -1064,7 +1145,10 @@ function activityToSprite(
     case 'hiss':
       return 'hiss'
     case 'play':
+    case 'pounce':
       return 'play'
+    case 'in_box':
+      return phase === 0 ? 'sit' : 'sit2'
     case 'on_post':
       return 'on_post'
     case 'chase':
@@ -1128,6 +1212,7 @@ function activityToParticles(
       // Z's drifting up from the head (sleep pose head is to one side)
       return { type: 'zzz', x: SPRITE_WIDTH / 2 + 2, y: 12, count: 3 }
     case 'play':
+    case 'pounce':
       // Tiny sparkle puff for zoomies/play
       return { type: 'sparkles', x: SPRITE_WIDTH / 2, y: 20, count: 3 }
     default:
@@ -1137,22 +1222,27 @@ function activityToParticles(
 
 // === STATE-MACHINE LOOP =====================================================
 
-function initialCats(): CatState[] {
+function initialCats(placement: 'app' | 'login'): CatState[] {
   const w = layerWidth()
   const ids: CatId[] = ['panther', 'mushu', 'coco']
   const now = performance.now()
   return ids.map((id, i) => ({
     id,
-    x: (w / 4) * (i + 1) + rand(-30, 30),
+    x: placement === 'login'
+      ? [18, w - SPRITE_WIDTH - 18, w * 0.88][i]
+      : (w / 4) * (i + 1) + rand(-30, 30),
     y: 0,
-    direction: Math.random() < 0.5 ? 'L' : 'R',
+    direction: placement === 'login' ? (i === 0 ? 'R' : 'L') : (Math.random() < 0.5 ? 'L' : 'R'),
     // Enter already in-frame and at rest. After this short settling
     // beat the existing personality state machine lets each cat wander.
-    activity: id === 'coco' ? 'loaf' : 'sit',
-    activityUntil: now + rand(1400, 2600),
-    mood: null,
+    // The nested CSS entrance supplies the opening trot/box pop without
+    // spending React work during first-paint and form submission. The
+    // high-energy scheduler takes over after this gentle two-second beat.
+    activity: placement === 'login' ? (id === 'coco' ? 'in_box' : 'sit') : (id === 'coco' ? 'loaf' : 'sit'),
+    activityUntil: now + (placement === 'login' ? rand(1900, 2400) : rand(1400, 2600)),
+    mood: placement === 'login' ? (id === 'panther' ? '👀' : id === 'mushu' ? '🐾' : '✨') : null,
     moodSecondary: null,
-    moodUntil: 0,
+    moodUntil: placement === 'login' ? now + 1800 : 0,
     targetX: null,
     lastInteractedWith: null,
     lastInteractedAt: 0,
@@ -1165,6 +1255,7 @@ function stepCats(
   now: number,
   dt: number,
   lastGlobalRef: { current: number },
+  placement: 'app' | 'login',
 ): CatState[] {
   const w = layerWidth()
   const dtNorm = dt / 16.6 // per 60fps frame
@@ -1199,6 +1290,12 @@ function stepCats(
     } else if (activity === 'flee') {
       const speed = FLEE_SPEED * dtNorm
       x += direction === 'R' ? speed : -speed
+    } else if (activity === 'pounce' && targetX !== null) {
+      const distance = targetX - x
+      if (Math.abs(distance) > 2) {
+        direction = distance > 0 ? 'R' : 'L'
+        x += Math.sign(distance) * Math.min(Math.abs(distance), 1.35 * dtNorm)
+      }
     } else if (activity === 'play') {
       x += direction === 'R' ? 0.2 * dtNorm : -0.2 * dtNorm
     }
@@ -1219,7 +1316,8 @@ function stepCats(
     // Activity expiry → roll a solo event for the next state. This
     // ALWAYS counts as a change because rollSolo returns a new state.
     if (now > activityUntil) {
-      const next = rollSolo({ ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase }, now, w)
+      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase }
+      const next = placement === 'login' ? rollLoginSolo(base, now, w) : rollSolo(base, now, w)
       anyChanged = true
       return next
     }
@@ -1231,22 +1329,23 @@ function stepCats(
     return cat
   })
   // Pass 2 — interaction proximity check
-  if (now - lastGlobalRef.current > INTERACTION_COOLDOWN_MS) {
+  const interactionCooldown = placement === 'login' ? LOGIN_INTERACTION_COOLDOWN_MS : INTERACTION_COOLDOWN_MS
+  if (now - lastGlobalRef.current > interactionCooldown) {
     outer: for (let i = 0; i < stepped.length; i++) {
       for (let j = i + 1; j < stepped.length; j++) {
         const a = stepped[i]
         const b = stepped[j]
         // Both cats must be in a "open to interaction" state
         if (
-          (a.activity !== 'walk' && a.activity !== 'sit') ||
-          (b.activity !== 'walk' && b.activity !== 'sit')
+          (a.activity !== 'walk' && a.activity !== 'sit' && a.activity !== 'pounce') ||
+          (b.activity !== 'walk' && b.activity !== 'sit' && b.activity !== 'pounce')
         ) {
           continue
         }
         // Don't re-interact with the same cat instantly
         if (
-          (a.lastInteractedWith === b.id && now - a.lastInteractedAt < INTERACTION_COOLDOWN_MS * 2) ||
-          (b.lastInteractedWith === a.id && now - b.lastInteractedAt < INTERACTION_COOLDOWN_MS * 2)
+          (a.lastInteractedWith === b.id && now - a.lastInteractedAt < interactionCooldown * 2) ||
+          (b.lastInteractedWith === a.id && now - b.lastInteractedAt < interactionCooldown * 2)
         ) {
           continue
         }

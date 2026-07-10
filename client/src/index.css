@@ -729,6 +729,50 @@ html {
     animation: cat-empty-state-idle 5s ease-in-out infinite;
     transform-origin: center bottom;
   }
+
+  /* Login household vignette. These run on nested sprite/prop nodes, never
+     on CatLayer's rAF-driven translateX container. */
+  .cat-entrance-panther { animation: cat-arrive-left 900ms cubic-bezier(.2,.85,.3,1.15) both; }
+  .cat-entrance-mushu { animation: cat-arrive-right 1050ms 120ms cubic-bezier(.2,.85,.3,1.15) both; }
+  .cat-entrance-coco { animation: cat-arrive-box 850ms 260ms cubic-bezier(.2,.85,.3,1.15) both; }
+  .cat-micro-life .cat-sprite-img {
+    animation: cat-idle-life 2.8s ease-in-out infinite;
+    transform-origin: center bottom;
+  }
+  .cat-yarn-swat { animation: cat-yarn-roll 700ms cubic-bezier(.2,.8,.2,1) both; }
+  .cat-box-rustle { animation: cat-box-rustle 420ms ease-in-out 2; }
+}
+
+@keyframes cat-arrive-left {
+  from { opacity: 0; transform: translateX(-54px) scaleX(-1); }
+  70% { opacity: 1; transform: translateX(3px) scaleX(-1); }
+  to { opacity: 1; transform: translateX(0) scaleX(-1); }
+}
+@keyframes cat-arrive-right {
+  from { opacity: 0; transform: translateX(54px); }
+  70% { opacity: 1; transform: translateX(-3px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes cat-arrive-box {
+  from { opacity: 0; transform: translateY(22px) scale(.82); }
+  65% { opacity: 1; transform: translateY(-3px) scale(1.03); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes cat-idle-life {
+  0%, 44%, 52%, 100% { transform: translateY(0) scaleY(1) rotate(0); }
+  47% { transform: translateY(1px) scaleY(.94) rotate(-.7deg); }
+  76% { transform: translateY(0) scaleY(1.015) rotate(.6deg); }
+}
+@keyframes cat-yarn-roll {
+  0% { transform: translateX(0) rotate(0); }
+  45% { transform: translateX(13px) rotate(210deg); }
+  72% { transform: translateX(8px) rotate(150deg); }
+  100% { transform: translateX(10px) rotate(180deg); }
+}
+@keyframes cat-box-rustle {
+  0%, 100% { transform: rotate(0); }
+  35% { transform: rotate(-1.5deg); }
+  70% { transform: rotate(1.5deg); }
 }
 
 /* iter-356.35 — paw-spinner. Three paw glyphs fade in sequence

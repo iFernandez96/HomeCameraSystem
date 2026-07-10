@@ -186,6 +186,39 @@ describe('CatLayer', () => {
     // assert
     expect(container.querySelectorAll('[data-testid="cat-sprite"]')).toHaveLength(3)
     expect(rafSpy).not.toHaveBeenCalled()
+    expect(container.firstElementChild).toHaveAttribute('data-motion', 'static')
+  })
+
+  it('Given login placement, When the household scene renders, Then it exposes playful props and grounded cats', () => {
+    // arrange
+    stubMatchMedia({ matches: false })
+    vi.stubGlobal('requestAnimationFrame', vi.fn((_cb: FrameRequestCallback): number => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    // act
+    const { container } = render(<CatLayer placement="login" />)
+
+    // assert
+    const layer = container.firstElementChild
+    expect(layer).toHaveAttribute('data-scene-tempo', 'playful')
+    expect(layer).toHaveAttribute('data-motion', 'animated')
+    expect(container.querySelector('[data-testid="habitat-yarn"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="habitat-box"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="habitat-cat-tree"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-testid="cat-ground-shadow"]')).toHaveLength(3)
+    expect(container.querySelectorAll('.cat-micro-life')).toHaveLength(3)
+  })
+
+  it('Given app placement, When the scene renders, Then it keeps the calm tempo without login micro-life', () => {
+    // arrange
+    stubMatchMedia({ matches: true })
+
+    // act
+    const { container } = render(<CatLayer placement="app" />)
+
+    // assert
+    expect(container.firstElementChild).toHaveAttribute('data-scene-tempo', 'calm')
+    expect(container.querySelectorAll('.cat-micro-life')).toHaveLength(0)
   })
 
   // iter-356.30 (Pet Habitat slice 1): habitat objects render only when
