@@ -6,7 +6,7 @@ import {
 } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { BrandMarkRow } from '../components/WhoMark'
-import { CatLayer } from '../components/CatLayer'
+import { CAT_LAYER_HEIGHT, CatLayer } from '../components/CatLayer'
 import { Button } from '../components/primitives/Button'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
@@ -124,7 +124,13 @@ export function Login() {
   }
 
   return (
-    <div className="relative isolate h-full min-h-0 overflow-hidden flex items-center justify-center px-5 py-4 sm:px-6 sm:py-6 bg-[var(--color-bg)]">
+    <div
+      data-testid="login-root"
+      className="relative isolate h-full min-h-0 overflow-hidden flex items-center justify-center px-5 pt-4 pb-[calc(var(--login-cat-layer-height)+env(safe-area-inset-bottom,0px))] sm:px-6 sm:pt-6 bg-[var(--color-bg)]"
+      // Keep a real floor below the centered card on short iPhone viewports.
+      // The safe-area term also keeps the floor clear of the home indicator.
+      style={{ '--login-cat-layer-height': `${CAT_LAYER_HEIGHT}px` } as React.CSSProperties}
+    >
       <CatLayer placement="login" />
       {/* Playroom Modern (Task 9): card grammar matches the rest of
           the redesign — rounded-[var(--radius-xl)] + a 1.5px hairline

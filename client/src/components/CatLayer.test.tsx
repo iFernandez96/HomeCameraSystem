@@ -155,6 +155,39 @@ describe('CatLayer', () => {
     expect(layer!.className).toMatch(/pointer-events-none/)
   })
 
+  it('given login placement, when the layer mounts, then it is absolutely anchored below the z-10 form', () => {
+    // arrange
+    stubMatchMedia({ matches: true })
+
+    // act
+    const { container } = render(<CatLayer placement="login" />)
+
+    // assert
+    const layer = container.firstElementChild as HTMLElement
+    expect(layer.className).toMatch(/pointer-events-none/)
+    expect(layer.className).toMatch(/\babsolute\b/)
+    expect(layer.className).toMatch(/\bz-0\b/)
+    expect(layer.className).not.toMatch(/\bfixed\b/)
+    expect(layer.className).toMatch(/\bbottom-0\b/)
+    expect(layer.className).toContain(
+      'translate-y-[calc(-1*env(safe-area-inset-bottom,0px))]',
+    )
+  })
+
+  it('given reduced motion and login placement, when the layer mounts, then all three cats remain visible and static', () => {
+    // arrange
+    stubMatchMedia({ matches: true })
+    const rafSpy = vi.fn((_cb: FrameRequestCallback): number => 0)
+    vi.stubGlobal('requestAnimationFrame', rafSpy)
+
+    // act
+    const { container } = render(<CatLayer placement="login" />)
+
+    // assert
+    expect(container.querySelectorAll('[data-testid="cat-sprite"]')).toHaveLength(3)
+    expect(rafSpy).not.toHaveBeenCalled()
+  })
+
   // iter-356.30 (Pet Habitat slice 1): habitat objects render only when
   // CatLayer mounts (which happens iff authed && catsEnabled — gated in
   // App.tsx). The layer itself is the right granularity to pin: when the

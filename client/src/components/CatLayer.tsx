@@ -579,6 +579,9 @@ const SPRITE_WIDTH = (() => {
 // clipped them. Now: SPRITE_HEIGHT = 1.2 × SPRITE_WIDTH so the cat
 // fills its container with no clipping.
 const SPRITE_HEIGHT = Math.round(SPRITE_WIDTH * 1.2)
+// Login reserves exactly this much layout space below its form. Keep this
+// exported value as the single source of truth for the ambient floor height.
+export const CAT_LAYER_HEIGHT = SPRITE_HEIGHT + 56
 // iter-356.56 (Maya CRITICAL #2): bumped from 70 → 80 so the cats
 // have an extra 10 px clearance above the BottomNav top edge. Maya
 // flagged the cat-tail clipping into the BottomNav border on mobile
@@ -676,12 +679,19 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
       // text panels block cats from sitting on top of them. Modals
       // (z-40+), BottomNav (z-10), ConnectionBanner (z-30), and the
       // WatchRibbon (z-15) all still sit above. */}
-      className={`pointer-events-none fixed overflow-hidden ${
+      className={`pointer-events-none overflow-hidden ${
+        placement === 'login'
+          ? 'absolute bottom-0 translate-y-[calc(-1*env(safe-area-inset-bottom,0px))]'
+          : 'fixed'
+      } ${
         placement === 'login' ? 'z-0 animate-cat-layer-enter' : 'z-[5]'
       }`}
       style={{
-        height: `${SPRITE_HEIGHT + 56}px`,
-        bottom: placement === 'login' ? 0 : `var(--cat-layer-bottom, ${LAYER_BOTTOM_OFFSET}px)`,
+        height: `${CAT_LAYER_HEIGHT}px`,
+        bottom:
+          placement === 'login'
+            ? undefined
+            : `var(--cat-layer-bottom, ${LAYER_BOTTOM_OFFSET}px)`,
         // iter-356.28: respect SideNav rail on desktop so cats don't
         // walk across the "Sign out" button. SideNav is `w-56` (14rem)
         // and only mounted at lg:. Pre-iter-356.28 the layer was
