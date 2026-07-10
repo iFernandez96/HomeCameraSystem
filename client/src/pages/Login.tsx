@@ -6,6 +6,7 @@ import {
 } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { BrandMarkRow } from '../components/WhoMark'
+import { CatLayer } from '../components/CatLayer'
 import { Button } from '../components/primitives/Button'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
@@ -123,7 +124,8 @@ export function Login() {
   }
 
   return (
-    <div className="h-full min-h-0 overflow-hidden flex items-center justify-center px-5 py-4 sm:px-6 sm:py-6 bg-[var(--color-bg)]">
+    <div className="relative isolate h-full min-h-0 overflow-hidden flex items-center justify-center px-5 py-4 sm:px-6 sm:py-6 bg-[var(--color-bg)]">
+      <CatLayer placement="login" />
       {/* Playroom Modern (Task 9): card grammar matches the rest of
           the redesign — rounded-[var(--radius-xl)] + a 1.5px hairline
           border, still lifted by --shadow-card / --shadow-card-inset
@@ -138,7 +140,7 @@ export function Login() {
         // content shrinks the viewport. Card grows to fill available
         // space so the submit button stays bottom-anchored relative
         // to the card body.
-        className="w-full max-w-sm max-h-full flex flex-col bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 sm:p-8 animate-login-in shadow-[var(--shadow-card)]"
+        className="relative z-10 w-full max-w-sm max-h-full flex flex-col bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 sm:p-8 animate-login-in shadow-[var(--shadow-card)]"
         style={{ boxShadow: 'var(--shadow-card), var(--shadow-card-inset)' }}
       >
         {/* Playroom Modern (Task 9): the scoped stagger only fires

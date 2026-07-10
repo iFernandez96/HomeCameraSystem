@@ -607,7 +607,11 @@ function layerWidth(): number {
 
 // === COMPONENT ==============================================================
 
-export function CatLayer() {
+export interface CatLayerProps {
+  placement?: 'app' | 'login'
+}
+
+export function CatLayer({ placement = 'app' }: CatLayerProps) {
   const [cats, setCats] = useState<CatState[]>(() => initialCats())
   const lastGlobalInteractionRef = useRef<number>(0)
   const reducedMotion = usePrefersReducedMotion()
@@ -659,6 +663,7 @@ export function CatLayer() {
   return (
     <div
       aria-hidden="true"
+      data-testid="ambient-cat-layer"
       // iter-356.66 (round 2 — user "where are my little kitten
       // animations? why are they all gone?"): the previous -z-10 fix
       // hid the cats entirely behind <main>'s stacking context (the
@@ -671,17 +676,19 @@ export function CatLayer() {
       // text panels block cats from sitting on top of them. Modals
       // (z-40+), BottomNav (z-10), ConnectionBanner (z-30), and the
       // WatchRibbon (z-15) all still sit above. */}
-      className="pointer-events-none fixed z-[5] overflow-hidden"
+      className={`pointer-events-none fixed overflow-hidden ${
+        placement === 'login' ? 'z-0 animate-cat-layer-enter' : 'z-[5]'
+      }`}
       style={{
         height: `${SPRITE_HEIGHT + 56}px`,
-        bottom: `var(--cat-layer-bottom, ${LAYER_BOTTOM_OFFSET}px)`,
+        bottom: placement === 'login' ? 0 : `var(--cat-layer-bottom, ${LAYER_BOTTOM_OFFSET}px)`,
         // iter-356.28: respect SideNav rail on desktop so cats don't
         // walk across the "Sign out" button. SideNav is `w-56` (14rem)
         // and only mounted at lg:. Pre-iter-356.28 the layer was
         // inset-x-0 so the walking strip extended into the rail and
         // pixel cats sat on top of nav controls — confirmed visually
         // via browser-harness against the live tailnet PWA.
-        left: 'var(--cat-layer-left, 0px)',
+        left: placement === 'login' ? 0 : 'var(--cat-layer-left, 0px)',
         right: 0,
       }}
     >
@@ -1129,8 +1136,10 @@ function initialCats(): CatState[] {
     x: (w / 4) * (i + 1) + rand(-30, 30),
     y: 0,
     direction: Math.random() < 0.5 ? 'L' : 'R',
-    activity: 'walk',
-    activityUntil: now + rand(2000, 5000),
+    // Enter already in-frame and at rest. After this short settling
+    // beat the existing personality state machine lets each cat wander.
+    activity: id === 'coco' ? 'loaf' : 'sit',
+    activityUntil: now + rand(1400, 2600),
     mood: null,
     moodSecondary: null,
     moodUntil: 0,

@@ -64,6 +64,21 @@ describe('Login page', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
+  it('Given an anonymous user, When Login renders, Then ambient cats sit behind the reachable sign-in form', () => {
+    // arrange / act
+    renderLogin()
+
+    // assert
+    const layer = screen.getByTestId('ambient-cat-layer')
+    const form = screen.getByRole('form', { name: /sign in/i })
+    expect(layer.className).toMatch(/pointer-events-none/)
+    expect(layer.className).toMatch(/z-0/)
+    expect(form.className).toMatch(/z-10/)
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
+  })
+
   // Fix 7 (accessibility-auditor): the "Created when HomeCam was
   // first set up." helper text sat next to the username field with
   // no aria wiring — a screen-reader user tabbing to the field never

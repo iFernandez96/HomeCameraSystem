@@ -123,7 +123,10 @@ export function CatEmptyState({
       role="status"
       aria-label={ariaLabel ?? heading}
     >
-      <div className="flex justify-center text-[var(--color-text-secondary)] landscape-phone:h-14 landscape-phone:items-center landscape-phone:overflow-visible landscape-phone:[&>*]:scale-[0.55] landscape-phone:[&>*]:origin-center">
+      <div
+        data-testid="cat-empty-state-illustration"
+        className="cat-empty-state-idle motion-reduce:animate-none flex justify-center text-[var(--color-text-secondary)] landscape-phone:h-14 landscape-phone:items-center landscape-phone:overflow-visible landscape-phone:[&>*]:scale-[0.55] landscape-phone:[&>*]:origin-center"
+      >
         {finalIllustration}
       </div>
       <div className="space-y-1.5">

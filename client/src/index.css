@@ -705,6 +705,32 @@ html {
   }
 }
 
+/* Login-only ambient layer: begin in-frame in a calm pose, then ease
+   into view without putting a transition on the rAF-driven transform. */
+@keyframes cat-layer-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Empty-state art gets a tiny CSS-only breathing bob. The explicit
+   no-preference gate leaves the illustration exactly static for users
+   who request reduced motion. */
+@keyframes cat-empty-state-idle {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-2px) scale(1.01); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate-cat-layer-enter {
+    animation: cat-layer-enter 700ms var(--ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+  }
+
+  .cat-empty-state-idle {
+    animation: cat-empty-state-idle 5s ease-in-out infinite;
+    transform-origin: center bottom;
+  }
+}
+
 /* iter-356.35 — paw-spinner. Three paw glyphs fade in sequence
    left-to-right so loading reads as "cat walking past" instead of a
    mechanical ring spinner. Reduced-motion users see all three paws
