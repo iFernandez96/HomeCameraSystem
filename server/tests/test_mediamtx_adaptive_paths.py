@@ -168,3 +168,19 @@ def test_Given_hq_cam_path_When_inspected_Then_has_mid_stream_stall_watchdog(pat
     assert command.index("h264parse") < command.index("watchdog"), (
         "watchdog must sit after h264parse (post-encoder regular memory)"
     )
+
+
+def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1080p(paths):
+    # arrange / act
+    command = _camera_publish_script(paths)
+
+    # assert — one libargus owner fans out to two hardware encoders. Detection
+    # remains on /cam while explicit UHQ viewers consume /cam_uhq.
+    assert paths["cam_uhq"]["source"] == "publisher"
+    assert command.count("nvarguscamerasrc") == 1
+    assert command.count("tee name=camera") == 1
+    assert command.count("nvv4l2h264enc") == 2
+    assert "width=1280,height=720" in command
+    assert "width=1920,height=1080" in command
+    assert "rtsp://localhost:${RTSP_PORT}/cam\"" in command
+    assert "rtsp://localhost:${RTSP_PORT}/cam_uhq\"" in command

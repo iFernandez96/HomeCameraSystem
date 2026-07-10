@@ -3,25 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { DEFAULT_CAMERA_PATH, whepUrlForPath } from '../lib/streamQuality'
 import { errFields, log } from '../lib/log'
-import { getRecoverStatus, setCameraFocusMode } from '../lib/api'
 
 type Point = { x: number; y: number }
 type StreamState = 'connecting' | 'live' | 'error'
 
-const SAMPLE_SIZE = 160
+const SAMPLE_SIZE = 320
 const ROI_FRACTION = 0.22
-
-async function waitForModeChange(requestId: string) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const status = await getRecoverStatus(requestId)
-    if (status.status === 'done') return status
-    if (status.status === 'failed' || status.status === 'expired') {
-      throw new Error(status.detail || `Camera mode change ${status.status}`)
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 1000))
-  }
-  throw new Error('Camera mode change timed out')
-}
 
 function sharpnessOf(data: Uint8ClampedArray, width: number, height: number): number {
   let count = 0
@@ -63,12 +50,6 @@ export function FocusAssistant() {
   const [trend, setTrend] = useState<'Improving' | 'Getting worse' | 'Hold steady'>('Hold steady')
   const [frozen, setFrozen] = useState(false)
   const frozenRef = useRef(frozen)
-  const focusModeActiveRef = useRef(false)
-  const [focusModeActive, setFocusModeActive] = useState(false)
-  const [modeSwitching, setModeSwitching] = useState(false)
-  const [modeError, setModeError] = useState<string | null>(null)
-  const [expiresAt, setExpiresAt] = useState<number | null>(null)
-  const [secondsLeft, setSecondsLeft] = useState(0)
 
   useEffect(() => {
     targetRef.current = target
@@ -77,58 +58,7 @@ export function FocusAssistant() {
     frozenRef.current = frozen
   }, [frozen])
 
-  useEffect(() => {
-    focusModeActiveRef.current = focusModeActive
-  }, [focusModeActive])
-
-  useEffect(() => () => {
-    if (focusModeActiveRef.current) void setCameraFocusMode(false).catch(() => undefined)
-  }, [])
-
-  useEffect(() => {
-    if (!expiresAt) return
-    const update = () => {
-      const remaining = Math.max(0, Math.ceil(expiresAt - Date.now() / 1000))
-      setSecondsLeft(remaining)
-      if (remaining === 0 && focusModeActiveRef.current) {
-        focusModeActiveRef.current = false
-        setFocusModeActive(false)
-        setExpiresAt(null)
-        window.setTimeout(() => setRetry((value) => value + 1), 2500)
-      }
-    }
-    update()
-    const timer = window.setInterval(update, 1000)
-    return () => window.clearInterval(timer)
-  }, [expiresAt])
-
-  const changeFocusMode = async (enabled: boolean) => {
-    if (modeSwitching) return
-    setModeSwitching(true)
-    setModeError(null)
-    try {
-      const handle = await setCameraFocusMode(enabled)
-      const status = await waitForModeChange(handle.request_id)
-      const expiry = enabled ? status.result?.expires_at : null
-      if (enabled && !expiry) throw new Error('Camera did not return a focus-mode timeout')
-      focusModeActiveRef.current = enabled
-      setFocusModeActive(enabled)
-      setExpiresAt(expiry ?? null)
-      resetBest()
-      await new Promise((resolve) => window.setTimeout(resolve, 2200))
-      setRetry((value) => value + 1)
-    } catch (error) {
-      log.error('focusAssistant:mode-change-failed', errFields(error))
-      setModeError(error instanceof Error ? error.message : 'Camera mode change failed')
-    } finally {
-      setModeSwitching(false)
-    }
-  }
-
-  const finishAndBack = async () => {
-    if (focusModeActiveRef.current) await changeFocusMode(false)
-    navigate('/settings')
-  }
+  const finishAndBack = () => navigate('/settings')
 
   useEffect(() => {
     const video = videoRef.current
@@ -137,7 +67,7 @@ export function FocusAssistant() {
     let connection: WhepConnection | null = null
     let cancelled = false
     setStreamState('connecting')
-    connectWhep(whepUrlForPath(DEFAULT_CAMERA_PATH), video, { signal: controller.signal })
+    connectWhep(whepUrlForPath(`${DEFAULT_CAMERA_PATH}_uhq`), video, { signal: controller.signal })
       .then((next) => {
         if (cancelled) return next.close()
         connection = next
@@ -247,7 +177,7 @@ export function FocusAssistant() {
       <header className="mb-4 flex items-center gap-3">
         <button
           type="button"
-          onClick={() => void finishAndBack()}
+          onClick={finishAndBack}
           aria-label="Back to Settings"
           className="grid min-h-11 min-w-11 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-2xl text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]"
         >
@@ -260,27 +190,10 @@ export function FocusAssistant() {
       </header>
 
       <div className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-semibold text-[var(--color-text-primary)]">
-              {focusModeActive ? '1080p focus mode active' : 'Standard 720p preview'}
-            </p>
-            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-              {focusModeActive
-                ? `Maximum detail for focusing · returns automatically in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`
-                : 'Temporarily switch to 1920×1080 for more precise manual focus. Live viewing and recording pause briefly.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={modeSwitching}
-            onClick={() => void changeFocusMode(!focusModeActive)}
-            className="min-h-11 shrink-0 rounded-full bg-[var(--color-accent-default)] px-5 font-semibold text-white disabled:cursor-wait disabled:opacity-60"
-          >
-            {modeSwitching ? 'Switching camera…' : focusModeActive ? 'Finish focusing' : 'Enable 1080p focus mode'}
-          </button>
-        </div>
-        {modeError && <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">{modeError}</p>}
+        <p className="font-semibold text-[var(--color-text-primary)]">1080p precision preview</p>
+        <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+          Focus analysis uses a larger 320×320 sample on this phone. Detection remains on its separate 720p stream.
+        </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,.7fr)]">

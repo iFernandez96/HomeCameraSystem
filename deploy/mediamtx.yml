@@ -173,10 +173,15 @@ paths:
     # frames at 60 fps (clearly a stall, not a hiccup). The deeper "Failed to
     # create CaptureSession" startup wedge is handled by the systemd BindsTo +
     # the escalating detection watchdog (restart nvargus-daemon).
-    # The wrapper selects the normal 720p pipeline or a tokenized, five-minute
-    # 1080p focus-assist session. There is still exactly one camera producer.
+    # The wrapper owns one camera capture and tees its NVMM frames into a 720p
+    # publication for detection/default viewing plus a 1080p UHQ publication.
     runOnInit: /home/israel/HomeCameraSystem/deploy/run-camera-pipeline.sh
     runOnInitRestart: yes
+
+  # 1920x1080 viewer-only path. It is published by the same single-camera
+  # pipeline as `cam`; detection deliberately continues reading `cam`.
+  cam_uhq:
+    source: publisher
 
     # Alternative (USB / V4L2 camera) — comment the libargus block above and use this:
     # runOnInit: >-
@@ -194,14 +199,13 @@ paths:
   # CRITICAL — SINGLE-OWNER libargus / SINGLE ENCODE-FROM-SENSOR:
   #   These cam_lq / cam_uq paths DO NOT touch the camera. There is exactly
   #   ONE `nvarguscamerasrc` in this whole file (the `cam` path above) and
-  #   exactly ONE GStreamer `tee` count: zero. Each path below RE-DECODES the
+  #   exactly ONE capture pipeline. Each path below RE-DECODES the
   #   ALREADY-PUBLISHED `rtsp://localhost:8554/cam` H.264 stream via NVDEC
   #   (`nvv4l2decoder`), rescales with the Tegra VIC (`nvvidconv`, which also
   #   downloads NVMM -> system memory), and re-encodes to a smaller rung. This
-  #   is a TRANSCODE of the published stream, NOT a second capture path.
-  #   Do NOT "consolidate" by adding a GStreamer `tee` to the `cam` pipeline
-  #   (libargus is single-owner; a tee on the capture branch is exactly the
-  #   anti-pattern CLAUDE.md forbids).
+  #   is a TRANSCODE of the published stream, NOT a second capture path. The
+  #   capture-side tee in run-camera-pipeline.sh is intentional: it preserves
+  #   one libargus owner while publishing separate 720p and 1080p encodes.
   #
   # CRITICAL — WHY x264enc (SOFTWARE) AND NOT nvv4l2h264enc HERE:
   #   The hardware encoder `nvv4l2h264enc` emits output buffers with

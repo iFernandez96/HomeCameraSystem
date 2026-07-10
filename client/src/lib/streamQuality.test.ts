@@ -88,6 +88,7 @@ describe('resolveAutoQuality', () => {
 describe('pathForQuality', () => {
   it('given each fixed tier, then maps to the MediaMTX path', () => {
     // arrange / act / assert
+    expect(pathForQuality('uhq')).toBe('cam_uhq')
     expect(pathForQuality('hq')).toBe('cam')
     expect(pathForQuality('sd')).toBe('cam_lq')
     expect(pathForQuality('xs')).toBe('cam_uq')
@@ -180,7 +181,7 @@ describe('stream quality persistence', () => {
 
   it('given a value is set, when read back, then round-trips', () => {
     // arrange / act
-    for (const q of ['auto', 'hq', 'sd', 'xs'] as StreamQuality[]) {
+    for (const q of ['auto', 'uhq', 'hq', 'sd', 'xs'] as StreamQuality[]) {
       setStreamQuality(q)
       // assert
       expect(getStreamQuality()).toBe(q)

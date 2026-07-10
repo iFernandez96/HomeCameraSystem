@@ -25,7 +25,7 @@ IMX477 sensor
   → h264parse → watchdog(5 s) → rtspclientsink → MediaMTX :8554/cam
 ```
 
-- **MediaMTX** (native systemd service, deliberately NOT containerized — needs host libargus/L4T GStreamer) owns the single `nvarguscamerasrc`. Exactly one publisher branch, no `tee` (`deploy/mediamtx.yml`).
+- **MediaMTX** (native systemd service, deliberately NOT containerized — needs host libargus/L4T GStreamer) owns the single `nvarguscamerasrc`. One intentional NVMM tee publishes 720p `cam` for detection/default viewing and 1080p `cam_uhq` for explicit UHQ viewing (`deploy/mediamtx.yml`).
 - **Browsers** pull WebRTC via WHEP on `:8889`. ICE config includes Google STUN plus extra host candidates (Tailscale IP + MagicDNS name) and ICE-TCP on `:8189`, because on cellular the in-browser media socket does not ride the Tailscale tunnel — only the HTTPS control plane does.
 - **Adaptive quality rungs** `cam_lq` (854×480 ~700 kbps) and `cam_uq` (640×360 ~400 kbps) are `runOnDemand` transcodes: hardware NVDEC decode → **software** `x264enc tune=zerolatency`. Software encode is mandatory here: transcode-fed NVENC emits non-monotonic PTS that MediaMTX misreads as B-frames and kills every WebRTC reader. Zero cost when nobody selects them (`runOnDemandCloseAfter: 10s`).
 - **The detection worker** re-decodes `rtsp://localhost:8554/cam` via `jetson_utils.videoSource` (NVDEC).
