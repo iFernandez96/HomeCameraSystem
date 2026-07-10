@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
   EventsIcon,
@@ -76,6 +76,7 @@ const NAV_ITEMS: NavItem[] = [
 export function SideRail() {
   const { user, logout } = useAuth()
   const ripple = useRipple()
+  const navigate = useNavigate()
   const navItems =
     isGodModeUser(user)
       ? [...NAV_ITEMS, { to: '/god', label: 'God View', icon: () => <GodViewIcon /> }]
@@ -90,6 +91,21 @@ export function SideRail() {
           <li key={t.to} className="w-full flex justify-center">
             <NavLink
               to={t.to}
+              replace
+              onClick={(event) => {
+                if (
+                  event.defaultPrevented ||
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.altKey ||
+                  event.ctrlKey ||
+                  event.shiftKey
+                ) {
+                  return
+                }
+                event.preventDefault()
+                navigate(t.to, { replace: true })
+              }}
               end={t.to === '/'}
               className={({ isActive }) =>
                 // Playroom Modern (Task 4): same active grammar as the

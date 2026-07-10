@@ -201,6 +201,11 @@ import visit_runtime  # noqa: E402  (continuous-capture wiring + recovery, S4)
 from schedule import in_off_window  # noqa: E402
 from thermal_guard import ThermalGuard, read_gpu_temp_c  # noqa: E402
 from zones import any_box_center_inside_any_zone, sanitize_zones  # noqa: E402
+from wedge_diagnostics import (  # noqa: E402
+    count_argus_pending as _count_argus_pending,
+    parse_free_available_mb as _parse_free_available_mb,
+    parse_nvargus_rss_kb as _parse_nvargus_rss_kb,
+)
 
 # Note: `nvbuf_utils` / `dmabuf_fd` / `gstBufferManager` warnings come straight
 # from C code, not Python's stderr — a Python-level fd-redirect doesn't catch
@@ -341,6 +346,33 @@ def post_event(url, payload, timeout=2.0, metrics=None):
         )
         if metrics is not None:
             metrics.event_post_failures += 1
+
+
+_LIVE_DETECTION_POST_WARN_AT = 0.0
+
+
+def post_live_detection(url, boxes, camera_id, timeout=0.5):
+    """POST an ephemeral live-overlay bbox sample.
+
+    This is intentionally separate from post_event(): failures should not read
+    as lost timeline events, and the route is hot while a person is moving.
+    """
+    global _LIVE_DETECTION_POST_WARN_AT
+    payload = {"boxes": list(boxes or []), "camera_id": camera_id}
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except Exception as e:
+        now = time.time()
+        if now - _LIVE_DETECTION_POST_WARN_AT >= 30.0:
+            _LIVE_DETECTION_POST_WARN_AT = now
+            log.warning(
+                "live_detection POST failed: %s: %s (overlay sample dropped)",
+                type(e).__name__, e,
+            )
 
 
 def _request_json(url, method="GET", payload=None, timeout=2.0):
@@ -921,6 +953,145 @@ def restart_mediamtx():
     return True
 
 
+_FOCUS_MODE_SECONDS = 300
+_FOCUS_MARKER = "/home/israel/HomeCameraSystem/.focus-mode-expires"
+_FOCUS_RESTORE_SCRIPT = "/home/israel/HomeCameraSystem/deploy/restore-focus-mode.sh"
+
+
+def _camera_resolution():
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-rtsp_transport", "tcp",
+                "-select_streams", "v:0", "-show_entries",
+                "stream=width,height", "-of", "csv=p=0",
+                "rtsp://127.0.0.1:8554/cam",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+        )
+        if result.returncode == 0:
+            text = result.stdout.decode("utf-8", "replace").strip()
+            parts = text.split(",")
+            if len(parts) == 2:
+                return (int(parts[0]), int(parts[1]))
+    except Exception:
+        pass
+    return None
+
+
+def _wait_for_camera_resolution(expected, timeout_s=20.0):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _camera_resolution() == expected:
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def _schedule_detection_restart():
+    # The current worker's gstDecoder cannot recover if it opened RTSP during
+    # the mode-switch gap and received 404. Delay gives the host-action thread
+    # time to POST its terminal result before systemd replaces this process.
+    unit = "homecam-focus-detect-restart-{}".format(int(time.time() * 1000))
+    try:
+        result = subprocess.run(
+            [
+                "sudo", "-n", "systemd-run", "--unit", unit,
+                "--on-active=8s", "/bin/systemctl", "restart",
+                "homecam-detect.service",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        log.error("focus detection restart scheduling failed: %s", e)
+        return False
+
+
+def _restart_camera_pipeline_for_focus(expected_resolution):
+    """Release the Argus owner before starting a differently-sized stream."""
+    commands = (
+        ["sudo", "-n", "systemctl", "stop", "mediamtx.service"],
+        ["sudo", "-n", "pkill", "-9", "-f", "gst-launch-1.0.*nvarguscamerasrc"],
+        ["sudo", "-n", "systemctl", "restart", "nvargus-daemon.service"],
+        ["sudo", "-n", "systemctl", "start", "mediamtx.service"],
+    )
+    for attempt in range(2):
+        for index, command in enumerate(commands):
+            try:
+                result = subprocess.run(
+                    command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20
+                )
+            except Exception as e:
+                log.error("focus camera reset raised at step %s: %s", index, e)
+                return False
+            # pkill is best-effort; restarting Argus is authoritative.
+            if result.returncode != 0 and index != 1:
+                log.error(
+                    "focus camera reset failed at step %s: %s",
+                    index,
+                    result.stderr.decode("utf-8", "replace")[-300:],
+                )
+                return False
+            if index == 2:
+                time.sleep(2.0)
+        if _wait_for_camera_resolution(expected_resolution):
+            return _schedule_detection_restart()
+        log.warning(
+            "focus camera reset attempt %s published no %sx%s stream; retrying",
+            attempt + 1, expected_resolution[0], expected_resolution[1],
+        )
+    return False
+
+
+def start_focus_mode():
+    """Atomically select 1080p and arm an independent systemd timeout."""
+    expires = int(time.time()) + _FOCUS_MODE_SECONDS
+    tmp = _FOCUS_MARKER + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(str(expires) + "\n")
+        os.replace(tmp, _FOCUS_MARKER)
+        unit = "homecam-focus-restore-{}".format(expires)
+        scheduled = subprocess.run(
+            [
+                "sudo", "-n", "systemd-run", "--unit", unit,
+                "--on-active={}s".format(_FOCUS_MODE_SECONDS),
+                _FOCUS_RESTORE_SCRIPT, str(expires),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        if scheduled.returncode != 0:
+            raise RuntimeError(
+                scheduled.stderr.decode("utf-8", "replace")[-300:]
+            )
+        if not _restart_camera_pipeline_for_focus((1920, 1080)):
+            raise RuntimeError("camera reset failed")
+        return {"expires_at": expires, "width": 1920, "height": 1080}
+    except Exception as e:
+        try:
+            os.remove(_FOCUS_MARKER)
+        except OSError:
+            pass
+        log.error("focus mode start failed: %s: %s", type(e).__name__, e)
+        _restart_camera_pipeline_for_focus((1280, 720))
+        return None
+
+
+def stop_focus_mode():
+    """Restore the normal pipeline; old tokenized timers become harmless."""
+    try:
+        os.remove(_FOCUS_MARKER)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.error("focus mode marker removal failed: %s", e)
+        return False
+    return _restart_camera_pipeline_for_focus((1280, 720))
+
+
 def escalate_argus_recovery():
     """iter-302 (user "make sure all issues that broke the live feed
     will never happen again"): nvargus-daemon escalation tier.
@@ -1003,7 +1174,7 @@ _HOST_ACTION_SEEN_IDS = set()
 _HOST_ACTION_SEEN_PATH = None
 _HostActionDeps = namedtuple(
     "_HostActionDeps",
-    "restart_mediamtx restart_nvargus do_reboot tail_journal allow_reboot now",
+    "restart_mediamtx restart_nvargus do_reboot tail_journal start_focus_mode stop_focus_mode allow_reboot now",
 )
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
@@ -1084,46 +1255,6 @@ def _clear_watchdog_escalation():
         _WATCHDOG_STATE["level"] = 0
         _WATCHDOG_STATE["last_action_at"] = None
         _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
-
-
-def _parse_nvargus_rss_kb(text):
-    """Best-effort RSS parser for `ps -o pid=,rss=,etime=,cmd=` output."""
-    best = 0.0
-    for line in text.splitlines():
-        parts = line.strip().split(None, 3)
-        if len(parts) < 2:
-            continue
-        try:
-            rss = float(parts[1])
-        except (TypeError, ValueError):
-            continue
-        best = max(best, rss)
-    return best
-
-
-def _parse_free_available_mb(text):
-    """Return the Mem: available column from `free -m` output."""
-    for line in text.splitlines():
-        if not line.startswith("Mem:"):
-            continue
-        parts = line.split()
-        if len(parts) >= 7:
-            try:
-                return float(parts[6])
-            except (TypeError, ValueError):
-                return 0.0
-    return 0.0
-
-
-def _count_argus_pending(text):
-    """Count the known libargus pending/overflow signatures in dmesg."""
-    if not text:
-        return 0.0
-    return float(len(re.findall(
-        r"(Argus OverFlow|too many pending events)",
-        text,
-        flags=re.IGNORECASE,
-    )))
 
 
 def _mirror_watchdog_metrics(metrics, mediamtx_watchdog):
@@ -1420,6 +1551,56 @@ def open_camera(uri, attempts=30, retry_s=2.0):
     raise SystemExit("videoSource never came up: {}".format(last_err))
 
 
+def _close_camera(camera):
+    """Best-effort close for jetson-utils videoSource across JetPack builds."""
+    for method_name in ("Close", "close"):
+        method = getattr(camera, method_name, None)
+        if callable(method):
+            try:
+                method()
+                return True
+            except Exception as e:
+                print(
+                    "[detect] videoSource {}() failed during reopen: {}".format(
+                        method_name, e,
+                    ),
+                    flush=True,
+                )
+                return False
+    return False
+
+
+def reopen_camera_after_watchdog_action(uri, camera, action, attempts=15, retry_s=2.0):
+    """Recreate the RTSP reader after MediaMTX/Argus recovery.
+
+    Live failure seen 2026-07-09: MediaMTX recovered and republished `/cam`,
+    but the existing jetson-utils videoSource kept returning capture timeouts.
+    Browser Retry cannot fix that stale in-process reader; the detector must
+    reconnect to the recovered RTSP publisher.
+    """
+    print(
+        "[detect] reopening videoSource after watchdog action={} uri={}".format(
+            action, uri,
+        ),
+        flush=True,
+    )
+    closed = _close_camera(camera)
+    if closed:
+        print("[detect] previous videoSource closed before reopen", flush=True)
+    else:
+        print(
+            "[detect] previous videoSource had no close hook; replacing object",
+            flush=True,
+        )
+    camera = None
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+    return open_camera(uri, attempts=attempts, retry_s=retry_s)
+
+
 def _handle_capture_failure(
     reason, consecutive_failures, metrics, mediamtx_watchdog, liveness,
 ):
@@ -1596,6 +1777,7 @@ def main():
         "0", "false", "False", "no", "NO", "off", "OFF",
     )
     event_url = _env("EVENT_URL", "http://127.0.0.1:8000/api/_internal/event")
+    live_detection_url = event_url.rsplit("/event", 1)[0] + "/live_detection"
     # iter-288 (security-auditor G1, queued since iter-264): the
     # systemd unit file (`deploy/systemd/homecam-detect.service`) is
     # root-owned + chmod 644 in the operator-blessed deploy, so a
@@ -1839,6 +2021,7 @@ def main():
     heartbeat_url = event_url.rsplit("/", 1)[0] + "/heartbeat"
     start_heartbeat(heartbeat_url, liveness, metrics)
     log.info("heartbeat -> %s", heartbeat_url)
+    log.info("live detection samples -> %s", live_detection_url)
 
     log.info("opening source %s", source_uri)
     camera = open_camera(source_uri)
@@ -1929,6 +2112,7 @@ def main():
     import collections as _collections
     track_deque = _collections.deque(maxlen=512)
     active_tracks = {}  # type: ignore[var-annotated]
+    visit_track_ids = set()
     try:
         import tracks as _tracks_mod
     except Exception as _e:
@@ -1942,6 +2126,91 @@ def main():
             "%s: %s", type(_e).__name__, _e,
         )
         _tracks_mod = None
+
+    def _write_track_sidecar(event_id, track, post_roll_s=None):
+        if _tracks_mod is None:
+            return
+        try:
+            _post_roll_s = (
+                float(post_roll_s)
+                if post_roll_s is not None
+                else float(track.get("post_roll_s", 0.0))
+            )
+            _payload = _tracks_mod.build_payload(
+                event_id, track["event_ts"],
+                track["pre_roll_s"], _post_roll_s, track["samples"],
+            )
+            _ok = _tracks_mod.write_sidecar(recordings_dir, event_id, _payload)
+            if _ok:
+                applog.emit(
+                    "tracks",
+                    "wrote sidecar event_id={} samples={} pre_roll_s={:.3f} "
+                    "duration_s={:.3f}".format(
+                        event_id, len(_payload.get("samples", [])),
+                        float(_payload.get("pre_roll_s", 0.0)),
+                        _post_roll_s,
+                    ),
+                )
+        except Exception as _e:
+            print(
+                "[detect] track sidecar write failed for {}: {}".format(
+                    event_id, _e,
+                ),
+                flush=True,
+            )
+
+    def _sync_visit_track_sidecars(now):
+        """Register/finalize bbox tracks for continuous visit clips.
+
+        The legacy `start_clip` path registers an active track when it forks
+        the per-event recorder. Continuous capture suppresses that path, so it
+        must register visits from the VisitRunner's open table instead.
+        """
+        if _tracks_mod is None:
+            return
+        runner = _VISIT_RUNNER
+        open_visits = getattr(runner, "_open", {}) if runner is not None else {}
+        # Continuous VisitRunner records `start_ts` as the clip-window start
+        # (it already includes any pre-roll). `tracks.build_payload` subtracts
+        # `pre_roll_s` from `event_ts`, so visits must pass 0 here or the
+        # overlay is shifted late by one full pre-roll window.
+        pre_roll_s = 0.0
+        for _vid, _rec in list(open_visits.items()):
+            if _vid not in visit_track_ids:
+                _start_ts = float(_rec.get("start_ts", now))
+                _pre_lo = _start_ts
+                _pre_samples = [
+                    (_t, _b) for (_t, _b) in list(track_deque)
+                    if _t >= _pre_lo
+                ]
+                active_tracks[_vid] = {
+                    "event_ts": _start_ts,
+                    "pre_roll_s": pre_roll_s,
+                    "post_roll_s": 0.0,
+                    "samples": _pre_samples,
+                    "last_seen": float(_rec.get("last_seen", now)),
+                    "visit": True,
+                }
+                visit_track_ids.add(_vid)
+                applog.emit(
+                    "tracks",
+                    "registered continuous visit sidecar event_id={} "
+                    "seed_samples={}".format(_vid, len(_pre_samples)),
+                )
+            else:
+                _track = active_tracks.get(_vid)
+                if _track is not None:
+                    _track["last_seen"] = float(_rec.get("last_seen", now))
+        for _vid in list(visit_track_ids):
+            if _vid in open_visits:
+                continue
+            _track = active_tracks.pop(_vid, None)
+            visit_track_ids.discard(_vid)
+            if _track is None:
+                continue
+            _end_ts = float(_track.get("last_seen", now))
+            _post_roll_s = max(0.0, _end_ts - float(_track["event_ts"]))
+            _write_track_sidecar(_vid, _track, _post_roll_s)
     last_inference = 0.0
     last_detection = 0.0
     last_latest_save = 0.0
@@ -2019,6 +2288,8 @@ def main():
             restart_nvargus=escalate_argus_recovery,
             do_reboot=_do_reboot,
             tail_journal=host_action.tail_journal,
+            start_focus_mode=start_focus_mode,
+            stop_focus_mode=stop_focus_mode,
             allow_reboot=_allow_reboot,
             now=time.time,
         ),
@@ -2054,6 +2325,7 @@ def main():
         try:
             img = camera.Capture(timeout=2000)
         except Exception as e:
+            prev_action_count = mediamtx_watchdog.action_count
             consecutive_failures = _handle_capture_failure(
                 "error: {}".format(e),
                 consecutive_failures,
@@ -2061,6 +2333,13 @@ def main():
                 mediamtx_watchdog,
                 liveness,
             )
+            if (mediamtx_watchdog.action_count != prev_action_count
+                    and _WATCHDOG_STATE.get("last_action") != ACTION_REBOOT):
+                camera = reopen_camera_after_watchdog_action(
+                    source_uri,
+                    camera,
+                    _WATCHDOG_STATE.get("last_action"),
+                )
             continue
         if img is None:
             # iter-264 (camera-library-usage-auditor A1): jetson-utils
@@ -2087,6 +2366,7 @@ def main():
             # an hour with zero recovery action. Move the success
             # reset BELOW this check so it only runs on a real
             # frame (img is not None).
+            prev_action_count = mediamtx_watchdog.action_count
             consecutive_failures = _handle_capture_failure(
                 "timeout (None)",
                 consecutive_failures,
@@ -2094,6 +2374,13 @@ def main():
                 mediamtx_watchdog,
                 liveness,
             )
+            if (mediamtx_watchdog.action_count != prev_action_count
+                    and _WATCHDOG_STATE.get("last_action") != ACTION_REBOOT):
+                camera = reopen_camera_after_watchdog_action(
+                    source_uri,
+                    camera,
+                    _WATCHDOG_STATE.get("last_action"),
+                )
             continue
         # iter-300: real frame received. Reset both the local
         # counter AND the watchdog tally. Pre-iter-300 these were
@@ -2229,6 +2516,7 @@ def main():
             metrics.clips_dropped_disk_floor = (
                 _VISIT_RUNNER.clips_dropped_disk_floor
             )
+            _sync_visit_track_sidecars(now)
         # If the user has disabled detection (manually or via the schedule
         # window), drop the frame without running inference. Worker thus
         # burns no CUDA while still consuming the RTSP stream so it doesn't
@@ -2355,6 +2643,7 @@ def main():
                 continue
             kept.append((d, label))
         if not kept:
+            post_live_detection(live_detection_url, [], camera_id)
             del img
             continue
 
@@ -2405,26 +2694,17 @@ def main():
             if active_tracks:
                 _expired = []
                 for _eid, _track in active_tracks.items():
+                    if _track.get("visit"):
+                        _track["samples"].append((now, list(boxes)))
+                        _track["last_seen"] = now
+                        continue
                     if now > _track["expires_at"]:
                         _expired.append(_eid)
                     else:
                         _track["samples"].append((now, list(boxes)))
                 for _eid in _expired:
                     _track = active_tracks.pop(_eid)
-                    try:
-                        _payload = _tracks_mod.build_payload(
-                            _eid, _track["event_ts"],
-                            _track["pre_roll_s"], _track["post_roll_s"],
-                            _track["samples"],
-                        )
-                        _tracks_mod.write_sidecar(
-                            recordings_dir, _eid, _payload,
-                        )
-                    except Exception as _e:
-                        print(
-                            "[detect] track sidecar write failed for {}: {}".format(_eid, _e),
-                            flush=True,
-                        )
+                    _write_track_sidecar(_eid, _track)
         # iter-191b (Feature #5): zone gate. When the user has drawn
         # zones, drop the event entirely if no detection box's center
         # falls inside any polygon. Empty zones short-circuits to
@@ -2448,8 +2728,10 @@ def main():
                     _ZONE_SUPPRESS_EVERY_S,
                 )
                 last_zone_suppress_log = now
+            post_live_detection(live_detection_url, [], camera_id)
             del img
             continue
+        post_live_detection(live_detection_url, boxes, camera_id)
         # Compute the top-confidence detection now — it drives the presence
         # key and the rest of the emit path.
         top_d, top_label = max(kept, key=lambda dl: dl[0].Confidence)
@@ -2482,6 +2764,7 @@ def main():
                 runtime.absence_finalize_s, runtime.max_visit_s,
                 boxes=boxes, cuda_img=img,
             )
+            _sync_visit_track_sidecars(now)
             del img
             continue
         # Presence-coalescing gate (replaces the old flat per-key cooldown).

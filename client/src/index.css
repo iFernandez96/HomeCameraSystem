@@ -13,7 +13,20 @@
  * a Tailwind default breakpoint (those are width-only); this is an
  * explicit orientation+height compound condition, hence the custom
  * variant per the Tailwind v4 arbitrary-media escape hatch. */
-@custom-variant landscape-phone (@media (orientation: landscape) and (max-height: 520px));
+@custom-variant landscape-phone (@media (orientation: landscape) and (max-height: 520px) and (max-width: 1023px));
+@custom-variant tablet-landscape (@media (orientation: landscape) and (min-width: 768px) and (max-width: 1023px) and (min-height: 521px));
+
+@media (hover: hover) and (pointer: fine) {
+  .fine-pointer-delete {
+    opacity: 0;
+  }
+
+  .group:hover .fine-pointer-delete,
+  .group:focus-within .fine-pointer-delete,
+  .fine-pointer-delete:focus-visible {
+    opacity: 1;
+  }
+}
 
 /* Premium-launch slice — self-hosted variable fonts.
  *
@@ -517,6 +530,24 @@ body {
    * px Inter. Firefox/macOS counterpart for parity. */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html.homecam-watch-route,
+body.homecam-watch-route {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.bottomnav-inner {
+  padding-left: max(0px, env(safe-area-inset-left));
+  padding-right: max(0px, env(safe-area-inset-right));
+}
+
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 1023px) {
+  .bottomnav-inner {
+    padding-left: 0;
+    padding-right: 0;
+  }
 }
 
 /* iter-356.66 (iOS edge-cases audit H): suppress iOS Safari's long-

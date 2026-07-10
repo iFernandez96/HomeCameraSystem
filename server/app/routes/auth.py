@@ -123,6 +123,7 @@ class MeOut(BaseModel):
 
 def _set_session_cookies(
     response: Response,
+    request: Request,
     username: str,
     role: str,
 ) -> tuple[str, str]:
@@ -143,12 +144,18 @@ def _set_session_cookies(
     refresh_jti = uuid.uuid4().hex
     access = tokens.issue(username, "access", role=role, jti=access_jti)
     refresh = tokens.issue(username, "refresh", role=role, jti=refresh_jti)
+    # The native wrapper intentionally falls back from the Tailscale HTTPS URL
+    # to the Jetson's LAN HTTP URL when the phone's VPN/MagicDNS is offline.
+    # A Secure cookie is silently discarded on that HTTP fallback (login 200,
+    # immediately followed by an unauthenticated /api/status). Preserve Secure
+    # on real HTTPS while allowing the explicitly-supported LAN transport.
+    cookie_secure = settings.cookie_secure and request.url.scheme == "https"
     response.set_cookie(
         COOKIE_ACCESS,
         access,
         max_age=settings.access_token_ttl_s,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=cookie_secure,
         samesite="strict",
         path="/api",
     )
@@ -157,7 +164,7 @@ def _set_session_cookies(
         refresh,
         max_age=settings.refresh_token_ttl_s,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=cookie_secure,
         samesite="strict",
         path="/api",
     )
@@ -249,7 +256,7 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
         raise HTTPException(status_code=401, detail="invalid credentials")
     now = time.time()
     access_jti, refresh_jti = _set_session_cookies(
-        response, user["username"], user["role"]
+        response, request, user["username"], user["role"]
     )
     _try_create_session_row(
         request=request,
@@ -348,7 +355,7 @@ async def refresh(
         )
         raise HTTPException(status_code=401, detail="session expired")
     access_jti, refresh_jti = _set_session_cookies(
-        response, user["username"], user["role"]
+        response, request, user["username"], user["role"]
     )
     if session_row is not None and isinstance(old_refresh_jti, str):
         try:

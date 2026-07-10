@@ -53,6 +53,24 @@ def _normalize(command: str) -> str:
     return re.sub(r"\s+", " ", expanded)
 
 
+def _camera_publish_script(paths: dict) -> str:
+    """Resolve the committed camera publisher referenced by ``runOnInit``.
+
+    The camera pipeline is a script because it selects temporary focus mode at
+    runtime.  Keep the config-to-script boundary pinned while inspecting the
+    actual pipeline rather than assuming it remains inline YAML.
+    """
+    command = paths["cam"]["runOnInit"].strip()
+    script = Path(command.split()[0])
+    if script.is_absolute():
+        try:
+            script = _REPO_ROOT / script.relative_to("/home/israel/HomeCameraSystem")
+        except ValueError:
+            pytest.fail("cam runOnInit points outside the deployed project: {}".format(script))
+    assert script.is_file(), "cam runOnInit script is missing: {}".format(script)
+    return _normalize(script.read_text(encoding="utf-8"))
+
+
 @pytest.mark.parametrize("rung", ["cam_lq", "cam_uq"])
 def test_Given_mediamtx_config_When_loaded_Then_adaptive_rung_path_exists(paths, rung):
     # arrange / act
@@ -130,7 +148,7 @@ def test_Given_hq_cam_path_When_inspected_Then_keeps_hardware_encoder(paths):
     encodes live sensor frames (monotonic PTS, WebRTC-safe) and full-res
     software encode would be far too costly on the Nano."""
     # arrange / act
-    command = _normalize(paths["cam"]["runOnInit"])
+    command = _camera_publish_script(paths)
     # assert
     assert "nvv4l2h264enc" in command, "HQ cam path must keep the hardware encoder"
     assert "nvarguscamerasrc" in command, "HQ cam path is the single capture path"
@@ -143,7 +161,7 @@ def test_Given_hq_cam_path_When_inspected_Then_has_mid_stream_stall_watchdog(pat
     sits AFTER h264parse (post-encoder, regular memory) so it can't perturb
     the NVMM zero-copy path."""
     # arrange / act
-    command = _normalize(paths["cam"]["runOnInit"])
+    command = _camera_publish_script(paths)
     # assert — watchdog present, with a finite (non-zero = enabled) timeout,
     # and downstream of the encoder/parser (not on the NVMM sensor caps).
     assert "watchdog timeout=5000" in command, "publish pipeline must have a stall watchdog"

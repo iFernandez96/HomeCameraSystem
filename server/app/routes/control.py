@@ -152,6 +152,11 @@ class _RecoverBody(BaseModel):
     confirm: bool
 
 
+class _FocusModeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
 _LOG_UNITS = ("homecam-detect", "mediamtx", "nvargus-daemon", "homecam-server")
 
 
@@ -339,7 +344,44 @@ async def system_recover_status(
         "requested_by": rec.get("requested_by"),
         "requested_at": rec.get("requested_at"),
         "result_at": rec.get("result_at"),
+        "result": rec.get("result"),
         "worker_online": worker_health.is_alive(),
+    }
+
+
+@router.post(
+    "/camera/focus-mode",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def camera_focus_mode(
+    body: _FocusModeBody,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
+    """Queue a temporary 1080p mode or restore the normal 720p pipeline."""
+    kind = "focus_start" if body.enabled else "focus_stop"
+    rec = host_bridge.enqueue(kind, {}, requested_by=user, now=time.time())
+    # The audit schema intentionally has a closed action vocabulary. Record
+    # this as its underlying mediamtx lifecycle action and keep the mode in
+    # detail rather than weakening that constraint.
+    try:
+        audit_db.insert_host_action_event(
+            settings.audit_db_path,
+            ts=time.time(),
+            username=user,
+            action="mediamtx",
+            request_id=rec["id"],
+            phase="requested",
+            status=None,
+            detail="camera_focus_mode={}".format("1080p" if body.enabled else "720p"),
+        )
+    except Exception:
+        log.warning("focus mode request audit failed id=%s", rec["id"], exc_info=True)
+    return {
+        "ok": True,
+        "request_id": rec["id"],
+        "status": rec["status"],
+        "worker_online": worker_health.is_alive(),
+        "timeout_s": 300 if body.enabled else 0,
     }
 
 
@@ -552,6 +594,41 @@ _TIMELAPSE_STATUS: dict[str, dict] = {}
 _TIMELAPSE_TASKS: set[asyncio.Task] = set()
 
 
+def _job_to_status(job: dict) -> dict[str, object]:
+    state = job["state"]
+    return {
+        "building": state in ("queued", "running"),
+        "ready": state == "ready",
+        "error": job.get("error"),
+    }
+
+
+def _start_timelapse_task(date: str, requested_by: str | None) -> None:
+    task = asyncio.create_task(_run_timelapse_build(date, requested_by))
+    _TIMELAPSE_TASKS.add(task)
+    task.add_done_callback(_TIMELAPSE_TASKS.discard)
+
+
+def reconcile_timelapse_jobs() -> int:
+    """Resume builds left queued/running by an unclean server exit."""
+    from ..services import timelapse_jobs
+
+    resumed = 0
+    for job in timelapse_jobs.unfinished(settings.timelapses_dir):
+        date = job["date"]
+        if (settings.timelapses_dir / f"{date}.mp4").exists():
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "ready")
+            _TIMELAPSE_STATUS[date] = {"building": False, "ready": True, "error": None}
+            continue
+        timelapse_jobs.set_state(
+            settings.timelapses_dir, date, "queued", requested_by=job["requested_by"]
+        )
+        _TIMELAPSE_STATUS[date] = {"building": True, "ready": False, "error": None}
+        _start_timelapse_task(date, job["requested_by"])
+        resumed += 1
+    return resumed
+
+
 async def _notify_timelapse_done(
     user: str | None, date: str, ok: bool, reason: str | None
 ) -> None:
@@ -594,6 +671,10 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
     `_TIMELAPSE_STATUS` for the status endpoint, and Web-Push the requester
     (`requested_by`) when it finishes."""
     from ..services import timelapse as _timelapse_service
+    from ..services import timelapse_jobs
+    timelapse_jobs.set_state(
+        settings.timelapses_dir, date, "running", requested_by=requested_by
+    )
     ok = False
     reason = None  # human-readable failure reason, also the push body on fail
     try:
@@ -601,6 +682,7 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
         if result.ok:
             log.info("timelapse built for %s: %d clips", date, result.clip_count)
             _TIMELAPSE_STATUS[date] = {"building": False, "ready": True, "error": None}
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "ready")
             ok = True
         elif result.clip_count == 0:
             log.info("timelapse skipped for %s: no clips", date)
@@ -608,6 +690,7 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
             _TIMELAPSE_STATUS[date] = {
                 "building": False, "ready": False, "error": reason,
             }
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "failed", error=reason)
         else:
             log.warning("timelapse build failed for %s: %s", date, result.error)
             reason = "Couldn't build timelapse: {0}".format(
@@ -616,12 +699,14 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
             _TIMELAPSE_STATUS[date] = {
                 "building": False, "ready": False, "error": reason,
             }
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "failed", error=reason)
     except Exception:
         log.exception("timelapse background build crashed for %s", date)
         reason = "Timelapse build crashed — see server logs."
         _TIMELAPSE_STATUS[date] = {
             "building": False, "ready": False, "error": reason,
         }
+        timelapse_jobs.set_state(settings.timelapses_dir, date, "failed", error=reason)
     # Notify the requester last, after status is settled (best-effort).
     await _notify_timelapse_done(requested_by, date, ok, reason)
 
@@ -639,6 +724,10 @@ async def system_timelapse(
     # dependency above gates access; this resolves who to notify.
     expected_url = f"/api/timelapses/{body.date}.mp4"
     existing = _TIMELAPSE_STATUS.get(body.date)
+    from ..services import timelapse_jobs
+    durable = timelapse_jobs.get(settings.timelapses_dir, body.date)
+    if existing is None and durable is not None:
+        existing = _job_to_status(durable)
     if existing is not None and existing.get("building"):
         # De-dupe: a build for this day is already running. Don't spawn a
         # second concurrent ffmpeg (they'd race on the same .tmp).
@@ -652,9 +741,10 @@ async def system_timelapse(
     # Mark building SYNCHRONOUSLY (before create_task) so two rapid POSTs
     # can't both pass the guard above.
     _TIMELAPSE_STATUS[body.date] = {"building": True, "ready": False, "error": None}
-    task = asyncio.create_task(_run_timelapse_build(body.date, user))
-    _TIMELAPSE_TASKS.add(task)
-    task.add_done_callback(_TIMELAPSE_TASKS.discard)
+    timelapse_jobs.set_state(
+        settings.timelapses_dir, body.date, "queued", requested_by=user
+    )
+    _start_timelapse_task(body.date, user)
     log.info("timelapse build started (background) for %s", body.date)
     return {
         "ok": True,
@@ -677,6 +767,11 @@ async def system_timelapse_status(
     restarted mid/after a build, or it was built in a prior session)."""
     expected_url = f"/api/timelapses/{date}.mp4"
     st = _TIMELAPSE_STATUS.get(date)
+    if st is None:
+        from ..services import timelapse_jobs
+        job = timelapse_jobs.get(settings.timelapses_dir, date)
+        if job is not None:
+            st = _job_to_status(job)
     if st is None:
         exists = (settings.timelapses_dir / f"{date}.mp4").exists()
         return {
@@ -842,7 +937,7 @@ async def system_update(
     response["host_commands"] = list(result.host_commands)
     response["restart_required"] = bool(result.applied)
     if result.phase == "manifest_gate" and result.reason == "missing":
-        response["note"] = "scaffold: update manifest is not present"
+        response["note"] = "No signed update manifest is currently staged."
     return response
 
 
@@ -1019,6 +1114,9 @@ async def delete_timelapse(
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="invalid path")
     if not resolved.exists():
+        from ..services import timelapse_jobs
+        timelapse_jobs.delete(settings.timelapses_dir, date)
+        _TIMELAPSE_STATUS.pop(date, None)
         return {"deleted": False, "date": date}
     try:
         resolved.unlink()
@@ -1037,5 +1135,8 @@ async def delete_timelapse(
         sidecar.unlink()
     except OSError:
         pass
+    from ..services import timelapse_jobs
+    timelapse_jobs.delete(settings.timelapses_dir, date)
+    _TIMELAPSE_STATUS.pop(date, None)
     log.info("timelapse deleted for %s", date)
     return {"deleted": True, "date": date}

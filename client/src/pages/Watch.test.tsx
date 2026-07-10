@@ -46,6 +46,8 @@ vi.mock('../components/VideoTile', () => ({
     onPlayingChange,
     actions,
     showFullscreenButton,
+    showQualityMenu,
+    showBoxToggle,
     streamPath,
   }: {
     fit?: string
@@ -53,6 +55,8 @@ vi.mock('../components/VideoTile', () => ({
     onPlayingChange?: (playing: boolean) => void
     actions?: ReactNode
     showFullscreenButton?: boolean
+    showQualityMenu?: boolean
+    showBoxToggle?: boolean
     streamPath?: string
   }) => (
     <div
@@ -60,6 +64,8 @@ vi.mock('../components/VideoTile', () => ({
       data-fit={fit}
       data-show-status-pill={String(showStatusPill)}
       data-stream-path={streamPath}
+      data-show-quality-menu={String(showQualityMenu)}
+      data-show-box-toggle={String(showBoxToggle)}
     >
       {/* Status-truth fix test hooks: the real VideoTile fires
           onPlayingChange on confirmed 'live'/'error' transitions —
@@ -157,23 +163,28 @@ beforeEach(() => {
 })
 
 describe('Watch — Home screen (Playroom Modern)', () => {
-  it('Given a healthy armed camera, When the page renders, Then the heading reads Home, the docked video shows only the camera-name pill, and the glance card owns the armed state in the shared ribbon vocabulary (overhaul W1 item 2)', async () => {
+  it('Given a healthy single camera, When the page renders, Then docked video omits the redundant camera-name pill and the glance card owns armed state', async () => {
     // arrange / act
     renderWatch()
 
-    // assert — page heading + glance card copy carry the armed state.
-    // The glance headline now speaks the ONE shared vocabulary from
+    // assert — page heading + live bottom-card copy carry the armed state.
+    // The live summary headline now speaks the ONE shared vocabulary from
     // lib/watchState.ts ("On watch", same as the ribbon), replacing
     // the page-local "Watching" synonym.
     expect(screen.getByRole('heading', { name: 'Home', level: 1 })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('On watch')).toBeInTheDocument()
     })
-    expect(screen.getByText(/is on watch · alerts on/)).toBeInTheDocument()
+    expect(document.body).toHaveTextContent(/is on watch · alerts on/)
+    const strip = screen.getByTestId('live-glance-strip')
+    expect(screen.getByTestId('live-viewport')).toContainElement(strip)
+    expect(strip.className).toMatch(/border-t/)
+    expect(strip.className).toMatch(/bg-black\/88/)
+    expect(strip.className).not.toMatch(/absolute/)
     // Fuzz F3/F9/F13 still holds: the armed state renders exactly ONCE
     // docked (the glance card) — no duplicate pill over the video.
     expect(screen.getAllByText('On watch')).toHaveLength(1)
-    expect(screen.getByText('Front Door')).toBeInTheDocument()
+    expect(screen.queryByText('Front Door')).not.toBeInTheDocument()
   })
 
   it("Given events today, When the timeline loads, Then rows show who appeared and tapping one opens the clip", async () => {
@@ -195,7 +206,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.getByRole('dialog', { name: 'clip:k1' })).toBeInTheDocument()
   })
 
-  it('Given repeat sightings of one person today, When the glance card renders, Then the count reads as sightings not distinct people (painfix wave B #1)', async () => {
+  it('Given repeat sightings of one person today, When the live summary renders, Then the count reads as sightings not distinct people (painfix wave B #1)', async () => {
     // arrange — the same person crossing the porch many times in one
     // day used to read "50 people"; every row here is label 'person'
     // so the honest word is "sightings", not a head count.
@@ -210,7 +221,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('3 person sightings · 1 cat sighting')).toBeInTheDocument()
+      expect(document.body).toHaveTextContent('3 person sightings · 1 cat sighting')
     })
   })
 
@@ -229,6 +240,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     captureSnapshot.mockResolvedValue({ ok: true, url: '/snapshots/x.jpg' })
     const user = userEvent.setup()
     renderWatch()
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
 
     // act
     await user.click(screen.getByRole('button', { name: 'Snapshot' }))
@@ -241,7 +253,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     })
   })
 
-  it('Given the docked live tile, When rendered, Then Snapshot + expand are the ONLY corner buttons and sit inside VideoTile-owned single row, not a second Watch-owned overlay (control-overlap fix)', () => {
+  it('Given the docked live tile, When rendered, Then camera actions remain available below video and Expand is the only over-video corner button', () => {
     // arrange / act
     renderWatch()
 
@@ -253,7 +265,9 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     const snapshotBtn = screen.getByRole('button', { name: 'Snapshot' })
     const expandBtn = screen.getByRole('button', { name: 'Full screen live view' })
     expect(row).toContainElement(snapshotBtn)
-    expect(row).toContainElement(expandBtn)
+    expect(row).not.toContainElement(expandBtn)
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-quality-menu', 'true')
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-box-toggle', 'true')
     // VideoTile's own native-fullscreen button must be suppressed —
     // Watch's CSS docked/full toggle is the one canonical "make it
     // bigger" affordance; two competing fullscreen buttons was part
@@ -347,7 +361,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await waitFor(() => expect(viewport.className).toMatch(/relative/))
   })
 
-  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the glance card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled glance card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
+  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the live bottom card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled live card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -375,7 +389,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
   // -dead always wins regardless of video; status-unreachable +
   // video-confirmed-not-playing is a real "both channels dark" outage.
 
-  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the glance card shows the reconnecting copy, not Camera offline', async () => {
+  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the live bottom card shows the reconnecting copy, not Camera offline', async () => {
     // arrange — /api/status errors on every poll (simulates the
     // server-restart window); the stubbed VideoTile drives its own
     // onPlayingChange signal via the test-hook button.
@@ -520,6 +534,28 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     }
   })
 
+  it('Given docked mode on a landscape device, When rendered, Then the video uses object-contain so the camera aspect ratio stays honest', () => {
+    // arrange — matchMedia('(orientation: landscape)') reports landscape.
+    const originalMatchMedia = window.matchMedia
+    const mql = {
+      matches: true,
+      media: '(orientation: landscape)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    window.matchMedia = vi.fn().mockReturnValue(mql) as unknown as typeof window.matchMedia
+    try {
+      // act
+      renderWatch()
+
+      // assert
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-fit', 'contain')
+    } finally {
+      window.matchMedia = originalMatchMedia
+    }
+  })
+
+
   it('Given the docked viewport, When rendered, Then VideoTile owns the ONE status pill (showStatusPill=true) and fullscreen turns it off in favor of the combined cluster (fuzz F3/F7/F13)', async () => {
     // arrange
     const user = userEvent.setup()
@@ -544,6 +580,24 @@ describe('Watch — Home screen (Playroom Modern)', () => {
         'false',
       ),
     )
+  })
+
+  it('Given docked live video, When the scene is tapped, Then over-video chrome hides and a second tap restores it without hiding the below-video toolbar', async () => {
+    const user = userEvent.setup()
+    renderWatch()
+    const scene = screen.getByTestId('live-scene')
+
+    expect(screen.getByRole('button', { name: 'Full screen live view' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Snapshot' })).toBeInTheDocument()
+
+    await user.click(scene)
+    expect(screen.queryByRole('button', { name: 'Full screen live view' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-status-pill', 'false')
+    expect(screen.getByRole('button', { name: 'Snapshot' })).toBeInTheDocument()
+
+    await user.click(scene)
+    expect(screen.getByRole('button', { name: 'Full screen live view' })).toBeInTheDocument()
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-status-pill', 'true')
   })
 
   // Fuzz F5: the fullscreen thumb rail (Snapshot) clipped under the
@@ -766,9 +820,90 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // the contract, mirroring the proven landscape-phone pattern).
     const root = container.firstElementChild as HTMLElement
     expect(root.className).toMatch(/lg:grid /)
+    expect(root.className).toMatch(
+      /landscape-phone:grid-cols-\[minmax\(0,1fr\)_clamp\(22rem,32vw,29rem\)\]/,
+    )
+    expect(root.className).toMatch(/landscape-phone:gap-x-4/)
     expect(root.className).toMatch(/lg:grid-cols-\[minmax\(0,1fr\)_minmax\(20rem,26rem\)\]/)
     expect(root.className).toMatch(/lg:max-w-\[100rem\]/)
-    expect(root.className).toMatch(/lg:overflow-hidden/)
+    expect(root.className).toMatch(/overflow-hidden/)
+  })
+
+  it('Given Watch renders, Then only the Today at home section owns vertical scrolling', () => {
+    // arrange / act
+    const { container } = renderWatch()
+
+    // assert — root/page and lower pane are height-bounded; the
+    // timeline section itself is the scroll container so the live view
+    // stays anchored.
+    const root = container.firstElementChild as HTMLElement
+    expect(root.className).toMatch(/h-\[calc\(100dvh-var\(--ribbon-h,0px\)\)\]/)
+    expect(root.className).toMatch(/overflow-hidden/)
+
+    const timeline = screen.getByLabelText("Today's activity")
+    expect(timeline.className).toMatch(/flex/)
+    expect(timeline.className).toMatch(/min-h-0/)
+    expect(timeline.className).toMatch(/flex-1/)
+    expect(timeline.className).toMatch(/landscape-phone:order-2/)
+    expect(timeline.className).toMatch(/landscape-phone:pt-0/)
+    expect(timeline.className).toMatch(/landscape-phone:pb-2/)
+    expect(timeline.className).toMatch(/landscape-phone:scrollbar-hide/)
+    expect(timeline.className).toMatch(/pb-\[calc\(6rem\+env\(safe-area-inset-bottom\)\)\]/)
+    expect(timeline.className).toMatch(/overflow-y-auto/)
+    expect(timeline.className).toMatch(/overscroll-contain/)
+    expect(timeline.className).toMatch(/touch-pan-y/)
+
+    const list = timeline.querySelector('ol') as HTMLOListElement | null
+    expect(list).not.toBeNull()
+    expect(list!.className).not.toMatch(/overflow-y-auto/)
+  })
+
+  it('Given a landscape phone viewport, When Watch renders, Then the live bottom cards stay compact so Today at home remains visible', () => {
+    // arrange / act
+    const { container } = renderWatch()
+
+    // assert — in the short landscape viewport the visible title/brand
+    // row is removed from the layout but the header itself can still
+    // host real controls such as the multicam switcher. The live
+    // video remains a true camera-aspect surface, and the status
+    // summary belongs to the live tile instead of consuming the event rail.
+    const header = container.querySelector('header') as HTMLElement | null
+    expect(header).not.toBeNull()
+    expect(header!.className).toMatch(/landscape-phone:col-span-2/)
+    expect(header!.className).toMatch(/landscape-phone:p-0/)
+    const titleRow = header!.querySelector('div') as HTMLElement | null
+    expect(titleRow).not.toBeNull()
+    expect(titleRow!.className).toMatch(/landscape-phone:sr-only/)
+
+    const live = screen.getByTestId('live-viewport')
+    expect(live.className).toMatch(/landscape-phone:m-0/)
+    expect(live.className).toMatch(/landscape-phone:ml-2/)
+    expect(live.className).toMatch(/landscape-phone:mt-12/)
+    expect(live.className).toMatch(/landscape-phone:self-start/)
+    expect(live.className).not.toMatch(/landscape-phone:self-center/)
+    expect(live.className).toMatch(/landscape-phone:w-full/)
+    expect(live.className).not.toMatch(/landscape-phone:h-full/)
+    expect(live.className).toMatch(/landscape-phone:rounded-\[var\(--radius-xl\)\]/)
+
+    const strip = screen.getByTestId('live-glance-strip')
+    expect(live).toContainElement(strip)
+    expect(strip.className).toMatch(/shrink-0/)
+    expect(strip.className).toMatch(/landscape-phone:py-1\.5/)
+    expect(strip.className).not.toMatch(/absolute/)
+    const stripGrid = strip.querySelector('.grid') as HTMLElement | null
+    expect(stripGrid).not.toBeNull()
+    expect(stripGrid!.className).toMatch(/grid-cols-2/)
+
+    const lowerPane = container.querySelector(
+      '.landscape-phone\\:col-start-2',
+    ) as HTMLElement | null
+    expect(lowerPane).not.toBeNull()
+    expect(lowerPane!.className).toMatch(/landscape-phone:pt-12/)
+    expect(lowerPane).not.toContainElement(strip)
+
+    const timeline = screen.getByLabelText("Today's activity")
+    expect(timeline.className).toMatch(/landscape-phone:order-2/)
+    expect(timeline.className).toMatch(/landscape-phone:scrollbar-hide/)
   })
 
   it('Given fullscreen, When the exit control renders, Then it meets the 44px touch floor (overhaul W1 item 4, frank#1 / hari REACH-2)', async () => {

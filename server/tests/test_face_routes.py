@@ -497,7 +497,7 @@ def test_when_owner_uploads_bootstrap_photo_then_jpeg_lands_under_name_dir(
     body = r.json()
     assert body["ok"] is True
     # Stub-with-note pattern: client branches on `r.note`.
-    assert "scaffold" in body["note"].lower()
+    assert "training queue" in body["note"].lower()
     assert body["saved_to"].startswith("carol/")
     assert body["saved_to"].endswith("_bootstrap.jpg")
     # File actually written.
@@ -585,23 +585,25 @@ def test_when_anonymous_bootstraps_then_401(client_anon, captures_root):
     assert r.status_code == 401
 
 
-def test_when_owner_calls_retrain_then_returns_stub_with_note(
+def test_Given_owner_When_capabilities_requested_Then_retrain_is_unavailable(
     client, captures_root,
 ):
-    # arrange — Phase 4 stub.
+    r = client.get("/api/face/capabilities")
 
-    # act
-    r = client.post("/api/face/retrain")
-
-    # assert
     assert r.status_code == 200
     body = r.json()
-    assert body["ok"] is True
-    # The "scaffold" wording is the discriminator the client checks.
-    # If a future iter wires the actual subprocess, this assertion
-    # FIRES (caught by test failure) so the wording can't drift
-    # without the audit.
-    assert "scaffold" in body["note"].lower()
+    assert body["bootstrap"] is True
+    assert body["retrain"] is False
+    assert "host" in body["retrain_reason"].lower()
+
+
+def test_Given_owner_When_retrain_called_without_helper_Then_503(
+    client, captures_root,
+):
+    r = client.post("/api/face/retrain")
+
+    assert r.status_code == 503
+    assert "host" in r.json()["detail"].lower()
 
 
 def test_when_anonymous_calls_retrain_then_401(client_anon, captures_root):

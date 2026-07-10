@@ -64,7 +64,7 @@
  *   1. No horizontal overflow: shell.scrollWidth ≤ window.innerWidth+1.
  *   2. A level-1 heading is present.
  *   3. At least one primary action button is reachable by role.
- *   4. The shell <main> carries the pb-[calc(5rem+env(safe-area-
+ *   4. The shell <main> carries the pb-[calc(6rem+env(safe-area-
  *      inset-bottom))] bottom-nav-clearance pad.
  */
 
@@ -287,7 +287,7 @@ function setViewport(width: number) {
 // clamped to window.innerWidth + style overflowX:hidden? NO — we
 // want overflow to be observable, so width is unconstrained and we
 // measure scrollWidth directly.
-const MAIN_PAD_CLASS = 'pb-[calc(5rem+env(safe-area-inset-bottom))]'
+const MAIN_PAD_CLASS = 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
 
 function TestShell({ children }: { children: ReactNode }) {
   return (
@@ -375,7 +375,7 @@ describe('viewport matrix — JSDOM smoke', () => {
 
           // assert — pad class survives
           expect(main.className).toMatch(
-            /pb-\[calc\(5rem\+env\(safe-area-inset-bottom\)\)\]/,
+            /pb-\[calc\(6rem\+env\(safe-area-inset-bottom\)\)\]/,
           )
 
           // assert — level-1 heading exists (sr-only OR visible).

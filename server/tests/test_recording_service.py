@@ -7,6 +7,7 @@ storage/retention surface.
 from __future__ import annotations
 
 import time
+import json
 
 import pytest
 
@@ -64,6 +65,50 @@ def test_clip_exists_true_after_write(rec_dir):
 def test_clip_exists_false_for_invalid_id(rec_dir):
     """Invalid id → False (don't raise; clip_path catches it)."""
     assert recording_service.clip_exists("../etc/passwd") is False
+
+
+def test_clip_state_reads_worker_ledger_when_clip_missing(rec_dir):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-001": {
+                "event_id": "evt-001",
+                "state": "recording",
+                "start_ts": 100.0,
+                "last_seen": 105.0,
+            },
+        },
+    }))
+
+    state = recording_service.clip_state("evt-001")
+
+    assert state["state"] == "recording"
+    assert state["source"] == "ledger"
+    assert state["last_seen"] == 105.0
+
+
+def test_clip_state_disk_available_wins_over_stale_ledger(rec_dir):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"evt-001": {"state": "recording"}},
+    }))
+    (rec_dir / "evt-001.mp4").write_bytes(b"fake")
+
+    state = recording_service.clip_state("evt-001")
+
+    assert state["state"] == "available"
+    assert state["source"] == "disk"
+    assert state["bytes"] == 4
+
+
+def test_clip_state_unknown_when_no_file_or_ledger_entry(rec_dir):
+    assert recording_service.clip_state("evt-ghost") == {
+        "event_id": "evt-ghost",
+        "state": "unknown",
+        "source": "missing",
+    }
 
 
 def test_delete_clip_removes_existing(rec_dir):

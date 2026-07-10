@@ -96,7 +96,7 @@ export function WatchRibbon() {
       // it only when the OS reports an inset.
       // Nav-coherence fix (painfix): on landscape-phone, BottomNav docks
       // as a left rail (App.tsx's <main> reserves
-      // `landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))]` for
+      // `landscape-phone:ml-[calc(4rem+env(safe-area-inset-left))]` for
       // it). This full-bleed sticky ribbon had no matching inset, so
       // its `bg-[var(--color-surface-scrim)]` surface painted straight
       // OVER the rail on every non-Watch route (the rail sits at z-10,
@@ -107,7 +107,7 @@ export function WatchRibbon() {
       // mirroring exactly the calc `<main>` already uses. Portrait and
       // desktop (`lg:`) are untouched — the rail only docks left under
       // `landscape-phone:`.
-      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface-scrim)] backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))]"
+      className="flex items-center justify-between min-h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface-scrim)] backdrop-blur sticky top-0 z-[15] shadow-[var(--shadow-subtle)] landscape-phone:ml-[calc(4rem+env(safe-area-inset-left))]"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
         paddingLeft: 'max(1rem, env(safe-area-inset-left))',

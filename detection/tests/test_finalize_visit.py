@@ -16,6 +16,7 @@ display PTS (no backward jump) and a clean real-decode validate.
 BDD-lite: Given/When/Then names + arrange/act/assert bodies.
 """
 import os
+import json
 import shutil as _shutil
 import subprocess
 import sys
@@ -73,6 +74,9 @@ def test_given_empty_scratch_when_finalize_then_false_and_no_output(tmp_path):
     assert ok is False
     assert not (Path(rec.recordings_dir) / "abc.mp4").exists()
     assert not (Path(rec.recordings_dir) / "abc.mp4.tmp").exists()
+    ledger = json.loads((Path(rec.recordings_dir) / ".clip_state.json").read_text())
+    assert ledger["events"]["abc"]["state"] == "failed"
+    assert ledger["events"]["abc"]["reason"] == "finalize_failed"
 
 
 def test_given_missing_scratch_dir_when_finalize_then_false_no_crash(tmp_path):
@@ -142,6 +146,9 @@ def test_given_segments_when_finalize_then_concat_argv_is_copy_mp4(tmp_path):
     assert "concat" in concat_cmd and "-safe" in concat_cmd
     # output is the .tmp sidecar, NOT the final
     assert concat_cmd[-1].endswith("abc.mp4.tmp")
+    ledger = json.loads((Path(rec.recordings_dir) / ".clip_state.json").read_text())
+    assert ledger["events"]["abc"]["state"] == "available"
+    assert ledger["events"]["abc"]["bytes"] == 4096
 
 
 def test_given_concat_call_when_finalize_then_timeout_scales_with_bytes(tmp_path):

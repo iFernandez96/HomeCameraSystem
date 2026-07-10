@@ -30,6 +30,8 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DASHBOARD_DIR = _REPO_ROOT / "deploy" / "grafana" / "dashboards"
 _METRICS_SRC = _REPO_ROOT / "server" / "app" / "routes" / "metrics_prom.py"
+_PROMETHEUS_CONFIG = _REPO_ROOT / "deploy" / "prometheus" / "prometheus.yml"
+_PROMETHEUS_ALERTS = _REPO_ROOT / "deploy" / "prometheus" / "alerts.yml"
 
 
 def _exposed_metric_names() -> set[str]:
@@ -130,3 +132,17 @@ def test_metrics_prom_extractor_finds_canonical_names():
 def test_at_least_two_dashboards_ship():
     """Feature #11 slice 2 ships overview + detection minimum."""
     assert len(_all_dashboards()) >= 2
+
+
+def test_prometheus_loads_camera_health_alert_rules():
+    config = _PROMETHEUS_CONFIG.read_text()
+    assert "/etc/prometheus/alerts.yml" in config
+    alerts = _PROMETHEUS_ALERTS.read_text()
+    for alert in (
+        "HomecamDetectionWorkerDown",
+        "HomecamVideoStale",
+        "HomecamJetsonHot",
+        "HomecamDiskLow",
+        "HomecamCameraRecoveryLoop",
+    ):
+        assert "alert: {}".format(alert) in alerts

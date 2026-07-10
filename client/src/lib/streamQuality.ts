@@ -98,8 +98,23 @@ export function pathForQuality(
  * server proxies `/whep` → `http://localhost:8889` for parity (see
  * vite.config.ts).
  */
-export function whepUrlForPath(path: string): string {
-  return `${window.location.origin}/whep/${path}/whep`
+export function whepUrlForPath(
+  path: string,
+  location: Pick<Location, 'protocol' | 'hostname' | 'origin'> = window.location,
+): string {
+  // The native Android wrapper falls back to the Jetson's LAN HTTP origin
+  // when Tailscale/MagicDNS is unavailable. FastAPI on :8000 does not proxy
+  // WHEP; MediaMTX serves it directly on :8889. HTTPS must stay same-origin
+  // through Tailscale Serve to avoid mixed content. Keep localhost on the
+  // same-origin Vite proxy used by development and tests.
+  if (
+    location.protocol === 'http:' &&
+    location.hostname !== 'localhost' &&
+    location.hostname !== '127.0.0.1'
+  ) {
+    return `http://${location.hostname}:8889/${path}/whep`
+  }
+  return `${location.origin}/whep/${path}/whep`
 }
 
 const STORAGE_KEY = 'homecam:streamQuality'

@@ -44,6 +44,8 @@ import {
   relativeTime,
 } from '../lib/eventLabel'
 
+export type EventListViewMode = 'timeline' | 'thumbs' | 'compact'
+
 /** YYYY-MM-DD key in the user's local TZ. Mirrors the iter-223
  * `dayBounds` convention. */
 function localDayKey(ts: number): string {
@@ -99,6 +101,7 @@ export function EventList({
   selectionMode = false,
   selectedIds,
   onToggleSelect,
+  viewMode = 'timeline',
 }: {
   events: DetectionEvent[]
   onSelect?: (event: DetectionEvent) => void
@@ -111,6 +114,7 @@ export function EventList({
   selectionMode?: boolean
   selectedIds?: Set<string>
   onToggleSelect?: (event: DetectionEvent) => void
+  viewMode?: EventListViewMode
   /**
    * iter-356.24 (Frank ux-grandpa #1 carryover from iter-356.22):
    * when true AND no events exist, the empty state pivots from the
@@ -154,6 +158,78 @@ export function EventList({
   }
 
   const groups = groupEventsByDay(events)
+
+  if (viewMode === 'thumbs') {
+    return (
+      <div className="pb-4 lg:max-w-5xl">
+        {groups.map((group) => (
+          <section
+            key={group.dayKey}
+            aria-label={`Events on ${formatDayLabel(group.dayKey, now)}`}
+          >
+            <DayHeader
+              label={formatDayLabel(group.dayKey, now)}
+              count={group.events.length}
+            />
+            <ol
+              data-testid="event-thumbnail-grid"
+              className="grid list-none grid-cols-2 gap-3 px-4 pt-3 pb-4 sm:grid-cols-3 lg:px-0 xl:grid-cols-4"
+            >
+              {group.events.map((e) => (
+                <li key={e.id}>
+                  <EventTile
+                    event={e}
+                    now={now}
+                    onSelect={onSelect}
+                    onDelete={onDelete}
+                    selectionMode={selectionMode}
+                    isSelected={selectedIds?.has(e.id) ?? false}
+                    onToggleSelect={onToggleSelect}
+                  />
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))}
+      </div>
+    )
+  }
+
+  if (viewMode === 'compact') {
+    return (
+      <div className="pb-4 lg:max-w-3xl">
+        {groups.map((group) => (
+          <section
+            key={group.dayKey}
+            aria-label={`Events on ${formatDayLabel(group.dayKey, now)}`}
+          >
+            <DayHeader
+              label={formatDayLabel(group.dayKey, now)}
+              count={group.events.length}
+            />
+            <ol
+              data-testid="event-compact-list"
+              className="mx-4 list-none divide-y divide-[var(--color-border)] rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] lg:mx-0"
+            >
+              {group.events.map((e) => (
+                <li key={e.id}>
+                  <CompactEventRow
+                    event={e}
+                    now={now}
+                    onSelect={onSelect}
+                    onDelete={onDelete}
+                    selectionMode={selectionMode}
+                    isSelected={selectedIds?.has(e.id) ?? false}
+                    onToggleSelect={onToggleSelect}
+                  />
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))}
+      </div>
+    )
+  }
 
   return (
     // iter-356.58 (LAYOUT REBUILD): the responsive Pinterest grid
@@ -235,6 +311,206 @@ export function EventList({
           </ol>
         </section>
       ))}
+    </div>
+  )
+}
+
+function eventCanOpen(e: DetectionEvent, onSelect?: (event: DetectionEvent) => void) {
+  return !!e.thumb_url && !!onSelect
+}
+
+function EventTile({
+  event: e,
+  now,
+  onSelect,
+  onDelete,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+}: {
+  event: DetectionEvent
+  now: number
+  onSelect?: (event: DetectionEvent) => void
+  onDelete?: (event: DetectionEvent) => void
+  selectionMode?: boolean
+  isSelected?: boolean
+  onToggleSelect?: (event: DetectionEvent) => void
+}) {
+  const clickable = eventCanOpen(e, onSelect)
+  const Wrapper = (clickable || selectionMode ? 'button' : 'div') as
+    | 'button'
+    | 'div'
+  const title = eventTitle(e)
+  const hasClip = !!e.clip_url
+  return (
+    <div className="group relative h-full">
+      <Wrapper
+        type={clickable || selectionMode ? 'button' : undefined}
+        onClick={
+          selectionMode
+            ? () => onToggleSelect?.(e)
+            : clickable
+              ? () => onSelect?.(e)
+              : undefined
+        }
+        aria-pressed={selectionMode ? isSelected : undefined}
+        aria-label={
+          selectionMode
+            ? `${isSelected ? 'Deselect' : 'Select'} ${title} at ${absoluteTime(e.ts)}`
+            : clickable
+              ? `${hasClip ? 'Play clip:' : 'Open:'} ${title} at ${absoluteTime(e.ts)}`
+              : undefined
+        }
+        className={`block h-full w-full overflow-hidden rounded-[var(--radius-md)] border text-left transition-colors ${
+          selectionMode && isSelected
+            ? 'border-[var(--color-accent-default)] bg-[var(--color-accent-subtle)]'
+            : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+        } ${
+          clickable || selectionMode
+            ? 'hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2'
+            : ''
+        }`}
+      >
+        <div className="relative aspect-video bg-[var(--color-surface-raised)]">
+          <EventThumbnail url={e.thumb_url} alt={title} />
+          <span className="absolute left-1.5 top-1.5" aria-hidden="true">
+            <WhoMark identity={identityOf(e)} size={26} />
+          </span>
+          {selectionMode && (
+            <span
+              aria-hidden="true"
+              className={`absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 ${
+                isSelected
+                  ? 'border-[var(--color-accent-default)] bg-[var(--color-accent-default)] text-[var(--color-on-accent)]'
+                  : 'border-white/80 bg-black/35 text-white'
+              }`}
+            >
+              {isSelected ? <CheckIcon /> : null}
+            </span>
+          )}
+          {hasClip ? (
+            <span
+              className="absolute bottom-1.5 right-1.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white shadow"
+              aria-label="Clip available"
+            >
+              <PlayIcon />
+            </span>
+          ) : null}
+          <ConfidencePill score={e.score} />
+        </div>
+        <div className="px-2.5 py-2">
+          <div className="truncate text-sm font-bold text-[var(--color-text-primary)]">
+            {title}
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
+            <span className="truncate">{relativeTime(e.ts, now)}</span>
+            <span className="shrink-0 tabular-nums">{clockTime(e.ts)}</span>
+          </div>
+        </div>
+      </Wrapper>
+      {onDelete && !selectionMode && (
+        <button
+          type="button"
+          onClick={() => onDelete(e)}
+          aria-label={`Delete event from ${absoluteTime(e.ts)}`}
+          className="fine-pointer-delete absolute right-1 top-1 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--color-danger)] opacity-90 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-surface-scrim)] backdrop-blur">
+            ✕
+          </span>
+        </button>
+      )}
+    </div>
+  )
+}
+
+function CompactEventRow({
+  event: e,
+  now,
+  onSelect,
+  onDelete,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+}: {
+  event: DetectionEvent
+  now: number
+  onSelect?: (event: DetectionEvent) => void
+  onDelete?: (event: DetectionEvent) => void
+  selectionMode?: boolean
+  isSelected?: boolean
+  onToggleSelect?: (event: DetectionEvent) => void
+}) {
+  const clickable = eventCanOpen(e, onSelect)
+  const Wrapper = (clickable || selectionMode ? 'button' : 'div') as
+    | 'button'
+    | 'div'
+  const title = eventTitle(e)
+  return (
+    <div className="group relative">
+      <Wrapper
+        type={clickable || selectionMode ? 'button' : undefined}
+        onClick={
+          selectionMode
+            ? () => onToggleSelect?.(e)
+            : clickable
+              ? () => onSelect?.(e)
+              : undefined
+        }
+        aria-pressed={selectionMode ? isSelected : undefined}
+        aria-label={
+          selectionMode
+            ? `${isSelected ? 'Deselect' : 'Select'} ${title} at ${absoluteTime(e.ts)}`
+            : clickable
+              ? `Open: ${title} at ${absoluteTime(e.ts)}`
+              : undefined
+        }
+        className={`grid min-h-14 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-left transition-colors ${
+          selectionMode && isSelected
+            ? 'bg-[var(--color-accent-subtle)]'
+            : 'bg-transparent'
+        } ${
+          clickable || selectionMode
+            ? 'hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-[-2px]'
+            : ''
+        }`}
+      >
+        <span aria-hidden="true" className="flex items-center gap-2">
+          {selectionMode ? (
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded border-2 ${
+                isSelected
+                  ? 'border-[var(--color-accent-default)] bg-[var(--color-accent-default)] text-[var(--color-on-accent)]'
+                  : 'border-[var(--color-border-strong)] bg-[var(--color-surface)]'
+              }`}
+            >
+              {isSelected ? <CheckIcon /> : null}
+            </span>
+          ) : null}
+          <WhoMark identity={identityOf(e)} size={28} />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-[var(--color-text-primary)]">
+            {title}
+          </span>
+          <span className="block truncate text-xs text-[var(--color-text-secondary)]">
+            {relativeTime(e.ts, now)}
+          </span>
+        </span>
+        <span className="pr-8 text-xs tabular-nums text-[var(--color-text-tertiary)]">
+          {clockTime(e.ts)}
+        </span>
+      </Wrapper>
+      {onDelete && !selectionMode && (
+        <button
+          type="button"
+          onClick={() => onDelete(e)}
+          aria-label={`Delete event from ${absoluteTime(e.ts)}`}
+          className="fine-pointer-delete absolute right-1 top-1/2 inline-flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-danger)] opacity-80 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
+        >
+          ✕
+        </button>
+      )}
     </div>
   )
 }
@@ -623,10 +899,11 @@ function EventCardImpl({
                     {visible.map((name, i) => (
                       <span
                         key={name}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-success-bg)] text-[var(--color-success)] border border-[var(--color-success-border)]"
+                        className="inline-flex max-w-full min-w-0 items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-success-bg)] text-[var(--color-success)] border border-[var(--color-success-border)]"
+                        title={name}
                       >
                         {i === 0 ? <FaceMatchIcon /> : null}
-                        {name}
+                        <span className="min-w-0 truncate">{name}</span>
                       </span>
                     ))}
                     {overflow > 0 ? (
@@ -667,7 +944,7 @@ function EventCardImpl({
           // INSIDE the card gutter (44px hit area via padding, 32px
           // visual), still always-visible on touch, hover-revealed on
           // desktop. Swipe-to-delete unchanged.
-          className="absolute top-1/2 -translate-y-1/2 right-1 p-2.5 -m-2.5 rounded-full text-[var(--color-danger)] flex items-center justify-center text-sm font-bold opacity-80 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
+          className="fine-pointer-delete absolute top-1/2 -translate-y-1/2 right-1 p-2.5 -m-2.5 rounded-full text-[var(--color-danger)] flex items-center justify-center text-sm font-bold opacity-80 transition-opacity active:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-danger)] focus-visible:outline-offset-2"
         >
           <span className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-[var(--color-danger-bg)]">
             ✕
@@ -830,6 +1107,24 @@ function PlayIcon() {
       aria-hidden="true"
     >
       <path d="M8 5v14l11-7z" />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="20 6 9 17 4 12" />
     </svg>
   )
 }

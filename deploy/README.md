@@ -30,7 +30,7 @@ The installer:
 2. Adds the current user to the `docker` group, ensures the daemon is running.
 3. Installs the Docker Compose v2 plugin to `~/.docker/cli-plugins/`.
 4. Downloads MediaMTX (current pin: `v1.18.0` arm64).
-5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, and `homecam-jetson-perf` (iter-39 oneshot — pins clocks/power-mode at boot, avoids the 50–150 ms encode warmup on the first frame after each restart).
+5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
 6. Builds the server container image.
 7. Enables + starts all three services.
 8. Smoke tests `/api/status` and `:8889`.
@@ -84,6 +84,17 @@ journalctl -u mediamtx -u homecam-detect -f
 ```
 
 Open `http://jetson.local:8000` (or the Jetson's LAN IP) from a phone or laptop on the same LAN. Add to home screen on Android.
+
+### Repeatable phone verification
+
+With one Android device connected over ADB, run `scripts/verify-phone.sh` from
+the repository root. If multiple devices are listed, set
+`HOMECAM_ADB_SERIAL=<serial>`. The check launches the wrapper, verifies it stays
+foreground without an Android crash, and saves a screenshot, UI hierarchy, and
+bounded logcat evidence under `/tmp/homecam-phone-smoke`.
+
+Debug APKs expose their embedded WebView to `chrome://inspect` over ADB for
+interactive JavaScript, network, and performance debugging. Release APKs do not.
 
 ## First-run quirk: TRT engine compile
 

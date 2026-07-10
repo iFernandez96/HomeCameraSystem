@@ -152,6 +152,14 @@ describe('whepUrlForPath', () => {
     expect(whepUrlForPath('cam_lq')).toBe(`${origin}/whep/cam_lq/whep`)
     expect(whepUrlForPath('cam_uq')).toBe(`${origin}/whep/cam_uq/whep`)
   })
+
+  it('uses MediaMTX directly for a LAN HTTP app origin', () => {
+    expect(whepUrlForPath('cam', {
+      protocol: 'http:',
+      hostname: '10.0.0.9',
+      origin: 'http://10.0.0.9:8000',
+    })).toBe('http://10.0.0.9:8889/cam/whep')
+  })
 })
 
 describe('stream quality persistence', () => {

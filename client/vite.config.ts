@@ -111,7 +111,7 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,ico,webmanifest,woff2}'],
         globIgnores: ['**/cats/**', '**/*-cat-*.png'],
       },
-      includeAssets: ['icon.svg', 'icon-maskable.svg'],
+      includeAssets: ['icon-96.png', 'icon-192.png', 'icon-512.png'],
       devOptions: {
         enabled: true,
         type: 'module',
@@ -140,23 +140,6 @@ export default defineConfig({
         scope: '/',
         icons: [
           {
-            src: '/icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any',
-          },
-          {
-            src: '/icon-maskable.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'maskable',
-          },
-          // iter-356.x (mobile audit D1): Android Chrome 12+ adaptive-
-          // icon system applies a circular mask to maskable icons.
-          // SVG-only maskable can render without the safe-zone crop
-          // on some launchers, bleeding artwork to the edge. PNG
-          // raster fallbacks fix that.
-          {
             src: '/icon-192.png',
             sizes: '192x192',
             type: 'image/png',
@@ -179,14 +162,14 @@ export default defineConfig({
             short_name: 'Live',
             description: 'Open the live camera feed',
             url: '/live',
-            icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+            icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
           },
           {
             name: 'Recent events',
             short_name: 'Events',
             description: 'Browse recent detection events',
             url: '/events',
-            icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+            icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
           },
         ],
         lang: 'en',

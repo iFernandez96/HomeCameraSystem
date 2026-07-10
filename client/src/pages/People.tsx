@@ -398,7 +398,7 @@ function _PersonGrid({
   onPersonClick: (name: string) => void
 }) {
   return (
-    <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lg:gap-3 list-none">
+    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 list-none">
       {people.map((p) => {
         // Playroom Modern (Task 9): every known person gets a stable
         // wheel hue from the identity system — the wheel color becomes

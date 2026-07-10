@@ -72,11 +72,21 @@ def _deps(**overrides):
         calls.append(("logs", unit, since, lines))
         return ["line"]
 
+    def start_focus_mode():
+        calls.append("focus_start")
+        return {"expires_at": 400.0, "width": 1920, "height": 1080}
+
+    def stop_focus_mode():
+        calls.append("focus_stop")
+        return True
+
     deps = SimpleNamespace(
         restart_mediamtx=restart_mediamtx,
         restart_nvargus=restart_nvargus,
         do_reboot=do_reboot,
         tail_journal=tail_journal,
+        start_focus_mode=start_focus_mode,
+        stop_focus_mode=stop_focus_mode,
         allow_reboot=True,
         calls=calls,
     )
@@ -146,6 +156,27 @@ def test_given_logs_action_when_executed_then_tail_result_returned():
     assert (status, detail) == ("done", "logs fetched")
     assert result == {"lines": ["line"]}
     assert deps.calls == [("logs", "mediamtx", "1 hour", 5)]
+
+
+def test_given_focus_start_when_executed_then_mode_metadata_returned():
+    deps = _deps()
+    status, detail, result = host_action.execute_action(
+        _record(kind="focus_start"), deps
+    )
+    assert (status, detail) == ("done", "1080p focus mode started")
+    assert result == {"expires_at": 400.0, "width": 1920, "height": 1080}
+    assert deps.calls == ["focus_start"]
+
+
+def test_given_focus_stop_when_executed_then_normal_camera_restored():
+    deps = _deps()
+    status, detail, result = host_action.execute_action(
+        _record(kind="focus_stop"), deps
+    )
+    assert (status, detail, result) == (
+        "done", "720p camera restore requested", None
+    )
+    assert deps.calls == ["focus_stop"]
 
 
 def test_given_seen_reboot_id_when_planned_twice_then_reboot_at_most_once():

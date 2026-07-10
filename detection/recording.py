@@ -43,6 +43,7 @@ import subprocess
 import threading
 
 import applog
+import clip_state
 
 
 # ---- continuous-capture / S3: finalize_visit constants ----
@@ -1139,12 +1140,57 @@ class ClipRecorder(object):
 
         # plan R8: serialize finalizes (Nano OOM history) AND guarantee the
         # per-visit scratch dir is reaped on EVERY exit path.
+        clip_state.set_state(
+            rec_dir,
+            event_id,
+            "finalizing",
+            start_ts=start_ts,
+            end_ts=end_ts,
+            scratch_dir=scratch_dir,
+        )
         _FINALIZE_SEMAPHORE.acquire()
         try:
-            return self._finalize_visit_locked(
+            ok = self._finalize_visit_locked(
                 event_id, scratch_dir, rec_dir, final_path, tmp_path,
                 list_path, expected_duration, preroll_module,
             )
+            if ok:
+                size = None
+                try:
+                    size = os.path.getsize(final_path)
+                except OSError:
+                    pass
+                clip_state.set_state(
+                    rec_dir,
+                    event_id,
+                    "available",
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    path=final_path,
+                    bytes=size,
+                )
+            else:
+                clip_state.set_state(
+                    rec_dir,
+                    event_id,
+                    "failed",
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    reason="finalize_failed",
+                )
+            return ok
+        except Exception as e:
+            clip_state.set_state(
+                rec_dir,
+                event_id,
+                "failed",
+                start_ts=start_ts,
+                end_ts=end_ts,
+                reason="finalize_exception",
+                error_type=type(e).__name__,
+                error=str(e),
+            )
+            raise
         finally:
             # Reap the per-visit scratch dir no matter how we exited (plan R8
             # "try/finally rmtree on every exit path"). ignore_errors so a

@@ -73,6 +73,32 @@
       "fieldConfig": {
         "defaults": { "unit": "ms", "min": 0 }
       }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Seconds since last camera frame",
+      "description": "The canonical silent-stall signal. Worker heartbeat can remain healthy while this rises; investigate above 30 seconds.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "homecam_worker_seconds_since_last_frame", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 15 }, { "color": "red", "value": 30 }] } }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Heavy camera recoveries",
+      "description": "Argus daemon restarts are the last-resort camera recovery path and should remain flat at zero.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "expr": "increase(homecam_worker_argus_restarts_total[15m])", "refId": "A", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
     }
   ]
 }

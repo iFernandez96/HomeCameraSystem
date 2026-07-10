@@ -276,3 +276,48 @@ def test_given_liveness_when_handler_runs_then_bump_fires_on_each_failure():
 
     # assert
     assert liveness.bumps == 1
+
+
+def test_given_watchdog_action_when_reopening_camera_then_old_source_is_closed(
+    monkeypatch,
+):
+    """A watchdog action is not enough if detect.py keeps the old RTSP reader.
+
+    Pin the 2026-07-09 live failure: MediaMTX recovered `/cam`, but the
+    existing jetson-utils videoSource kept timing out. Recovery must replace
+    the in-process videoSource object.
+    """
+
+    class _OldCamera:
+        def __init__(self):
+            self.closed = False
+
+        def Close(self):
+            self.closed = True
+
+    class _NewCamera:
+        pass
+
+    old_camera = _OldCamera()
+    new_camera = _NewCamera()
+    calls = []
+
+    def _fake_video_source(uri, argv=None):
+        calls.append((uri, argv))
+        return new_camera
+
+    monkeypatch.setattr(detect.jetson_utils, "videoSource", _fake_video_source)
+
+    reopened = detect.reopen_camera_after_watchdog_action(
+        "rtsp://127.0.0.1:8554/cam",
+        old_camera,
+        "restart_mediamtx",
+        attempts=1,
+        retry_s=0.0,
+    )
+
+    assert old_camera.closed is True
+    assert reopened is new_camera
+    assert calls == [
+        ("rtsp://127.0.0.1:8554/cam", ["--input-codec=h264"]),
+    ]

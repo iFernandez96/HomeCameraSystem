@@ -9,6 +9,7 @@ Run from `detection/`:
     /tmp/homecam-venv/bin/python -m pytest tests/test_disk_floor.py -q
 """
 import sys
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -104,6 +105,52 @@ def test_given_free_space_above_floor_when_open_then_opens_normally(tmp_path):
     assert "vid1" in visit_runtime.read_open_visits(str(tmp_path))
     # plan S6: an accepted open is NOT counted as a disk-floor drop.
     assert runner.clips_dropped_disk_floor == 0
+    ledger = json.loads((tmp_path / ".clip_state.json").read_text())
+    assert ledger["events"]["vid1"]["state"] == "recording"
+    assert ledger["events"]["vid1"]["start_ts"] == 100.0
+
+
+def test_given_finalize_returns_false_when_visit_closes_then_ledger_marks_failed(
+    tmp_path,
+):
+    # arrange
+    events = {"open": [], "copy": [], "finalize": []}
+
+    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0):
+        events["open"].append((visit_id, key, start_ts, boxes))
+
+    def copy_segments(visit_id, start_ts, until_ts, scratch, already):
+        events["copy"].append((visit_id, start_ts, until_ts))
+        return [], set()
+
+    def finalize(visit_id, scratch, start_ts, end_ts):
+        events["finalize"].append((visit_id, start_ts, end_ts))
+        return False
+
+    def sync_spawn(target, _vid):
+        target()
+
+    runner = visit_runtime.VisitRunner(
+        recordings_dir=str(tmp_path),
+        post_event=post_event,
+        copy_segments=copy_segments,
+        finalize_visit=finalize,
+        tracker=VisitTracker(id_factory=lambda: "vid1"),
+        spawn=sync_spawn,
+        free_space=lambda _path: visit_runtime.WORKER_MIN_FREE_BYTES + 1,
+    )
+
+    # act
+    runner.observe("person:cam1", (0.0, 0.0, 0.1, 0.1), now=100.0,
+                   pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0,
+                   boxes=[{"label": "person"}])
+    runner.tick(now=111.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    # assert
+    assert events["finalize"] == [("vid1", 100.0, 110.0)]
+    ledger = json.loads((tmp_path / ".clip_state.json").read_text())
+    assert ledger["events"]["vid1"]["state"] == "failed"
+    assert ledger["events"]["vid1"]["reason"] == "finalize_returned_false"
 
 
 def test_given_refused_open_when_subject_persists_then_tracker_rolled_back(

@@ -10,6 +10,7 @@ import { DetectionSection } from './settings/DetectionSection'
 import { JetsonSection } from './settings/JetsonSection'
 import { NotificationsSection } from './settings/NotificationsSection'
 import { TimelapsesSection } from './settings/TimelapsesSection'
+import { CameraSetupSection } from './settings/CameraSetupSection'
 import { useAuth } from '../lib/auth'
 import { useStatus } from '../lib/useStatus'
 import { isOwner } from '../lib/roles'
@@ -150,7 +151,7 @@ export function Settings() {
     //     SR rotor announces by name.
     <section
       aria-labelledby="settings-h1"
-      className="lg:flex lg:gap-6 lg:max-w-5xl lg:mx-auto lg:px-6 lg:py-6"
+      className="md:flex md:gap-6 md:max-w-5xl md:mx-auto md:px-6 md:py-6"
     >
       {/* iter-356.65 (Mira critic): per-route sr-only h1 was added
           on Live/Events/People/Training/Review in Slice D but Settings
@@ -166,7 +167,7 @@ export function Settings() {
         showCamera={canManageOwnerSettings}
       />
 
-      <div className="flex-1 min-w-0 space-y-6 px-4 pb-8 pt-4 lg:px-0 lg:pt-0">
+      <div className="flex-1 min-w-0 space-y-6 px-4 pb-8 pt-4 md:px-0 md:pt-0">
         {showCameraPanel && canManageOwnerSettings && (
           <div
             role="tabpanel"
@@ -175,6 +176,9 @@ export function Settings() {
             tabIndex={0}
             className="focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
           >
+            <div className="mb-6">
+              <CameraSetupSection />
+            </div>
             <DetectionSection />
           </div>
         )}
@@ -285,13 +289,13 @@ function SettingsTabs({
         ? 'How HomeCam notifies you'
         : 'People, appearance and the box in the closet'
   // iter-356.x (coherence C2): track viewport for aria-orientation. The
-  // tablist visually flips to vertical at lg+ (1024px) per the flex-col
+  // tablist visually flips to vertical at md+ (tablet+) per the flex-col
   // class on the wrapper. SSR-safe default 'false' so first paint is
   // mobile orientation.
   const [isDesktopTabs, setIsDesktopTabs] = useState(false)
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
-    const mq = window.matchMedia('(min-width: 1024px)')
+    const mq = window.matchMedia('(min-width: 768px)')
     const onChangeMq = () => setIsDesktopTabs(mq.matches)
     onChangeMq()
     mq.addEventListener('change', onChangeMq)
@@ -311,23 +315,23 @@ function SettingsTabs({
 
   return (
     // iter-356.58 (LAYOUT REBUILD): tablist becomes a vertical left
-    // rail on desktop (lg+) and a horizontal pill strip on mobile.
+    // rail on tablet/desktop (md+) and a horizontal pill strip on mobile.
     // Pre-fix it was a full-width underline-tab strip that read as
     // generic browser tabs. The pill+rail treatment makes it
     // unmistakably navigation, not a tab control on a form.
-    <div className="lg:w-48 lg:flex-none lg:sticky lg:top-20 lg:self-start mx-4 mt-4 lg:mx-0 lg:mt-0">
+    <div className="md:w-48 md:flex-none md:sticky md:top-20 md:self-start mx-4 mt-4 md:mx-0 md:mt-0">
       <div
         role="tablist"
         tabIndex={-1}
         aria-label="Settings sections"
         // iter-356.x (coherence C2): tablist visually flips to vertical
-        // rail on lg+ via flex-col, but pre-fix aria-orientation stayed
+        // rail on md+ via flex-col, but pre-fix aria-orientation stayed
         // "horizontal" — AT users heard "horizontal tablist" and expected
         // left/right keys while sighted users saw a column. Bind to the
         // viewport.
         aria-orientation={isDesktopTabs ? 'vertical' : 'horizontal'}
         onKeyDown={onKey}
-        className="flex gap-1 lg:flex-col lg:gap-1.5 lg:p-3 lg:rounded-2xl lg:bg-[var(--color-surface)] lg:border lg:border-[var(--color-border-subtle)] lg:shadow-[var(--shadow-subtle)] px-2 py-1 overflow-x-auto lg:overflow-visible scrollbar-hide"
+        className="flex gap-1 md:flex-col md:gap-1.5 md:p-3 md:rounded-2xl md:bg-[var(--color-surface)] md:border md:border-[var(--color-border-subtle)] md:shadow-[var(--shadow-subtle)] px-2 py-1 overflow-x-auto md:overflow-visible scrollbar-hide"
       >
         {tabs.map((t, idx) => {
           const isActive = active === t.id

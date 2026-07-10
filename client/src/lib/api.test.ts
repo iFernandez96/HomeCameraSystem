@@ -4,6 +4,7 @@ import {
   fetchEvents,
   getCameras,
   getDetectionConfig,
+  getFaceCapabilities,
   getAdminAudit,
   getEventCountsByDay,
   fetchLogs,
@@ -1377,6 +1378,26 @@ describe('lib/api', () => {
     expect(r.dirs[0].name).toBe('alice')
     expect(r.dirs[0].count).toBe(12)
     expect(r.dirs[1].name).toBe('__unknown__')
+  })
+
+  it('Given face capabilities are requested, When the server disables retraining, Then the typed capability and reason are returned', async () => {
+    // arrange
+    mockJson({
+      bootstrap: true,
+      retrain: false,
+      retrain_reason: 'On-device retraining is not installed.',
+    })
+
+    // act
+    const result = await getFaceCapabilities()
+
+    // assert
+    expect(asMock().mock.calls[0][0]).toBe('/api/face/capabilities')
+    expect(result).toEqual({
+      bootstrap: true,
+      retrain: false,
+      retrain_reason: 'On-device retraining is not installed.',
+    })
   })
 
   it('given listFaceCapturesInDir called, when fetch resolves, then GET /api/face/captures/{encoded name} returns the files wire shape (iter-352)', async () => {

@@ -104,6 +104,16 @@ export type DetectionEvent = {
   clip_url?: string | null
 }
 
+export type LiveDetectionEvent = {
+  v: 1
+  type: 'live_detection'
+  /** Unix epoch seconds (float), stamped by the server. */
+  ts: number
+  camera_id: string
+  /** Empty when inference ran but no valid box is currently present. */
+  boxes: DetectionBox[]
+}
+
 /**
  * Server WebSocket event shape. iter-170 collapsed this from a
  * `DetectionEvent | StatusEvent` union to a single member after the
@@ -114,12 +124,11 @@ export type DetectionEvent = {
  * `{type: 'status', ...}` on the bus. Status data is exposed via the
  * REST `/api/status` endpoint, polled by `useStatus`.
  *
- * If a future iter genuinely starts publishing a non-detection event
- * type, widen this back to a discriminated union and add the
- * server-side emitter + tests in the same iter (per CLAUDE.md "Tests
- * as a contract surface" rule).
+ * Live bbox samples are websocket-only and do not represent timeline
+ * events. They update the live canvas without touching event history,
+ * unread badges, or push notifications.
  */
-export type ServerEvent = DetectionEvent
+export type ServerEvent = DetectionEvent | LiveDetectionEvent
 
 /**
  * Push notification filters per the iter-205/iter-207 Feature #4

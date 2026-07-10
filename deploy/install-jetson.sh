@@ -130,8 +130,9 @@ log "Building server container (first run takes ~5 min)"
 docker compose -f deploy/docker-compose.yml build
 
 log "Enabling and starting services"
-# Jetson perf unit first — pins clocks + power mode so the encoder
-# doesn't warmup-stutter on the first frame mediamtx hands out.
+# Jetson perf unit first — selects the MAXN power envelope while leaving
+# dynamic CPU/GPU clocks enabled. The encoder has its own max-performance
+# setting, so global clock pinning is unnecessary for stream startup.
 # Skipped silently on non-Jetson hosts via the unit's
 # ConditionPathExists guard.
 sudo systemctl enable --now homecam-jetson-perf.service || true

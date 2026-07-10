@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -34,6 +34,9 @@ const People = lazy(() =>
 )
 const Settings = lazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.Settings })),
+)
+const FocusAssistant = lazy(() =>
+  import('./pages/FocusAssistant').then((m) => ({ default: m.FocusAssistant })),
 )
 const GodView = lazy(() =>
   import('./pages/GodView').then((m) => ({ default: m.GodView })),
@@ -88,6 +91,34 @@ function PageFallback({ pathname }: { pathname: string }) {
   return <LoadingState shape={pathname === '/' ? 'video' : 'list'} />
 }
 
+function useRootBackGuard(pathname: string) {
+  useEffect(() => {
+    if (pathname !== '/') return
+    if (window.history.state?.homecamRootGuard !== true) {
+      window.history.replaceState(
+        { ...(window.history.state ?? {}), homecamRootBase: true },
+        '',
+      )
+      window.history.pushState({ homecamRootGuard: true }, '', '/')
+    }
+
+    const onPop = () => {
+      const path = window.location.pathname
+      if (path === '/' || path === '/live') {
+        if (window.history.state?.homecamRootGuard !== true) {
+          window.history.pushState({ homecamRootGuard: true }, '', '/')
+        }
+        return
+      }
+      window.history.pushState({ homecamRootGuard: true }, '', '/')
+      window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }))
+    }
+
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [pathname])
+}
+
 // Each page is wrapped in its own ErrorBoundary so an uncaught throw
 // in (say) the Events list renderer doesn't blank Live or Settings.
 // Bottom nav stays outside the boundary so the user can always
@@ -98,6 +129,7 @@ function AppShell() {
   // iter-248: home-screen app-icon badge wiring.
   useUnreadBadge()
   usePageViewTelemetry(state === 'authed' ? user?.username : null, location.pathname)
+  useRootBackGuard(location.pathname)
   // iter-356.58 (layout rebuild): cats only walk on Live. The
   // mobile-architect brief flagged the cat strip overlapping the
   // empty-state cat illustration on People + Settings. Restricting
@@ -108,6 +140,14 @@ function AppShell() {
   // the full viewport with its own brand block.
   const isLoginRoute = location.pathname === '/login'
   const showShell = state === 'authed' && !isLoginRoute
+  useEffect(() => {
+    document.documentElement.classList.toggle('homecam-watch-route', isWatchRoute)
+    document.body.classList.toggle('homecam-watch-route', isWatchRoute)
+    return () => {
+      document.documentElement.classList.remove('homecam-watch-route')
+      document.body.classList.remove('homecam-watch-route')
+    }
+  }, [isWatchRoute])
   // UI/UX overhaul 2026-07-07 (hari FOCUS-1): reset the main scroll
   // container to the top on every route change. <main> is the real
   // scroller (overflow-y-auto), NOT window, so React Router's
@@ -221,9 +261,9 @@ function AppShell() {
         // a few px wide (user-hit on Firefox Android, whose font scaling
         // widens text). clip forbids the pan at the real scroll container;
         // the body-level guard in index.css covers the page itself.
-        className={`flex-1 overflow-y-auto overflow-x-clip overscroll-y-contain ${
+        className={`flex-1 min-h-0 ${isLoginRoute || isWatchRoute ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-clip overscroll-y-contain ${
           isWatchRoute
-            ? 'pb-[calc(6rem+env(safe-area-inset-bottom)+7.5rem)]'
+            ? 'pb-0'
             : 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
         } lg:pb-6 landscape-phone:pb-0 w-full ${
           showShell
@@ -231,7 +271,7 @@ function AppShell() {
             // (resolution sweep 2026-07-07 caught main overflowing 10px
             // sideways at 673x455 on /settings), % tracks the real layout
             // width at every resolution.
-            ? 'lg:ml-16 lg:max-w-[calc(100%-4rem)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100%-5rem-env(safe-area-inset-left))]'
+            ? 'lg:ml-16 lg:max-w-[calc(100%-4rem)] landscape-phone:ml-[calc(3.5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100%-3.5rem-env(safe-area-inset-left))]'
             : ''
         }`}
         style={
@@ -244,7 +284,10 @@ function AppShell() {
       >
         {/* Premium-feel: keyed on the route so every page change plays
             the 160ms native-style enter transition. */}
-        <div key={location.pathname} className="w-full mx-auto animate-page-in">
+        <div
+          key={location.pathname}
+          className={`w-full mx-auto animate-page-in ${isWatchRoute || isLoginRoute ? 'h-full min-h-0' : ''}`}
+        >
           <Suspense fallback={<PageFallback pathname={location.pathname} />}>
             <Routes>
             <Route path="/login" element={<Login />} />
@@ -306,6 +349,16 @@ function AppShell() {
                 <RequireAuth>
                   <ErrorBoundary label="Settings">
                     <Settings />
+                  </ErrorBoundary>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/settings/focus-assistant"
+              element={
+                <RequireAuth>
+                  <ErrorBoundary label="Focus Assistant">
+                    <FocusAssistant />
                   </ErrorBoundary>
                 </RequireAuth>
               }

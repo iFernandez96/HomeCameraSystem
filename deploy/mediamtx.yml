@@ -173,16 +173,9 @@ paths:
     # frames at 60 fps (clearly a stall, not a hiccup). The deeper "Failed to
     # create CaptureSession" startup wedge is handled by the systemd BindsTo +
     # the escalating detection watchdog (restart nvargus-daemon).
-    runOnInit: >-
-      gst-launch-1.0 -e
-      nvarguscamerasrc sensor-mode=1 !
-      'video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1' !
-      nvvidconv !
-      'video/x-raw(memory:NVMM),width=1280,height=720' !
-      nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true !
-      h264parse !
-      watchdog timeout=5000 !
-      rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam
+    # The wrapper selects the normal 720p pipeline or a tokenized, five-minute
+    # 1080p focus-assist session. There is still exactly one camera producer.
+    runOnInit: /home/israel/HomeCameraSystem/deploy/run-camera-pipeline.sh
     runOnInitRestart: yes
 
     # Alternative (USB / V4L2 camera) — comment the libargus block above and use this:

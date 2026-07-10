@@ -31,7 +31,16 @@ Thumbs.db
 # Build artifacts
 client/dist/
 client/dev-dist/
+client/.lighthouseci/
 server/static/
+.gradle/
+build/
+**/build/
+*.tsbuildinfo
+local.properties
+
+# Local visual exploration; final selected assets live under client/public.
+design-drafts/
 
 # Jetson runtime
 mediamtx

@@ -88,8 +88,12 @@ export function QualityMenu({
     // position above the trigger, clamped to the viewport's left edge.
     const rect = triggerRef.current?.getBoundingClientRect()
     if (rect) {
+      const menuWidth = 152
       setAnchor({
-        left: Math.max(8, rect.left),
+        left: Math.min(
+          Math.max(8, rect.left),
+          Math.max(8, window.innerWidth - menuWidth - 8),
+        ),
         bottomUp: Math.max(8, window.innerHeight - rect.top + 8),
       })
     } else {

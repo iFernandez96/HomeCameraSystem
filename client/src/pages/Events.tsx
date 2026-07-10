@@ -7,7 +7,7 @@ import { ClipModal } from '../components/ClipModal'
 // mobile (the calendar is opened via the header button OR sits in the
 // lg+ right rail). Deferring it cuts the Events route's first paint.
 const EventHeatmap = lazy(() => import('../components/EventHeatmap.lazy'))
-import { EventList } from '../components/EventList'
+import { EventList, type EventListViewMode } from '../components/EventList'
 import { HourBand } from '../components/HourBand'
 import { EventListSkeleton, HeatmapSkeleton } from '../components/Skeleton'
 import { ErrorState } from '../components/states/ErrorState'
@@ -54,6 +54,70 @@ const _LOAD_MORE_PAGE = 50
 // for casual browsing of the recent past. 500 cards is well past
 // the natural browse window and well before the React render cliff.
 const _LOAD_MORE_CAP = 500
+
+const _EVENTS_VIEW_MODE_KEY = 'homecam:eventsViewMode'
+const _EVENTS_VIEW_MODES: Array<{ id: EventListViewMode; label: string }> = [
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'thumbs', label: 'Thumbs' },
+  { id: 'compact', label: 'Compact' },
+]
+
+function isEventsViewMode(value: string | null): value is EventListViewMode {
+  return value === 'timeline' || value === 'thumbs' || value === 'compact'
+}
+
+function readEventsViewMode(): EventListViewMode {
+  if (typeof window === 'undefined') return 'timeline'
+  try {
+    const stored = window.localStorage.getItem(_EVENTS_VIEW_MODE_KEY)
+    return isEventsViewMode(stored) ? stored : 'timeline'
+  } catch {
+    return 'timeline'
+  }
+}
+
+function rememberEventsViewMode(mode: EventListViewMode) {
+  try {
+    window.localStorage.setItem(_EVENTS_VIEW_MODE_KEY, mode)
+  } catch {
+    // Best-effort; mode selection still works for the current tab.
+  }
+}
+
+function EventsViewSwitcher({
+  mode,
+  onChange,
+}: {
+  mode: EventListViewMode
+  onChange: (mode: EventListViewMode) => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Event list view"
+      className="flex rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-0.5"
+    >
+      {_EVENTS_VIEW_MODES.map((option) => {
+        const active = mode === option.id
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.id)}
+            className={`min-h-9 rounded-[var(--radius-sm)] px-2.5 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 sm:px-3 ${
+              active
+                ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+            }`}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 /** Filter token: 'all' = no filter, '__unknown__' = events without a face
  * match, any other string = exact person_name match. */
@@ -141,6 +205,13 @@ export function Events() {
   // optional — leaving end null means "from start to end of day".
   const [dayStartTime, setDayStartTime] = useState<string | null>(null)
   const [dayEndTime, setDayEndTime] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<EventListViewMode>(() =>
+    readEventsViewMode(),
+  )
+  const chooseViewMode = useCallback((mode: EventListViewMode) => {
+    setViewMode(mode)
+    rememberEventsViewMode(mode)
+  }, [])
 
   // iter-251: calendar collapsed by default. The heatmap takes ~120
   // px of vertical space — for the typical "I just want to see the
@@ -1082,7 +1153,10 @@ export function Events() {
               Recent motion and clips
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            {!loading && !error && events.length > 0 && (
+              <EventsViewSwitcher mode={viewMode} onChange={chooseViewMode} />
+            )}
             {!loading && !error && events.length > 0 && !selectionMode && (
               // iter-356.49: "100 recent" reads as a noun-phrase
               // riddle — "100 recent what?" Now: "Last 100" /
@@ -1569,6 +1643,7 @@ export function Events() {
               )}
               <EventList
                 events={filtered}
+                viewMode={viewMode}
                 // iter-307: per-row delete affordance for owners only.
                 // Family/viewer roles see the list without the ✕ buttons.
                 // iter-312: handler refs (`onDeleteOne`, `onSelectEvent`)
@@ -1656,15 +1731,6 @@ export function Events() {
         <ClipModal
           event={selectedEvent}
           onClose={() => setSelectedEvent(null)}
-          // Final whole-branch review fix batch #1: ClipModal's own
-          // Delete pill (owner-only) succeeds server-side but this
-          // page's `events` list is separate state — without pruning
-          // it here the just-deleted row kept rendering until the
-          // next unrelated refetch. Mirrors onDeleteOne's own
-          // `setEvents((cur) => cur.filter(...))` pruning step above.
-          onDeleted={(id) =>
-            setEvents((cur) => cur.filter((ev) => ev.id !== id))
-          }
         />
       )}
     </div>

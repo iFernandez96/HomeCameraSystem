@@ -329,3 +329,54 @@ async def test_given_persist_failure_then_warning_names_event_id_and_db_path(
     msg = warns[0].getMessage()
     assert evt["id"] in msg
     assert str(settings.events_db_path) in msg
+
+
+async def test_slow_event_store_write_does_not_block_event_loop(bus, monkeypatch):
+    """A slow SQLite/fsync path runs in a worker thread, not on the loop."""
+    import time
+    import app.services.events_db as events_db_mod
+
+    def _slow(*_args, **_kwargs):
+        time.sleep(0.08)
+        return True
+
+    monkeypatch.setattr(events_db_mod, "insert_event", _slow)
+    publish = asyncio.create_task(
+        bus.publish(make_detection_event("person", 0.5, []))
+    )
+    ticked = False
+    for _ in range(5):
+        await asyncio.sleep(0.005)
+        ticked = True
+        if publish.done():
+            break
+    assert ticked is True
+    assert publish.done() is False
+    await publish
+
+
+async def test_concurrent_event_store_writes_are_serialized(bus, monkeypatch):
+    import threading
+    import time
+    import app.services.events_db as events_db_mod
+
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def _tracked(*_args, **_kwargs):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with guard:
+            active -= 1
+        return True
+
+    monkeypatch.setattr(events_db_mod, "insert_event", _tracked)
+    await asyncio.gather(*[
+        bus.publish(make_detection_event("person", 0.5, []))
+        for _ in range(5)
+    ])
+    assert peak == 1

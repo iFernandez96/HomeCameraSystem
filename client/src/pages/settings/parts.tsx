@@ -74,9 +74,9 @@ export function Row({
   right: ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between px-4 py-3">
-      <span className="text-[var(--color-text-primary)]">{label}</span>
-      <div>{right}</div>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3">
+      <span className="min-w-0 break-words text-[var(--color-text-primary)]">{label}</span>
+      <div className="shrink-0">{right}</div>
     </div>
   )
 }

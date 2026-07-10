@@ -65,6 +65,36 @@ def test_internal_event_streams_over_websocket(client: TestClient):
         assert evt["score"] == 0.88
 
 
+def test_internal_live_detection_streams_without_history(client: TestClient):
+    from app.services.event_bus import event_bus
+
+    before = len(event_bus.recent(1000))
+    with client.websocket_connect(
+        "/api/events/ws", headers={"origin": "http://testserver"}
+    ) as ws:
+        r = client.post(
+            "/api/_internal/live_detection",
+            json={"camera_id": "cam1", "boxes": _payload()["boxes"]},
+        )
+        assert r.status_code == 200, r.text
+        evt = ws.receive_json()
+        assert evt["type"] == "live_detection"
+        assert evt["camera_id"] == "cam1"
+        assert evt["boxes"][0]["label"] == "person"
+
+    after = len(event_bus.recent(1000))
+    assert after == before
+
+
+def test_internal_live_detection_accepts_empty_boxes(client: TestClient):
+    r = client.post(
+        "/api/_internal/live_detection",
+        json={"camera_id": "cam1", "boxes": []},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+
 def test_internal_event_rejects_missing_boxes(client: TestClient):
     r = client.post("/api/_internal/event", json=_payload(boxes=[]))
     assert r.status_code == 422

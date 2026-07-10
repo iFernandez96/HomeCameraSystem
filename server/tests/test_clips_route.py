@@ -10,6 +10,7 @@ path without spawning ffmpeg).
 from __future__ import annotations
 
 import logging
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,6 +39,27 @@ def test_clip_authed_returns_404_when_missing(client: TestClient, rec_dir):
     assert "clip" in r.json().get("detail", "").lower()
 
 
+def test_clip_404_log_includes_ledger_state(
+    client: TestClient,
+    rec_dir,
+    caplog,
+):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"evt-recording": {"state": "recording"}},
+    }))
+
+    with caplog.at_level(logging.INFO, logger="app.routes.clips"):
+        r = client.get("/api/events/evt-recording/clip")
+
+    assert r.status_code == 404
+    assert any(
+        "event_id=evt-recording clip_state=recording" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
 def test_clip_authed_returns_file_when_present(client: TestClient, rec_dir):
     """Pin the FileResponse contract: status 200, Content-Type
     `video/mp4`, body matches the on-disk bytes."""
@@ -48,6 +70,45 @@ def test_clip_authed_returns_file_when_present(client: TestClient, rec_dir):
     assert r.status_code == 200
     assert r.headers["content-type"] == "video/mp4"
     assert r.content == fake_mp4
+
+
+def test_clip_status_returns_ledger_state_when_recording(
+    client: TestClient,
+    rec_dir,
+):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-recording": {
+                "event_id": "evt-recording",
+                "state": "recording",
+                "last_seen": 123.0,
+            },
+        },
+    }))
+
+    r = client.get("/api/events/evt-recording/clip/status")
+
+    assert r.status_code == 200
+    assert r.json()["state"] == "recording"
+    assert r.json()["source"] == "ledger"
+    assert r.json()["last_seen"] == 123.0
+
+
+def test_clip_status_returns_available_when_file_exists(
+    client: TestClient,
+    rec_dir,
+):
+    rec_dir.mkdir()
+    (rec_dir / "evt-have.mp4").write_bytes(b"fake")
+
+    r = client.get("/api/events/evt-have/clip/status")
+
+    assert r.status_code == 200
+    assert r.json()["state"] == "available"
+    assert r.json()["source"] == "disk"
+    assert r.json()["bytes"] == 4
 
 
 def test_clip_rejects_event_id_with_dot(client: TestClient, rec_dir):

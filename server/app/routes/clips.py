@@ -88,13 +88,16 @@ def get_event_clip(
     event_id: str = Path(..., pattern=r"^[A-Za-z0-9_-]+$", max_length=128),
 ) -> FileResponse:
     if not recording_service.clip_exists(event_id):
+        state = recording_service.clip_state(event_id)
         # logging-plan §2: clip 404. INFO (not WARN) — this is a
         # routine outcome (event older than the retention window, or
         # the recorder hadn't spun up when the event fired). The line
         # lets an operator distinguish "recorder never produced a
         # clip" from a transient FS error in recording_service.
         log.info(
-            "clip fetch 404: no clip on disk for event_id=%s", event_id,
+            "clip fetch 404: no clip on disk for event_id=%s clip_state=%s",
+            event_id,
+            state.get("state"),
         )
         raise HTTPException(
             status_code=404,
@@ -109,6 +112,18 @@ def get_event_clip(
         media_type="video/mp4",
         filename="{}.mp4".format(event_id),
     )
+
+
+@router.get("/events/{event_id}/clip/status")
+def get_event_clip_status(
+    event_id: str = Path(..., pattern=r"^[A-Za-z0-9_-]+$", max_length=128),
+) -> dict:
+    """Return the best-known clip lifecycle state for one event.
+
+    This endpoint is intentionally separate from the MP4 route so the client can
+    ask "why is the video not available?" without interpreting a 404.
+    """
+    return recording_service.clip_state(event_id)
 
 
 @router.get("/events/{event_id}/tracks")

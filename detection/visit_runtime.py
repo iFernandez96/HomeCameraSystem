@@ -33,6 +33,7 @@ import shutil
 import threading
 
 import applog
+import clip_state
 
 from visit import VisitTracker
 
@@ -595,6 +596,16 @@ class VisitRunner(object):
         self._open[visit_id] = rec
         self._copy_state[visit_id] = None
         self._persist()
+        clip_state.set_state(
+            self.recordings_dir,
+            visit_id,
+            "recording",
+            key=key,
+            start_ts=start_ts,
+            last_seen=now,
+            last_extend=start_ts,
+            segment_index=rec["segment_index"],
+        )
         # POST the open event today (clip_url points at /api/events/<id>/clip;
         # the no-clip-url-at-open + clip-ready WS update is S6/R4, not here).
         # _pending_boxes is the frame's server-valid box list from observe()
@@ -642,6 +653,16 @@ class VisitRunner(object):
                 "what it has".format(visit_id, free, self._min_free_bytes),
             )
             self._persist()
+            clip_state.set_state(
+                self.recordings_dir,
+                visit_id,
+                "recording",
+                key=rec.get("key"),
+                start_ts=rec.get("start_ts"),
+                last_seen=now,
+                last_extend=rec.get("last_extend"),
+                disk_floor=True,
+            )
             return
         rec["last_extend"] = end_ts
         # Incremental copy-on-extend (B3): copy completed ring segments into
@@ -660,6 +681,15 @@ class VisitRunner(object):
                 "may be short)".format(visit_id, type(e).__name__, e),
             )
         self._persist()
+        clip_state.set_state(
+            self.recordings_dir,
+            visit_id,
+            "recording",
+            key=rec.get("key"),
+            start_ts=rec.get("start_ts"),
+            last_seen=now,
+            last_extend=end_ts,
+        )
 
     def _on_finalize(self, tr, now):
         visit_id = tr["visit_id"]
@@ -729,11 +759,38 @@ class VisitRunner(object):
         # the watchdog-escalation path (plan S6 observability).
         self.visits_finalized += 1
         scratch = scratch_dir_for(self.recordings_dir, visit_id)
+        clip_state.set_state(
+            self.recordings_dir,
+            visit_id,
+            "finalizing",
+            start_ts=start_ts,
+            end_ts=end_ts,
+            scratch_dir=scratch,
+        )
 
         def _run():
             try:
-                self._finalize_visit(visit_id, scratch, start_ts, end_ts)
+                ok = bool(self._finalize_visit(visit_id, scratch, start_ts, end_ts))
+                if not ok:
+                    clip_state.set_state(
+                        self.recordings_dir,
+                        visit_id,
+                        "failed",
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        reason="finalize_returned_false",
+                    )
             except Exception as e:
+                clip_state.set_state(
+                    self.recordings_dir,
+                    visit_id,
+                    "failed",
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    reason="finalize_exception",
+                    error_type=type(e).__name__,
+                    error=str(e),
+                )
                 applog.emit(
                     "visit",
                     "ERROR finalize thread raised for visit {}: {}: {}".format(

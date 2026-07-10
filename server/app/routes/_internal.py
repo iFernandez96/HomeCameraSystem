@@ -259,13 +259,14 @@ async def host_action_result(body: _ResultBody) -> dict[str, bool]:
     )
     if ok:
         action = (rec or host_bridge.get(body.id) or {}).get("kind", "")
+        audit_action = "mediamtx" if action in ("focus_start", "focus_stop") else action
         username = (rec or host_bridge.get(body.id) or {}).get("requested_by", "worker")
         try:
             audit_db.insert_host_action_event(
                 settings.audit_db_path,
                 ts=now,
                 username=username,
-                action=action,
+                action=audit_action,
                 request_id=body.id,
                 phase="result",
                 status=body.status,
@@ -494,6 +495,12 @@ class DetectionPayload(BaseModel):
         return self
 
 
+class LiveDetectionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    boxes: list[Box] = Field(default_factory=list, max_length=32)
+    camera_id: str = Field(default="front_door", pattern=r"^[a-z0-9_]{1,32}$")
+
+
 @router.get("/detection/config")
 async def worker_detection_config() -> dict[str, object]:
     """Worker-side mirror of GET /api/detection/config (iter-244).
@@ -626,6 +633,23 @@ async def client_log(entry: ClientLog) -> dict:
         entry.fields or {},
         entry.online,
         (entry.ua or "")[:120],
+    )
+    return {"ok": True}
+
+
+@router.post("/live_detection")
+async def publish_live_detection(payload: LiveDetectionPayload) -> dict[str, object]:
+    worker_health.heartbeat()
+    if not detection_service.active:
+        return {"ok": True, "dropped": "detection paused"}
+    await event_bus.publish_live(
+        {
+            "v": 1,
+            "type": "live_detection",
+            "ts": time.time(),
+            "camera_id": payload.camera_id,
+            "boxes": [b.model_dump() for b in payload.boxes],
+        }
     )
     return {"ok": True}
 

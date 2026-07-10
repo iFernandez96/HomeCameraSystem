@@ -117,12 +117,21 @@ echo "==> creating $ARTIFACT_PATH"
 tar --dereference -C "$PAYLOAD_DIR" -czf "$ARTIFACT_PATH" client detection
 
 SHA256="$(sha256sum "$ARTIFACT_PATH" | awk '{print $1}')"
+SOURCE_FINGERPRINT="$("$ROOT/scripts/source-fingerprint.sh")"
+SOURCE_DIRTY=false
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]]; then
+  SOURCE_DIRTY=true
+fi
 ESCAPED_VERSION="$(json_escape "$VERSION")"
 ESCAPED_ARTIFACT_NAME="$(json_escape "$ARTIFACT_NAME")"
 
 cat >"$MANIFEST_PATH" <<EOF
 {
   "version": "$ESCAPED_VERSION",
+  "source": {
+    "fingerprint": "$SOURCE_FINGERPRINT",
+    "dirty": $SOURCE_DIRTY
+  },
   "artifact": {
     "name": "$ESCAPED_ARTIFACT_NAME",
     "sha256": "$SHA256"
@@ -132,6 +141,7 @@ EOF
 
 echo "==> wrote $MANIFEST_PATH"
 echo "==> artifact sha256 $SHA256"
+echo "==> source fingerprint $SOURCE_FINGERPRINT (dirty=$SOURCE_DIRTY)"
 echo
 echo "To ship this artifact, run:"
 printf 'rsync -av --delete %q %q\n' "$OUT_DIR/" "$RSYNC_TARGET$VERSION/"

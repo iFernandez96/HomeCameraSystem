@@ -236,6 +236,24 @@ def test_given_owner_recover_when_posted_then_status_reflects_worker_result(
     assert status.json()["detail"] == "nvargus restart requested"
 
 
+def test_given_owner_when_focus_mode_enabled_then_host_change_is_queued(
+    client: TestClient,
+):
+    from app.services import host_bridge
+
+    response = client.post("/api/camera/focus-mode", json={"enabled": True})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["timeout_s"] == 300
+    rec = host_bridge.get(body["request_id"])
+    assert rec["kind"] == "focus_start"
+
+
+def test_given_anon_when_focus_mode_requested_then_unauthorized(client_anon: TestClient):
+    response = client_anon.post("/api/camera/focus-mode", json={"enabled": True})
+    assert response.status_code == 401
+
+
 def test_given_anon_when_fetching_system_logs_then_401(client_anon: TestClient):
     r = client_anon.get("/api/system/logs", params={"unit": "mediamtx"})
     assert r.status_code == 401

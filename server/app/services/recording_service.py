@@ -29,6 +29,7 @@ Public surface (iter-201, slice 1):
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import shutil
@@ -71,6 +72,7 @@ SERVER_MIN_FREE_BYTES = 300 * 1024 * 1024  # ~300 MB
 # documents the same shape so any future caller that builds an
 # event_id from outside the route layer can validate against it.
 _VALID_EVENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+_CLIP_STATE_LEDGER = ".clip_state.json"
 
 
 def _is_safe_event_id(event_id: str) -> bool:
@@ -98,6 +100,68 @@ def clip_exists(event_id: str) -> bool:
         return clip_path(event_id).is_file()
     except ValueError:
         return False
+
+
+def clip_state_ledger_path() -> Path:
+    """Path to the worker-written clip-state ledger."""
+    return settings.recordings_dir / _CLIP_STATE_LEDGER
+
+
+def read_clip_state_ledger() -> dict:
+    """Read the worker's clip-state ledger.
+
+    Returns a normalized ``{"v": 1, "events": {...}}`` shape. Any missing,
+    corrupt, or malformed file reads as an empty ledger; the API must never fail
+    a clip fetch because observability state is unavailable.
+    """
+    path = clip_state_ledger_path()
+    try:
+        with path.open("r") as f:
+            data = json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"v": 1, "events": {}}
+    if not isinstance(data, dict):
+        return {"v": 1, "events": {}}
+    events = data.get("events")
+    if not isinstance(events, dict):
+        events = {}
+    return {"v": 1, "events": events}
+
+
+def clip_state(event_id: str) -> dict:
+    """Best known state for an event clip.
+
+    Disk availability wins over stale ledger state: if ``<id>.mp4`` exists, the
+    route can serve it and the state is ``available`` even if the worker crashed
+    before updating the ledger.
+    """
+    if not _is_safe_event_id(event_id):
+        raise ValueError("invalid event_id: {!r}".format(event_id))
+    if clip_exists(event_id):
+        path = clip_path(event_id)
+        size = None
+        updated_ts = None
+        try:
+            stat = path.stat()
+            size = stat.st_size
+            updated_ts = stat.st_mtime
+        except OSError:
+            pass
+        return {
+            "event_id": event_id,
+            "state": "available",
+            "source": "disk",
+            "path": str(path),
+            "bytes": size,
+            "updated_ts": updated_ts,
+        }
+    rec = read_clip_state_ledger()["events"].get(event_id)
+    if isinstance(rec, dict):
+        out = dict(rec)
+        out.setdefault("event_id", event_id)
+        out.setdefault("source", "ledger")
+        return out
+    return {"event_id": event_id, "state": "unknown", "source": "missing"}
 
 
 def tracks_path(event_id: str) -> Path:

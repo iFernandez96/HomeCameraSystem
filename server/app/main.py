@@ -33,7 +33,8 @@ class _SuppressNoisyAccess(logging.Filter):
     """Drop uvicorn access-log lines for the high-volume polling
     endpoints. The PWA hits `/api/status` every 5 s (with as many
     open sessions as users), the worker hits
-    `/api/_internal/heartbeat` every 10 s, and the worker also polls
+    `/api/_internal/heartbeat` every 10 s, the live overlay sample endpoint
+    can run multiple times per second, and the worker also polls
     `/api/detection/config` every 30 s — together they generate ~1k+
     routine log lines per hour and bury the actually interesting
     routes (events, detection/config PATCH, push subscribe).
@@ -50,6 +51,7 @@ class _SuppressNoisyAccess(logging.Filter):
     _suppressed_lines = (
         '"GET /api/status ',
         '"POST /api/_internal/heartbeat ',
+        '"POST /api/_internal/live_detection ',
         '"GET /api/detection/config ',
     )
 
@@ -119,6 +121,18 @@ async def lifespan(_app: FastAPI):
             settings.events_db_path, exc_info=True,
         )
         raise
+    # Resume durable timelapse jobs that were interrupted by a container or
+    # host restart. Reconciliation happens after an event loop exists and
+    # before requests are served, so duplicate POSTs cannot race recovery.
+    try:
+        resumed = control.reconcile_timelapse_jobs()
+        if resumed:
+            log.info("lifespan: resumed %d interrupted timelapse build(s)", resumed)
+    except Exception:
+        log.warning(
+            "lifespan: timelapse job reconciliation failed — continuing boot",
+            exc_info=True,
+        )
     from .services.audit_db import init_db as _audit_init_db
     try:
         _audit_init_db(settings.audit_db_path)

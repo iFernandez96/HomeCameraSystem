@@ -49,6 +49,15 @@ server/tests/
 # Snapshots dir is created by the runtime; the build doesn't need it
 # (and it could hold months of personal images).
 snapshots/
+recordings/
+backups/
+timelapses/
+face_captures/
+person_captures/
+
+# Local proof fixtures / fetched Jetson data. Never needed in the server image
+# and can be hundreds of MB, making deploys crawl.
+.jetson-snapshot/
 
 # Pre-built MediaMTX binary — installed by deploy/install-jetson.sh,
 # not by the Docker image.

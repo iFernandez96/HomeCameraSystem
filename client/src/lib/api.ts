@@ -222,6 +222,25 @@ export async function probeEventClip(eventId: string): Promise<boolean> {
   return true
 }
 
+export type EventClipStatus = {
+  event_id: string
+  state: 'recording' | 'finalizing' | 'available' | 'failed' | 'unknown'
+  source: 'ledger' | 'disk' | 'missing'
+  updated_ts?: number
+  start_ts?: number
+  end_ts?: number
+  path?: string
+  bytes?: number
+  reason?: string
+  error_type?: string
+  error?: string
+}
+
+export const fetchEventClipStatus = (eventId: string) =>
+  req<EventClipStatus>(
+    `/api/events/${encodeURIComponent(eventId)}/clip/status`,
+  )
+
 // iter-220 (Feature #6 slice 6): cursor-paginated event search. Wraps
 // the iter-219 `GET /api/events/search` route. All filters optional;
 // `before_ts` is the cursor passed back from `next_cursor` on the
@@ -317,7 +336,7 @@ export const markAllEventsSeen = () =>
 export const captureSnapshot = () =>
   req<{ url: string }>('/api/capture', { method: 'POST' })
 
-export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot'
+export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot' | 'focus_start' | 'focus_stop'
 export type LogUnit =
   | 'homecam-detect'
   | 'mediamtx'
@@ -343,6 +362,7 @@ export type RecoverStatus =
       requested_by: string
       requested_at: number
       result_at: number | null
+      result?: { expires_at?: number; width?: number; height?: number } | null
       worker_online: boolean
     }
 
@@ -362,6 +382,19 @@ export const getRecoverStatus = (requestId?: string) =>
       requestId ? `?request_id=${encodeURIComponent(requestId)}` : ''
     }`,
   )
+
+export const setCameraFocusMode = (enabled: boolean) =>
+  req<{
+    ok: true
+    request_id: string
+    status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+    worker_online: boolean
+    timeout_s: number
+  }>('/api/camera/focus-mode', {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+    keepalive: true,
+  })
 
 export type LogHandle = {
   request_id: string
@@ -885,6 +918,17 @@ export const bootstrapFace = (
 
 export const retrainFace = () =>
   req<{ ok: true; note?: string }>('/api/face/retrain', { method: 'POST' })
+
+export interface FaceCapabilities {
+  bootstrap: boolean
+  retrain: boolean
+  retrain_reason: string
+}
+
+/** Server-advertised face-management operations. Unsupported host-helper
+ * scaffolds stay out of the UI instead of failing only after a click. */
+export const getFaceCapabilities = () =>
+  req<FaceCapabilities>('/api/face/capabilities')
 
 export const toggleDetection = () =>
   req<{ active: boolean }>('/api/detection/toggle', { method: 'POST' })

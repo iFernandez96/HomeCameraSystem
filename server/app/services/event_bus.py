@@ -63,10 +63,24 @@ class DetectionEventDict(TypedDict):
     clip_url: str | None
 
 
+class LiveDetectionEventDict(TypedDict):
+    """Ephemeral bbox samples for the live video overlay.
+
+    These are intentionally NOT persisted to SQLite and NOT pushed. Timeline
+    events stay cooldown/coalescing-gated; the live overlay needs fresher
+    samples so boxes track the current frame instead of the last event row.
+    """
+
+    v: Literal[1]
+    type: Literal["live_detection"]
+    ts: float
+    camera_id: str
+    boxes: list[BoxDict]
+
+
 # Anything that flows over the bus / out the WebSocket. Today only
-# DetectionEventDict — leave the alias in place so future event types
-# (status snapshots, heartbeat broadcasts) just become a Union.
-ServerEvent = DetectionEventDict
+# DetectionEventDict and websocket-only LiveDetectionEventDict.
+ServerEvent = DetectionEventDict | LiveDetectionEventDict
 
 
 class SubscriberCapReached(Exception):
@@ -114,6 +128,11 @@ class EventBus:
         # `recent()` runs on every /api/events poll; a failing read
         # would otherwise log on every poll. Rate-limit to once/60s.
         self._recent_fail_gate = RateLimitedLog(60.0)
+        # SQLite writes are serialized (one writer and no internal unbounded
+        # work queue) and run off the event-loop thread. This keeps
+        # camera/WebSocket coroutines responsive during slow fsyncs while
+        # preserving write-before-fanout ordering and idempotency.
+        self._persist_lock = asyncio.Lock()
 
     def subscribe(
         self,
@@ -155,7 +174,16 @@ class EventBus:
         # (locked DB, disk full) doesn't break the WS fanout —
         # individual events are then lost from history but live
         # subscribers still see them.
-        self._persist_event(event)
+        async with self._persist_lock:
+            await asyncio.to_thread(self._persist_event, event)
+        await self.publish_live(event)
+
+    async def publish_live(self, event: ServerEvent) -> None:
+        """Fan out an event to live subscribers without storing history.
+
+        Used for high-cadence live bbox samples. Detection events should call
+        publish(), which persists first and then delegates here.
+        """
         for q in list(self._subs):
             try:
                 q.put_nowait(event)
@@ -195,6 +223,8 @@ class EventBus:
         rhythm on a successful insert.
         """
         try:
+            if event.get("type") != "detection":
+                return
             # Lazy import: events_db imports DetectionEventDict from
             # THIS module — module-level import would loop.
             from .events_db import insert_event

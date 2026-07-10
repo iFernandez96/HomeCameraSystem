@@ -33,6 +33,9 @@ vi.mock('./lib/api', () => {
     getStatus: vi.fn().mockResolvedValue(null),
     searchEvents: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
     captureSnapshot: vi.fn(),
+    getCameras: vi.fn().mockResolvedValue({
+      cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
+    }),
     getUnreadCount: vi.fn().mockResolvedValue(0),
     // W2 scroll-reset test navigates to the real Events page, which
     // pulls in the rest of the events API surface at module scope —
@@ -126,6 +129,25 @@ describe('App routing', () => {
     expect(main.scrollTop).toBe(0)
   })
 
+  it('GIVEN Home renders WHEN the app shell lays out the live view THEN main itself is not a vertical scroller', async () => {
+    // arrange / act
+    goTo('/')
+    render(<App />)
+    const main = await screen.findByRole('main')
+    await screen.findByTestId('video-tile-stub')
+
+    // assert — the Watch route owns a fixed viewport and the Today at
+    // home list scrolls internally. The shell must not add route-level
+    // scroll or old bottom padding, otherwise the live view drifts.
+    expect(main.className).toMatch(/overflow-hidden/)
+    expect(main.className).toMatch(/pb-0/)
+    expect(main.className).not.toMatch(/overflow-y-auto/)
+    expect(main.firstElementChild?.className).toMatch(/h-full/)
+    expect(main.firstElementChild?.className).toMatch(/min-h-0/)
+    expect(document.documentElement.classList.contains('homecam-watch-route')).toBe(true)
+    expect(document.body.classList.contains('homecam-watch-route')).toBe(true)
+  })
+
   it('GIVEN an unknown path WHEN the app mounts THEN it does not render a blank page — Home renders instead', async () => {
     // arrange
     goTo('/some-old-bookmarked-route-that-no-longer-exists')
@@ -151,5 +173,52 @@ describe('App routing', () => {
     // assert
     const nav = await screen.findByRole('navigation', { name: 'Bottom navigation' })
     expect(nav).toBeInTheDocument()
+  })
+
+  it('GIVEN the user changes primary tabs WHEN Android Back is pressed from Home THEN it does not replay the previous Settings tab', async () => {
+    // arrange — seed a real previous entry, then enter the app. If tab
+    // clicks push instead of replace, Back from Home lands on Settings.
+    window.history.replaceState({}, '', '/before-app')
+    window.history.pushState({}, '', '/')
+    render(<App />)
+    const nav = await screen.findByRole('navigation', {
+      name: 'Bottom navigation',
+    })
+
+    // act — tab to Settings, tab back Home, then simulate Android Back.
+    fireEvent.click(within(nav).getByRole('link', { name: /settings/i }))
+    await waitFor(() => expect(window.location.pathname).toBe('/settings'))
+    fireEvent.click(within(nav).getByRole('link', { name: /home/i }))
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    const popped = new Promise<void>((resolve) => {
+      window.addEventListener('popstate', () => resolve(), { once: true })
+    })
+    window.history.back()
+    await popped
+
+    // assert — Back may leave the app entry or be caught by the
+    // catch-all redirect, but it must not land sideways on Settings.
+    await waitFor(() => expect(window.location.pathname).not.toBe('/settings'))
+  })
+
+  it('GIVEN Home is the current app tab WHEN Android Back is pressed THEN the PWA stays on Home instead of falling through to a blank shell', async () => {
+    // arrange — simulate the PWA custom-tab having a non-app entry
+    // behind Home. The root back guard should consume Back inside the
+    // app document before the browser exposes that empty container.
+    window.history.replaceState({}, '', '/blank-shell')
+    window.history.pushState({}, '', '/')
+    render(<App />)
+    await screen.findByRole('navigation', { name: 'Bottom navigation' })
+    await waitFor(() => expect(window.history.state?.homecamRootGuard).toBe(true))
+
+    // act
+    const popped = new Promise<void>((resolve) => {
+      window.addEventListener('popstate', () => resolve(), { once: true })
+    })
+    window.history.back()
+    await popped
+
+    // assert
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
   })
 })
