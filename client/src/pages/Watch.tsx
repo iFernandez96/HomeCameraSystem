@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { EventRow } from '../components/EventRow'
@@ -940,7 +940,17 @@ export function Watch() {
           <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
             Home
           </h1>
-          <BrandMarkRow size={28} />
+          {/* Mobile entry point to /playground (2026-07-11): the pebble
+              BottomNav can't fit a 6th tab at 360px and the SideRail is
+              desktop-only, so tapping the brand cats takes you to the
+              cats. Discoverable, on-brand, zero nav clutter. */}
+          <Link
+            to="/playground"
+            aria-label="Open the cat playground"
+            className="rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          >
+            <BrandMarkRow size={28} />
+          </Link>
         </div>
         {/* Multicam contract (2026-07-07): camera switcher — renders
             ONLY when a second camera is configured. Same pill/
