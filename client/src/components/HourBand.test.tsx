@@ -46,7 +46,7 @@ describe('HourBand activity ruler', () => {
     expect(within(ruler).getByText('6 AM')).toBeInTheDocument()
     expect(within(ruler).getByText('Noon')).toBeInTheDocument()
     expect(within(ruler).getByText('6 PM')).toBeInTheDocument()
-    expect(screen.getByText('Now · 2:00 PM')).toBeInTheDocument()
+    expect(screen.getByText('0 sightings')).toBeInTheDocument()
   })
 
   it('renders the current-time cursor at the correct position', () => {
@@ -116,8 +116,27 @@ describe('HourBand activity ruler', () => {
     expect(
       screen.getByRole('group', { name: /1 recorded event in 1 period/i }),
     ).toBeInTheDocument()
-    expect(screen.getByText('Empty space = no recorded event')).toBeInTheDocument()
+    expect(screen.getByText('1 sighting')).toBeInTheDocument()
+    expect(screen.getByText('Latest 8:00 AM')).toBeInTheDocument()
+    expect(screen.getByText('Cats 1')).toBeInTheDocument()
+    expect(screen.getByText('Tap a mark for exact time')).toBeInTheDocument()
     expect(screen.queryByText(/quiet/i)).not.toBeInTheDocument()
+  })
+
+  it('summarizes identity counts at a glance', () => {
+    render(
+      <HourBand
+        events={[ev(8, 0, 'person'), ev(9, 0, 'person'), ev(10, 0, 'cat'), ev(11, 0, 'motion')]}
+        dayStartTs={day}
+        nowTs={day + 12 * 3600}
+      />,
+    )
+
+    expect(screen.getByText('4 sightings')).toBeInTheDocument()
+    expect(screen.getByText('People 2')).toBeInTheDocument()
+    expect(screen.getByText('Cats 1')).toBeInTheDocument()
+    expect(screen.getByText('Other 1')).toBeInTheDocument()
+    expect(screen.getByText('Latest 11:00 AM')).toBeInTheDocument()
   })
 
   it('keeps out-of-day events off the ruler', () => {
