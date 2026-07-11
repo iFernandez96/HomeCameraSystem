@@ -134,7 +134,7 @@ export function Events() {
   const reportError = useReportError()
   // iter-356.24 (Frank carryover): pull worker_alive + detection_active
   // so the EventList empty state can branch between "all is calm" and
-  // "camera is offline" instead of showing the same sleeping cat for
+  // "detection unavailable" instead of showing the same sleeping cat for
   // both. 5s poll cadence (the useStatus default) is right — the
   // empty-state-vs-offline distinction is a setup-time call, not a
   // millisecond-real-time one. Existing useStatus visibility-pause
@@ -1708,7 +1708,7 @@ export function Events() {
                 //   armed  = detection_active && worker_alive
                 //   offline = worker_alive === false        (danger)
                 //   "off duty" = !offline && detection_active===false (calm)
-                cameraOffline={
+                detectionUnavailable={
                   status !== null && status.worker_alive === false
                 }
                 detectionOff={

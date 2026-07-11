@@ -448,13 +448,11 @@ export function Watch() {
   }, [audioEnabled])
 
   // Overhaul W1 item 2 (one state vocabulary): the three-state truth
-  // model (status-confirmed down / status unknown with video-truth
-  // tiebreak / healthy) moved to lib/watchState.ts::watchStateOf so
+  // model (detector truth / independent video truth / healthy) moved
+  // to lib/watchState.ts::watchStateOf so
   // this page, the WatchRibbon, and the glance card all say the SAME
-  // word for the same state ("On watch" / "Off duty" / "Camera
-  // offline"). VideoTile's own pill deliberately keeps its separate
+  // word for the same state. VideoTile's own pill deliberately keeps its separate
   // stream-truth vocabulary ("Live"/"Connecting"/"Offline").
-  const statusConfirmedDown = status != null && status.worker_alive === false
   const stateKind = watchStateOf({
     statusKnown: status != null,
     workerAlive,
@@ -462,6 +460,7 @@ export function Watch() {
     videoPlaying,
   })
   const dangerDown = stateKind === 'offline'
+  const detectionUnavailable = stateKind === 'detection-unavailable'
   const reconnecting = stateKind === 'reconnecting'
   const armed = stateKind === 'armed'
   const unhealthy = dangerDown || lowMemory || thermal
@@ -480,9 +479,11 @@ export function Watch() {
   // not a page-local synonym set ("Watching"/"Paused").
   const watching = armed
   const watchingDetail = dangerDown
-    ? statusConfirmedDown
-      ? 'Check its power, then see Settings.'
-      : "Can't reach the camera. Check its connection."
+    ? "Can't reach the camera. Check its connection."
+    : detectionUnavailable
+      ? videoPlaying === true
+        ? 'Live video is on. Events and alerts are paused.'
+        : 'Events and alerts are paused. Checking live video…'
     : reconnecting
       ? 'Status reconnecting'
       : lowMemory
