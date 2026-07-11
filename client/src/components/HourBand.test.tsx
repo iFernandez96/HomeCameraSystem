@@ -1,105 +1,133 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import type { DetectionEvent } from '../lib/types'
 import { HourBand } from './HourBand'
 
 const day = new Date(2026, 6, 7).getTime() / 1000
-const ev = (h: number, label: string, name?: string) => ({
-  id: `${h}-${label}`, ts: day + h * 3600 + 60, label,
-  person_name: name ?? null, person_names: name ? [name] : null,
-}) as any
+const ev = (
+  hour: number,
+  minute: number,
+  label: string,
+  over: Partial<DetectionEvent> = {},
+): DetectionEvent => ({
+  v: 1,
+  type: 'detection',
+  id: `${hour}-${minute}-${label}`,
+  ts: day + hour * 3600 + minute * 60,
+  camera_id: 'cam1',
+  label,
+  score: 0.9,
+  boxes: [],
+  person_name: null,
+  ...over,
+})
 
-describe('HourBand', () => {
-  it('GIVEN events in two hours WHEN rendered THEN 24 cells with those hours colored', () => {
-    // arrange / act
-    render(<HourBand events={[ev(8, 'cat'), ev(20, 'person')]} dayStartTs={day} />)
-    // assert
-    const band = screen.getByRole('img', { name: /hour by hour/i })
-    const cells = band.querySelectorAll('[data-hour]')
-    expect(cells).toHaveLength(24)
-    expect((cells[8] as HTMLElement).style.background).toContain('--color-id-mushu')
-    expect((cells[20] as HTMLElement).style.background).toContain('--color-id-person')
-  })
-
-  it('GIVEN a person and a cat in the same hour WHEN rendered THEN the person wins the cell', () => {
-    // arrange / act
-    render(<HourBand events={[ev(9, 'cat'), ev(9, 'person')]} dayStartTs={day} />)
-    // assert
-    const cell = screen.getByRole('img', { name: /hour by hour/i }).querySelectorAll('[data-hour]')[9]
-    expect((cell as HTMLElement).style.background).toContain('--color-id-person')
-  })
-
-  it('GIVEN events in two hours WHEN rendered THEN the aria sentence names each active hour and identity', () => {
-    // arrange / act
-    render(<HourBand events={[ev(8, 'cat'), ev(20, 'person')]} dayStartTs={day} />)
-    // assert
-    const band = screen.getByRole('img', {
-      name: /Today hour by hour: 8 AM cat, 8 PM person, rest quiet\./i,
-    })
-    expect(band).toBeInTheDocument()
-  })
-
-  it('GIVEN a repeated visit in one hour WHEN rendered THEN the aria sentence calls out the count', () => {
-    // arrange / act
-    render(<HourBand events={[ev(14, 'person'), ev(14, 'person'), ev(14, 'person')]} dayStartTs={day} />)
-    // assert
-    expect(screen.getByRole('img', { name: /2 PM person \(x3\)/i })).toBeInTheDocument()
-  })
-
-  it('GIVEN one sighting in an hour WHEN rendered THEN the cell is lighter than a busy hour of 4+', () => {
-    // arrange / act
+describe('HourBand activity ruler', () => {
+  it('positions events at their exact minute on one 24-hour ruler', () => {
     render(
       <HourBand
-        events={[ev(5, 'cat'), ev(6, 'cat'), ev(6, 'cat'), ev(6, 'cat'), ev(6, 'cat')]}
+        events={[ev(6, 0, 'cat'), ev(18, 0, 'person')]}
         dayStartTs={day}
+        nowTs={day + 12 * 3600}
       />,
     )
-    // assert
-    const cells = screen.getByRole('img', { name: /hour by hour/i }).querySelectorAll('[data-hour]')
-    expect((cells[5] as HTMLElement).style.opacity).toBe('0.55') // 1 event
-    expect((cells[6] as HTMLElement).style.opacity).toBe('1') // 4+ events
+
+    const markers = screen.getAllByTestId('timeline-marker')
+    expect(markers).toHaveLength(2)
+    expect(markers[0]).toHaveStyle({ left: '25%' })
+    expect(markers[1]).toHaveStyle({ left: '75%' })
   })
 
-  it('GIVEN no events WHEN rendered THEN a plain quiet aria sentence (no "rest quiet" dangling comma)', () => {
-    // arrange / act
-    render(<HourBand events={[]} dayStartTs={day} />)
-    // assert
-    expect(screen.getByRole('img', { name: /quiet so far, no activity/i })).toBeInTheDocument()
+  it('shows a clean labeled time axis instead of requiring users to count 24 blocks', () => {
+    render(<HourBand events={[]} dayStartTs={day} nowTs={day + 14 * 3600} />)
+
+    const ruler = screen.getByTestId('day-activity-ruler')
+    expect(within(ruler).getAllByText('12 AM')).toHaveLength(2)
+    expect(within(ruler).getByText('6 AM')).toBeInTheDocument()
+    expect(within(ruler).getByText('Noon')).toBeInTheDocument()
+    expect(within(ruler).getByText('6 PM')).toBeInTheDocument()
+    expect(screen.getByText('Now · 2:00 PM')).toBeInTheDocument()
   })
 
-  it('GIVEN two same-rank events (named persons) tie in one hour, WHEN events arrive newest-first (as the API returns them), THEN the EARLIEST event of the hour wins the cell (final review fix batch #7)', () => {
-    // arrange — same rank (both 'named-person'), same hour, DIFFERENT
-    // timestamps. Pushed newest-first to mirror the real API ordering
-    // — pre-fix, the naive "keep the first array entry on a tie" rule
-    // picked the NEWEST (array-first) event instead of the hour's
-    // actual first arrival.
-    const hour = 9
-    const earliest = {
-      id: 'evt-early', ts: day + hour * 3600 + 30, label: 'person',
-      person_name: 'Sheenal', person_names: ['Sheenal'],
-    } as any
-    const latest = {
-      id: 'evt-late', ts: day + hour * 3600 + 300, label: 'person',
-      person_name: 'Israel', person_names: ['Israel'],
-    } as any
+  it('renders the current-time cursor at the correct position', () => {
+    render(<HourBand events={[]} dayStartTs={day} nowTs={day + 9 * 3600} />)
+    expect(screen.getByTestId('now-cursor')).toHaveStyle({ left: '37.5%' })
+  })
 
-    // act — newest-first array order (latest before earliest).
-    render(<HourBand events={[latest, earliest]} dayStartTs={day} />)
+  it('uses observed start and end timestamps to render a proportional session bar', () => {
+    render(
+      <HourBand
+        events={[ev(8, 0, 'person', { start_ts: day + 8 * 3600, end_ts: day + 10 * 3600 })]}
+        dayStartTs={day}
+        nowTs={day + 12 * 3600}
+      />,
+    )
 
-    // assert — the aria sentence names the EARLIEST arrival's identity.
+    const fill = screen.getByTestId('timeline-marker-fill')
+    expect(fill).toHaveStyle({ left: '33.33333333333333%' })
+    expect(fill.getAttribute('style')).toContain('width: 8.333')
+  })
+
+  it('uses a point marker when no authoritative duration is available', () => {
+    render(<HourBand events={[ev(8, 30, 'cat')]} dayStartTs={day} nowTs={day + 12 * 3600} />)
+    expect(screen.getByTestId('timeline-marker-fill')).toHaveStyle({ width: '6px' })
+  })
+
+  it('opens a single event directly from its marker', () => {
+    const event = ev(13, 44, 'person', { video_status: 'available' })
+    const onSelectEvent = vi.fn()
+    render(
+      <HourBand
+        events={[event]}
+        dayStartTs={day}
+        nowTs={day + 15 * 3600}
+        onSelectEvent={onSelectEvent}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /1:44 PM.*video available/i }))
+    expect(onSelectEvent).toHaveBeenCalledWith(event)
+  })
+
+  it('clusters dense nearby events and lets the user choose the exact one', () => {
+    const first = ev(13, 40, 'person')
+    const second = ev(13, 46, 'cat')
+    const onSelectEvent = vi.fn()
+    render(
+      <HourBand
+        events={[first, second]}
+        dayStartTs={day}
+        nowTs={day + 15 * 3600}
+        onSelectEvent={onSelectEvent}
+      />,
+    )
+
+    const cluster = screen.getByRole('button', { name: /2 events from 1:40 PM–1:46 PM/i })
+    expect(cluster).toHaveTextContent('2')
+    fireEvent.click(cluster)
+
+    const detail = screen.getByRole('region', { name: /2 events from 1:40 PM–1:46 PM/i })
+    fireEvent.click(within(detail).getByRole('button', { name: /1:46 PM.*cat/i }))
+    expect(onSelectEvent).toHaveBeenCalledWith(second)
+  })
+
+  it('gives the ruler a concise accessible summary without claiming empty time was healthy', () => {
+    render(<HourBand events={[ev(8, 0, 'cat')]} dayStartTs={day} nowTs={day + 12 * 3600} />)
     expect(
-      screen.getByRole('img', { name: /9 AM Sheenal/i }),
+      screen.getByRole('group', { name: /1 recorded event in 1 period/i }),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('img', { name: /9 AM Israel/i }),
-    ).not.toBeInTheDocument()
+    expect(screen.getByText('Empty space = no recorded event')).toBeInTheDocument()
+    expect(screen.queryByText(/quiet/i)).not.toBeInTheDocument()
   })
 
-  it('GIVEN the band WHEN rendered THEN a visible legend names People, Cats, and Quiet', () => {
-    // arrange / act
-    render(<HourBand events={[ev(8, 'cat')]} dayStartTs={day} />)
-    // assert
-    expect(screen.getByText('People')).toBeInTheDocument()
-    expect(screen.getByText('Cats')).toBeInTheDocument()
-    expect(screen.getByText('Quiet')).toBeInTheDocument()
+  it('keeps out-of-day events off the ruler', () => {
+    render(
+      <HourBand
+        events={[ev(8, 0, 'cat'), { ...ev(9, 0, 'person'), ts: day - 60 }]}
+        dayStartTs={day}
+        nowTs={day + 12 * 3600}
+      />,
+    )
+    expect(screen.getAllByTestId('timeline-marker')).toHaveLength(1)
   })
 })

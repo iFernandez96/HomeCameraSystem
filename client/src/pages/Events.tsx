@@ -682,7 +682,7 @@ export function Events() {
     return `No ${typeWord} events for ${whoWord}${whenWord}. Try clearing one filter.`
   }, [loading, error, filtered, filter, labelFilter, selectedDay])
 
-  // Playroom Modern (Task 6): the "Today, hour by hour" band reuses
+  // The exact-time activity ruler reuses
   // the already-fetched `events` state (no extra fetch) — it just
   // narrows to today's local-midnight window. `todayStartTs` is
   // computed once via useMemo (same lazy-init pattern EventHeatmap
@@ -1620,8 +1620,7 @@ export function Events() {
             />
           ) : (
             <>
-              {/* Playroom Modern (Task 6): "Today, hour by hour" card
-                  — 24-cell identity timeline above the list. Skipped
+              {/* Exact-time activity ruler above the list. Skipped
                   while a day filter is active (selectedDay browses a
                   different day than "today", so the band would be
                   misleading) and while there are zero events overall
@@ -1630,9 +1629,13 @@ export function Events() {
               {!selectedDay && events.length > 0 && (
                 <div className="card-paper px-2.5 py-3 mx-4 lg:mx-0 landscape-phone:mx-0 mb-3">
                   <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-                    Today, hour by hour
+                    Today&apos;s activity
                   </h2>
-                  <HourBand events={todaysEvents} dayStartTs={todayStartTs} />
+                  <HourBand
+                    events={todaysEvents}
+                    dayStartTs={todayStartTs}
+                    onSelectEvent={onSelectEvent}
+                  />
                 </div>
               )}
               {/* iter-356.x desktop D1: selection-mode action bar.
