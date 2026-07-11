@@ -29,6 +29,15 @@ import { isGodModeUser } from '../lib/roles'
 // header link). The desktop SideRail keeps its 5-item roster — a
 // cross-DEVICE difference is acceptable, a cross-ORIENTATION one
 // is not.
+//
+// Playground (Slice A): deliberately NOT a tab here. The width math
+// fails at 360px: the pebble's inner strip is ~360 - 28 (mx-3.5) -
+// 20 (px-2.5) - 3 (border) ≈ 309px, and each tab's icon row is a
+// w-14 (56px) span — 5 base tabs + the god-mode God View entry = 6
+// tabs at ~51px each, which overflows the 56px icon span. It also
+// re-litigates the NAV-1 4-destination phone IA cap above. The
+// Playground lives on the desktop SideRail; phones reach it by URL /
+// deep link until a dedicated mobile entry point is designed.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },

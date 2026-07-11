@@ -61,6 +61,21 @@ export function SettingsIcon({ active: _active = false }: { active?: boolean }) 
   )
 }
 
+export function PlaygroundIcon({ active: _active = false }: { active?: boolean }) {
+  // Yarn-ball glyph (Playground Slice A): a wound ball with two wrap
+  // arcs and a trailing strand. Same stroke grammar as the rest of
+  // the set — 22px, viewBox 24, stroke-2, round caps/joins.
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M5.5 7.5c3 1.6 8 1.6 11 0" />
+      <path d="M4.5 13.5c3.5 2 9.5 2 13 0" />
+      <path d="M11 4c-2.6 2.6-2.6 11.4 0 14" />
+      <path d="M16.5 15.5 21 21" />
+    </svg>
+  )
+}
+
 export function GodViewIcon({ active: _active = false }: { active?: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

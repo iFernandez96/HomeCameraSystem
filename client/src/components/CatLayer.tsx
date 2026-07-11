@@ -12,7 +12,6 @@ import {
 } from './CatIcons'
 import { CatParticles, type CatParticleType } from './CatParticles'
 import { moodBadgeParts } from './catMoodBadges'
-import { errFields, log } from '../lib/log'
 import {
   CAT_ANIM_SEQUENCES,
   CYCLE_DURATION_MS,
@@ -22,6 +21,32 @@ import {
   type CatAnimFrame,
   type CatAnimSequenceName,
 } from './catAnimSequences'
+// Playground Slice A: the pure sprite-engine machinery (pose
+// transitions, plan builder, weighted rolls), the perf-gate hooks,
+// and the image preload cache were EXTRACTED into shared modules so
+// the Playground page can reuse them. CatLayer keeps thin wrappers
+// bound to its own Activity maps; CatLayer.test.tsx pins that the
+// extraction changed nothing.
+import {
+  POSE_TRANSITIONS,
+  animationPlanFor as buildAnimationPlan,
+  rand,
+  rollWeighted,
+  rollWithoutImmediateRepeat,
+  type AnimActivityMaps,
+  type AnimationPlan,
+  type PoseGroup,
+} from './catEngineCore'
+import {
+  _resetImageCacheForTests,
+  isImageSetReady,
+  preloadImageUrls,
+} from './catImageCache'
+import {
+  useBatteryLow,
+  usePrefersReducedData,
+  usePrefersReducedMotion,
+} from './catPerfGates'
 
 /**
  * iter-356.4-cats — ambient cat layer with full Animal-Crossing-style
@@ -123,14 +148,10 @@ const WALK_PRELOAD_STAGGER_MS: Record<CatId, number> = {
   coco: 12_000,
 }
 
-type AnimationCacheEntry = {
-  status: 'idle' | 'loading' | 'ready' | 'failed'
-  images: HTMLImageElement[]
-  promise: Promise<boolean> | null
-}
-
-let animationCache = new Map<string, AnimationCacheEntry>()
-
+// Preload cache generalized into catImageCache.ts (Playground Slice
+// A). This wrapper keeps CatLayer's per-cat key + frame→URL mapping
+// and the original log tag; ready/failed/in-flight semantics are
+// unchanged (whole set or nothing; first error fails permanently).
 function animationCacheKey(catId: CatId, frames: readonly CatAnimFrame[]): string {
   return `${catId}:${frames.join(',')}`
 }
@@ -139,68 +160,17 @@ function preloadAnimationFrames(
   catId: CatId,
   frames: readonly CatAnimFrame[],
 ): Promise<boolean> {
-  const key = animationCacheKey(catId, frames)
-  let cached = animationCache.get(key)
-  if (!cached) {
-    cached = { status: 'idle', images: [], promise: null }
-    animationCache.set(key, cached)
-  }
-  if (cached.status === 'ready') return Promise.resolve(true)
-  if (cached.status === 'failed') return Promise.resolve(false)
-  if (cached.promise) return cached.promise
-
-  cached.status = 'loading'
-  cached.promise = new Promise<boolean>((resolve) => {
-    let loaded = 0
-    let settled = false
-
-    const fail = (frame: CatAnimFrame, error?: unknown) => {
-      if (settled) return
-      settled = true
-      cached.status = 'failed'
-      log.warn('catLayer:walk-frames-failed', {
-        catId,
-        frame,
-        reason: error ? 'image-construction-failed' : 'image-load-error',
-        ...(error ? errFields(error) : {}),
-      })
-      resolve(false)
-    }
-
-    for (const frame of frames) {
-      try {
-        const image = new Image()
-        cached.images.push(image)
-        image.onload = () => {
-          if (settled) return
-          loaded += 1
-          if (loaded === frames.length) {
-            settled = true
-            cached.status = 'ready'
-            resolve(true)
-          }
-        }
-        image.onerror = () => fail(frame)
-        image.src = catAnimFrameUrl(catId, frame)
-      } catch (error) {
-        fail(frame, error)
-        break
-      }
-    }
-  })
-  return cached.promise
+  return preloadImageUrls(
+    animationCacheKey(catId, frames),
+    frames.map((frame) => catAnimFrameUrl(catId, frame)),
+    'catLayer:walk-frames-failed',
+  )
 }
 
 // Narrow test seam: module-scope image caches otherwise outlive each
 // CatLayer render in Vitest. Production never calls this.
 export function _resetCatWalkAnimationCacheForTests(): void {
-  for (const entry of animationCache.values()) {
-    for (const image of entry.images) {
-      image.onload = null
-      image.onerror = null
-    }
-  }
-  animationCache = new Map()
+  _resetImageCacheForTests()
 }
 
 function useAnimationFramesReady(
@@ -210,7 +180,7 @@ function useAnimationFramesReady(
 ): boolean {
   const cacheKey = animationCacheKey(catId, frames)
   const [loadedKey, setLoadedKey] = useState<string | null>(
-    () => animationCache.get(cacheKey)?.status === 'ready' ? cacheKey : null,
+    () => isImageSetReady(cacheKey) ? cacheKey : null,
   )
 
   useEffect(() => {
@@ -229,7 +199,7 @@ function useAnimationFramesReady(
   }, [cacheKey, catId, frames.length, shouldPreload])
 
   return frames.length > 0 && shouldPreload && (
-    loadedKey === cacheKey || animationCache.get(cacheKey)?.status === 'ready'
+    loadedKey === cacheKey || isImageSetReady(cacheKey)
   )
 }
 
@@ -494,29 +464,23 @@ function rollInteraction(
     asPartner = a.id === 'coco' ? a : b
   }
   if (!pool || !asMushu || !asPartner) return null
-  const totalWeight = pool.reduce((s, o) => s + o.weight, 0)
-  let roll = Math.random() * totalWeight
-  for (const outcome of pool) {
-    roll -= outcome.weight
-    if (roll <= 0) {
-      const [na, nb] = outcome.apply(asMushu, asPartner, now, viewportWidth)
-      // Re-stamp last-interacted so cats don't loop
-      const naFinal: CatState = {
-        ...na,
-        lastInteractedWith: asPartner.id,
-        lastInteractedAt: now,
-      }
-      const nbFinal: CatState = {
-        ...nb,
-        lastInteractedWith: asMushu.id,
-        lastInteractedAt: now,
-      }
-      // Map back to a/b ordering
-      if (a.id === naFinal.id) return [naFinal, nbFinal]
-      return [nbFinal, naFinal]
-    }
+  const outcome = rollWeighted(pool, (o) => o.weight)
+  if (!outcome) return null
+  const [na, nb] = outcome.apply(asMushu, asPartner, now, viewportWidth)
+  // Re-stamp last-interacted so cats don't loop
+  const naFinal: CatState = {
+    ...na,
+    lastInteractedWith: asPartner.id,
+    lastInteractedAt: now,
   }
-  return null
+  const nbFinal: CatState = {
+    ...nb,
+    lastInteractedWith: asMushu.id,
+    lastInteractedAt: now,
+  }
+  // Map back to a/b ordering
+  if (a.id === naFinal.id) return [naFinal, nbFinal]
+  return [nbFinal, naFinal]
 }
 
 // === SOLO EVENTS — random personality moments ===============================
@@ -724,34 +688,15 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
 }
 
 function rollSolo(c: CatState, now: number, w: number): CatState {
-  const pool = SOLO_EVENTS[c.id]
-  const totalWeight = pool.reduce((s, o) => s + o.weight, 0)
-  let roll = Math.random() * totalWeight
-  for (const e of pool) {
-    roll -= e.weight
-    if (roll <= 0) return e.apply(c, now, w)
-  }
-  return c
+  const event = rollWeighted(SOLO_EVENTS[c.id], (e) => e.weight)
+  return event ? event.apply(c, now, w) : c
 }
 
-// Anti-repeat wrapper (user feedback 2026-07-11 "contrived and repeating"):
-// weighted random happily rolls the same state twice in a row, which is
-// the #1 thing that reads as robotic. Standard fix in idle-animation
-// systems ("shuffle bag" family): if the roll lands on the activity the
-// cat JUST finished, re-roll once. A second collision is accepted — real
-// cats do occasionally resume the same thing, and a hard exclusion would
-// skew the personality weights.
-export function _rollWithoutImmediateRepeatForTests(
-  roller: (c: CatState, now: number, w: number) => CatState,
-  c: CatState,
-  now: number,
-  w: number,
-): CatState {
-  const first = roller(c, now, w)
-  if (first === c || first.activity !== c.activity) return first
-  const second = roller(c, now, w)
-  return second === c || second.activity === c.activity ? first : second
-}
+// Anti-repeat wrapper (user feedback 2026-07-11 "contrived and
+// repeating") — moved to catEngineCore.ts (Playground Slice A) with
+// its full rationale comment; re-exported under the original test-seam
+// name so CatLayer.test.tsx stays unchanged.
+export const _rollWithoutImmediateRepeatForTests = rollWithoutImmediateRepeat
 
 // Login is a tiny household vignette, not the app's quiet ambient mascot.
 // Events are intentionally short and toy/prop-led so a new beat begins every
@@ -853,9 +798,7 @@ const INTERACTION_DISTANCE = 50
 const INTERACTION_COOLDOWN_MS = 5000
 const LOGIN_INTERACTION_COOLDOWN_MS = 2800
 
-function rand(min: number, max: number) {
-  return Math.random() * (max - min) + min
-}
+// `rand` moved to catEngineCore.ts (Playground Slice A) — imported above.
 
 // iter-356.28: layer width excludes the desktop SideNav rail (224px =
 // w-56). Cats' x is local to the layer, so spawn + clamp + flee
@@ -1184,8 +1127,8 @@ function HabitatBackground({
 // Net: 0 evaluations/sec instead of 180/sec during long sleep states.
 const CatRender = memo(CatRenderImpl)
 
-type PoseGroup = 'walking' | 'seated' | 'sleeping' | 'crouched' | 'standing'
-
+// PoseGroup + POSE_TRANSITIONS moved to catEngineCore.ts (Playground
+// Slice A). The Activity→PoseGroup binding below stays CatLayer's own.
 const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
   walk: 'walking',
   chase: 'walking',
@@ -1206,44 +1149,6 @@ const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
   pooped: 'crouched',
   hiss: 'standing',
   scared: 'standing',
-}
-
-const POSE_TRANSITIONS: Record<PoseGroup, Record<PoseGroup, readonly CatAnimSequenceName[]>> = {
-  walking: {
-    walking: [],
-    seated: ['walk_to_front', 'stand_to_seated'],
-    sleeping: ['walk_to_front', 'stand_to_seated', 'sleep_down'],
-    crouched: ['walk_to_front', 'stand_to_seated', 'crouch_down'],
-    standing: ['walk_to_front'],
-  },
-  seated: {
-    walking: ['seated_to_stand', 'front_to_walk'],
-    seated: [],
-    sleeping: ['sleep_down'],
-    crouched: ['crouch_down'],
-    standing: ['seated_to_stand'],
-  },
-  sleeping: {
-    walking: ['wake_up', 'seated_to_stand', 'front_to_walk'],
-    seated: ['wake_up'],
-    sleeping: [],
-    crouched: ['wake_up', 'crouch_down'],
-    standing: ['wake_up', 'seated_to_stand'],
-  },
-  crouched: {
-    walking: ['crouch_up', 'seated_to_stand', 'front_to_walk'],
-    seated: ['crouch_up'],
-    sleeping: ['crouch_up', 'sleep_down'],
-    crouched: [],
-    standing: ['crouch_up', 'seated_to_stand'],
-  },
-  standing: {
-    walking: ['front_to_walk'],
-    seated: ['stand_to_seated'],
-    sleeping: ['stand_to_seated', 'sleep_down'],
-    crouched: ['stand_to_seated', 'crouch_down'],
-    standing: [],
-  },
 }
 
 const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenceName[]>> = {
@@ -1268,49 +1173,8 @@ export function _catSequenceNamesForTransitionForTests(
   ]
 }
 
-type AnimationPlan = {
-  frame: CatAnimFrame | null
-  framesToPreload: readonly CatAnimFrame[]
-  walkFrame: number | undefined
-}
-
-function frameFromSteps(
-  steps: readonly { frame: CatAnimFrame; ms: number }[],
-  elapsedMs: number,
-  loop: boolean,
-): CatAnimFrame {
-  const duration = sequenceDurationMs(steps)
-  let cursor = loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1)
-  for (const step of steps) {
-    if (cursor < step.ms) return step.frame
-    cursor -= step.ms
-  }
-  return steps[steps.length - 1].frame
-}
-
-function transitionFrame(
-  catId: CatId,
-  sequenceNames: readonly CatAnimSequenceName[],
-  elapsedMs: number,
-): CatAnimFrame | null {
-  let cursor = elapsedMs
-  for (const name of sequenceNames) {
-    const steps = CAT_ANIM_SEQUENCES[name][catId]
-    const duration = sequenceDurationMs(steps)
-    if (cursor < duration) return frameFromSteps(steps, cursor, false)
-    cursor -= duration
-  }
-  return null
-}
-
-function uniqueFrames(
-  catId: CatId,
-  sequenceNames: readonly CatAnimSequenceName[],
-): CatAnimFrame[] {
-  return Array.from(new Set(
-    sequenceNames.flatMap((name) => CAT_ANIM_SEQUENCES[name][catId].map((step) => step.frame)),
-  ))
-}
+// frameFromSteps / transitionFrame / uniqueFrames / AnimationPlan
+// moved to catEngineCore.ts (Playground Slice A).
 
 const ONGOING_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName>> = {
   walk: 'walk',
@@ -1332,55 +1196,19 @@ const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
   stretch: 'crouch',
 }
 
+// Playground Slice A: the plan builder is now the shared, activity-
+// agnostic catEngineCore.animationPlanFor. This binding supplies
+// CatLayer's own Activity maps (including the hiss/scared special
+// cases inside _catSequenceNamesForTransitionForTests).
+const CAT_LAYER_ANIM_MAPS: AnimActivityMaps<Activity> = {
+  transitionNamesFor: _catSequenceNamesForTransitionForTests,
+  ongoingSequenceByActivity: ONGOING_SEQUENCE_BY_ACTIVITY,
+  holdFrameByActivity: HOLD_FRAME_BY_ACTIVITY,
+  sequences: CAT_ANIM_SEQUENCES,
+}
+
 function animationPlanFor(cat: CatState, now: number): AnimationPlan {
-  const transitionNames = _catSequenceNamesForTransitionForTests(
-    cat.previousActivity,
-    cat.activity,
-  )
-  const elapsed = Math.max(0, now - cat.activityStartedAt)
-  const transitioningFrame = transitionFrame(cat.id, transitionNames, elapsed)
-  const ongoingName = ONGOING_SEQUENCE_BY_ACTIVITY[cat.activity]
-  const idleName = cat.idleSequence
-  const sequenceNames = [
-    ...transitionNames,
-    ...(ongoingName ? [ongoingName] : []),
-    ...(idleName ? [idleName] : []),
-  ]
-  const framesToPreload = uniqueFrames(cat.id, sequenceNames)
-
-  if (transitioningFrame) {
-    return { frame: transitioningFrame, framesToPreload, walkFrame: undefined }
-  }
-
-  const transitionDuration = transitionNames.reduce(
-    (total, name) => total + sequenceDurationMs(CAT_ANIM_SEQUENCES[name][cat.id]),
-    0,
-  )
-  if (idleName) {
-    const steps = CAT_ANIM_SEQUENCES[idleName][cat.id]
-    if (steps.length > 0) {
-      return {
-        frame: frameFromSteps(steps, Math.max(0, now - cat.idleSequenceStartedAt), false),
-        framesToPreload,
-        walkFrame: undefined,
-      }
-    }
-  }
-  if (ongoingName) {
-    const steps = CAT_ANIM_SEQUENCES[ongoingName][cat.id]
-    const frame = frameFromSteps(steps, Math.max(0, elapsed - transitionDuration), true)
-    const walkFrame = ongoingName === 'walk'
-      ? Number(frame.slice('walk_'.length)) - 1
-      : undefined
-    return { frame, framesToPreload, walkFrame }
-  }
-  return {
-    frame: HOLD_FRAME_BY_ACTIVITY[cat.activity] ?? null,
-    framesToPreload: HOLD_FRAME_BY_ACTIVITY[cat.activity]
-      ? [HOLD_FRAME_BY_ACTIVITY[cat.activity]] as CatAnimFrame[]
-      : framesToPreload,
-    walkFrame: undefined,
-  }
+  return buildAnimationPlan(cat, now, CAT_LAYER_ANIM_MAPS)
 }
 
 function CatRenderImpl({
@@ -1839,12 +1667,8 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
 
 function pickSeatedIdleSequence(catId: CatId): CatAnimSequenceName {
   const choices = SEATED_IDLE_CHOICES[catId]
-  let roll = Math.random() * choices.reduce((total, choice) => total + choice.weight, 0)
-  for (const choice of choices) {
-    roll -= choice.weight
-    if (roll <= 0) return choice.name
-  }
-  return choices[choices.length - 1].name
+  return rollWeighted(choices, (choice) => choice.weight)?.name
+    ?? choices[choices.length - 1].name
 }
 
 function isSpecialIdleSequence(name: CatAnimSequenceName): boolean {
@@ -2029,116 +1853,5 @@ function stepCats(
   return anyChanged ? stepped : cats
 }
 
-// === Reduced-motion preference hook =========================================
-
-function usePrefersReducedMotion(): boolean {
-  // iter-356.4-cats: lazy-init from matchMedia AT MOUNT (avoids the
-  // react-hooks/set-state-in-effect lint trap — synchronous setReduced
-  // inside useEffect is what the rule rejects).
-  const [reduced, setReduced] = useState(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return false
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  })
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const onChange = (e: MediaQueryListEvent) => setReduced(e.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
-  return reduced
-}
-
-// iter-356-E (Slice E): mirror of usePrefersReducedMotion for the
-// `prefers-reduced-data: reduce` media query. Same lazy-init + change-
-// listener pattern so the lint rule (no setState in useEffect body) is
-// honored. Browsers without the query (most as of 2026) report `false`
-// at construction — the user opts in via a known browser flag or OS-
-// level data-saver, so missing support === "no preference set."
-function usePrefersReducedData(): boolean {
-  const [reduced, setReduced] = useState(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return false
-    return window.matchMedia('(prefers-reduced-data: reduce)').matches
-  })
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return
-    const mq = window.matchMedia('(prefers-reduced-data: reduce)')
-    const onChange = (e: MediaQueryListEvent) => setReduced(e.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
-  return reduced
-}
-
-// iter-356-E (Slice E): best-effort Battery Status API gate. Returns
-// `true` when battery level < 20% AND the device is not charging.
-// Wrapped in try/catch + feature detect because the API is unevenly
-// shipped (Chromium yes, Safari no, Firefox removed). React 19 lint
-// rule (no setState in useEffect body) is honored via a `cancelled`
-// flag in the .then() — same pattern as the AuthProvider /me fetch.
-type BatteryManagerLike = {
-  level: number
-  charging: boolean
-  addEventListener: (type: string, listener: () => void) => void
-  removeEventListener: (type: string, listener: () => void) => void
-}
-function useBatteryLow(): boolean {
-  const [low, setLow] = useState(false)
-  useEffect(() => {
-    if (typeof navigator === 'undefined') return
-    const nav = navigator as Navigator & {
-      getBattery?: () => Promise<BatteryManagerLike>
-    }
-    if (typeof nav.getBattery !== 'function') return
-    let cancelled = false
-    let battery: BatteryManagerLike | null = null
-    const evaluate = (b: BatteryManagerLike) => {
-      // < 20% AND not charging — plugging in cancels the gate even if
-      // the cell is at 5%, which matches the "save what's left" intent.
-      const isLow = b.level < 0.2 && !b.charging
-      if (!cancelled) setLow(isLow)
-    }
-    try {
-      nav
-        .getBattery()
-        .then((b) => {
-          if (cancelled) return
-          battery = b
-          evaluate(b)
-          const onChange = () => {
-            if (battery) evaluate(battery)
-          }
-          b.addEventListener('levelchange', onChange)
-          b.addEventListener('chargingchange', onChange)
-          // Stash the listener on the battery object via a closure so
-          // cleanup can reach it. Returning early-cleanup from a
-          // .then() isn't possible — instead the outer useEffect
-          // returns a cleanup that flips `cancelled` AND tears down
-          // the listeners by re-binding via `battery` ref capture.
-          ;(battery as BatteryManagerLike & { __homecamCleanup?: () => void }).__homecamCleanup = () => {
-            b.removeEventListener('levelchange', onChange)
-            b.removeEventListener('chargingchange', onChange)
-          }
-        })
-        .catch(() => {
-          // getBattery() can reject in privacy-restricted contexts
-          // (some Chromium policies block it). Treat as "no signal."
-          if (!cancelled) setLow(false)
-        })
-    } catch {
-      // Synchronous throw from a non-conforming polyfill; default
-      // initial state is already `false` so no setState is needed
-      // (and the React 19 lint rule rejects sync setState here).
-    }
-    return () => {
-      cancelled = true
-      const b = battery as
-        | (BatteryManagerLike & { __homecamCleanup?: () => void })
-        | null
-      if (b && typeof b.__homecamCleanup === 'function') {
-        b.__homecamCleanup()
-      }
-    }
-  }, [])
-  return low
-}
+// usePrefersReducedMotion / usePrefersReducedData / useBatteryLow moved
+// VERBATIM to catPerfGates.ts (Playground Slice A) — imported at the top.

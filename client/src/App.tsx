@@ -85,6 +85,11 @@ const Training = lazy(() =>
 const Review = lazy(() =>
   import('./pages/Review').then((m) => ({ default: m.Review })),
 )
+// Playground (Slice A): the cats' side-view diorama room. Lazy like
+// every other page; art preloads are gated inside the page itself.
+const Playground = lazy(() =>
+  import('./pages/Playground').then((m) => ({ default: m.Playground })),
+)
 
 // iter-356.6 (perf A1): lazy-load the ambient CatLayer. Pre-iter-356.6
 // the static import at module top pulled the ~12 KB minified SVG +
@@ -412,6 +417,16 @@ function AppShell() {
               }
             />
             <Route
+              path="/playground"
+              element={
+                <RequireAuth>
+                  <ErrorBoundary label="Playground">
+                    <Playground />
+                  </ErrorBoundary>
+                </RequireAuth>
+              }
+            />
+            <Route
               path="/god"
               element={
                 <RequireAuth>
@@ -473,7 +488,11 @@ function AppShell() {
           timeline and the sprites walked straight over event cards.
           The brand stays via the trio mark, paw nav, and cat empty
           states. The component + cat toggle remain for a future
-          surface that has real floor space. */}
+          surface that has real floor space.
+          Playground (Slice A): if the ambient layer ever remounts,
+          it must ALSO be excluded on /playground (route check like
+          the isWatchRoute gating above) — that page renders its own
+          cat scene and two cat layers on one screen reads as a bug. */}
     </div>
   )
 }
