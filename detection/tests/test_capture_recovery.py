@@ -56,6 +56,10 @@ from mediamtx_watchdog import MediaMtxWatchdog  # noqa: E402
 from metrics import Metrics  # noqa: E402
 
 
+def test_detect_imports_clip_state_for_boot_reconciliation():
+    assert detect.clip_state is not None
+
+
 class _FakeLiveness:
     """Stand-in for the iter-8 Liveness object — bump() is a no-op."""
 

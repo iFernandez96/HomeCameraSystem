@@ -76,6 +76,7 @@ if _HERE not in sys.path:
 # thing so the leaf-lib `logging` records + the hot-loop `[tag]` prints all
 # land in journald with one format.
 import applog  # noqa: E402
+import clip_state  # noqa: E402
 from activity_rules import ActivityRuleEngine, sanitize_rules  # noqa: E402
 from audio_events import sanitize_audio_labels  # noqa: E402
 from scene_guard import SceneGuard  # noqa: E402
