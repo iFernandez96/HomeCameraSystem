@@ -93,7 +93,7 @@ describe('QualityMenu (fuzz F6 — themed replacement for the native select)', (
 
     // assert
     expect(screen.getByText('Adjusts to your connection')).toBeInTheDocument()
-    expect(screen.getByText('1080p, maximum detail and data')).toBeInTheDocument()
+    expect(screen.getByText('1440p30, maximum detail and data')).toBeInTheDocument()
     expect(screen.getByText('720p, sharp with lower Jetson load')).toBeInTheDocument()
     expect(
       screen.getByText('Good picture, about a quarter of the data'),

@@ -331,6 +331,38 @@ def test_privacy_polygons_become_conservative_pipeline_rectangles():
     ]
 
 
+def test_default_privacy_coordinates_keep_durable_1080p_file_contract():
+    masks = [[[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]]
+    assert detect.privacy_rectangles(masks) == [(0, 0, 961, 541)]
+
+
+def test_exposure_region_coordinates_match_native_4k_sensor(tmp_path, monkeypatch):
+    target = tmp_path / ".camera-exposure.env"
+    monkeypatch.setattr(detect, "_EXPOSURE_CONFIG", str(target))
+
+    region = detect._write_exposure_config(
+        (True, 0.25, 0.25, 0.5, 0.5, 0.0, False)
+    )
+
+    assert region == "960 540 2880 1620 1"
+    assert target.read_text() == (
+        "AE_SENSOR_WIDTH='3840'\n"
+        "AE_SENSOR_HEIGHT='2160'\n"
+        "AE_REGION='960 540 2880 1620 1'\n"
+        "AE_COMPENSATION='0.00'\n"
+        "AE_LOCK='false'\n"
+    )
+
+
+def test_camera_ready_requires_720p_detection_and_1440p_uhq(monkeypatch):
+    resolutions = {"cam": (1280, 720), "cam_uhq": (2560, 1440)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
+    assert detect._both_camera_streams_ready(timeout_s=0.1) is True
+
+
 def test_privacy_pipeline_file_is_atomic_and_restart_only_on_change(tmp_path):
     path = tmp_path / ".privacy.env"
     restarts = []
