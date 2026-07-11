@@ -161,6 +161,22 @@ describe('ClipModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('Given a parent refresh supplies a new onClose callback, Then the modal keeps the user\'s focus and Escape uses the newest callback', () => {
+    const event = makeEvent()
+    const firstClose = vi.fn()
+    const latestClose = vi.fn()
+    const { rerender } = render(<ClipModal event={event} onClose={firstClose} />)
+    const keepButton = screen.getByRole('button', { name: 'Protect clip from cleanup' })
+    keepButton.focus()
+
+    rerender(<ClipModal event={event} onClose={latestClose} />)
+
+    expect(document.activeElement).toBe(keepButton)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(firstClose).not.toHaveBeenCalled()
+    expect(latestClose).toHaveBeenCalledTimes(1)
+  })
+
   it('given the backdrop has aria-hidden, when screen-readers query it, then it has no accessible role (iter-270)', () => {
     // arrange
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
