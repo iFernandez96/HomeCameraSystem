@@ -77,6 +77,15 @@ export type PlayCat = {
   /** Bottom offset in scene px (lane floor + elevation). */
   y: number
   lane: PlaygroundLane
+  /** Rendered depth cross-fade, 0 = front lane scale, 1 = back lane
+      scale. Chases `lane` at a fixed rate in stepPlayground so a lane
+      switch never pops the sprite's size in a single frame. */
+  laneBlend: number
+  /** Horizontal travel may not begin before this stamp: the pose
+      transition into the walk plays out first (plus a small jittered
+      "look before you go" hold for autonomous beats), then the gait
+      eases in — never 0-to-full-stride while still standing up. */
+  moveRampAt: number
   direction: 'L' | 'R'
   activity: PlayActivity
   previousActivity: PlayActivity
@@ -177,15 +186,18 @@ export function buildHomeCat(
   sceneW: number,
   sceneH: number,
   random: () => number = Math.random,
+  compact = false,
 ): PlayCat {
   const homeId = HOME_ANCHOR[id]
   const home = anchorById(homeId)
   const pose = HOME_POSE[id]
   const base: PlayCat = {
     id,
-    x: anchorCatX(home, sceneW),
-    y: anchorCatY(home, sceneH),
+    x: anchorCatX(home, sceneW, compact),
+    y: anchorCatY(home, sceneW, sceneH, compact),
     lane: home.lane,
+    laneBlend: home.lane === 'back' ? 1 : 0,
+    moveRampAt: 0,
     direction: 'L', // shared PNGs face left by default
     activity: pose.activity,
     previousActivity: pose.activity,
@@ -219,10 +231,11 @@ export function initialPlaygroundState(
   sceneW: number,
   sceneH: number,
   random: () => number = Math.random,
+  compact = false,
 ): PlaygroundState {
   return {
     cats: (['panther', 'mushu', 'coco'] as const).map((id) =>
-      buildHomeCat(id, now, sceneW, sceneH, random),
+      buildHomeCat(id, now, sceneW, sceneH, random, compact),
     ),
     toys: INITIAL_TOY_STATE,
     ambient: [],
@@ -343,6 +356,26 @@ export const PLAYGROUND_ANIM_MAPS: AnimActivityMaps<PlayActivity> = {
 
 export function playgroundAnimationPlanFor(cat: PlayCat, now: number): AnimationPlan {
   return animationPlanFor(cat, now, PLAYGROUND_ANIM_MAPS)
+}
+
+/** Total duration of the pose-transition chain from one activity into
+    another (wake_up / stand-up / turn frames). Travel starters gate
+    horizontal motion on this so a cat finishes getting up before its
+    paws start moving — no more sliding sleepers. */
+export function playTransitionDurationMs(
+  catId: PlaygroundCatId,
+  from: PlayActivity,
+  to: PlayActivity,
+): number {
+  return playTransitionNamesFor(from, to).reduce(
+    (total, name) => total + sequenceDurationMsOf(name, catId),
+    0,
+  )
+}
+
+function sequenceDurationMsOf(name: CatAnimSequenceName, catId: PlaygroundCatId): number {
+  const steps = CAT_ANIM_SEQUENCES[name]?.[catId] ?? []
+  return steps.reduce((total, step) => total + step.ms, 0)
 }
 
 /** Frame → URL router: playground-only frames (bat/eat/purr) come from

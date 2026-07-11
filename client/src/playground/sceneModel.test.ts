@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CAT_WIDTH_PX,
+  FURNITURE_GAP_PX,
   HOME_ANCHOR,
   SCENE_ANCHORS,
   anchorById,
@@ -11,8 +12,11 @@ import {
   isAnchorFree,
   laneFloorY,
   occupantOf,
+  packFurnitureLayout,
+  packedSpotFor,
   routeTo,
   type AnchorOccupant,
+  type PackedSpot,
 } from './sceneModel'
 import { SCENE_MARGIN_PX } from './playgroundTypes'
 
@@ -92,26 +96,24 @@ describe('sceneModel reachability (the shelf superhighway)', () => {
 })
 
 describe('sceneModel compact layout', () => {
-  it('Given the sub-480px compact layout, When anchors are listed, Then only the shelf superhighway drops (its furniture is hidden there)', () => {
+  it('Given the sub-480px compact layout, When anchors are listed, Then the anchors of dropped furniture (shelves, plant, post, hammock) leave the pool', () => {
     // act
-    const compactIds = anchorsForLayout(true).map((a) => a.id)
-    const fullIds = anchorsForLayout(false).map((a) => a.id)
+    const compactIds = anchorsForLayout(390, true).map((a) => a.id)
+    const fullIds = anchorsForLayout(W, false).map((a) => a.id)
 
     // assert
     expect(fullIds).toContain('shelf_1')
+    expect(fullIds).toContain('hammock')
     expect(compactIds).not.toContain('shelf_1')
     expect(compactIds).not.toContain('shelf_2')
     expect(compactIds).not.toContain('shelf_3')
-    expect(fullIds.filter((id) => !compactIds.includes(id))).toEqual([
-      'shelf_1',
-      'shelf_2',
-      'shelf_3',
-    ])
+    expect(compactIds).not.toContain('hammock')
+    expect(compactIds).not.toContain('scratch_post')
   })
 
-  it('Given the dweller taxonomy homes, When looked up, Then every home anchor survives the compact layout', () => {
+  it('Given the dweller taxonomy homes, When looked up, Then every home anchor survives the compact layout at 360px', () => {
     // arrange
-    const compactIds = anchorsForLayout(true).map((a) => a.id)
+    const compactIds = anchorsForLayout(360, true).map((a) => a.id)
 
     // act + assert — Panther tree, Mushu rug, Coco tunnel nook
     expect(HOME_ANCHOR).toEqual({ panther: 'tree_top', mushu: 'rug', coco: 'tunnel_nook' })
@@ -121,21 +123,104 @@ describe('sceneModel compact layout', () => {
   })
 })
 
+describe('sceneModel furniture packing (the overlap pin, iter Slice D)', () => {
+  // The live 390px screenshot showed the tree, post, tunnel, rug,
+  // hammock, and litter box all piled center-left. Placement is now a
+  // packing problem: for every pair of same-lane props the rects must
+  // NEVER intersect, at every supported width. No exemptions — the only
+  // deliberate layering (the litter-box front lip and cats ON props)
+  // happens outside this layout.
+  const CASES: ReadonlyArray<{ width: number; compact: boolean }> = [
+    { width: 360, compact: true },
+    { width: 390, compact: true },
+    { width: 480, compact: false },
+    { width: 640, compact: false },
+    { width: 800, compact: false },
+  ]
+
+  function horizontalOverlap(a: PackedSpot, b: PackedSpot): number {
+    return Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left)
+  }
+
+  it.each(CASES)(
+    'Given a $width px scene (compact=$compact), When the layout packs, Then no two same-lane furniture rects intersect and every prop stays inside the walls',
+    ({ width, compact }) => {
+      // act
+      const spots = packFurnitureLayout(width, compact)
+
+      // assert — pairwise zero intersection per lane
+      for (const lane of ['front', 'back'] as const) {
+        const laneSpots = spots.filter((s) => s.lane === lane)
+        for (let i = 0; i < laneSpots.length; i++) {
+          for (let j = i + 1; j < laneSpots.length; j++) {
+            const overlap = horizontalOverlap(laneSpots[i], laneSpots[j])
+            expect(
+              overlap,
+              `${laneSpots[i].name} vs ${laneSpots[j].name} @${width}px overlap ${overlap}px`,
+            ).toBeLessThanOrEqual(0)
+          }
+        }
+      }
+      // walls
+      for (const spot of spots) {
+        expect(spot.left, `${spot.name} left wall`).toBeGreaterThanOrEqual(SCENE_MARGIN_PX - 1)
+        expect(
+          spot.left + spot.width,
+          `${spot.name} right wall`,
+        ).toBeLessThanOrEqual(width - SCENE_MARGIN_PX + 1)
+      }
+    },
+  )
+
+  it('Given any supported width, When the front floor packs, Then the room composition holds: tree anchors the left end, bowls cluster as a feeding corner, litter tucks at the far edge', () => {
+    for (const { width, compact } of CASES) {
+      const front = packFurnitureLayout(width, compact).filter((s) => s.lane === 'front')
+      const names = front.map((s) => s.name)
+      // deliberate left→right order (dropped props may be absent)
+      expect(names[0]).toBe('cat_tree_deluxe')
+      expect(names[names.length - 1]).toBe('litter_box')
+      const food = front.find((s) => s.name === 'food_bowl')
+      const water = front.find((s) => s.name === 'water_bowl')
+      if (!food || !water) throw new Error('bowls missing from layout')
+      // the bowls stay a tight pair (feeding corner), even at 800px
+      const bowlGap = water.left - (food.left + food.width)
+      expect(bowlGap, `bowl gap @${width}px`).toBeLessThanOrEqual(FURNITURE_GAP_PX * 4)
+    }
+  })
+
+  it('Given the full layout, When the back wall packs, Then window, feeder, and shelves hang in the upper third (elevated), using the vertical space', () => {
+    // act
+    const back = packFurnitureLayout(800, false).filter((s) => s.lane === 'back')
+
+    // assert — wall-mounted props carry a render elevation
+    expect(back.find((s) => s.name === 'window_perch')?.elevPct).toBeGreaterThan(0)
+    expect(back.find((s) => s.name === 'bird_feeder')?.elevPct).toBeGreaterThan(0)
+    expect(back.find((s) => s.name === 'wall_shelf_set')?.elevPct).toBeGreaterThan(0.15)
+    // the floor plant stands on the floor
+    expect(back.find((s) => s.name === 'plant')?.elevPct).toBe(0)
+  })
+})
+
 describe('sceneModel geometry', () => {
-  it('Given an anchor, When the cat target is computed, Then x centers on the clamped footprint and y adds elevation above the lane floor', () => {
+  it('Given an anchor, When the cat target is computed, Then x sits at its fractional spot on the packed furniture and y tracks the art height above the lane floor', () => {
     // arrange
     const rug = anchorById('rug')
     const treeTop = anchorById('tree_top')
+    const rugRect = packedSpotFor('rug', W, false)
+    const treeRect = packedSpotFor('cat_tree_deluxe', W, false)
+    if (!rugRect || !treeRect) throw new Error('missing packed rects')
 
     // act
     const x = anchorCatX(rug, W)
-    const yFloor = anchorCatY(rug, H)
-    const yHigh = anchorCatY(treeTop, H)
+    const yFloor = anchorCatY(rug, W, H)
+    const yHigh = anchorCatY(treeTop, W, H)
 
-    // assert — rug at 50% of 800 = left 400, center 460, minus half a cat
-    expect(x).toBe(400 + rug.widthPx / 2 - CAT_WIDTH_PX / 2)
+    // assert
+    expect(x).toBe(rugRect.left + rugRect.width * rug.fracX - CAT_WIDTH_PX / 2)
     expect(yFloor).toBe(laneFloorY('front', H))
-    expect(yHigh).toBe(laneFloorY('front', H) + Math.round(treeTop.elevPct * H))
+    expect(yHigh).toBe(
+      laneFloorY('front', H) + Math.round(treeTop.elevFrac * treeRect.height),
+    )
   })
 
   it('Given an out-of-bounds x, When clamped, Then the cat stays inside the scene walls', () => {

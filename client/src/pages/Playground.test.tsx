@@ -173,7 +173,7 @@ describe('Playground page (Slice A scaffolding)', () => {
     expect(rafSpy).not.toHaveBeenCalled()
   })
 
-  it('Given a compact viewport under 480px, When the scene renders, Then the plant and wall shelf set are dropped while the rest of the room remains', async () => {
+  it('Given a compact viewport under 480px, When the scene renders, Then the packing drops the space-hungry extras (shelves, plant, post, hammock) while the core room remains', async () => {
     // arrange
     stubMatchMediaPerQuery({
       ...DEFAULT_QUERIES,
@@ -188,13 +188,14 @@ describe('Playground page (Slice A scaffolding)', () => {
       await Promise.resolve()
     })
 
-    // assert
-    expect(screen.queryByTestId('playground-furniture-plant')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('playground-furniture-wall_shelf_set'),
-    ).not.toBeInTheDocument()
+    // assert — the compact packing (sceneModel) drops the extras so the
+    // remaining props NEVER overlap at phone widths
+    const dropped = ['plant', 'wall_shelf_set', 'scratching_post', 'hammock']
+    for (const name of dropped) {
+      expect(screen.queryByTestId(`playground-furniture-${name}`)).not.toBeInTheDocument()
+    }
     for (const name of PLAYGROUND_FURNITURE_NAMES) {
-      if (name === 'plant' || name === 'wall_shelf_set') continue
+      if (dropped.includes(name)) continue
       expect(screen.getByTestId(`playground-furniture-${name}`)).toBeInTheDocument()
     }
   })
