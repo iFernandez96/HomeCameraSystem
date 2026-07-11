@@ -21,9 +21,75 @@ set -euo pipefail
 
 HOST="${1:-jetson}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TAR="/tmp/homecam-server-arm64.tar"
+TAR="${HOMECAM_SERVER_TAR:-/tmp/homecam-server-arm64.tar}"
 IMAGE="homecam-server:latest"
 COMPOSE="/home/israel/HomeCameraSystem/deploy/docker-compose.yml"
+SSH_RETRY_S="${HOMECAM_SSH_RETRY_S:-5}"
+SSH_WAIT_TIMEOUT_S="${HOMECAM_SSH_WAIT_TIMEOUT_S:-0}"
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2)
+
+case "$SSH_RETRY_S,$SSH_WAIT_TIMEOUT_S" in
+  *[!0-9,]*)
+    echo "HOMECAM_SSH_RETRY_S and HOMECAM_SSH_WAIT_TIMEOUT_S must be non-negative integers" >&2
+    exit 2
+    ;;
+esac
+if [ "$SSH_RETRY_S" -lt 1 ]; then
+  echo "HOMECAM_SSH_RETRY_S must be at least 1 second" >&2
+  exit 2
+fi
+
+wait_for_ssh() {
+  local started=$SECONDS attempts=0 elapsed
+  while ! ssh "${SSH_OPTS[@]}" "$HOST" true >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    elapsed=$((SECONDS - started))
+    if [ "$SSH_WAIT_TIMEOUT_S" -gt 0 ] && [ "$elapsed" -ge "$SSH_WAIT_TIMEOUT_S" ]; then
+      echo "TIMEOUT waiting ${elapsed}s for SSH on $HOST" >&2
+      return 1
+    fi
+    # First failure is immediate; subsequent updates are rate-limited to
+    # roughly 30 seconds at the default interval so unattended deploy logs do
+    # not grow without bound during an outage.
+    if [ "$attempts" -eq 1 ] || [ $((attempts % 6)) -eq 0 ]; then
+      echo "==> $HOST is offline or unreachable; retrying SSH (${elapsed}s elapsed)…" >&2
+    fi
+    sleep "$SSH_RETRY_S"
+  done
+  if [ "$attempts" -gt 0 ]; then
+    echo "==> $HOST is reachable again; resuming deployment."
+  fi
+}
+
+run_ssh_retry() {
+  local remote_command="$1" rc
+  while true; do
+    wait_for_ssh
+    set +e
+    ssh "${SSH_OPTS[@]}" "$HOST" "$remote_command"
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] && return 0
+    # 255 is OpenSSH's transport/session failure. Remote command failures are
+    # real deployment errors and must not be hidden behind an infinite retry.
+    [ "$rc" -eq 255 ] || return "$rc"
+    echo "==> SSH transport dropped; waiting to resume…" >&2
+  done
+}
+
+load_image_retry() {
+  local rc
+  while true; do
+    wait_for_ssh
+    set +e
+    ssh "${SSH_OPTS[@]}" "$HOST" 'sudo docker load' < "$TAR"
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] && return 0
+    [ "$rc" -eq 255 ] || return "$rc"
+    echo "==> image transfer lost SSH; restarting the idempotent transfer…" >&2
+  done
+}
 
 cd "$ROOT"
 
@@ -33,13 +99,13 @@ docker buildx build --platform linux/arm64 \
   -o "type=docker,dest=$TAR" .
 
 echo "==> shipping image to $HOST ($(du -h "$TAR" | cut -f1))…"
-ssh "$HOST" 'sudo docker load' < "$TAR"
+load_image_retry
 
 echo "==> recreating server container from the loaded image (no --build)…"
-ssh "$HOST" "cd /home/israel/HomeCameraSystem && sudo docker compose -f '$COMPOSE' up -d --no-build server"
+run_ssh_retry "cd /home/israel/HomeCameraSystem && sudo docker compose -f '$COMPOSE' up -d --no-build server"
 
 echo "==> waiting for /healthz (until-loop, no fixed sleep)…"
-ssh "$HOST" 'n=0; until curl -sf -m5 http://localhost:8000/healthz >/dev/null 2>&1; do
+run_ssh_retry 'n=0; until curl -sf -m5 http://localhost:8000/healthz >/dev/null 2>&1; do
   n=$((n+1)); [ "$n" -gt 40 ] && { echo "TIMEOUT waiting for healthz"; exit 1; }
   sleep 3
 done; echo "healthy after ${n} checks"'
