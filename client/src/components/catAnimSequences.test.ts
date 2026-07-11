@@ -135,8 +135,9 @@ describe('cat animation sequences', () => {
             .map((n: CatAnimSequenceName) => CAT_ANIM_SEQUENCES[n][catId])
             .filter((steps) => steps.length > 0)
           for (let i = 0; i + 1 < parts.length; i++) {
-            const tail = parts[i][parts[i].length - 1].frame
-            const head = parts[i + 1][0].frame
+            const tail = parts[i]?.[parts[i]!.length - 1]?.frame
+            const head = parts[i + 1]?.[0]?.frame
+            if (!tail || !head) continue
             const legal = legalJoins[tail]?.includes(head) ?? tail === head
             if (!legal) badJoins.push(`${from}->${to} (${catId}): ${tail} !-> ${head}`)
           }

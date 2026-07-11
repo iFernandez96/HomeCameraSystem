@@ -4,6 +4,7 @@ import {
   CatLayer,
   _catSequenceNamesForTransitionForTests,
   _resetCatWalkAnimationCacheForTests,
+  _rollWithoutImmediateRepeatForTests,
 } from './CatLayer'
 
 type MqlInit = {
@@ -697,5 +698,41 @@ describe('CatLayer', () => {
       const flipChild = el.querySelector('[data-testid="cat-direction-flip"]')
       expect(flipChild).not.toBeNull()
     }
+  })
+
+  it('Given a roll that repeats the finished activity, When the anti-repeat wrapper runs, Then it re-rolls once and keeps a differing second roll (idle variation, 2026-07-11)', () => {
+    // arrange — a fake roller whose first roll repeats the cat's current
+    // activity ('sit') and whose second roll differs ('walk').
+    const cat = { activity: 'sit' } as Parameters<typeof _rollWithoutImmediateRepeatForTests>[1]
+    const rolls: string[] = []
+    const roller = (c: typeof cat) => {
+      const next = rolls.length === 0 ? 'sit' : 'walk'
+      rolls.push(next)
+      return { ...c, activity: next } as typeof cat
+    }
+
+    // act
+    const result = _rollWithoutImmediateRepeatForTests(roller, cat, 0, 640)
+
+    // assert — two rolls happened and the non-repeating one won.
+    expect(rolls).toEqual(['sit', 'walk'])
+    expect(result.activity).toBe('walk')
+  })
+
+  it('Given both re-rolls land on the same activity, When the wrapper settles, Then the repeat is accepted rather than looping forever', () => {
+    // arrange
+    const cat = { activity: 'sleep' } as Parameters<typeof _rollWithoutImmediateRepeatForTests>[1]
+    let count = 0
+    const roller = (c: typeof cat) => {
+      count += 1
+      return { ...c, activity: 'sleep' } as typeof cat
+    }
+
+    // act
+    const result = _rollWithoutImmediateRepeatForTests(roller, cat, 0, 640)
+
+    // assert — exactly two attempts, then acquiesce (cats DO nap twice).
+    expect(count).toBe(2)
+    expect(result.activity).toBe('sleep')
   })
 })

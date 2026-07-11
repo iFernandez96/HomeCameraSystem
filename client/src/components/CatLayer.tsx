@@ -337,7 +337,11 @@ function setActivity(c: CatState, activity: Activity, durationMs: number, now: n
     previousActivity: c.activity,
     activity,
     activityStartedAt: now,
-    activityUntil: now + durationMs,
+    // Duration jitter (user feedback 2026-07-11 "contrived and repeating"):
+    // no bout ever lasts exactly its nominal length twice. ±~25% keeps
+    // repeated states from reading as a metronome — the standard idle-
+    // variation trick in game/mascot animation.
+    activityUntil: now + durationMs * rand(0.78, 1.32),
     phaseTime: now,
     idleSequence: null,
     nextIdleLifeAt: now + rand(3000, 7000),
@@ -698,6 +702,25 @@ function rollSolo(c: CatState, now: number, w: number): CatState {
     if (roll <= 0) return e.apply(c, now, w)
   }
   return c
+}
+
+// Anti-repeat wrapper (user feedback 2026-07-11 "contrived and repeating"):
+// weighted random happily rolls the same state twice in a row, which is
+// the #1 thing that reads as robotic. Standard fix in idle-animation
+// systems ("shuffle bag" family): if the roll lands on the activity the
+// cat JUST finished, re-roll once. A second collision is accepted — real
+// cats do occasionally resume the same thing, and a hard exclusion would
+// skew the personality weights.
+export function _rollWithoutImmediateRepeatForTests(
+  roller: (c: CatState, now: number, w: number) => CatState,
+  c: CatState,
+  now: number,
+  w: number,
+): CatState {
+  const first = roller(c, now, w)
+  if (first === c || first.activity !== c.activity) return first
+  const second = roller(c, now, w)
+  return second === c || second.activity === c.activity ? first : second
 }
 
 // Login is a tiny household vignette, not the app's quiet ambient mascot.
@@ -1829,7 +1852,12 @@ function stepCats(
     // ALWAYS counts as a change because rollSolo returns a new state.
     if (now > activityUntil) {
       const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial }
-      const next = placement === 'login' ? rollLoginSolo(base, now, w) : rollSolo(base, now, w)
+      const next = _rollWithoutImmediateRepeatForTests(
+        placement === 'login' ? rollLoginSolo : rollSolo,
+        base,
+        now,
+        w,
+      )
       anyChanged = true
       return next
     }
