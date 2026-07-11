@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CAT_IDS } from './catAnimSequences'
@@ -59,8 +59,8 @@ describe('cat mood badges', () => {
   })
 
   it('Given a symbols-only mood, When parts are computed, Then no badge is used and the full string stays text', () => {
-    // arrange
-    const mood = '💤'
+    // arrange — ✨ is a pure symbol glyph with no emotion mapping
+    const mood = '✨'
 
     // act
     const parts = moodBadgeParts('coco', mood)
@@ -71,20 +71,35 @@ describe('cat mood badges', () => {
     expect(parts.rest).toBe(mood)
   })
 
-  it('Given the shared 💩 glyph, When parts are computed for every cat, Then all cats resolve to the same poop prop badge', () => {
-    // arrange
-    const expectedSrc = SHARED_MOOD_BADGES['💩']
+  it('Given a primary 💤 mood, When parts are computed for every cat, Then it resolves to that cat\'s own sleepy face badge (user ask 2026-07-11)', () => {
+    // arrange — all three cats ship the sleepy badge
+    for (const catId of CAT_IDS) {
+      expect(AVAILABLE_MOOD_BADGES[catId]).toContain('sleepy')
+    }
+
+    // act + assert
+    for (const catId of CAT_IDS) {
+      const parts = moodBadgeParts(catId, '💤')
+      expect(parts.src).toBe(moodBadgeUrl(catId, 'sleepy'))
+      expect(parts.face).toBe('💤')
+      expect(parts.rest).toBe('')
+    }
+  })
+
+  it('Given the ground-poop rework (2026-07-11), When mood-emitting sources are scanned, Then no mood string carries 💩 and the shared badge table is empty (poop is a ground object, never a bubble)', () => {
+    // arrange — the files that set moods on cats
+    const sources = [
+      join(__dirname, 'CatLayer.tsx'),
+      join(__dirname, '..', 'playground', 'catBrain.beats.ts'),
+      join(__dirname, '..', 'playground', 'stepPlayground.ts'),
+    ]
 
     // act
-    const parts = CAT_IDS.map((catId) => moodBadgeParts(catId, '💩'))
+    const offenders = sources.filter((path) => readFileSync(path, 'utf8').includes('💩'))
 
-    // assert — shared badge, not a per-cat mood asset.
-    expect(expectedSrc).toBe('/cats/props/poop.png')
-    for (const p of parts) {
-      expect(p.src).toBe(expectedSrc)
-      expect(p.face).toBe('💩')
-      expect(p.rest).toBe('')
-    }
+    // assert
+    expect(offenders).toEqual([])
+    expect(Object.keys(SHARED_MOOD_BADGES)).toEqual([])
   })
 
   it('Given the shared badge table, When the exported props dir is scanned, Then each shared badge PNG exists on disk', () => {

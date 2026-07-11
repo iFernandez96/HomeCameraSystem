@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { PlaygroundCat } from './PlaygroundCat'
+import { PlaygroundCat, spriteRenderHeightPx } from './PlaygroundCat'
 import { buildHomeCat, type PlayCat } from './playgroundState'
 
 const W = 800
@@ -63,10 +63,16 @@ describe('PlaygroundCat wrapper structure (the Panther-mirror pin, same as CatLa
   })
 })
 
-describe('PlaygroundCat sprite box (USER REPORT 1: every frame renders at the same size)', () => {
-  it('Given anim-set and playground-set frames, When rendered, Then both use the SAME fixed sprite box (objectFit contain, bottom-anchored) so aspect-ratio differences can never change the cat size or feet line', () => {
+describe('PlaygroundCat sprite render (RESIDUAL A 2026-07-11: fixed BODY SCALE, not a fixed contain box)', () => {
+  function spriteFor(cat: PlayCat): HTMLElement {
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+    return screen.getByTestId('playground-cat-sprite')
+  }
+
+  it('Given a narrow walk frame and a WIDE eat frame, When rendered, Then both pin the SAME rendered body height with width:auto (a wide canvas can never shrink the cat) and hang bottom-centered on the cat x', () => {
     // arrange — a walking cat (shared anim frame) and an eating cat
-    // (playground-only frame from the area-normalized export set)
+    // (playground eat_a is a 165×128 canvas: contain-fitting it into the
+    // 44px box was the "cat gets smaller while eating" size complaint)
     const walking = catFor({ activity: 'walk', previousActivity: 'walk' })
     const eating = catFor({ activity: 'eat', previousActivity: 'eat' })
 
@@ -75,11 +81,12 @@ describe('PlaygroundCat sprite box (USER REPORT 1: every frame renders at the sa
       <PlaygroundCat cat={walking} onPetStart={() => {}} onPetEnd={() => {}} />,
     )
     const walkImg = screen.getByTestId('playground-cat-sprite')
-    const walkBox = {
-      width: walkImg.getAttribute('width'),
-      height: walkImg.getAttribute('height'),
-      fit: walkImg.style.objectFit,
-      position: walkImg.style.objectPosition,
+    const walkRender = {
+      height: walkImg.style.height,
+      width: walkImg.style.width,
+      left: walkImg.style.left,
+      bottom: walkImg.style.bottom,
+      transform: walkImg.style.transform,
     }
     first.unmount()
     render(<PlaygroundCat cat={eating} onPetStart={() => {}} onPetEnd={() => {}} />)
@@ -87,16 +94,71 @@ describe('PlaygroundCat sprite box (USER REPORT 1: every frame renders at the sa
 
     // assert — the playground frame comes from the playground set…
     expect(eatImg.getAttribute('src')).toContain('/cats/playground/panther/eat_')
-    // …and renders in the IDENTICAL fixed box as the anim set
+    // …and renders at the IDENTICAL body height, aspect-free width,
+    // anchored bottom-CENTER (may overflow the layout box horizontally)
     expect({
-      width: eatImg.getAttribute('width'),
-      height: eatImg.getAttribute('height'),
-      fit: eatImg.style.objectFit,
-      position: eatImg.style.objectPosition,
-    }).toEqual(walkBox)
-    expect(walkBox.width).toBe('44')
-    expect(walkBox.fit).toBe('contain')
-    expect(walkBox.position).toBe('center bottom')
+      height: eatImg.style.height,
+      width: eatImg.style.width,
+      left: eatImg.style.left,
+      bottom: eatImg.style.bottom,
+      transform: eatImg.style.transform,
+    }).toEqual(walkRender)
+    expect(walkRender.height).toBe('53px') // = CAT_HEIGHT_PX (128-tall canvas)
+    expect(walkRender.width).toBe('auto')
+    expect(walkRender.left).toBe('50%')
+    expect(walkRender.transform).toBe('translateX(-50%)')
+    // no legacy contain-fit remnants
+    expect(eatImg.getAttribute('width')).toBeNull()
+    expect(eatImg.style.objectFit).toBe('')
+  })
+
+  it('Given a 160-tall-canvas pose (climb), When rendered, Then the sprite is proportionally TALLER at the same body scale (spriteRenderHeightPx), never squashed into the 53px box', () => {
+    // arrange — a climbing cat renders climb_a via the climbing override
+    const climbingCat = catFor({
+      activity: 'walk',
+      previousActivity: 'walk',
+      climbing: true,
+    })
+
+    // act
+    const img = spriteFor(climbingCat)
+
+    // assert — 53 × 160/128 = 66px; the taller canvas is real pose height
+    expect(img.getAttribute('data-anim-frame')).toBe('climb_a')
+    expect(img.style.height).toBe(`${spriteRenderHeightPx('climb_a')}px`)
+    expect(img.style.height).toBe('66px')
+    expect(spriteRenderHeightPx('seated')).toBe(53)
+  })
+
+  it('Given a right-facing cat with the centered sprite, When rendered, Then the flip still carries ONLY scaleX(-1) so mirroring stays around the box center', () => {
+    // arrange
+    const cat = catFor({ direction: 'R', activity: 'eat', previousActivity: 'eat' })
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert — flip div unchanged; the img centers itself inside it, so
+    // scaleX about the box center keeps the sprite centered either way
+    const flip = screen.getByTestId('playground-cat-direction-flip')
+    expect(flip.style.transform).toBe('scaleX(-1)')
+    const img = screen.getByTestId('playground-cat-sprite')
+    expect(img.style.left).toBe('50%')
+    expect(img.style.transform).toBe('translateX(-50%)')
+  })
+
+  it('Given wide/tall sprites can overflow the 44×53 layout box, When rendered, Then the petting hit area is oversized beyond the box so it still covers the visual sprite', () => {
+    // arrange
+    const cat = catFor({ activity: 'eat', previousActivity: 'eat' })
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert — extends past every overflowing edge, still floor-anchored
+    const hit = screen.getByTestId('playground-cat-hit-panther')
+    expect(hit.style.left).toBe('-16px')
+    expect(hit.style.right).toBe('-16px')
+    expect(hit.style.top).toBe('-14px')
+    expect(hit.style.bottom).toBe('0px')
   })
 
   it('Given a back-lane depth blend, When rendered, Then the container scale follows laneBlend (cross-fade), not a lane boolean', () => {
@@ -109,6 +171,33 @@ describe('PlaygroundCat sprite box (USER REPORT 1: every frame renders at the sa
     // assert — 1 - (1 - 0.85) * 0.5 = 0.925
     const container = screen.getByTestId('playground-cat-panther')
     expect(container.style.transform).toContain('scale(0.9250)')
+  })
+})
+
+describe('PlaygroundCat ground shadow (live burst audit 2026-07-11: floating cats)', () => {
+  it('Given a visible cat, When rendered, Then a ground-shadow ellipse sits inside the positioned container but OUTSIDE the entrance wrapper (never inherits flip/bob transforms)', () => {
+    // arrange
+    const cat = catFor()
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert
+    const shadow = screen.getByTestId('playcat-ground-shadow')
+    expect(shadow.parentElement).toBe(screen.getByTestId('playground-cat-panther'))
+    const entrance = screen.getByTestId('playground-cat-entrance-wrapper')
+    expect(entrance.contains(shadow)).toBe(false)
+  })
+
+  it('Given a cat hidden inside the tunnel, When rendered, Then no ground shadow renders (nothing casts one)', () => {
+    // arrange
+    const cat = catFor({ activity: 'tunnel', previousActivity: 'tunnel' })
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert
+    expect(screen.queryByTestId('playcat-ground-shadow')).toBeNull()
   })
 })
 

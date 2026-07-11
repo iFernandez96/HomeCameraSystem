@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { CatAnimId } from '../components/catAnimSequences'
+import { GroundPoop, POOP_SIZE_FRAC } from '../components/GroundPoop'
 import { PlaygroundCat } from './PlaygroundCat'
+import { CAT_WIDTH_PX } from './sceneModel'
+import { BACK_LANE_SCALE } from './playgroundTypes'
 import {
   PlaygroundAmbient,
   PlaygroundFurniture,
@@ -328,6 +331,28 @@ export function PlaygroundScene({ staticScene, compact }: PlaygroundSceneProps) 
           style={{ height: '38%' }}
         />
         <PlaygroundFurniture compact={compact} sceneW={sceneW} tunnelRustling={tunnelRustling} />
+        {/* Ground poops (2026-07-11): spawned by stepPlayground when a
+            floor squat completes, anchored in scene coordinates so they
+            stay put while the cat walks away, then fade. Rendered
+            before the cats at the cats' z so a cat paints over its own
+            handiwork. */}
+        {state?.cats.map(
+          (cat) =>
+            cat.poop && (
+              <GroundPoop
+                key={`${cat.id}-poop-${cat.poop.spawnedAt}`}
+                x={cat.poop.x}
+                bottom={cat.poop.y}
+                size={Math.round(
+                  CAT_WIDTH_PX *
+                    POOP_SIZE_FRAC *
+                    (cat.poop.lane === 'back' ? BACK_LANE_SCALE : 1),
+                )}
+                visibleMs={cat.poop.fadeAt - cat.poop.spawnedAt}
+                zIndex={cat.poop.lane === 'back' ? 1 : 2}
+              />
+            ),
+        )}
         {state?.cats.map((cat) => (
           <PlaygroundCat
             key={cat.id}

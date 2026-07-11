@@ -5,9 +5,15 @@ import {
   type CatAnimSequenceName,
 } from '../components/catAnimSequences'
 import { rollWeighted } from '../components/catEngineCore'
-import { rollNextBeat, rollPairInteraction, type BeatContext } from './catBrain.beats'
+import {
+  forceDismountStroll,
+  rollNextBeat,
+  rollPairInteraction,
+  type BeatContext,
+} from './catBrain.beats'
 import {
   SEATED_IDLE_PLAY_ACTIVITIES,
+  perchDwellDeadlineFor,
   playTransitionDurationMs,
   playTransitionNamesFor,
   setPlayActivity,
@@ -22,9 +28,11 @@ import {
   anchorCatY,
   clampCatX,
   feederPerchPoint,
+  isElevatedAnchor,
   laneFloorY,
   packedSpotFor,
 } from './sceneModel'
+import { groundPoopExpired, spawnGroundPoop } from '../components/GroundPoop'
 import { stepToyLayer } from './toyLayer'
 import type { VerbCatView } from './catBrain.verbs'
 import type {
@@ -73,6 +81,9 @@ const BUTTERFLY_FLAP_MS = 160
 const BIRD_HOP_MS = 420
 const BIRD_VISIT_MS = 9000
 const PET_HOLD_GRACE_MS = 600
+/** Below this much remaining vertical distance a climb leg reads as
+    done — the gait returns to walk frames for the horizontal tail. */
+const CLIMB_ANIM_EPS_PX = 4
 
 const BAT_BOUT_MS = playgroundSequenceDurationMs(PLAYGROUND_SEQUENCES.bat_bout) * 3
 const EAT_BOUT_MS = playgroundSequenceDurationMs(PLAYGROUND_SEQUENCES.eat_bout)
@@ -94,6 +105,7 @@ export function stepPlayground(
     sceneW,
     sceneH,
     compact,
+    now,
     random,
   }
 
@@ -239,6 +251,15 @@ function stepCat(
     changed = true
   }
 
+  // Ground poop lifecycle: leaves state once its visible window + fade
+  // have fully played out (the fade itself is CSS — no re-render needed
+  // between spawn and removal).
+  let poop = cat.poop
+  if (poop && groundPoopExpired(poop, now)) {
+    poop = null
+    changed = true
+  }
+
   // Petting hold: while the finger stays down on this cat, the purr
   // never expires (petting preempts everything; release lets the
   // short grace window run out naturally).
@@ -255,6 +276,10 @@ function stepCat(
   const gaitReady = activity === 'walk' || activity === 'run' || activity === 'chase' || activity === 'flee'
   let arrivedFinal = false
   let arrivedWaypoint = false
+  // Climb rendering (interaction wave 2026-07-11): while a mount or
+  // dismount leg still has vertical distance, the render layer swaps
+  // the walk gait for the climb_a/b cling loop.
+  let climbing = false
   if (gaitReady) {
     const dest = travelDestination(cat, ctx)
     if (dest) {
@@ -289,6 +314,7 @@ function stepCat(
         } else {
           y += Math.sign(dy) * climb
         }
+        climbing = cat.climbTravel && Math.abs(dest.y - y) > CLIMB_ANIM_EPS_PX
         if (Math.abs(dest.x - x) < ARRIVE_EPSILON_PX && Math.abs(dest.y - y) < ARRIVE_EPSILON_PX) {
           if (cat.targetAnchor && cat.route.length > 1) arrivedWaypoint = true
           else arrivedFinal = true
@@ -339,6 +365,8 @@ function stepCat(
       direction,
       mood,
       moodSecondary,
+      poop,
+      climbing,
       route: cat.route.slice(1),
       targetAnchor: cat.route[1] ?? null,
       phaseTime: now,
@@ -357,8 +385,13 @@ function stepCat(
       direction,
       mood,
       moodSecondary,
+      poop,
       lane: anchor.lane,
       anchorId: cat.targetAnchor,
+      // Fresh anchor acquisition: restart the continuous-stay clock and
+      // roll this stay's jittered dwell deadline (RESIDUAL B).
+      anchorSince: now,
+      perchDwellDeadline: perchDwellDeadlineFor(now, ctx.random),
       targetAnchor: null,
       route: [],
       arrival: null,
@@ -378,6 +411,7 @@ function stepCat(
       direction,
       mood,
       moodSecondary,
+      poop,
       targetX: null,
       targetY: null,
       arrival: null,
@@ -398,8 +432,11 @@ function stepCat(
         changed = true
       }
     } else if (now >= nextIdleLifeAt) {
-      if (watchingBird) {
-        // Bird chatter: fast tailflicks, no blink filler.
+      if (watchingBird || activity === 'watch') {
+        // Bird chatter: fast tailflicks, no blink filler. The window
+        // hold is a BACK VIEW, so tailflick is also the ONLY micro-life
+        // that composes with it — a front-view blink would spin the cat
+        // around for a frame.
         idleSequence = 'tailflick'
         lastIdleLifeWasSpecial = true
       } else if (lastIdleLifeWasSpecial) {
@@ -437,6 +474,7 @@ function stepCat(
     phaseTime = cat.activityStartedAt + transitionDuration
   }
   if (phaseTime !== cat.phaseTime) changed = true
+  if (climbing !== cat.climbing) changed = true
 
   // --- Beat expiry -------------------------------------------------------------
   if (now > activityUntil && !gaitReady) {
@@ -448,6 +486,8 @@ function stepCat(
       direction,
       mood,
       moodSecondary,
+      poop,
+      climbing,
       activityUntil,
       phaseTime,
       idleSequence,
@@ -460,7 +500,8 @@ function stepCat(
   // Travel cap: a cat stuck walking too long re-rolls (self-heal).
   if (now > activityUntil && gaitReady) {
     const base: PlayCat = {
-      ...cat, x, y, laneBlend, direction, mood, moodSecondary, activityUntil, phaseTime,
+      ...cat, x, y, laneBlend, direction, mood, moodSecondary, poop, activityUntil, phaseTime,
+      climbTravel: false, climbing: false,
       targetAnchor: null, route: [], arrival: null, targetX: null, targetY: null, focus: null,
       idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial,
     }
@@ -476,6 +517,8 @@ function stepCat(
     direction,
     mood,
     moodSecondary,
+    poop,
+    climbing,
     activityUntil,
     phaseTime,
     idleSequence,
@@ -514,6 +557,7 @@ function hasOngoingSequence(activity: PlayCat['activity']): boolean {
     case 'scratch':
     case 'bat':
     case 'eat':
+    case 'drink':
       return true
     default:
       return false
@@ -551,6 +595,36 @@ function pickSeatedIdle(catId: PlayCat['id']): CatAnimSequenceName {
 }
 
 function expireBeat(cat: PlayCat, now: number, ctx: BeatContext): PlayCat {
+  // RESIDUAL B (Panther glued to the tree): a continuous stay on an
+  // elevated anchor past its jittered dwell deadline ends in a FORCED
+  // dismount stroll — another roll could keep her in place (sit_spot /
+  // re-perch apply in place), so the cap does not go through the pool.
+  // Petting and toy commitments still preempt (checked further down
+  // only for focus types this branch does not carry).
+  if (
+    isElevatedAnchor(cat.anchorId) &&
+    now >= cat.perchDwellDeadline &&
+    cat.focus?.type !== 'pet' &&
+    cat.focus?.type !== 'toy'
+  ) {
+    return forceDismountStroll(cat, now, ctx)
+  }
+  // A completed squat pays off (2026-07-11): the poop lands ON THE
+  // GROUND at the cat's trailing edge as the bout ends, and outlives
+  // the activity — the next beat walks away from it. The litter-box
+  // squat's product stays hidden inside the box (the front-lip z-trick
+  // masks the cat's lower half there anyway), so only floor squats
+  // spawn a visible poop.
+  if (cat.activity === 'pooped' && cat.anchorId !== 'litter_box') {
+    cat = {
+      ...cat,
+      poop: {
+        ...spawnGroundPoop(cat.x, cat.direction, CAT_WIDTH_PX, now, ctx.random),
+        y: cat.y,
+        lane: cat.lane,
+      },
+    }
+  }
   // Tunnel dive re-emerges: pop out of the FAR mouth with a stretch,
   // THEN the next beat rolls (discovery beat — the rustle pays off).
   // This is the ONLY sanctioned teleport in the playground: the cat is
@@ -760,6 +834,8 @@ function applyOneStimulus(
         targetAnchor: null,
         route: [],
         anchorId: null,
+        // A perched cat answering a toy descends with the climb loop.
+        climbTravel: isElevatedAnchor(cat.anchorId),
         targetX,
         targetY,
         lane: req.lane,
@@ -784,6 +860,7 @@ function applyOneStimulus(
         targetAnchor: null,
         route: [],
         anchorId: null,
+        climbTravel: isElevatedAnchor(cat.anchorId),
         targetX: clampCatX(treat.x - CAT_WIDTH_PX / 2, ctx.sceneW),
         targetY: laneFloorY(treat.lane, ctx.sceneH),
         lane: treat.lane,

@@ -7,6 +7,7 @@ import {
 import {
   POSE_TRANSITIONS,
   animationPlanFor,
+  frameFromSteps,
   type AnimActivityMaps,
   type AnimationPlan,
   type PoseGroup,
@@ -18,6 +19,7 @@ import {
   type PlaygroundCatFrameName,
   type PlaygroundCatId,
 } from './playgroundAssets'
+import type { GroundPoopSpawn } from '../components/GroundPoop'
 import { PLAYGROUND_SEQUENCES, type PlaygroundAnimStep } from './playgroundSequences'
 import {
   HOME_ANCHOR,
@@ -55,8 +57,9 @@ export type PlayActivity =
   | 'tunnel' // hidden inside the tunnel (renders nothing; tunnel rustles)
   | 'watch' // window bird-watching (Cat TV)
   | 'pooped' // litter visit — reuses the existing silly beat
-  | 'scratch' // scratching bout at the post (reuses bat frames)
-  | 'eat' // eat/drink bout at bowls or a treat
+  | 'scratch' // scratching bout at the post (dedicated standing-stretch frames)
+  | 'eat' // eat bout at the food bowl or a treat
+  | 'drink' // lapping bout at the water bowl
   // stimulus responses
   | 'bat' // toy bat bout
   | 'purr' // petting hold
@@ -109,7 +112,33 @@ export type PlayCat = {
   /** Point travel (toy chase / ambient pursuit) — scene px. */
   targetX: number | null
   targetY: number | null
+  /** True while the CURRENT travel involves a vertical mount/dismount
+      (an elevated origin or destination anchor) — the render layer
+      swaps the walk gait for the climb loop wherever the leg still has
+      vertical distance to cover. Reset by every activity switch. */
+  climbTravel: boolean
+  /** Live per-tick render flag: this frame the cat is actually lerping
+      up/down a climbTravel leg, so PlaygroundCat plays climb_a/b. */
+  climbing: boolean
+  /** When the cat acquired its current anchor (continuous-stay clock —
+      in-place beats on the same anchor do NOT reset it). */
+  anchorSince: number
+  /** RESIDUAL B (2026-07-11, Panther glued to the tree): hard deadline
+      for a single continuous stay on an elevated anchor, jittered
+      12–20s at acquisition. Expiring past it forces a dismount stroll. */
+  perchDwellDeadline: number
+  /** No-repeat window after dismounting an elevated anchor: this
+      anchor reads as occupied to the cat's own beat rolls until the
+      stamp passes, so she does something else before re-perching. */
+  anchorCooldownId: string | null
+  anchorCooldownUntil: number
   petStartedAt: number | null
+  /** Ground poop lifecycle (2026-07-11): spawned when a floor squat
+      COMPLETES (litter-box squats stay hidden in the box), anchored in
+      scene coordinates so it stays put while the cat walks away, then
+      fades. One per cat — anti-repeat means no double squat inside a
+      lifecycle window. */
+  poop: (GroundPoopSpawn & { y: number; lane: PlaygroundLane }) | null
   /** Anti-repeat memory for the beat brain. */
   lastBeatId: string | null
   lastInteractedWith: PlaygroundCatId | null
@@ -137,6 +166,18 @@ export type PlaygroundState = {
 export const ACTIVITY_JITTER_MIN = 0.78
 export const ACTIVITY_JITTER_MAX = 1.32
 
+// RESIDUAL B constants — a single perch stay is capped (jittered) and a
+// dismounted anchor is off the menu for a short window.
+export const PERCH_DWELL_MIN_MS = 12000
+export const PERCH_DWELL_RANGE_MS = 8000
+export const PERCH_NO_REPEAT_MS = 20000
+
+/** Jittered continuous-stay deadline for an elevated anchor acquired at
+    `now` (~12–20s). */
+export function perchDwellDeadlineFor(now: number, random: () => number): number {
+  return now + PERCH_DWELL_MIN_MS + random() * PERCH_DWELL_RANGE_MS
+}
+
 /** Duration-jittered activity switch (same 0.78–1.32× spread as
     CatLayer's setActivity — no bout ever lasts its nominal length
     twice). Random source injected for deterministic tests. */
@@ -155,6 +196,10 @@ export function setPlayActivity(
     activityStartedAt: now,
     activityUntil: now + durationMs * jitter,
     phaseTime: now,
+    // Every activity switch closes any climb leg; travel starters that
+    // mount/dismount re-arm climbTravel explicitly after this call.
+    climbTravel: false,
+    climbing: false,
     idleSequence: null,
     idleSequenceStartedAt: 0,
     nextIdleLifeAt: now + 3000 + random() * 4000,
@@ -214,7 +259,14 @@ export function buildHomeCat(
     arrival: null,
     targetX: null,
     targetY: null,
+    climbTravel: false,
+    climbing: false,
+    anchorSince: now,
+    perchDwellDeadline: perchDwellDeadlineFor(now, random),
+    anchorCooldownId: null,
+    anchorCooldownUntil: 0,
     petStartedAt: null,
+    poop: null,
     lastBeatId: null,
     lastInteractedWith: null,
     lastInteractedAt: 0,
@@ -265,6 +317,11 @@ export const PLAYGROUND_SEQUENCE_TABLE: SequenceTable = {
   bat_bout: perCat(PLAYGROUND_SEQUENCES.bat_bout),
   eat_bout: perCat(PLAYGROUND_SEQUENCES.eat_bout),
   purr_hold: perCat(PLAYGROUND_SEQUENCES.purr_hold),
+  scratch_bout: perCat(PLAYGROUND_SEQUENCES.scratch_bout),
+  drink_bout: perCat(PLAYGROUND_SEQUENCES.drink_bout),
+  climb: perCat(PLAYGROUND_SEQUENCES.climb),
+  hammock_hold: perCat(PLAYGROUND_SEQUENCES.hammock_hold),
+  window_hold: perCat(PLAYGROUND_SEQUENCES.window_hold),
 } as unknown as SequenceTable
 
 const seq = (name: string) => name as CatAnimSequenceName
@@ -289,19 +346,26 @@ export const POSE_GROUP_BY_PLAY_ACTIVITY: Record<PlayActivity, PoseGroup> = {
   pooped: 'crouched',
   pounce: 'crouched',
   play: 'crouched',
-  scratch: 'crouched',
+  // The scratch frames are a standing full-body stretch at the post
+  // (160-tall canvases), so the pose chain stands the cat up rather
+  // than crouching it down.
+  scratch: 'standing',
   bat: 'crouched',
   eat: 'crouched',
+  drink: 'crouched',
   tunnel: 'crouched',
   hiss: 'standing',
   scared: 'standing',
 }
 
-const PLAY_ENTRY_SEQUENCES: Partial<Record<PlayActivity, readonly CatAnimSequenceName[]>> = {
-  perch: ['jump_post'],
-  hammock: ['jump_post'],
-  watch: ['jump_post'],
-}
+// Interaction wave 2026-07-11: the jump_post arrival pop is RETIRED for
+// the vertical mounts (perch / hammock / watch) — the climb loop now
+// covers the ascent while the cat actually lerps up (see PlayCat.
+// climbTravel), which reads far better than teleport-then-pop. Nothing
+// currently re-enters here; low floor-level hops (litter box, tunnel)
+// never had an entry pop and read fine without one (the tunnel cat is
+// hidden anyway). Keep this map as the slot for future arrival flair.
+const PLAY_ENTRY_SEQUENCES: Partial<Record<PlayActivity, readonly CatAnimSequenceName[]>> = {}
 
 export function playTransitionNamesFor(
   from: PlayActivity,
@@ -328,20 +392,24 @@ export const PLAY_ONGOING_SEQUENCE: Partial<Record<PlayActivity, CatAnimSequence
   play: 'pounce',
   pounce: 'pounce',
   pooped: 'poop_squat',
-  scratch: seq('bat_bout'), // scratching reuses the bat paw-swipe frames
+  scratch: seq('scratch_bout'), // dedicated standing-stretch strokes
   bat: seq('bat_bout'),
   eat: seq('eat_bout'),
+  drink: seq('drink_bout'),
 }
 
 export const PLAY_HOLD_FRAME: Partial<Record<PlayActivity, CatAnimFrame>> = {
   sit: 'seated',
   judge: 'seated',
   loaf: 'seated',
-  watch: 'seated',
+  // Cat TV: the BACK-VIEW seated hold sells "watching out the window";
+  // the tailflick micro-life briefly interrupts it (that composes).
+  watch: frame('window_watch'),
   perch: 'seated',
   snuggle: 'seated',
   sleep: 'sleep',
-  hammock: 'sleep',
+  // Draped side-lie for the hammock nap (breathe pulse on the render).
+  hammock: frame('hammock_lie'),
   stretch: 'crouch',
   purr: frame('purr'),
   // 'tunnel' has no hold frame — a hidden cat renders nothing.
@@ -354,7 +422,22 @@ export const PLAYGROUND_ANIM_MAPS: AnimActivityMaps<PlayActivity> = {
   sequences: PLAYGROUND_SEQUENCE_TABLE,
 }
 
+// The climb loop is travel-phase state, not an activity: while a mount/
+// dismount leg still has vertical distance, the cling frames override
+// the walk gait (stepPlayground maintains cat.climbing per tick).
+const CLIMB_STEPS = PLAYGROUND_SEQUENCES.climb as unknown as readonly {
+  frame: CatAnimFrame
+  ms: number
+}[]
+
 export function playgroundAnimationPlanFor(cat: PlayCat, now: number): AnimationPlan {
+  if (cat.climbing) {
+    return {
+      frame: frameFromSteps(CLIMB_STEPS, Math.max(0, now - cat.activityStartedAt), true),
+      framesToPreload: CLIMB_STEPS.map((step) => step.frame),
+      walkFrame: undefined,
+    }
+  }
   return animationPlanFor(cat, now, PLAYGROUND_ANIM_MAPS)
 }
 

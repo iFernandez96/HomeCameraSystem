@@ -43,6 +43,48 @@ export const PLAYGROUND_SEQUENCES = {
   purr_hold: [
     { frame: 'purr', ms: 1 },
   ],
+  // Scratching-post bout — three deliberate full-arm strokes (slower
+  // than the toy-bat flurry), then settle back to the seated hold.
+  scratch_bout: [
+    { frame: 'scratch_a', ms: 280 },
+    { frame: 'scratch_b', ms: 240 },
+    { frame: 'scratch_a', ms: 280 },
+    { frame: 'scratch_b', ms: 240 },
+    { frame: 'scratch_a', ms: 280 },
+    { frame: 'scratch_b', ms: 240 },
+    { frame: 'seated', ms: 1 },
+  ],
+  // Water-bowl bout — four quick lapping cycles (tongue out / swallow),
+  // a touch faster than eating, then the seated hold.
+  drink_bout: [
+    { frame: 'drink_a', ms: 260 },
+    { frame: 'drink_b', ms: 300 },
+    { frame: 'drink_a', ms: 260 },
+    { frame: 'drink_b', ms: 300 },
+    { frame: 'drink_a', ms: 260 },
+    { frame: 'drink_b', ms: 300 },
+    { frame: 'drink_a', ms: 260 },
+    { frame: 'drink_b', ms: 300 },
+    { frame: 'seated', ms: 1 },
+  ],
+  // Vertical-cling travel loop — plays WHILE a cat lerps up/down a
+  // mount (tree / shelf / window / hammock), replacing the old
+  // jump_post pop. No hold step: the loop runs for exactly as long as
+  // the vertical travel does.
+  climb: [
+    { frame: 'climb_a', ms: 200 },
+    { frame: 'climb_b', ms: 200 },
+  ],
+  // Draped side-lie hold for the hammock nap (breathe pulse rides the
+  // render layer, same as sleep).
+  hammock_hold: [
+    { frame: 'hammock_lie', ms: 1 },
+  ],
+  // Back-view seated hold for the window perch — the turned back sells
+  // "watching out the window"; tailflick micro-life interrupts it.
+  window_hold: [
+    { frame: 'window_watch', ms: 1 },
+  ],
 } as const satisfies Record<string, readonly PlaygroundAnimStep[]>
 
 export type PlaygroundSequenceName = keyof typeof PLAYGROUND_SEQUENCES

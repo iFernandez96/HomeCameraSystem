@@ -19,7 +19,7 @@ const H = 400
 const NOW = 50_000
 
 function ctxFor(cats: readonly PlayCat[], over: Partial<BeatContext> = {}): BeatContext {
-  return { cats, ambient: [], sceneW: W, sceneH: H, compact: false, random: () => 0.5, ...over }
+  return { cats, ambient: [], sceneW: W, sceneH: H, compact: false, now: NOW, random: () => 0.5, ...over }
 }
 
 function homeCat(id: 'panther' | 'mushu' | 'coco'): PlayCat {
@@ -79,7 +79,8 @@ describe('catBrain.beats personality weights (Shimeji rule: personality lives ON
 
   it('Given the duration jitter, When a beat applies, Then the bout length is nominal x (0.78 + random * 0.54)', () => {
     // arrange — floor_nap is nominal 22000ms; ctx.random 0.5 => x1.05.
-    // Force the weighted roll past hammock (8) into floor_nap.
+    // Force the weighted roll past hammock (8) into floor_nap's 8–14
+    // band (coco's pool totals 28 since floor_poop; 9/27 × 28 ≈ 9.3).
     vi.spyOn(Math, 'random').mockReturnValue(9 / 27)
     const coco = homeCat('coco')
 
@@ -121,6 +122,47 @@ describe('catBrain.beats personality weights (Shimeji rule: personality lives ON
   })
 })
 
+describe('catBrain.beats pooping (2026-07-11: ground object, never a mood bubble)', () => {
+  it('Given the litter visit, When it applies, Then the cat travels to the box for a squat with NO 💩 bubble', () => {
+    // arrange
+    const mushu = homeCat('mushu')
+
+    // act
+    const next = beatById('litter_visit').apply(mushu, NOW, ctxFor([mushu]))
+
+    // assert — en route to the box, arrival squats; mood untouched
+    expect(next.targetAnchor).toBe('litter_box')
+    expect(next.arrival).toMatchObject({ activity: 'pooped' })
+    expect(next.mood).toBeNull()
+  })
+
+  it('Given the rare floor accident, When it applies, Then the cat squats IN PLACE (stepPlayground drops the ground poop when the bout completes)', () => {
+    // arrange — every cat can have the accident, rarely
+    const beat = beatById('floor_poop')
+    expect(beat.weights).toEqual({ panther: 1, mushu: 1, coco: 1 })
+    const mushu = homeCat('mushu')
+
+    // act
+    const next = beat.apply(mushu, NOW, ctxFor([mushu]))
+
+    // assert — no travel, no mood; the squat plays where the cat stands
+    expect(next.activity).toBe('pooped')
+    expect(next.targetAnchor).toBeNull()
+    expect(next.mood).toBeNull()
+  })
+
+  it('Given a cat perched on the tree top, When the floor accident is gated, Then it is unavailable (no poop floating on a platform)', () => {
+    // arrange — panther's home anchor IS tree_top
+    const panther = homeCat('panther')
+    const mushu = homeCat('mushu') // floor home (rug)
+
+    // act + assert
+    const available = beatById('floor_poop').available
+    expect(available?.(panther, ctxFor([panther]))).toBe(false)
+    expect(available?.(mushu, ctxFor([mushu]))).toBe(true)
+  })
+})
+
 describe('catBrain.beats travel routing', () => {
   it('Given Panther already on the tree top, When she travels to a shelf, Then the already-climbed waypoints are skipped', () => {
     // arrange
@@ -147,6 +189,114 @@ describe('catBrain.beats travel routing', () => {
     expect(next.activity).toBe('perch')
     expect(next.anchorId).toBe('tree_top')
     expect(next.targetAnchor).toBeNull()
+  })
+})
+
+describe('catBrain.beats bowl beats (interaction wave 2026-07-11)', () => {
+  it('Given the food bowl is free, When bowl_snack applies, Then the cat arrives into an eat bout', () => {
+    // arrange
+    const mushu = homeCat('mushu')
+
+    // act
+    const next = beatById('bowl_snack').apply(mushu, NOW, ctxFor([mushu]))
+
+    // assert
+    expect(next.targetAnchor).toBe('food_bowl')
+    expect(next.arrival).toMatchObject({ activity: 'eat' })
+  })
+
+  it('Given the food bowl is taken, When bowl_snack applies, Then the cat heads to the WATER bowl and arrives into a drink (lapping) bout', () => {
+    // arrange — panther camps the food bowl
+    const mushu = homeCat('mushu')
+    const panther = { ...homeCat('panther'), anchorId: 'food_bowl' }
+
+    // act
+    const next = beatById('bowl_snack').apply(mushu, NOW, ctxFor([mushu, panther]))
+
+    // assert — water reads as lapping, not chewing
+    expect(next.targetAnchor).toBe('water_bowl')
+    expect(next.arrival).toMatchObject({ activity: 'drink' })
+  })
+})
+
+describe('catBrain.beats climb travel legs (interaction wave 2026-07-11)', () => {
+  it('Given a floor cat mounting the tree top, When travel starts, Then the leg is flagged climbTravel (the render layer plays climb_a/b while y lerps)', () => {
+    // arrange — mushu's home is the rug (floor)
+    const mushu = homeCat('mushu')
+
+    // act
+    const next = travelToAnchor(mushu, NOW, ctxFor([mushu]), 'tree_top', 'perch', 16000)
+
+    // assert
+    expect(next.climbTravel).toBe(true)
+    expect(next.activity).toBe('walk')
+  })
+
+  it('Given a perched cat dismounting to a floor anchor, When travel starts, Then the descent is ALSO a climb leg (dismounts reverse with climb frames)', () => {
+    // arrange — panther's home is the tree top
+    const panther = homeCat('panther')
+
+    // act
+    const next = travelToAnchor(panther, NOW, ctxFor([panther]), 'rug', 'sit', 5000)
+
+    // assert
+    expect(next.climbTravel).toBe(true)
+  })
+
+  it('Given floor-to-floor travel, When it starts, Then no climb leg is flagged (walk gait all the way)', () => {
+    // arrange
+    const mushu = homeCat('mushu')
+
+    // act
+    const next = travelToAnchor(mushu, NOW, ctxFor([mushu]), 'litter_box', 'pooped', 4500)
+
+    // assert
+    expect(next.climbTravel).toBe(false)
+  })
+})
+
+describe('catBrain.beats perch no-repeat window (RESIDUAL B: Panther glued to the tree)', () => {
+  it('Given a fresh dismount cooldown on the tree top, When tree_perch availability is checked, Then the beat is off the menu until the window passes', () => {
+    // arrange — panther just vacated the tree top
+    const panther = {
+      ...homeCat('panther'),
+      anchorId: null,
+      anchorCooldownId: 'tree_top',
+      anchorCooldownUntil: NOW + 20000,
+    }
+    const available = beatById('tree_perch').available
+
+    // act + assert — blocked inside the window, open after it
+    expect(available?.(panther, ctxFor([panther]))).toBe(false)
+    expect(available?.(panther, ctxFor([panther], { now: NOW + 20001 }))).toBe(true)
+  })
+
+  it('Given a beat roll moves Panther OFF the tree top, When the new beat applies, Then the vacated perch gets a ~20s no-repeat window', () => {
+    // arrange — roll ~0 lands on hammock_nap (travel away from the tree)
+    vi.spyOn(Math, 'random').mockReturnValue(0.001)
+    const panther = homeCat('panther') // anchored at tree_top
+
+    // act
+    const next = rollNextBeat(panther, NOW, ctxFor([panther]))
+
+    // assert — she left, and the tree is cooling down
+    expect(next.lastBeatId).toBe('hammock_nap')
+    expect(next.anchorId).toBeNull()
+    expect(next.anchorCooldownId).toBe('tree_top')
+    expect(next.anchorCooldownUntil).toBe(NOW + 20000)
+  })
+
+  it('Given an in-place beat on the same anchor, When it applies, Then the continuous-stay clock and cooldown are untouched', () => {
+    // arrange — panther perched, sit_spot applies in place
+    const panther = { ...homeCat('panther'), anchorSince: NOW - 9000 }
+
+    // act
+    const next = beatById('sit_spot').apply(panther, NOW, ctxFor([panther]))
+
+    // assert — still on her anchor, stay clock intact
+    expect(next.anchorId).toBe('tree_top')
+    expect(next.anchorSince).toBe(NOW - 9000)
+    expect(next.anchorCooldownId).toBeNull()
   })
 })
 
