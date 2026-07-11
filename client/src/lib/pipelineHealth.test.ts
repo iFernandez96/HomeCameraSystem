@@ -28,21 +28,25 @@ function status(overrides: Partial<ServerStatus> = {}): ServerStatus {
 }
 
 describe('derivePipeline', () => {
-  it("Given camera 'ok', worker_alive, detection_active, and a fresh frame, When derivePipeline runs, Then all four stages are up", () => {
+  it('Given status has no direct camera or MediaMTX probes, When derived, Then those stages stay unknown while detection and server are up', () => {
     // arrange / act
     const stages = derivePipeline(status())
 
     // assert
-    expect(stages.map((s) => s.verdict)).toEqual(['up', 'up', 'up', 'up'])
+    expect(stages.map((s) => s.verdict)).toEqual(['unknown', 'unknown', 'up', 'up'])
   })
 
-  it('Given seconds_since_last_frame is 120, When derivePipeline runs, Then the MediaMTX stage is down with a STALE reason', () => {
+  it('Given detector frame age is 120 seconds, When derived, Then detection intake is down while MediaMTX remains unknown', () => {
     // arrange / act
-    const mediamtx = derivePipeline(status({ seconds_since_last_frame: 120 }))[1]
+    const stages = derivePipeline(status({ seconds_since_last_frame: 120 }))
 
     // assert
-    expect(mediamtx).toMatchObject({ stage: 'mediamtx', verdict: 'down' })
-    expect(mediamtx.reason).toMatch(/STALE/)
+    expect(stages[1]).toMatchObject({ stage: 'mediamtx', verdict: 'unknown' })
+    expect(stages[2]).toMatchObject({
+      stage: 'detect',
+      verdict: 'down',
+      reason: 'frame intake stalled',
+    })
   })
 
   it('Given seconds_since_last_frame is null, When derivePipeline runs, Then the MediaMTX stage is unknown', () => {

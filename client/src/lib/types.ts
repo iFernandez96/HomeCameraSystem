@@ -614,7 +614,8 @@ export type ServerStatus = {
    * (booting / never received one). Distinct from `worker_last_seen_s`
    * which is heartbeat freshness — the iter-300 outage had heartbeat
    * fine for 14 hours while this counter would have climbed to
-   * 50,000+. UI flips a "STREAM STALE" pill when this exceeds ~60.
+   * 50,000+. This is detection-ingest freshness only; it must never be
+   * presented as proof that the independent MediaMTX/WebRTC video is down.
    */
   seconds_since_last_frame: number | null
   /**

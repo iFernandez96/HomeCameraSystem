@@ -76,6 +76,23 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       expect(screen.getByText(/detection service hasn't reported/i)).toBeInTheDocument()
     })
 
+    it('given detector frames are stale while the worker is alive, then it says detection feed stalled and explicitly separates live video', () => {
+      // arrange + act
+      render(
+        <LiveStats
+          status={status({
+            worker_alive: true,
+            seconds_since_last_frame: 125,
+          })}
+        />,
+      )
+
+      // assert
+      expect(screen.getByText('Detection feed stalled')).toBeInTheDocument()
+      expect(screen.getByText(/live video is checked separately/i)).toBeInTheDocument()
+      expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
+    })
+
     it('given gear=low-memory, when rendered, then summary is the red "Detection paused — low memory" + recovery hint', () => {
       // arrange + act
       render(

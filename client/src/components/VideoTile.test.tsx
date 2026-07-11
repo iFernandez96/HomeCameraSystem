@@ -295,7 +295,7 @@ describe('VideoTile', () => {
   // red pill render WHILE `status === 'live'` (frames visibly
   // flowing), a live-caught contradiction. Both `workerAlive=false`
   // cases now collapse into ONE amber "Detection unavailable" pill
-  // regardless of `streamStaleSeconds`; "Camera offline" copy is
+  // regardless of detector frame age; "Camera offline" copy is
   // reserved for the status==='error' overlay (video path itself
   // confirmed dead), tested separately below.
 
@@ -333,7 +333,7 @@ describe('VideoTile', () => {
         src="http://test/cam/whep"
         detectionActive={true}
         workerAlive={false}
-        streamStaleSeconds={5}
+        detectionFrameAgeSeconds={5}
       />,
     )
 
@@ -367,11 +367,9 @@ describe('VideoTile', () => {
     expect(screen.queryByLabelText(/detection unavailable/i)).not.toBeInTheDocument()
   })
 
-  // iter-302a/b (test-coverage-auditor D2): the stream-stale pill is
-  // the user-visible signal of the iter-300 outage class. Pin its
-  // precedence + render gate.
+  // Detector freshness is independent from the visible WebRTC stream.
 
-  it('given streamStaleSeconds > 60 and status live, when rendered, then shows STREAM STALE pill (iter-302)', async () => {
+  it('given detector frames are stale while video is live, when rendered, then it reports detection delayed and preserves live-video truth', async () => {
     // arrange
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
 
@@ -380,23 +378,22 @@ describe('VideoTile', () => {
       <VideoTile
         src="http://test/cam/whep"
         workerAlive={true}
-        streamStaleSeconds={90}
+        detectionFrameAgeSeconds={90}
       />,
     )
 
     // assert
     await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    // iter-356.C: visible text "Stream stalled"; the "no video for Ns"
-    // detail moved into the aria-label so SR users still hear it but
-    // the visible UI stays calm.
-    expect(screen.getByText(/stream stalled/i)).toBeInTheDocument()
+    expect(screen.getByText(/detection delayed/i)).toBeInTheDocument()
+    expect(screen.getByText(/live video is on/i)).toBeInTheDocument()
     expect(
-      screen.getByLabelText(/no video for 90s/i),
+      screen.getByLabelText(/detection feed stalled for 90 seconds.*live video is still on/i),
     ).toBeInTheDocument()
+    expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
   })
 
-  it('given streamStaleSeconds <= 60, when rendered, then no STREAM STALE pill (iter-302)', async () => {
+  it('given detector frames are within the freshness threshold, when rendered, then no detection-delay pill appears', async () => {
     // arrange
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
 
@@ -405,7 +402,7 @@ describe('VideoTile', () => {
       <VideoTile
         src="http://test/cam/whep"
         workerAlive={true}
-        streamStaleSeconds={30}
+        detectionFrameAgeSeconds={30}
       />,
     )
 
@@ -413,13 +410,10 @@ describe('VideoTile', () => {
     // status branch is "live" (when stale would be eligible).
     await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/detection delayed/i)).not.toBeInTheDocument()
   })
 
-  it('given streamStaleSeconds > 60 and worker alive, when stale and offline conflict, then STREAM STALE wins over OFFLINE (iter-302)', async () => {
-    // arrange — worker alive but stream stalled is the iter-300
-    // signature. Stream-stale should take precedence over the
-    // OFFLINE pill (which only fires when worker_alive=false).
+  it('given detector intake is stale while worker and video are live, then it never claims the camera is offline', async () => {
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
 
     // act
@@ -428,16 +422,14 @@ describe('VideoTile', () => {
         src="http://test/cam/whep"
         workerAlive={true}
         detectionActive={true}
-        streamStaleSeconds={120}
+        detectionFrameAgeSeconds={120}
       />,
     )
 
     // assert
     await fireFirstFrame()
     await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
-    // iter-356.C: stream-stale aria-label collapses seconds + Reconnect
-    // hint into a single string; visible text says "Stream stalled".
-    expect(screen.getByText(/stream stalled/i)).toBeInTheDocument()
+    expect(screen.getByText(/detection delayed/i)).toBeInTheDocument()
     expect(
       screen.queryByLabelText(/^camera offline/i),
     ).not.toBeInTheDocument()
@@ -1103,20 +1095,19 @@ describe('VideoTile', () => {
     errorSpy.mockRestore()
   })
 
-  it('Given the stream goes stale, When the pill renders, Then a stream-stale severity glyph is present alongside the colored dot (premium-launch slice — Dana #2 partial-sight redundancy)', async () => {
+  it('Given detector intake goes stale, When the pill renders, Then a detection-stale severity glyph reinforces the warning', async () => {
     // arrange — Dana #2 partial-sight redundancy: each precedence-
     // ladder pill carries a distinctive glyph in addition to the
     // colored dot so tritan-deficient + low-vision users have a
     // redundant signal channel.
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
 
-    // act — workerAlive=true + streamStaleSeconds > 60 → STREAM
-    // STALE pill takes precedence.
+    // act
     render(
       <VideoTile
         src="http://test/cam/whep"
         workerAlive={true}
-        streamStaleSeconds={120}
+        detectionFrameAgeSeconds={120}
       />,
     )
 
@@ -1125,9 +1116,9 @@ describe('VideoTile', () => {
     // carries the accessible meaning).
     await fireFirstFrame()
     await waitFor(() =>
-      expect(screen.getByTestId('pill-icon-stream-stale')).toBeInTheDocument(),
+      expect(screen.getByTestId('pill-icon-detection-stale')).toBeInTheDocument(),
     )
-    expect(screen.getByTestId('pill-icon-stream-stale')).toHaveAttribute(
+    expect(screen.getByTestId('pill-icon-detection-stale')).toHaveAttribute(
       'aria-hidden',
       'true',
     )
@@ -1148,7 +1139,7 @@ describe('VideoTile', () => {
   })
 
   it('Given the worker has died but the stream is fine, When the worker-offline pill renders, Then a worker-offline severity glyph is present (Dana #2)', async () => {
-    // arrange — workerAlive=false + streamStaleSeconds present (recent
+    // arrange — workerAlive=false + recent detector frame age present
     // frame counter cached server-side) — same merged Detection-paused
     // pill as the no-frame-counter case above (status-truth fix).
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
@@ -1158,7 +1149,7 @@ describe('VideoTile', () => {
       <VideoTile
         src="http://test/cam/whep"
         workerAlive={false}
-        streamStaleSeconds={20}
+        detectionFrameAgeSeconds={20}
       />,
     )
 
@@ -1286,32 +1277,21 @@ describe('VideoTile', () => {
     errorSpy.mockRestore()
   })
 
-  // WebRTC lifecycle audit — defect 3: the stream-stale pill's "Reconnect"
-  // copy was passive text with no control wired to it (the real Retry
-  // button only exists in the status==='error' overlay, unreachable while
-  // status stays 'live'). It's now a real button on the same retry path.
-
-  it('given the stream-stale pill is showing, when it is pressed, then exactly one new WHEP connect attempt is triggered (defect 3)', async () => {
+  it('given detection intake is stale while WebRTC is live, then it offers no misleading video reconnect action', async () => {
     // arrange
     connectWhep.mockResolvedValue({ close: closeFn, pc: fakePc() })
     render(
       <VideoTile
         src="http://test/cam/whep"
         workerAlive={true}
-        streamStaleSeconds={90}
+        detectionFrameAgeSeconds={90}
       />,
     )
     await fireFirstFrame()
-    await waitFor(() => expect(screen.getByText(/stream stalled/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/detection delayed/i)).toBeInTheDocument())
     expect(connectWhep).toHaveBeenCalledTimes(1)
-
-    // act — the pill is now a real button (accessible name carries the
-    // full "Stream stalled — no video for Ns. Reconnect." label).
-    const btn = screen.getByRole('button', { name: /stream stalled/i })
-    fireEvent.click(btn)
-
-    // assert — one new attempt, not zero (unreachable) and not a loop.
-    await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument()
+    expect(connectWhep).toHaveBeenCalledTimes(1)
   })
 
   // WebRTC lifecycle audit — defect 4: mobile resume can fire

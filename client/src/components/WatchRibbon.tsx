@@ -53,6 +53,10 @@ export function WatchRibbon() {
     statusKnown: status != null,
     workerAlive: status?.worker_alive ?? null,
     detectionActive: status?.detection_active ?? null,
+    detectionFramesStale:
+      status?.worker_alive === true &&
+      status.seconds_since_last_frame != null &&
+      status.seconds_since_last_frame > 60,
   })
   const dotClass = watchStateDotClass(stateKind)
   const stateLabel = WATCH_STATE_LABEL[stateKind]
@@ -64,8 +68,10 @@ export function WatchRibbon() {
       : status.seconds_since_last_frame == null
         ? null
         : status.seconds_since_last_frame < 5
-          ? 'Live now'
-          : `${formatAge(status.seconds_since_last_frame)} ago`
+          ? 'Detection live'
+          : status.seconds_since_last_frame > 60
+            ? 'Detection delayed'
+            : `Detection ${formatAge(status.seconds_since_last_frame)} ago`
 
   return (
     <header

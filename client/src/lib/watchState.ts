@@ -35,6 +35,8 @@ export interface WatchStateInput {
   workerAlive: boolean | null
   /** status.detection_active — null when unknown. */
   detectionActive: boolean | null
+  /** Detector has not decoded a frame for the stale threshold. */
+  detectionFramesStale?: boolean
   /**
    * Independent video-truth channel (Watch's VideoTile
    * onPlayingChange): true = frames confirmed flowing, false = WHEP
@@ -59,10 +61,11 @@ export interface WatchStateInput {
 export function watchStateOf(input: WatchStateInput): WatchStateKind {
   const { statusKnown, workerAlive, detectionActive } = input
   const videoPlaying = input.videoPlaying ?? null
-  if (statusKnown && workerAlive === false) {
-    return videoPlaying === false ? 'offline' : 'detection-unavailable'
-  }
-  if (!statusKnown && videoPlaying === false) return 'offline'
+  if (videoPlaying === false) return 'offline'
+  if (
+    statusKnown &&
+    (workerAlive === false || input.detectionFramesStale === true)
+  ) return 'detection-unavailable'
   if (statusKnown && detectionActive === true && workerAlive === true) {
     return 'armed'
   }

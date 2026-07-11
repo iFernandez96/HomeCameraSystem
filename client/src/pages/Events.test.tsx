@@ -1811,6 +1811,32 @@ describe('Events page', () => {
     expect(screen.queryByText(/detection is off duty/i)).not.toBeInTheDocument()
   })
 
+  it('given the worker is alive but detector frames are stale, when the event list is empty, then it reports detection unavailable rather than camera offline', async () => {
+    // arrange
+    _restoreVisible()
+    fetchEvents.mockResolvedValue([])
+    getDetectionConfigM.mockReset().mockReturnValue(new Promise(() => {}))
+    getStatusM.mockReset().mockResolvedValue({
+      ok: true,
+      uptime_s: 100,
+      camera: 'ok',
+      detection_active: true,
+      worker_alive: true,
+      worker_last_seen_s: 1,
+      worker_metrics: null,
+      seconds_since_last_frame: 120,
+    })
+
+    // act
+    render(<Events />)
+
+    // assert
+    await waitFor(() =>
+      expect(screen.getByText(/detection unavailable/i)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/camera looks offline/i)).not.toBeInTheDocument()
+  })
+
   it('given worker_alive is true but detection_active is false, when the event list is empty, then the calm "Detection is off duty" empty state renders — not the alarming offline copy (Painfix #6)', async () => {
     // arrange — the worker process is fine; the user just paused
     // detection in Settings. Mirrors WatchRibbon's "Off duty" state.
