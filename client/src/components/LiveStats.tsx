@@ -22,7 +22,7 @@ import type { ServerStatus } from '../lib/types'
  * disclosure that surfaces the existing stat grid for power users.
  *
  * Health rules — strongest signal wins:
- *   1. Worker offline → red, "Camera offline" + reconnect hint
+ *   1. Worker offline → amber, "Detection unavailable"; video is separate
  *   2. Worker paused (low memory / thermal) → red, explanatory copy
  *   3. CPU/GPU temp ≥ 85°C OR clock throttled → amber, "Camera running warm"
  *   4. Worker manually paused / scheduled-off → amber, "Detection paused"
@@ -48,16 +48,16 @@ function computeHealth(status: ServerStatus, sentryCat: SentryCat): HealthSummar
   const isLowMemory = gear === 'low-memory'
   const isThermal = gear === 'thermal-throttled'
 
-  // 1. Worker offline takes precedence.
+  // A silent detection worker does not prove that MediaMTX/WebRTC is down.
   if (!status.worker_alive) {
     const seenAge =
       status.worker_last_seen_s != null
-        ? `Last seen ${formatAge(status.worker_last_seen_s)} ago.`
-        : "We haven't heard from the camera since this app loaded."
+        ? `Last detection heartbeat ${formatAge(status.worker_last_seen_s)} ago.`
+        : "The detection service hasn't reported in yet."
     return {
-      level: 'error',
-      label: 'Camera offline',
-      hint: `${seenAge} It usually comes back on its own — wait a moment.`,
+      level: 'warn',
+      label: 'Detection unavailable',
+      hint: `${seenAge} Live video is checked separately; events and alerts are paused.`,
     }
   }
 
@@ -467,8 +467,8 @@ function SystemDetails({
 function workerStateLabel(status: ServerStatus): string {
   if (!status.worker_alive) {
     return status.worker_last_seen_s != null
-      ? `Camera offline (last seen ${formatAge(status.worker_last_seen_s)} ago)`
-      : 'Camera offline'
+      ? `Detection unavailable (last heartbeat ${formatAge(status.worker_last_seen_s)} ago)`
+      : 'Detection unavailable'
   }
   const m = status.worker_metrics
   if (m?.gear === 'off') return 'Watching: paused'

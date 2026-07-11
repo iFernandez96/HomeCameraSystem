@@ -1777,7 +1777,7 @@ describe('Events page', () => {
   // WatchRibbon.tsx:41-56 treats these as distinct tri-state cases;
   // Events must mirror that precedence.
 
-  it('given worker_alive is false, when the event list is empty, then the alarming "Camera looks offline" empty state renders (Painfix #6)', async () => {
+  it('given worker_alive is false, when the event list is empty, then it reports detection unavailable without claiming the camera stream is offline', async () => {
     // arrange — explicit reset: `getStatusM`/`getDetectionConfigM`
     // aren't cleared by the shared `afterEach`'s `vi.clearAllMocks()`
     // (that clears call history, not a `mockResolvedValue`
@@ -1805,8 +1805,9 @@ describe('Events page', () => {
 
     // assert
     await waitFor(() =>
-      expect(screen.getByText(/camera looks offline/i)).toBeInTheDocument(),
+      expect(screen.getByText(/detection unavailable/i)).toBeInTheDocument(),
     )
+    expect(screen.queryByText(/camera looks offline/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/detection is off duty/i)).not.toBeInTheDocument()
   })
 

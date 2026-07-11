@@ -17,7 +17,11 @@ export function powerDisplay(status: ServerStatus | null): PowerDisplay {
     return { state: 'checking', compact: 'Power —', detail: 'Checking power sensor' }
   }
   if (!status.worker_alive) {
-    return { state: 'offline', compact: 'Power —', detail: 'Camera box is offline' }
+    return {
+      state: 'offline',
+      compact: 'Power —',
+      detail: 'Power telemetry unavailable while detection is offline',
+    }
   }
 
   const metrics = status.worker_metrics

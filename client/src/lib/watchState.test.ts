@@ -9,6 +9,7 @@ import {
 
 const ALL_KINDS: WatchStateKind[] = [
   'offline',
+  'detection-unavailable',
   'armed',
   'reconnecting',
   'off-duty',
@@ -16,7 +17,7 @@ const ALL_KINDS: WatchStateKind[] = [
 ]
 
 describe('watchStateOf — shared armed-state vocabulary (overhaul W1 item 2)', () => {
-  it('Given status confirms the worker is dead, When classified, Then it is offline regardless of video', () => {
+  it('Given the detector is silent while video is playing, When classified, Then it reports detection unavailable without calling the camera offline', () => {
     // arrange
     const input = {
       statusKnown: true,
@@ -26,7 +27,19 @@ describe('watchStateOf — shared armed-state vocabulary (overhaul W1 item 2)', 
     }
     // act
     const kind = watchStateOf(input)
-    // assert — status-confirmed-down always wins (status-truth fix).
+    // assert
+    expect(kind).toBe('detection-unavailable')
+  })
+
+  it('Given the detector is silent and video confirms failure, When classified, Then both paths down is camera offline', () => {
+    // arrange / act
+    const kind = watchStateOf({
+      statusKnown: true,
+      workerAlive: false,
+      detectionActive: true,
+      videoPlaying: false,
+    })
+    // assert
     expect(kind).toBe('offline')
   })
 
@@ -104,6 +117,7 @@ describe('watch state maps — one word / one color per state', () => {
     // arrange / act / assert
     expect(WATCH_STATE_LABEL).toEqual({
       offline: 'Camera offline',
+      'detection-unavailable': 'Detection unavailable',
       armed: 'On watch',
       reconnecting: 'Reconnecting…',
       'off-duty': 'Off duty',

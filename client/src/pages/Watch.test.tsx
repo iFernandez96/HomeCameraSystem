@@ -537,7 +537,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await waitFor(() => expect(viewport.className).toMatch(/relative/))
   })
 
-  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the live bottom card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled live card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
+  it('Given detection is offline and video has not resolved, When the page renders, Then the glance card says detection unavailable without inventing a camera outage', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -550,11 +550,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
     })
     expect(
-      screen.getByText('Check its power, then see Settings.'),
+      screen.getByText(/events and alerts are paused.*checking live video/i),
     ).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   // Status-truth fix (server-restart contradiction, 2026-07-07): a
@@ -586,7 +587,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
-  it('Given /api/status confirms the worker is dead, When the video tile ALSO confirms frames are playing, Then the Offline danger state still shows (status-confirmed-down wins regardless of video)', async () => {
+  it('Given the detector is dead and the video tile confirms frames, When rendered, Then it says detection unavailable and confirms live video', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -601,11 +602,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
     })
     expect(
-      screen.getByText('Check its power, then see Settings.'),
+      screen.getByText('Live video is on. Events and alerts are paused.'),
     ).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   it('Given the status fetch fails AND the video tile confirms frames are NOT playing, When the page renders, Then the danger state shows (both channels dark)', async () => {
@@ -641,7 +643,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
-  it('Given the worker is offline, When the page renders, Then the glance headline reads "Camera offline" (not an off-duty synonym) — final review fix batch #8 + overhaul W1 item 2', async () => {
+  it('Given the detector is offline, When the page renders, Then the glance headline reads Detection unavailable rather than Off duty or Camera offline', async () => {
     // arrange — pre-fix the glance card said "Paused" for offline,
     // which reads as "detection is paused" rather than "the camera
     // itself is unreachable." Danger styling + the existing detail
@@ -657,12 +659,10 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
     })
     expect(screen.queryByText('Off duty')).not.toBeInTheDocument()
-    expect(
-      screen.getByText('Check its power, then see Settings.'),
-    ).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   // Fuzz F4: landscape fullscreen wasted ~45% of the width because

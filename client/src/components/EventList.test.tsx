@@ -41,21 +41,21 @@ describe('EventList', () => {
     ).toBeInTheDocument()
   })
 
-  it('given cameraOffline=true, when no events, then the empty state pivots to "Camera looks offline" not the sleeping cat (iter-356.24 — Frank carryover)', () => {
+  it('given detectionUnavailable=true, when no events, then the empty state explains that events are paused without claiming the camera is offline', () => {
     // arrange / act — Frank's iter-356.22 wife-anecdote: "She'd stare
     // at the sleeping cat for two hours wondering why the front door
     // wasn't showing up." iter-356.24 branches the empty state so the
     // sleeping cat is reserved for "camera is on and nothing
     // happened."
-    render(<EventList events={[]} cameraOffline={true} />)
+    render(<EventList events={[]} detectionUnavailable={true} />)
 
     // assert — offline copy + offline aria-label render; the sleeping-
     // cat copy does NOT.
-    expect(screen.getByText(/camera looks offline/i)).toBeInTheDocument()
-    expect(screen.getByText(/check the live tab/i)).toBeInTheDocument()
+    expect(screen.getByText(/detection unavailable/i)).toBeInTheDocument()
+    expect(screen.getByText(/live video path is separate/i)).toBeInTheDocument()
     expect(screen.queryByText(/nothing came knocking/i)).not.toBeInTheDocument()
     expect(
-      screen.getByRole('status', { name: /camera offline — no events being recorded/i }),
+      screen.getByRole('status', { name: /detection unavailable — no new events being recorded/i }),
     ).toBeInTheDocument()
   })
 
@@ -695,7 +695,7 @@ describe('EventList', () => {
     const { container } = render(
       <EventList
         events={[evt({ id: 'axis-offline', video_status: 'recording' })]}
-        cameraOffline
+        detectionUnavailable
       />,
     )
 

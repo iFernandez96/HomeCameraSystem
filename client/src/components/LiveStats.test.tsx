@@ -49,7 +49,7 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       expect(screen.getByText('Home is calm')).toBeInTheDocument()
     })
 
-    it('given worker_alive=false with last-seen, when rendered, then summary is Camera offline + reconnect hint', () => {
+    it('given worker_alive=false with last-seen, when rendered, then it reports detection unavailable without claiming the camera is offline', () => {
       // arrange + act
       render(
         <LiveStats
@@ -58,8 +58,9 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // assert
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
-      expect(screen.getByText(/last seen 45s ago/i)).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
+      expect(screen.getByText(/last detection heartbeat 45s ago/i)).toBeInTheDocument()
+      expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
     })
 
     it('given worker_alive=false with no last_seen, when rendered, then hint says we never heard back', () => {
@@ -71,8 +72,8 @@ describe('LiveStats System Health card (iter-356.15)', () => {
       )
 
       // assert
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
-      expect(screen.getByText(/haven't heard from the camera/i)).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
+      expect(screen.getByText(/detection service hasn't reported/i)).toBeInTheDocument()
     })
 
     it('given gear=low-memory, when rendered, then summary is the red "Detection paused — low memory" + recovery hint', () => {

@@ -96,7 +96,7 @@ export function EventList({
   events,
   onSelect,
   onDelete,
-  cameraOffline = false,
+  detectionUnavailable = false,
   detectionOff = false,
   filterHint,
   selectionMode = false,
@@ -118,27 +118,22 @@ export function EventList({
   viewMode?: EventListViewMode
   /**
    * iter-356.24 (Frank ux-grandpa #1 carryover from iter-356.22):
-   * when true AND no events exist, the empty state pivots from the
-   * sleeping-cat "all is calm" message to a "camera is offline"
-   * message. Pre-iter-356.24 the same sleeping-cat surface rendered
-   * for both cases — Frank's wife "would stare at the sleeping cat
-   * for two hours wondering why the front door wasn't showing up."
-   * Source: ServerStatus.worker_alive === false (the worker process
-   * itself is dead — genuinely alarming). Takes precedence over
-   * `detectionOff` below, mirroring WatchRibbon.tsx's derivation.
+   * True when the host-side detection worker is silent. This pauses
+   * new events and alerts, but says nothing about the independent
+   * MediaMTX/WebRTC video path.
    */
-  cameraOffline?: boolean
+  detectionUnavailable?: boolean
   /**
    * Painfix #6 (coherence audit): `worker_alive===false` (dead
    * process) and `detection_active===false` (intentionally paused
    * by the user in Settings) used to collapse into the same
-   * alarming `cameraOffline` empty state. WatchRibbon treats these
-   * as distinct tri-state cases — "Camera offline" (danger) vs.
+   * warning `detectionUnavailable` empty state. WatchRibbon treats these
+   * as distinct cases — "Detection unavailable" vs.
    * "Off duty" (calm, informational) — because a user who paused
    * detection on purpose does not need to be told something is
    * wrong. Source: ServerStatus.worker_alive !== false AND
-   * detection_active === false. Ignored when `cameraOffline` is
-   * true (the worker-dead case always wins).
+   * detection_active === false. Ignored when `detectionUnavailable`
+   * is true (the worker-dead case wins).
    */
   detectionOff?: boolean
   /** Painfix #4: forwarded straight to the empty state. Parent
@@ -151,7 +146,7 @@ export function EventList({
   if (events.length === 0) {
     return (
       <EmptyState
-        cameraOffline={cameraOffline}
+        detectionUnavailable={detectionUnavailable}
         detectionOff={detectionOff}
         filterHint={filterHint}
       />
@@ -303,7 +298,7 @@ export function EventList({
                   activityPresent={e.video_activity_present}
                   finalizeIfClearTs={e.video_finalize_if_clear_ts}
                   detectionPaused={detectionOff}
-                  workerOffline={cameraOffline}
+                  workerOffline={detectionUnavailable}
                   nowMs={now}
                 />
                 <EventCard
@@ -999,14 +994,14 @@ function ConfidencePill({ score }: { score: number }) {
 }
 
 function EmptyState({
-  cameraOffline,
+  detectionUnavailable,
   detectionOff = false,
   filterHint,
 }: {
-  cameraOffline: boolean
+  detectionUnavailable: boolean
   /** Painfix #6: worker is alive but detection is intentionally
    * paused — calm, not alarming. See EventList's `detectionOff`
-   * prop doc for the precedence rule (cameraOffline wins). */
+   * prop doc for the precedence rule (detectionUnavailable wins). */
   detectionOff?: boolean
   /** Painfix #4: when a person filter AND a type filter are both
    * active and their intersection is empty, name the combination
@@ -1015,7 +1010,7 @@ function EmptyState({
   filterHint?: string
 }) {
   // iter-356.22 → iter-356.23 → iter-356.24 → painfix #6: branches on
-  // cameraOffline / detectionOff / filterHint, in that priority order.
+  // detectionUnavailable / detectionOff / filterHint, in that priority order.
   //
   // Sleeping-cat path (default, camera healthy + waiting):
   //   Maya Major #3: "front porch" presumes camera location;
@@ -1035,13 +1030,13 @@ function EmptyState({
   //   directs the user to Live to diagnose. Sleeping cat reserved
   //   for "camera is on and nothing happened," which is the only
   //   case where the cat is emotionally accurate.
-  if (cameraOffline) {
+  if (detectionUnavailable) {
     return (
       <CatEmptyState
-        heading="Camera looks offline"
-        body="Detection isn&rsquo;t running right now, so new events can&rsquo;t land here. Check the Live tab to see what the camera&rsquo;s doing."
-        hint="If this stays this way, restart the camera box or check that detection is turned on in Settings."
-        ariaLabel="Camera offline — no events being recorded"
+        heading="Detection unavailable"
+        body="New events and alerts are paused. The live video path is separate and may still be available."
+        hint="Open Live to check the video. Detection can be restored independently when the camera box is ready."
+        ariaLabel="Detection unavailable — no new events being recorded"
       />
     )
   }

@@ -22,6 +22,7 @@
 
 export type WatchStateKind =
   | 'offline'
+  | 'detection-unavailable'
   | 'armed'
   | 'reconnecting'
   | 'off-duty'
@@ -45,8 +46,10 @@ export interface WatchStateInput {
 
 /**
  * Three-state truth model (status-truth fix, 2026-07-07):
- *  1. STATUS-CONFIRMED DOWN — the API is reachable and says the
- *     worker is dead. Danger, regardless of video.
+ *  1. DETECTOR DOWN — the API is reachable and says only the detection
+ *     worker is silent. This is a warning, not proof that video is down.
+ *     If the independent video channel also confirms failure, the camera
+ *     is offline.
  *  2. STATUS UNKNOWN — the API is unreachable. Video-confirmed
  *     playing -> low-alarm 'reconnecting'; video-confirmed dead ->
  *     both channels dark, treat as 'offline'; video unresolved ->
@@ -56,7 +59,9 @@ export interface WatchStateInput {
 export function watchStateOf(input: WatchStateInput): WatchStateKind {
   const { statusKnown, workerAlive, detectionActive } = input
   const videoPlaying = input.videoPlaying ?? null
-  if (statusKnown && workerAlive === false) return 'offline'
+  if (statusKnown && workerAlive === false) {
+    return videoPlaying === false ? 'offline' : 'detection-unavailable'
+  }
   if (!statusKnown && videoPlaying === false) return 'offline'
   if (statusKnown && detectionActive === true && workerAlive === true) {
     return 'armed'
@@ -69,6 +74,7 @@ export function watchStateOf(input: WatchStateInput): WatchStateKind {
 /** The one user-facing name per state, everywhere it renders. */
 export const WATCH_STATE_LABEL: Record<WatchStateKind, string> = {
   offline: 'Camera offline',
+  'detection-unavailable': 'Detection unavailable',
   armed: 'On watch',
   reconnecting: 'Reconnecting…',
   'off-duty': 'Off duty',
@@ -82,6 +88,8 @@ export function watchStateDotClass(kind: WatchStateKind): string {
       return 'bg-[var(--color-danger)]'
     case 'armed':
       return 'bg-[var(--color-success)] animate-[pulse_2s_ease-in-out_infinite]'
+    case 'detection-unavailable':
+      return 'bg-[var(--color-warning)]'
     case 'reconnecting':
       return 'bg-[var(--color-warning)] animate-pulse'
     case 'off-duty':
@@ -99,6 +107,7 @@ export function watchStateTextClass(kind: WatchStateKind): string {
     case 'armed':
       return 'text-[var(--color-success)]'
     case 'reconnecting':
+    case 'detection-unavailable':
     case 'off-duty':
       return 'text-[var(--color-warning)]'
     case 'checking':

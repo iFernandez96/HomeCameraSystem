@@ -1062,9 +1062,8 @@ export function VideoTile({
         )}
         {/* Status-truth fix (server-restart contradiction, 2026-07-07):
             single honest pill for "the detection worker isn't
-            heartbeating" — amber, plain text, no operator action
-            implied (the worker auto-recovers within a heartbeat
-            cycle). This ONLY renders while status === 'live', i.e.
+            heartbeating" — amber, plain text, and distinct from an
+            intentional user pause. This ONLY renders while status === 'live', i.e.
             real frames ARE flowing through the separate MediaMTX/
             WebRTC pipeline, so it must never claim the camera itself
             is offline — that copy is reserved for the status==='error'
@@ -1076,11 +1075,11 @@ export function VideoTile({
         {workerDead && status === 'live' && (
           <div
             className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label="Detection paused. The watcher is restarting."
+            aria-label="Detection unavailable. Live video is still on."
           >
             <PillSeverityIcon kind="worker-offline" tone="warning" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
-            Detection paused: the watcher is restarting
+            Detection unavailable · Live video is on
           </div>
         )}
         {lowMem && status === 'live' && (
