@@ -229,4 +229,47 @@ describe('sceneModel geometry', () => {
     expect(clampCatX(W + 50, W)).toBe(W - CAT_WIDTH_PX - SCENE_MARGIN_PX)
     expect(clampCatX(300, W)).toBe(300)
   })
+
+  it('Given both tree perches occupied, When their cat positions are computed, Then two perched cats never merge into one blob (10Hz audit, 2026-07-11)', () => {
+    // arrange — the failure mode: tree_mid and tree_top rendered within
+    // one sprite of each other on compact-scaled art, so two perched
+    // cats visually merged. Diagonal separation must exceed a sprite in
+    // at least one axis at every supported width.
+    const widths = [360, 390, 480, 640, 800]
+
+    // act + assert
+    for (const w of widths) {
+      for (const compact of [true, false]) {
+        const dx = Math.abs(
+          anchorCatX('tree_top', w, compact) - anchorCatX('tree_mid', w, compact),
+        )
+        const dy = Math.abs(
+          anchorCatY('tree_top', w, 600, compact) - anchorCatY('tree_mid', w, 600, compact),
+        )
+        expect(
+          dx >= CAT_WIDTH_PX * 0.8 || dy >= 44,
+          `perches too close at w=${w} compact=${compact}: dx=${dx} dy=${dy}`,
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('Given the tunnel nook, When Coco rests there, Then she sits beside the tunnel mouth instead of clipped on top of the art', () => {
+    // arrange
+    const widths = [360, 390, 800]
+
+    // act + assert — the nook's cat left-edge must start past ~90% of
+    // the tunnel art (or be wall-clamped), so the sleeping sprite reads
+    // as next to her nook, not draped over its mouth.
+    for (const w of widths) {
+      const spot = packedSpotFor('tunnel', w, w < 480)
+      if (!spot) continue // tunnel dropped at this layout — nothing to overlap
+      const catX = anchorCatX('tunnel_nook', w, w < 480)
+      const clamped = catX === w - CAT_WIDTH_PX - SCENE_MARGIN_PX
+      expect(
+        clamped || catX >= spot.left + spot.width * 0.9 - CAT_WIDTH_PX / 2,
+        `nook overlaps tunnel at w=${w}: catX=${catX} tunnel=[${spot.left},${spot.left + spot.width}]`,
+      ).toBe(true)
+    }
+  })
 })

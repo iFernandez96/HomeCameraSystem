@@ -241,15 +241,24 @@ export const SCENE_ANCHORS: readonly SceneAnchor[] = [
   anchor('rug', 'floor', 'front', 'rug', 0.5, 0), // Mushu's open-floor home (Beach Dweller)
   anchor('food_bowl', 'floor', 'front', 'food_bowl', 0.5, 0),
   anchor('water_bowl', 'floor', 'front', 'water_bowl', 0.5, 0),
-  anchor('tunnel_nook', 'floor', 'front', 'tunnel', 0.82, 0), // Coco's semi-concealed home (Bush Dweller)
+  // Coco's semi-concealed home (Bush Dweller). fracX > 1 sits her just
+  // PAST the tunnel's right mouth — beside her nook, not clipped on top
+  // of the art (10Hz live audit 2026-07-11 caught her draped over the
+  // mouth).
+  anchor('tunnel_nook', 'floor', 'front', 'tunnel', 1.14, 0),
   anchor('tunnel_inside', 'floor', 'front', 'tunnel', 0.5, 0), // the hidden dive
   anchor('litter_box', 'floor', 'front', 'litter_box', 0.5, 0),
   anchor('scratch_post', 'floor', 'front', 'scratching_post', 0.5, 0),
   // --- mid tier -------------------------------------------------------------
-  anchor('tree_mid', 'mid', 'front', 'cat_tree_deluxe', 0.28, 0.46, 'jump_post'),
+  // Perch separation (10Hz live audit 2026-07-11): tree_mid and tree_top
+  // sat within one sprite-width of each other on compact-scaled art, so
+  // two perched cats merged into a single blob. The perches now occupy
+  // OPPOSITE corners of the artwork (low-left platform vs top-right
+  // platform) — the maximum diagonal separation the art offers.
+  anchor('tree_mid', 'mid', 'front', 'cat_tree_deluxe', 0.14, 0.38, 'jump_post'),
   anchor('hammock', 'mid', 'front', 'hammock', 0.5, 0.5, 'jump_post'),
   // --- high tier ------------------------------------------------------------
-  anchor('tree_top', 'high', 'front', 'cat_tree_deluxe', 0.6, 0.8, 'jump_post', ['tree_mid']), // Panther's home (Tree Dweller)
+  anchor('tree_top', 'high', 'front', 'cat_tree_deluxe', 0.74, 0.88, 'jump_post', ['tree_mid']), // Panther's home (Tree Dweller)
   anchor('shelf_1', 'high', 'back', 'wall_shelf_set', 0.2, 0.2, 'jump_post', ['tree_mid', 'tree_top']),
   anchor('shelf_2', 'high', 'back', 'wall_shelf_set', 0.52, 0.5, 'jump_post', ['tree_mid', 'tree_top']),
   anchor('shelf_3', 'high', 'back', 'wall_shelf_set', 0.82, 0.8, 'jump_post', ['tree_mid', 'tree_top']),
