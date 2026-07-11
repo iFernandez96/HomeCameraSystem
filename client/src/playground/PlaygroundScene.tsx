@@ -44,6 +44,12 @@ const FALLBACK_H = 360
 
 const FLICK_SAMPLES = 3
 
+/** A tap shorter than one-two frames would flip pointer.down back off
+    before any rAF tick reads it — the laser dot would NEVER show for
+    quick pokes (the live FINDING-3 miss). Sub-dwell laser taps latch
+    the press so the dot flashes where the finger landed. */
+const LASER_TAP_DWELL_MS = 280
+
 function freshInput(): PlaygroundInput {
   return { pointer: null, activeVerb: null, petTarget: null, flick: null, treatTap: null }
 }
@@ -57,14 +63,22 @@ export function PlaygroundScene({ staticScene, compact }: PlaygroundSceneProps) 
   /** Ring buffer of the last pointer samples while pressed — flick
       velocity for the yarn throw comes from its endpoints. */
   const flickRef = useRef<{ x: number; y: number; t: number }[]>([])
+  /** Laser tap latch: press start stamp + the pending release timer. */
+  const pressAtRef = useRef(0)
+  const tapReleaseRef = useRef<number | null>(null)
 
   const [state, setState] = useState<PlaygroundState | null>(null)
   const [verb, setVerb] = useState<PlaygroundVerb | null>(null)
+  // Rendered scene width — the packed furniture layout derives from it
+  // (px positions, not CSS percentages), so the render side needs a
+  // re-render on resize. The rAF loop keeps reading the ref.
+  const [sceneW, setSceneW] = useState(FALLBACK_W)
 
   const measure = useCallback(() => {
     const rect = sceneRef.current?.getBoundingClientRect()
     if (rect && rect.width > 0 && rect.height > 0) {
       sizeRef.current = { w: rect.width, h: rect.height }
+      setSceneW((prev) => (prev === rect.width ? prev : rect.width))
     }
   }, [])
 
@@ -80,12 +94,17 @@ export function PlaygroundScene({ staticScene, compact }: PlaygroundSceneProps) 
           performance.now(),
           sizeRef.current.w,
           sizeRef.current.h,
+          Math.random,
+          compact,
         ),
       )
     })
     return () => {
       cancelled = true
     }
+    // compact only seeds the INITIAL pose; live flips flow through the
+    // step options, so re-init on change is unnecessary (and unwanted).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measure])
 
   // Track resizes so travel targets stay on their furniture. Anchored
@@ -165,6 +184,11 @@ export function PlaygroundScene({ staticScene, compact }: PlaygroundSceneProps) 
       const p = toScene(event)
       const input = inputRef.current
       input.pointer = { x: p.x, y: p.y, down: true }
+      pressAtRef.current = performance.now()
+      if (tapReleaseRef.current !== null) {
+        window.clearTimeout(tapReleaseRef.current)
+        tapReleaseRef.current = null
+      }
       flickRef.current = [{ x: p.x, y: p.y, t: performance.now() }]
       if (input.activeVerb === 'treat') {
         input.treatTap = { x: p.x, y: p.y, lane: laneForY(p.y, sizeRef.current.h) }
@@ -205,16 +229,44 @@ export function PlaygroundScene({ staticScene, compact }: PlaygroundSceneProps) 
           vy: first ? (p.y - first.y) / dtMs : 0,
         }
       }
-      input.pointer = { x: p.x, y: p.y, down: false }
+      if (
+        wasDown &&
+        input.activeVerb === 'laser' &&
+        performance.now() - pressAtRef.current < LASER_TAP_DWELL_MS
+      ) {
+        // Sub-dwell tap: keep the press latched so at least a few ticks
+        // see it — the dot flashes at the tap point, then releases.
+        input.pointer = { x: p.x, y: p.y, down: true }
+        tapReleaseRef.current = window.setTimeout(() => {
+          const current = inputRef.current.pointer
+          if (current !== null) {
+            inputRef.current.pointer = { ...current, down: false }
+          }
+          tapReleaseRef.current = null
+        }, LASER_TAP_DWELL_MS)
+      } else {
+        input.pointer = { x: p.x, y: p.y, down: false }
+      }
       flickRef.current = []
     },
     [toScene],
   )
 
   const onPointerLeave = useCallback(() => {
+    // Touch pointers "leave" the instant the finger lifts — that must
+    // not wipe a latched tap flash mid-dwell.
+    if (tapReleaseRef.current !== null) return
     inputRef.current.pointer = null
     flickRef.current = []
   }, [])
+
+  // The tap latch's pending release must not fire into an unmounted ref.
+  useEffect(
+    () => () => {
+      if (tapReleaseRef.current !== null) window.clearTimeout(tapReleaseRef.current)
+    },
+    [],
+  )
 
   const onSelectVerb = useCallback((next: PlaygroundVerb | null) => {
     inputRef.current.activeVerb = next
@@ -275,7 +327,7 @@ export function PlaygroundScene({ staticScene, compact }: PlaygroundSceneProps) 
           className="absolute inset-x-0 bottom-0 bg-[var(--color-surface-raised)]"
           style={{ height: '38%' }}
         />
-        <PlaygroundFurniture compact={compact} tunnelRustling={tunnelRustling} />
+        <PlaygroundFurniture compact={compact} sceneW={sceneW} tunnelRustling={tunnelRustling} />
         {state?.cats.map((cat) => (
           <PlaygroundCat
             key={cat.id}

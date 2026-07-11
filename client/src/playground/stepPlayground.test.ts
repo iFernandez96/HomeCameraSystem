@@ -42,18 +42,24 @@ beforeEach(() => {
 describe('stepPlayground bail-out discipline', () => {
   it('Given nothing moves in a quiet frame, When the world steps, Then the ORIGINAL state reference comes back (React setState bails out)', () => {
     // arrange — home poses hold, no toys, no ambient due, idle gap open.
-    // The quiet frame lands AFTER the spawn transition (jump_post) so no
+    // The quiet frames land AFTER the spawn transition (jump_post) so no
     // sprite timeline is advancing phaseTime, and BEFORE the first idle
-    // micro-beat / beat expiry / ambient spawn.
+    // micro-beat / beat expiry / ambient spawn. The first post-transition
+    // step legitimately changes state once (it snaps the frozen phase
+    // clock to the transition's end — the jump_post statue fix); the
+    // steady state after it must bail out.
     const state = freshState()
+    const settled = stepPlayground(state, makeInput(), 16, START + 4000, W, H, {
+      random: () => 0.5,
+    })
 
     // act
-    const next = stepPlayground(state, makeInput(), 16, START + 4000, W, H, {
+    const next = stepPlayground(settled, makeInput(), 16, START + 4016, W, H, {
       random: () => 0.5,
     })
 
     // assert — same reference, not a deep-equal copy
-    expect(next).toBe(state)
+    expect(next).toBe(settled)
   })
 
   it('Given a cat is mid-travel, When the world steps, Then a NEW state reference comes back with the cat advanced', () => {

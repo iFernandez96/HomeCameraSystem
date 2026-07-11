@@ -5,12 +5,10 @@ import {
   PLAYGROUND_FURNITURE_URLS,
   PLAYGROUND_TOY_URLS,
 } from './playgroundAssets'
-import { FURNITURE_LAYOUT } from './sceneModel'
+import { packFurnitureLayout } from './sceneModel'
 import {
   BACK_LANE_FLOOR_PCT,
-  BACK_LANE_SCALE,
   FRONT_LANE_FLOOR_PCT,
-  SCENE_MARGIN_PX,
   type AmbientEntity,
   type PlaygroundLane,
   type ToyState,
@@ -38,25 +36,19 @@ const LANE_BOTTOM_PCT: Record<PlaygroundLane, number> = {
   back: Math.round((1 - BACK_LANE_FLOOR_PCT) * 100),
   front: Math.round((1 - FRONT_LANE_FLOOR_PCT) * 100),
 }
-const LANE_SCALE: Record<PlaygroundLane, number> = {
-  back: BACK_LANE_SCALE,
-  front: 1,
-}
 
 function hideOnError(event: SyntheticEvent<HTMLImageElement>) {
   event.currentTarget.style.display = 'none'
-}
-
-/** Shared percent-of-width + px-clamp left rule (same grammar as the
-    cat anchors in sceneModel, so cats land ON their furniture). */
-function clampedLeft(xPct: number, widthPx: number): string {
-  return `clamp(${SCENE_MARGIN_PX}px, ${xPct}%, calc(100% - ${widthPx + SCENE_MARGIN_PX}px))`
 }
 
 // === Furniture ===============================================================
 
 export type PlaygroundFurnitureProps = {
   compact: boolean
+  /** Live scene width in px — the packed layout is computed from it
+      (sceneModel.packFurnitureLayout), so props NEVER overlap at any
+      width and cats land exactly on their furniture. */
+  sceneW: number
   /** A cat is hiding inside the tunnel — the tunnel rustles (the
       hidden beat's discovery payoff; the cat itself renders nothing). */
   tunnelRustling: boolean
@@ -64,10 +56,11 @@ export type PlaygroundFurnitureProps = {
 
 export const PlaygroundFurniture = memo(function PlaygroundFurniture({
   compact,
+  sceneW,
   tunnelRustling,
 }: PlaygroundFurnitureProps) {
-  const spots = FURNITURE_LAYOUT.filter((spot) => !(compact && spot.compactHidden))
-  const litter = FURNITURE_LAYOUT.find((spot) => spot.name === 'litter_box')
+  const spots = packFurnitureLayout(sceneW, compact)
+  const litter = spots.find((spot) => spot.name === 'litter_box')
   return (
     <>
       {spots.map((spot) => (
@@ -77,15 +70,16 @@ export const PlaygroundFurniture = memo(function PlaygroundFurniture({
           alt=""
           data-testid={`playground-furniture-${spot.name}`}
           data-lane={spot.lane}
-          width={spot.widthPx}
+          width={spot.width}
           decoding="async"
           style={{
             position: 'absolute',
-            bottom: `${LANE_BOTTOM_PCT[spot.lane]}%`,
-            left: clampedLeft(spot.xPct, spot.widthPx),
-            width: spot.widthPx,
-            transform: `scale(${LANE_SCALE[spot.lane]})`,
-            transformOrigin: 'bottom center',
+            // Wall-mounted back-wall props (window, feeder, shelves)
+            // hang above their lane's floor line — the room reads as
+            // three vertical tiers, not one crowded baseboard.
+            bottom: `calc(${LANE_BOTTOM_PCT[spot.lane]}% + ${(spot.elevPct * 100).toFixed(1)}%)`,
+            left: spot.left,
+            width: spot.width,
             pointerEvents: 'none',
             zIndex: 0,
             // The tunnel rustle reuses the habitat box-rustle keyframes
@@ -111,15 +105,13 @@ export const PlaygroundFurniture = memo(function PlaygroundFurniture({
           alt=""
           aria-hidden="true"
           data-testid="playground-furniture-litter_box-lip"
-          width={litter.widthPx}
+          width={litter.width}
           decoding="async"
           style={{
             position: 'absolute',
             bottom: `${LANE_BOTTOM_PCT[litter.lane]}%`,
-            left: clampedLeft(litter.xPct, litter.widthPx),
-            width: litter.widthPx,
-            transform: `scale(${LANE_SCALE[litter.lane]})`,
-            transformOrigin: 'bottom center',
+            left: litter.left,
+            width: litter.width,
             clipPath: 'inset(55% 0 0 0)',
             pointerEvents: 'none',
             zIndex: 3,
@@ -225,7 +217,7 @@ export const PlaygroundToys = memo(function PlaygroundToys({ toys }: { toys: Toy
         // The laser dot is pure CSS light — no asset to 404, zero
         // latency (Swink rule: the toy layer responds instantly).
         <div
-          data-testid="playground-toy-laser"
+          data-testid="playground-laser-dot"
           style={{
             position: 'absolute',
             left: laser.x,

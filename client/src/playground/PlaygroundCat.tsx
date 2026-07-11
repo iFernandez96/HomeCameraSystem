@@ -42,6 +42,9 @@ function PlaygroundCatImpl({ cat, onPetStart, onPetEnd }: PlaygroundCatProps) {
   let src = playFrameUrl(cat.id, frame)
   if (failedSrc === src) src = catAnimFrameUrl(cat.id, 'seated')
   const backLane = cat.lane === 'back'
+  // Depth scale follows laneBlend (stepped toward the logical lane in
+  // stepPlayground) so a lane switch cross-fades instead of popping.
+  const depthScale = 1 - (1 - BACK_LANE_SCALE) * cat.laneBlend
   const bob = spriteAnim(cat.activity)
   return (
     <div
@@ -56,14 +59,21 @@ function PlaygroundCatImpl({ cat, onPetStart, onPetEnd }: PlaygroundCatProps) {
         height: CAT_HEIGHT_PX,
         // Horizontal motion on the compositor; back-lane cats shrink
         // to the shared depth scale and paint behind front cats.
-        transform: `translateX(${cat.x}px)${backLane ? ` scale(${BACK_LANE_SCALE})` : ''}`,
+        transform: `translateX(${cat.x}px)${depthScale !== 1 ? ` scale(${depthScale.toFixed(4)})` : ''}`,
         transformOrigin: 'bottom center',
         willChange: 'transform',
         zIndex: backLane ? 1 : 2,
         visibility: hidden ? 'hidden' : undefined,
       }}
     >
-      <div data-testid="playground-cat-entrance-wrapper" style={{ width: '100%', height: '100%' }}>
+      {/* Entrance choreography rides the SAME wrapper CatLayer uses:
+          the filled arrive animation lives on its own element so it can
+          never override the container's per-frame inline translate. */}
+      <div
+        data-testid="playground-cat-entrance-wrapper"
+        className={`cat-entrance-${cat.id}`}
+        style={{ width: '100%', height: '100%' }}
+      >
         <div
           data-testid="playground-cat-direction-flip"
           style={{

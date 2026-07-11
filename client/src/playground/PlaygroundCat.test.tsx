@@ -63,6 +63,55 @@ describe('PlaygroundCat wrapper structure (the Panther-mirror pin, same as CatLa
   })
 })
 
+describe('PlaygroundCat sprite box (USER REPORT 1: every frame renders at the same size)', () => {
+  it('Given anim-set and playground-set frames, When rendered, Then both use the SAME fixed sprite box (objectFit contain, bottom-anchored) so aspect-ratio differences can never change the cat size or feet line', () => {
+    // arrange — a walking cat (shared anim frame) and an eating cat
+    // (playground-only frame from the area-normalized export set)
+    const walking = catFor({ activity: 'walk', previousActivity: 'walk' })
+    const eating = catFor({ activity: 'eat', previousActivity: 'eat' })
+
+    // act
+    const first = render(
+      <PlaygroundCat cat={walking} onPetStart={() => {}} onPetEnd={() => {}} />,
+    )
+    const walkImg = screen.getByTestId('playground-cat-sprite')
+    const walkBox = {
+      width: walkImg.getAttribute('width'),
+      height: walkImg.getAttribute('height'),
+      fit: walkImg.style.objectFit,
+      position: walkImg.style.objectPosition,
+    }
+    first.unmount()
+    render(<PlaygroundCat cat={eating} onPetStart={() => {}} onPetEnd={() => {}} />)
+    const eatImg = screen.getByTestId('playground-cat-sprite')
+
+    // assert — the playground frame comes from the playground set…
+    expect(eatImg.getAttribute('src')).toContain('/cats/playground/panther/eat_')
+    // …and renders in the IDENTICAL fixed box as the anim set
+    expect({
+      width: eatImg.getAttribute('width'),
+      height: eatImg.getAttribute('height'),
+      fit: eatImg.style.objectFit,
+      position: eatImg.style.objectPosition,
+    }).toEqual(walkBox)
+    expect(walkBox.width).toBe('44')
+    expect(walkBox.fit).toBe('contain')
+    expect(walkBox.position).toBe('center bottom')
+  })
+
+  it('Given a back-lane depth blend, When rendered, Then the container scale follows laneBlend (cross-fade), not a lane boolean', () => {
+    // arrange — mid-fade toward the back lane
+    const cat = catFor({ lane: 'back', laneBlend: 0.5 })
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert — 1 - (1 - 0.85) * 0.5 = 0.925
+    const container = screen.getByTestId('playground-cat-panther')
+    expect(container.style.transform).toContain('scale(0.9250)')
+  })
+})
+
 describe('PlaygroundCat behavior', () => {
   it('Given a cat hidden inside the tunnel, When rendered, Then the sprite is invisible (the tunnel rustle carries the beat)', () => {
     // arrange

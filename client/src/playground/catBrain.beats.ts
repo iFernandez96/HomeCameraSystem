@@ -1,6 +1,7 @@
 import { rollWeighted, rollWithoutImmediateRepeat } from '../components/catEngineCore'
 import type { PlaygroundCatId } from './playgroundAssets'
 import {
+  playTransitionDurationMs,
   setPlayActivity,
   setPlayMood,
   type PlayActivity,
@@ -77,6 +78,10 @@ export function travelToAnchor(
     focus: { type: 'anchor', anchorId },
     targetX: null,
     targetY: null,
+    // Look before you go: the stand-up transition plays out, then a
+    // small jittered regard-the-destination hold, THEN paws move.
+    moveRampAt:
+      now + playTransitionDurationMs(cat.id, cat.activity, 'walk') + 150 + ctx.random() * 250,
   }
 }
 
@@ -99,7 +104,7 @@ function inPlace(
 
 const anchorFreeFor = (anchorId: string) => (cat: PlayCat, ctx: BeatContext) =>
   isAnchorFree(ctx.cats, anchorId, cat.id) &&
-  anchorsForLayout(ctx.compact).some((a) => a.id === anchorId)
+  anchorsForLayout(ctx.sceneW, ctx.compact).some((a) => a.id === anchorId)
 
 // === The beat pool ===========================================================
 // Weights follow the design doc's dweller taxonomy: Panther = Tree
@@ -130,7 +135,11 @@ export const PLAY_BEATS: readonly Beat[] = [
     available: anchorFreeFor('tree_top'),
     apply: (cat, now, ctx) => {
       const next = travelToAnchor(cat, now, ctx, 'tree_top', 'perch', 16000)
-      return cat.id === 'panther' ? setPlayMood(next, '😼', 2200, now) : next
+      // Moods punctuate, they don't persist: the judging look is an
+      // occasional commentary, not a HUD element.
+      return cat.id === 'panther' && ctx.random() < 0.55
+        ? setPlayMood(next, '😼', 2200, now)
+        : next
     },
   },
   {
@@ -213,6 +222,8 @@ export const PLAY_BEATS: readonly Beat[] = [
         targetY: laneFloorY('front', ctx.sceneH),
         arrival: { activity: 'pounce', durationMs: 900 },
         focus: { type: 'ambient', ambientId: target.id },
+        // Crouched anticipation: the get-up chain plays before the sprint.
+        moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, 'run') + 100 + ctx.random() * 200,
       }
     },
   },
@@ -230,8 +241,13 @@ export const PLAY_BEATS: readonly Beat[] = [
     id: 'wander',
     weights: { panther: 2, mushu: 3, coco: 1 },
     apply: (cat, now, ctx) => {
+      // An aimless moment: stroll a SHORT random distance from here,
+      // pause briefly as if sniffing something, then re-roll. Bounded
+      // strolls (not scene-wide marches) read as purposeless life.
       const next = setPlayActivity(cat, 'walk', 60000, now, ctx.random)
-      const x = clampCatX(ctx.random() * ctx.sceneW, ctx.sceneW)
+      const stride = 60 + ctx.random() * 180
+      const sign = ctx.random() < 0.5 ? -1 : 1
+      const x = clampCatX(cat.x + sign * stride, ctx.sceneW)
       return {
         ...next,
         activityUntil: now + 60000,
@@ -240,15 +256,17 @@ export const PLAY_BEATS: readonly Beat[] = [
         anchorId: null,
         targetX: x,
         targetY: laneFloorY('front', ctx.sceneH),
-        arrival: { activity: 'sit', durationMs: 5000 },
+        arrival: { activity: 'sit', durationMs: 1400 },
         focus: null,
+        moveRampAt:
+          now + playTransitionDurationMs(cat.id, cat.activity, 'walk') + 150 + ctx.random() * 250,
       }
     },
   },
 ]
 
 function pickFreeShelf(cat: PlayCat, ctx: BeatContext): string | null {
-  const shelves = anchorsForLayout(ctx.compact).filter((a) =>
+  const shelves = anchorsForLayout(ctx.sceneW, ctx.compact).filter((a) =>
     a.id.startsWith('shelf_'),
   )
   const free = shelves.filter((a) => isAnchorFree(ctx.cats, a.id, cat.id))
@@ -311,6 +329,8 @@ const grounded = (cat: PlayCat, now: number, ctx: { random: () => number }, acti
   arrival: null,
   targetX: null,
   targetY: null,
+  // Chase/flee outcomes sprint — but only after the get-up chain.
+  moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, activity),
 })
 
 // Mushu + Coco — the love story
