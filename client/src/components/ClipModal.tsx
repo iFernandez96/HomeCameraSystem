@@ -356,6 +356,15 @@ export function ClipModal({
   // page on the next interaction. Mirror of the iter-? confirm-
   // dialog focus-restore (also added this iter).
   const closeRef = useRef<HTMLButtonElement | null>(null)
+  // Parent status refreshes may create a new onClose function while this
+  // modal remains open. Keep the newest callback available to the mount-only
+  // keyboard handler without rerunning focus initialization: refocusing the
+  // top Close button on every parent render used to yank a user's mobile
+  // scroll position back to the top of the event.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
   const videoRef = useRef<HTMLVideoElement | null>(null)
   // VideoPlayer hands us its <video> element here; store it in our own ref so
   // the bbox-overlay effect can bind to it. Memoized so VideoPlayer's
@@ -818,7 +827,7 @@ export function ClipModal({
         : null
     closeRef.current?.focus()
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onCloseRef.current()
     }
     window.addEventListener('keydown', handler)
     return () => {
@@ -830,7 +839,7 @@ export function ClipModal({
         previouslyFocused.focus()
       }
     }
-  }, [onClose])
+  }, [])
 
   // iter-356.44 — bbox overlay during clip playback (canvas-on-video,
   // never pixel burn-in so the worker keeps `-c copy`). Events keep their
