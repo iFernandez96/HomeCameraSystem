@@ -70,7 +70,7 @@ describe('HourBand activity ruler', () => {
 
   it('uses a point marker when no authoritative duration is available', () => {
     render(<HourBand events={[ev(8, 30, 'cat')]} dayStartTs={day} nowTs={day + 12 * 3600} />)
-    expect(screen.getByTestId('timeline-marker-fill')).toHaveStyle({ width: '6px' })
+    expect(screen.getByTestId('timeline-marker-fill')).toHaveStyle({ width: '4px' })
   })
 
   it('opens a single event directly from its marker', () => {
@@ -103,7 +103,7 @@ describe('HourBand activity ruler', () => {
     )
 
     const cluster = screen.getByRole('button', { name: /2 events from 1:40 PM–1:46 PM/i })
-    expect(cluster).toHaveTextContent('2')
+    expect(cluster).toBeEmptyDOMElement()
     fireEvent.click(cluster)
 
     const detail = screen.getByRole('region', { name: /2 events from 1:40 PM–1:46 PM/i })
