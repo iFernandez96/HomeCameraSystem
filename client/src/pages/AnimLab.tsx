@@ -10,6 +10,12 @@ import {
   type CatAnimStep,
 } from '../components/catAnimSequences'
 import { _catSequenceNamesForTransitionForTests } from '../components/CatLayer'
+import {
+  AVAILABLE_MOOD_BADGES,
+  EMOJI_TO_EMOTION,
+  moodBadgeUrl,
+  type MoodEmotion,
+} from '../components/catMoodBadges'
 
 // Dev/QA harness — public, unlisted. Plays every animation sequence,
 // gait translation cycle, and activity->activity transition chain
@@ -38,6 +44,7 @@ const ACTIVITIES = [
   'play',
   'pounce',
   'on_post',
+  'pooped',
   'hiss',
   'scared',
 ] as const
@@ -131,6 +138,58 @@ function SpriteFrame({
         <span className="text-xs opacity-60">no frames (empty sequence)</span>
       )}
     </div>
+  )
+}
+
+const ALL_EMOTIONS = Array.from(new Set(Object.values(EMOJI_TO_EMOTION)))
+const EMOTION_TO_EMOJI: Partial<Record<MoodEmotion, string>> = {}
+for (const [emoji, emotion] of Object.entries(EMOJI_TO_EMOTION)) {
+  if (!EMOTION_TO_EMOJI[emotion]) EMOTION_TO_EMOJI[emotion] = emoji
+}
+
+/** Per-cat mood badge inventory: shipped badges render as images, the
+    rest show the emoji they would fall back to. */
+function MoodBadgeGrid() {
+  return (
+    <section className="space-y-2">
+      <h2 className="text-sm font-bold">Mood badges (shipped vs emoji fallback)</h2>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="text-xs" style={{ borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={{ padding: 4 }}>cat</th>
+              {ALL_EMOTIONS.map((e) => (
+                <th key={e} style={{ padding: 4, fontWeight: 400 }}>{e}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {CAT_IDS.map((catId) => (
+              <tr key={catId}>
+                <td style={{ padding: 4, fontWeight: 700 }}>{catId}</td>
+                {ALL_EMOTIONS.map((emotion) => (
+                  <td key={emotion} style={{ padding: 4, textAlign: 'center', border: '1px solid #ccc4' }}>
+                    {AVAILABLE_MOOD_BADGES[catId].includes(emotion) ? (
+                      <img
+                        src={moodBadgeUrl(catId, emotion)}
+                        alt={`${catId} ${emotion}`}
+                        width={28}
+                        height={28}
+                        style={{ display: 'inline-block' }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 16, opacity: 0.45 }} title="fallback emoji">
+                        {EMOTION_TO_EMOJI[emotion]}
+                      </span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
@@ -311,6 +370,8 @@ export function AnimLab() {
           />
         </div>
       </div>
+
+      <MoodBadgeGrid />
 
       {/* Frame-by-frame scrubber strip */}
       <div className="flex flex-wrap gap-1">

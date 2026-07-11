@@ -116,6 +116,7 @@ describe('cat animation sequences', () => {
     const activities = [
       'walk', 'chase', 'flee', 'sit', 'judge', 'loaf', 'snuggle', 'groom',
       'in_box', 'sleep', 'stretch', 'play', 'pounce', 'on_post', 'hiss', 'scared',
+      'pooped',
     ] as const
     const legalJoins: Record<string, readonly string[]> = {
       stand: ['stand', 'sit_a', 'hiss_windup'],
@@ -166,6 +167,15 @@ describe('cat animation sequences', () => {
       { from: 'stretch', to: 'walk', acceptTerminal: ['side_stand'] },
       { from: 'hiss', to: 'sit', acceptTerminal: ['seated'] },
       { from: 'sit', to: 'on_post', acceptTerminal: ['jump_post'] },
+      // 'pooped' is pose group 'crouched': entry chains must land on the
+      // crouch hold (where the looping poop_squat bout takes over) and
+      // exit chains must resolve back to each destination's pose.
+      { from: 'walk', to: 'pooped', acceptTerminal: ['crouch'] },
+      { from: 'sit', to: 'pooped', acceptTerminal: ['crouch'] },
+      { from: 'sleep', to: 'pooped', acceptTerminal: ['crouch'] },
+      { from: 'pooped', to: 'walk', acceptTerminal: ['side_stand'] },
+      { from: 'pooped', to: 'sit', acceptTerminal: ['seated'] },
+      { from: 'pooped', to: 'sleep', acceptTerminal: ['sleep'] },
     ]
 
     // act
@@ -186,5 +196,37 @@ describe('cat animation sequences', () => {
 
     // assert
     expect(bad).toEqual([])
+  })
+
+  it('Given the poop_squat bout, When its steps are read, Then it alternates a/b with a comedic quickening cadence', () => {
+    // arrange
+    const expected = [
+      { frame: 'poop_squat_a', ms: 700 },
+      { frame: 'poop_squat_b', ms: 500 },
+      { frame: 'poop_squat_a', ms: 600 },
+      { frame: 'poop_squat_b', ms: 400 },
+    ]
+
+    // act
+    const perCat = CAT_IDS.map((catId) => CAT_ANIM_SEQUENCES.poop_squat[catId])
+
+    // assert — every cat shares the same squat choreography.
+    for (const steps of perCat) expect(steps).toEqual(expected)
+  })
+
+  it('Given the poop_squat frames, When the exported asset dir is scanned, Then both frames exist on disk for all three cats', () => {
+    // arrange
+    const assetRoot = join(__dirname, '..', '..', 'public', 'cats', 'anim')
+    const frames = ['poop_squat_a', 'poop_squat_b']
+
+    // act
+    const missing = CAT_IDS.flatMap((catId) =>
+      frames
+        .filter((frame) => !existsSync(join(assetRoot, catId, `${frame}.png`)))
+        .map((frame) => `${catId}/${frame}.png`),
+    )
+
+    // assert
+    expect(missing).toEqual([])
   })
 })

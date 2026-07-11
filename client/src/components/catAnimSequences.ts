@@ -36,6 +36,8 @@ const SHARED_FRAMES = [
   'crouch_mid',
   'crouch_b',
   'crouch',
+  'poop_squat_a',
+  'poop_squat_b',
   'pounce_launch',
   'pounce_air',
   'pounce_land',
@@ -47,12 +49,17 @@ export type CatAnimFrame =
   | (typeof SHARED_FRAMES)[number]
   | 'blink'
   | 'crouch_a2'
+  | 'crouch_b2'
+  | 'sleep_b2'
 
-/** The checked-in asset manifest. Coco deliberately has no blink. */
+/** The checked-in asset manifest. Coco deliberately has no blink.
+    crouch_b2 (Panther) and sleep_b2 (Coco) are the 2026-07-11 tween
+    inserts fixing the two v3 triple-check blockers (crouch snap /
+    sleep-endpoint snap). */
 export const CAT_ANIM_MANIFEST: Record<CatAnimId, readonly CatAnimFrame[]> = {
-  panther: [...SHARED_FRAMES, 'blink', 'crouch_a2'],
+  panther: [...SHARED_FRAMES, 'blink', 'crouch_a2', 'crouch_b2'],
   mushu: [...SHARED_FRAMES, 'blink'],
-  coco: SHARED_FRAMES,
+  coco: [...SHARED_FRAMES, 'sleep_b2'],
 }
 
 export type CatAnimStep = Readonly<{
@@ -85,7 +92,25 @@ const crouchPanther: readonly CatAnimStep[] = [
   { frame: 'crouch_a2', ms: 140 },
   { frame: 'crouch_mid', ms: 140 },
   { frame: 'crouch_b', ms: 150 },
+  { frame: 'crouch_b2', ms: 140 },
   { frame: 'crouch', ms: 1 },
+]
+
+const sleepDownShared: readonly CatAnimStep[] = [
+  { frame: 'sleep_a', ms: 300 },
+  { frame: 'sleep_a2', ms: 190 },
+  { frame: 'sleep_mid', ms: 170 },
+  { frame: 'sleep_b', ms: 160 },
+  { frame: 'sleep', ms: 1 },
+]
+
+const wakeUpShared: readonly CatAnimStep[] = [
+  { frame: 'sleep', ms: 160 },
+  { frame: 'sleep_b', ms: 160 },
+  { frame: 'sleep_mid', ms: 160 },
+  { frame: 'sleep_a2', ms: 160 },
+  { frame: 'sleep_a', ms: 160 },
+  { frame: 'seated', ms: 1 },
 ]
 
 /**
@@ -121,21 +146,33 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'sit_a', ms: 130 },
     { frame: 'stand', ms: 1 },
   ]),
-  sleep_down: allCats([
-    { frame: 'sleep_a', ms: 300 },
-    { frame: 'sleep_a2', ms: 190 },
-    { frame: 'sleep_mid', ms: 170 },
-    { frame: 'sleep_b', ms: 160 },
-    { frame: 'sleep', ms: 1 },
-  ]),
-  wake_up: allCats([
-    { frame: 'sleep', ms: 160 },
-    { frame: 'sleep_b', ms: 160 },
-    { frame: 'sleep_mid', ms: 160 },
-    { frame: 'sleep_a2', ms: 160 },
-    { frame: 'sleep_a', ms: 160 },
-    { frame: 'seated', ms: 1 },
-  ]),
+  sleep_down: {
+    panther: sleepDownShared,
+    mushu: sleepDownShared,
+    // Coco gets the sleep_b2 tween before the endpoint — her sleep_b →
+    // sleep contraction was the v3 blocker.
+    coco: [
+      { frame: 'sleep_a', ms: 300 },
+      { frame: 'sleep_a2', ms: 190 },
+      { frame: 'sleep_mid', ms: 170 },
+      { frame: 'sleep_b', ms: 160 },
+      { frame: 'sleep_b2', ms: 150 },
+      { frame: 'sleep', ms: 1 },
+    ],
+  },
+  wake_up: {
+    panther: wakeUpShared,
+    mushu: wakeUpShared,
+    coco: [
+      { frame: 'sleep', ms: 160 },
+      { frame: 'sleep_b2', ms: 150 },
+      { frame: 'sleep_b', ms: 160 },
+      { frame: 'sleep_mid', ms: 160 },
+      { frame: 'sleep_a2', ms: 160 },
+      { frame: 'sleep_a', ms: 160 },
+      { frame: 'seated', ms: 1 },
+    ],
+  },
   crouch_down: {
     panther: crouchPanther,
     mushu: crouchShared,
@@ -146,6 +183,14 @@ export const CAT_ANIM_SEQUENCES = {
     mushu: [...crouchShared].reverse().concat({ frame: 'seated', ms: 1 }),
     coco: [...crouchShared].reverse().concat({ frame: 'seated', ms: 1 }),
   },
+  // The 'pooped' activity bout. Loops while the activity is active;
+  // comedic quickening — each strain a touch shorter than the last.
+  poop_squat: allCats([
+    { frame: 'poop_squat_a', ms: 700 },
+    { frame: 'poop_squat_b', ms: 500 },
+    { frame: 'poop_squat_a', ms: 600 },
+    { frame: 'poop_squat_b', ms: 400 },
+  ]),
   pounce: allCats([
     { frame: 'crouch', ms: 1 },
     { frame: 'pounce_launch', ms: 100 },

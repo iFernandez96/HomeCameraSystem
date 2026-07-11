@@ -11,6 +11,7 @@ import {
   YarnBall,
 } from './CatIcons'
 import { CatParticles, type CatParticleType } from './CatParticles'
+import { moodBadgeParts } from './catMoodBadges'
 import { errFields, log } from '../lib/log'
 import {
   CAT_ANIM_SEQUENCES,
@@ -72,6 +73,7 @@ type Activity =
   | 'loaf'
   | 'judge' // sit + stare aggressively (Panther)
   | 'on_post' // iter-356.41: sitting on the cat-tree habitat object
+  | 'pooped' // silly rare bathroom break — squat + strain + kawaii poop prop
   // Interactions
   | 'groom' // Mushu grooming Coco
   | 'snuggle' // Mushu + Coco sit close
@@ -585,6 +587,16 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
         return n
       },
     },
+    {
+      // Bathroom break — rare, silly, and even the dignified judge
+      // isn't above it. Weight 1 keeps it a surprise, not a habit.
+      weight: 1,
+      apply: (c, now) => {
+        let n = setActivity(c, 'pooped', 4500, now)
+        n = setMood(n, '💩', 2600, now)
+        return n
+      },
+    },
   ],
   mushu: [
     {
@@ -639,6 +651,15 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
         return n
       },
     },
+    {
+      // Bathroom break — zoomies fuel has to come out somewhere.
+      weight: 1,
+      apply: (c, now) => {
+        let n = setActivity(c, 'pooped', 4500, now)
+        n = setMood(n, '💩', 2600, now)
+        return n
+      },
+    },
   ],
   coco: [
     {
@@ -687,6 +708,15 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
         n = setMood(n, pickMood('coco', 'sleepy'), 2500, now, '💤')
         n.x = catTreeX(w)
         n.direction = 'L'
+        return n
+      },
+    },
+    {
+      // Bathroom break — she does everything sleepily, even this.
+      weight: 1,
+      apply: (c, now) => {
+        let n = setActivity(c, 'pooped', 4500, now)
+        n = setMood(n, '💩', 2600, now)
         return n
       },
     },
@@ -998,6 +1028,17 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
           0%, 100% { transform: scale(1, 1); }
           50%      { transform: scale(1.04, 0.92); }
         }
+        /* 'pooped' prop reveal — the kawaii poop fades in ~1.5s into
+           the squat (the strain has to pay off). OPACITY ONLY: a
+           filled CSS animation permanently overrides inline transform
+           on its element (the Panther mirror bug, 2026-07-11), so no
+           transform keyframes here. prefers-reduced-motion collapses
+           this via the global index.css rule — and the rAF loop is
+           paused under reduced motion anyway, so 'pooped' never rolls. */
+        @keyframes cat-poop-appear {
+          0%   { opacity: 0; }
+          100% { opacity: 1; }
+        }
       `}</style>
       {/* iter-356.30 (Pet Habitat slice 1): static habitat objects
           rendered BEHIND the cats so the cats walk on/over them.
@@ -1160,6 +1201,9 @@ const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
   play: 'crouched',
   pounce: 'crouched',
   on_post: 'crouched',
+  // 'crouched' so the existing crouch_down/crouch_up chains do the
+  // squat entry/exit for free — no bespoke transition sequences.
+  pooped: 'crouched',
   hiss: 'standing',
   scared: 'standing',
 }
@@ -1275,6 +1319,7 @@ const ONGOING_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName
   groom: 'groom_bout',
   play: 'pounce',
   pounce: 'pounce',
+  pooped: 'poop_squat', // loops while active — comedic quickening strain
 }
 
 const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
@@ -1422,6 +1467,33 @@ function CatRenderImpl({
           transformOrigin: 'center',
         }}
       />
+      {/* 'pooped' prop — the silly centerpiece. Rendered BEFORE the
+          entrance wrapper so the cat paints over it (poop sits on the
+          ground BEHIND the squat). Positioned at the cat's trailing
+          edge — opposite its facing — and OUTSIDE the direction-flip
+          div so the scaleX(-1) never mirrors the prop art. Fades in
+          ~1.5s into the squat via cat-poop-appear (opacity-only,
+          `both` fill is safe without transform keyframes). */}
+      {cat.activity === 'pooped' && (
+        <img
+          src="/cats/props/poop.png"
+          alt=""
+          data-testid="cat-poop-prop"
+          width={Math.round(SPRITE_WIDTH * 0.42)}
+          height={Math.round(SPRITE_WIDTH * 0.42)}
+          decoding="async"
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left:
+              cat.direction === 'L'
+                ? SPRITE_WIDTH - Math.round(SPRITE_WIDTH * 0.42) * 0.45
+                : -Math.round(SPRITE_WIDTH * 0.42) * 0.55,
+            animation: 'cat-poop-appear 400ms ease-out 1500ms both',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
       {/* Entrance wrapper — MUST stay a separate element from the
           direction-flip div below. `cat-arrive-*` animations use
           `fill: both`, and a filled CSS animation overrides inline
@@ -1496,28 +1568,12 @@ function CatRenderImpl({
       </div>
       </div>
       {cat.mood && (
-        <span
+        <CatMoodBubble
           key={`${cat.id}-${cat.moodUntil}`}
-          style={{
-            position: 'absolute',
-            left: '50%',
-            top: -10,
-            fontSize: 18,
-            lineHeight: 1,
-            whiteSpace: 'nowrap',
-            animation: 'cat-mood-rise 2200ms ease-out forwards',
-            pointerEvents: 'none',
-            // Sunroom redesign (2026-07-01): warm ink shadow at low
-            // alpha — the old rgba(0,0,0,0.6) was tuned for the dark
-            // theme and read as a hard black smudge on the linen bg.
-            filter: 'drop-shadow(0 1px 2px rgba(43,34,19,0.35))',
-          }}
-        >
-          {cat.mood}
-          {cat.moodSecondary && (
-            <span style={{ marginLeft: 1 }}>{cat.moodSecondary}</span>
-          )}
-        </span>
+          catId={cat.id}
+          mood={cat.mood}
+          moodSecondary={cat.moodSecondary}
+        />
       )}
       {particleSpec && (
         <CatParticles
@@ -1529,6 +1585,65 @@ function CatRenderImpl({
         />
       )}
     </div>
+  )
+}
+
+// Cat-personalized mood bubble (user directive 2026-07-11): renders
+// THIS cat's face wearing the emotion instead of a generic emoji.
+// moodBadgeParts picks the first face glyph with an exported badge;
+// symbols (💤 ✨ 💢 …) stay text. Fallback chain: no badge mapped →
+// original emoji string; badge img fails to load → original emoji.
+function CatMoodBubble({
+  catId,
+  mood,
+  moodSecondary,
+}: {
+  catId: CatId
+  mood: string
+  moodSecondary: string | null
+}) {
+  const [imgFailed, setImgFailed] = useState(false)
+  const parts = moodBadgeParts(catId, mood)
+  const useBadge = parts.src !== null && !imgFailed
+  return (
+    <span
+      style={{
+        position: 'absolute',
+        left: '50%',
+        top: -10,
+        fontSize: 18,
+        lineHeight: 1,
+        whiteSpace: 'nowrap',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 1,
+        animation: 'cat-mood-rise 2200ms ease-out forwards',
+        pointerEvents: 'none',
+        // Sunroom redesign (2026-07-01): warm ink shadow at low
+        // alpha — the old rgba(0,0,0,0.6) was tuned for the dark
+        // theme and read as a hard black smudge on the linen bg.
+        filter: 'drop-shadow(0 1px 2px rgba(43,34,19,0.35))',
+      }}
+    >
+      {useBadge ? (
+        <>
+          <img
+            src={parts.src ?? undefined}
+            alt={parts.face ?? ''}
+            width={20}
+            height={20}
+            decoding="async"
+            data-testid="cat-mood-badge"
+            style={{ display: 'block' }}
+            onError={() => setImgFailed(true)}
+          />
+          {parts.rest}
+        </>
+      ) : (
+        mood
+      )}
+      {moodSecondary && <span style={{ marginLeft: 1 }}>{moodSecondary}</span>}
+    </span>
   )
 }
 
@@ -1575,6 +1690,7 @@ function activityToSprite(
     case 'sleep':
       return 'sleep'
     case 'stretch':
+    case 'pooped': // closest built-in fallback pose to the squat
       return 'stretch'
     case 'groom':
       return 'groom'
