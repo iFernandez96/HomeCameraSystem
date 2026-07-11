@@ -102,6 +102,28 @@ export type DetectionEvent = {
    * fallback path on events known to lack clips.
    */
   clip_url?: string | null
+  /** Excluded from automatic age and disk-pressure eviction. */
+  protected?: boolean
+  /** Origin of this activity. Absent on events created before security events. */
+  source?: 'vision' | 'audio' | 'doorbell' | 'tamper' | 'system'
+  /** Optional automation rule that promoted or described this event. */
+  rule_id?: string | null
+  rule_name?: string | null
+  /** Stable id joining related lifecycle events, such as one package. */
+  correlation_id?: string | null
+  /** Direct link to the event this transition updates or resolves. */
+  related_event_id?: string | null
+  /** Camera-local visit id and its observed time window. */
+  visit_id?: string | null
+  start_ts?: number | null
+  end_ts?: number | null
+  /** Package lifecycle transition carried by package events. */
+  package_state?:
+    | 'delivered'
+    | 'present'
+    | 'collected'
+    | 'possible_theft'
+    | null
 }
 
 export type LiveDetectionEvent = {
@@ -159,6 +181,19 @@ export type PushFilters = {
  */
 export type ZonePoint = [number, number]
 
+export type SmartRule = {
+  id: string
+  name: string
+  kind: 'line_crossing' | 'loitering' | 'package'
+  enabled: boolean
+  camera_id: string
+  points: ZonePoint[]
+  labels: string[]
+  direction: 'any' | 'forward' | 'reverse'
+  dwell_s: number
+  threshold: number
+}
+
 /**
  * Closed polygon = ordered list of points. iter-191 server bounds:
  * 3-32 vertices per polygon, up to 16 polygons total.
@@ -169,6 +204,8 @@ export type DetectionConfig = {
   threshold: number
   cooldown_s: number
   enabled: boolean
+  /** Persisted household mode. Privacy stops inference and event creation. */
+  operating_mode: 'home' | 'away' | 'night' | 'privacy'
   /** HH:MM (24h, local) — both must be set for the schedule to apply. */
   schedule_off_start: string | null
   schedule_off_end: string | null
@@ -182,6 +219,8 @@ export type DetectionConfig = {
    * iter-191c lands the client `<canvas>` editor in Settings.
    */
   zones: Zone[]
+  /** Permanently redacted areas for detections, thumbnails, and snapshots. */
+  privacy_masks: Zone[]
   /** iter-254: seconds AFTER detection the recorder keeps writing.
    * Live-tunable; takes effect on the next event without a worker
    * restart. */
@@ -225,6 +264,16 @@ export type DetectionConfig = {
    * the visit clip is finalized. NEW field (plan R3) — distinct from
    * the deprecated `clip_post_roll_s`. Server clamps to [3, 60]. */
   absence_finalize_s: number
+  daily_digest_enabled: boolean
+  daily_digest_time: string
+  smart_rules: SmartRule[]
+  package_change_threshold: number
+  package_stable_s: number
+  audio_event_enabled: boolean
+  audio_event_labels: string[]
+  deterrence_enabled: boolean
+  deterrence_action: 'light' | 'warning' | 'siren'
+  deterrence_duration_s: number
 }
 
 /** A curated pick-list of common COCO classes shown as chips in Settings. */
@@ -513,6 +562,10 @@ export type ServerStatus = {
   memory_used_mb: number | null
   memory_total_mb: number | null
   disk_free_gb: number | null
+  /** Measured bytes created by clips during the previous 24 hours. */
+  recording_gb_per_day?: number
+  /** Clip storage currently excluded from automatic eviction. */
+  protected_recording_gb?: number
   fps: number
   /**
    * Live count of registered Web Push subscriptions on the server

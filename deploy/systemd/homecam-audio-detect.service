@@ -1,0 +1,23 @@
+[Unit]
+Description=Home Camera optional privacy-aware audio event watcher
+After=mediamtx.service homecam-server.service
+Wants=mediamtx.service homecam-server.service
+ConditionPathExists=/home/israel/HomeCameraSystem/detection/audio_watch.py
+
+[Service]
+Type=simple
+User=israel
+Group=israel
+WorkingDirectory=/home/israel/HomeCameraSystem
+Environment=AUDIO_LISTEN_URL=rtsp://127.0.0.1:8554/listen
+Environment=AUDIO_SIGNAL_URL=http://127.0.0.1:8000/api/_internal/signal
+Environment=AUDIO_CONFIG_URL=http://127.0.0.1:8000/api/_internal/detection/config
+ExecStart=/usr/bin/python3 /home/israel/HomeCameraSystem/detection/audio_watch.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+
+# Deliberately no [Install] section: deployment does not enable this unit.
+# Install/start it only after a microphone exists and audio events have been
+# explicitly configured.  The watcher remains dormant until the live config's
+# audio_event_enabled flag is true, and it stops acquisition in privacy mode.

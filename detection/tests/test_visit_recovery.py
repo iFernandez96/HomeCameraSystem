@@ -306,8 +306,11 @@ def _make_runner(tmp_path, spawn=None):
     SYNCHRONOUSLY (spawn = call-immediately) so assertions are deterministic."""
     events = {"open": [], "copy": [], "finalize": []}
 
-    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0):
-        events["open"].append((visit_id, key, start_ts, boxes))
+    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0,
+                   root_visit_id=None, **_kwargs):
+        events["open"].append(
+            (visit_id, key, start_ts, boxes, root_visit_id)
+        )
 
     def copy_segments(visit_id, start_ts, until_ts, scratch, already):
         events["copy"].append((visit_id, start_ts, until_ts))
@@ -349,6 +352,38 @@ def test_given_observe_with_boxes_when_open_then_post_carries_those_boxes(tmp_pa
     posted_boxes = events["open"][0][3]
     assert posted_boxes == frame_boxes
     assert posted_boxes, "open POST must carry >=1 box or the server 422s"
+    assert events["open"][0][4] == "vid1"
+
+
+def test_given_cap_split_when_continuation_opens_then_root_survives_persistence(
+    tmp_path,
+):
+    # arrange — each capped segment keeps its own event/clip id.
+    ids = iter(["segment1", "segment2"])
+    runner, events = _make_runner(tmp_path)
+    runner.tracker = VisitTracker(id_factory=lambda: next(ids))
+    box = (0.0, 0.0, 0.2, 0.2)
+
+    # act — the second observation crosses the five-second hard cap.
+    runner.observe(
+        "person:cam1", box, now=100.0, pre_roll_s=0.0,
+        absence_finalize_s=10.0, max_visit_s=5.0,
+        boxes=[{"label": "person"}],
+    )
+    runner.observe(
+        "person:cam1", box, now=106.0, pre_roll_s=0.0,
+        absence_finalize_s=10.0, max_visit_s=5.0,
+        boxes=[{"label": "person"}],
+    )
+
+    # assert — segment1 finalized independently, while the crash-durable open
+    # table and both event callbacks retain one stable physical-story id.
+    assert [event[0] for event in events["open"]] == ["segment1", "segment2"]
+    assert [event[4] for event in events["open"]] == ["segment1", "segment1"]
+    assert events["finalize"][0][0] == "segment1"
+    table = visit_runtime.read_open_visits(str(tmp_path))
+    assert set(table) == {"segment2"}
+    assert table["segment2"]["root_visit_id"] == "segment1"
 
 
 def test_given_open_visit_when_all_absent_frames_tick_then_finalize_at_deadline(

@@ -9,6 +9,7 @@ import hashlib
 import json
 
 from fastapi import APIRouter, Depends, Query, Request, Response, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict
 
 from ..auth import tokens, users_db
 from ..auth.dependencies import get_current_user, require_role
@@ -161,6 +162,18 @@ async def search_events(
     return {"items": items, "next_cursor": next_cursor}
 
 
+@router.get("/events/digest")
+async def events_daily_digest(
+    day: str = Query(..., pattern=r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$"),
+    _user: str = Depends(get_current_user),
+) -> dict:
+    from ..services import events_db
+
+    return await asyncio.to_thread(
+        events_db.daily_digest, settings.events_db_path, day
+    )
+
+
 @router.get("/events/count_by_day")
 async def events_count_by_day(
     request: Request,
@@ -306,6 +319,34 @@ async def events_mark_all_seen(
         events_db.mark_all_seen, settings.events_db_path
     )
     return {"flipped": n}
+
+
+class _ProtectEventBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    protected: bool
+
+
+@router.put(
+    "/events/{event_id}/protection",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def events_set_protection(event_id: str, body: _ProtectEventBody) -> dict:
+    import re
+    from fastapi import HTTPException
+    from ..services import events_db
+
+    if not re.match(_EVENT_ID_PATTERN, event_id):
+        raise HTTPException(status_code=422, detail="invalid event id")
+    found = await asyncio.to_thread(
+        events_db.set_protected,
+        settings.events_db_path,
+        event_id,
+        body.protected,
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="event not found")
+    log.info("event protection changed: event_id=%r protected=%s", event_id, body.protected)
+    return {"protected": body.protected}
 
 
 _DAY_PATTERN = r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$"

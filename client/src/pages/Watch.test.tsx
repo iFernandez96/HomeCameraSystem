@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import type { ReactNode } from 'react'
@@ -14,6 +14,18 @@ const getStatusM = vi.fn()
 // beforeEach so every pre-multicam test renders exactly as before
 // (no switcher); the multicam tests override.
 const getCamerasM = vi.fn()
+const getCurrentPackagesM = vi.fn()
+const triggerDeterrenceM = vi.fn()
+let authRole: 'owner' | 'family' = 'owner'
+
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({
+    state: 'authed',
+    user: { username: 'watch-user', role: authRole },
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}))
 
 vi.mock('../lib/api', () => {
   // Defined inside the factory — vi.mock hoists above imports, so a
@@ -30,6 +42,8 @@ vi.mock('../lib/api', () => {
     captureSnapshot: (...a: unknown[]) => captureSnapshot(...a),
     getStatus: (...a: unknown[]) => getStatusM(...a),
     getCameras: (...a: unknown[]) => getCamerasM(...a),
+    getCurrentPackages: (...a: unknown[]) => getCurrentPackagesM(...a),
+    triggerDeterrence: (...a: unknown[]) => triggerDeterrenceM(...a),
     HttpError,
   }
 })
@@ -108,6 +122,7 @@ vi.mock('../components/SnapshotPreview', () => ({
 }))
 
 import { ToastProvider } from '../lib/toast'
+import { ConfirmProvider } from '../lib/confirm'
 import { registerCameraNames } from '../lib/eventLabel'
 import { Watch } from './Watch'
 
@@ -138,11 +153,13 @@ function ev(partial: Partial<DetectionEvent>): DetectionEvent {
   }
 }
 
-function renderWatch() {
+function renderWatch(initialEntry = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <ToastProvider>
-        <Watch />
+        <ConfirmProvider>
+          <Watch />
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>,
   )
@@ -150,6 +167,7 @@ function renderWatch() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  authRole = 'owner'
   getStatusM.mockResolvedValue(HEALTHY)
   searchEvents.mockResolvedValue({ items: [], next_cursor: null })
   // Multicam: single-camera registry default so pre-multicam tests
@@ -157,6 +175,19 @@ beforeEach(() => {
   // selection are module/storage state — reset for order-independence.
   getCamerasM.mockResolvedValue({
     cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
+  })
+  getCurrentPackagesM.mockResolvedValue({ v: 1, items: [] })
+  triggerDeterrenceM.mockResolvedValue({
+    ok: true,
+    status: 'executed',
+    reason: 'executed',
+    action: 'siren',
+    duration_s: 20,
+    capabilities: {
+      available: true,
+      adapter: 'mounted_executable',
+      limitation: '',
+    },
   })
   registerCameraNames([])
   window.localStorage.removeItem('homecam:cameraId')
@@ -1009,5 +1040,91 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     } finally {
       registerCameraNames([])
     }
+  })
+
+  it('Given a siren push action, When Home opens, Then it requires foreground confirmation before sending the exact request', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch('/?deterrence=siren&duration=20&event=evt-9')
+
+    // assert — merely opening the notification target does not actuate hardware.
+    expect(
+      await screen.findByText('Ready to sound the siren?'),
+    ).toBeInTheDocument()
+    expect(triggerDeterrenceM).not.toHaveBeenCalled()
+
+    // act — review, then explicitly confirm in the foreground dialog.
+    await user.click(screen.getByRole('button', { name: 'Review action' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Sound siren' }),
+    )
+
+    // assert
+    await waitFor(() => {
+      expect(triggerDeterrenceM).toHaveBeenCalledWith({
+        action: 'siren',
+        duration_s: 20,
+        confirm: true,
+        event_id: 'evt-9',
+      })
+    })
+  })
+
+  it('Given deterrence hardware is unavailable, When the foreground action is confirmed, Then Home reports the limitation and keeps the intent for retry', async () => {
+    // arrange
+    triggerDeterrenceM.mockResolvedValue({
+      ok: false,
+      status: 'unavailable',
+      reason: 'hardware adapter is not available',
+      action: 'warning',
+      duration_s: 60,
+      capabilities: {
+        available: false,
+        adapter: null,
+        limitation: 'Configure a supported speaker adapter first',
+      },
+    })
+    const user = userEvent.setup()
+    renderWatch('/?deterrence=warning&duration=600&event=evt-11')
+
+    // act
+    await user.click(await screen.findByRole('button', { name: 'Review action' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Start action' }))
+
+    // assert — hand-edited/push duration is capped to the server maximum.
+    await waitFor(() => {
+      expect(triggerDeterrenceM).toHaveBeenCalledWith({
+        action: 'warning',
+        duration_s: 60,
+        confirm: true,
+        event_id: 'evt-11',
+      })
+    })
+    expect(
+      await screen.findByText(
+        'Action unavailable: Configure a supported speaker adapter first',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Ready to play a warning?')).toBeInTheDocument()
+  })
+
+  it('Given a family account opens a Talk notification intent, Then Home explains owner permission and never offers microphone publish', async () => {
+    authRole = 'family'
+    getStatusM.mockResolvedValue({ ...HEALTHY, audio_enabled: true })
+
+    renderWatch('/?talk=1&event=evt-family')
+
+    expect(
+      await screen.findByText('Talk requires owner access'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/family and viewer accounts can listen, but only an owner can publish/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Start talk' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
   })
 })

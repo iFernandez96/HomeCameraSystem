@@ -510,6 +510,36 @@ describe('ClipModal', () => {
     expect(screen.getByText(/high confidence/i)).toBeInTheDocument()
   })
 
+  it('applies the server-returned event immediately after identity feedback', async () => {
+    const api = await import('../lib/api')
+    const original = makeEvent({ person_name: 'Alice' })
+    const updated = { ...original, person_name: 'Bob', person_names: ['Bob'] }
+    const feedback = vi.spyOn(api, 'submitIdentityFeedback').mockResolvedValue({
+      ok: true,
+      event: updated,
+      captures_moved: 1,
+    })
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    render(<ClipModal event={original} onClose={() => {}} />)
+
+    await user.click(screen.getByRole('button', { name: 'Wrong person' }))
+    await user.type(
+      screen.getByLabelText(/correct person, or leave blank for unknown/i),
+      'Bob',
+    )
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+
+    expect(
+      await screen.findByLabelText(/clip of bob event/i),
+    ).toBeInTheDocument()
+    expect(feedback).toHaveBeenCalledWith('evt-1', {
+      verdict: 'incorrect',
+      correct_name: 'Bob',
+    })
+    feedback.mockRestore()
+  })
+
   it('given an event, when the modal renders, then the evidence pane shows exactly ONE compact When line (absolute time + relative age), not repeated When/Where/What blocks', () => {
     // arrange
     const ev = makeEvent({ label: 'cat', ts: 1700000000 })
@@ -1005,10 +1035,12 @@ describe('ClipModal', () => {
       fireEvent.touchEnd(pane)
 
       // assert
-      expect(screen.getByLabelText(/clip of cat event/i)).toHaveAttribute(
-        'src',
-        '/api/events/evt-newer/clip',
-      )
+      await waitFor(() => {
+        expect(screen.getByLabelText(/clip of cat event/i)).toHaveAttribute(
+          'src',
+          '/api/events/evt-newer/clip',
+        )
+      })
 
       // cleanup
       vi.restoreAllMocks()

@@ -24,6 +24,7 @@ import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { Button } from '../components/primitives/Button'
+import { OutageTimelinePanel } from '../components/godview/OutageTimelinePanel'
 
 function dayInputToEpoch(value: string, endOfDay: boolean): number | undefined {
   if (!value) return undefined
@@ -480,6 +481,7 @@ export function GodView() {
 
       <CrashCartPanels status={status} />
       <WedgePanel metrics={status?.worker_metrics ?? null} />
+      <OutageTimelinePanel />
       <RecoveryPanel />
       <LogViewerPanel />
       <SessionsPanel user={user} />

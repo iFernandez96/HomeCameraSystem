@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import tarfile
+import time
 
 from fastapi.testclient import TestClient
 
@@ -252,6 +253,195 @@ def test_given_owner_when_focus_mode_enabled_then_host_change_is_queued(
 def test_given_anon_when_focus_mode_requested_then_unauthorized(client_anon: TestClient):
     response = client_anon.post("/api/camera/focus-mode", json={"enabled": True})
     assert response.status_code == 401
+
+
+def test_given_owner_when_exposure_saved_then_config_persists_and_apply_is_queued(
+    client: TestClient,
+):
+    from app.services import host_bridge
+
+    payload = {
+        "enabled": True, "x": 0.2, "y": 0.25, "width": 0.5, "height": 0.5,
+        "compensation": 0.4, "locked": False,
+    }
+    response = client.put("/api/camera/exposure", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {key: body[key] for key in payload} == payload
+    record = host_bridge.get(body["request_id"])
+    assert record["kind"] == "exposure_apply"
+    assert {key: record["args"][key] for key in payload} == payload
+    assert record["args"]["_previous_config"] == {
+        "enabled": False,
+        "x": 0.25,
+        "y": 0.25,
+        "width": 0.5,
+        "height": 0.5,
+        "compensation": 0.0,
+        "locked": False,
+    }
+    assert client.get("/api/camera/exposure").json() == payload
+
+
+def test_given_worker_exposure_failure_when_result_posts_then_server_rolls_back(
+    client: TestClient,
+):
+    previous = client.get("/api/camera/exposure").json()
+    desired = {
+        "enabled": True,
+        "x": 0.1,
+        "y": 0.15,
+        "width": 0.5,
+        "height": 0.5,
+        "compensation": 0.8,
+        "locked": True,
+    }
+    queued = client.put("/api/camera/exposure", json=desired)
+    assert queued.status_code == 200
+    request_id = queued.json()["request_id"]
+    assert client.get("/api/camera/exposure").json() == desired
+
+    claimed = client.post(
+        "/api/_internal/host_action/claim", json={"id": request_id}
+    )
+    assert claimed.json() == {"result": "claimed"}
+    failed = client.post(
+        "/api/_internal/host_action/result",
+        json={
+            "id": request_id,
+            "status": "failed",
+            "detail": "camera exposure failed; previous settings restored",
+            "result": None,
+        },
+    )
+    assert failed.status_code == 200 and failed.json() == {"ok": True}
+    assert client.get("/api/camera/exposure").json() == previous
+
+    # A later accepted config must not be overwritten by a replay of the old
+    # failed callback (worker retries are expected after network loss).
+    later = {**desired, "compensation": -0.4, "locked": False}
+    later_response = client.put("/api/camera/exposure", json=later)
+    assert later_response.status_code == 200
+    replay = client.post(
+        "/api/_internal/host_action/result",
+        json={
+            "id": request_id,
+            "status": "failed",
+            "detail": "duplicate retry",
+            "result": None,
+        },
+    )
+    assert replay.status_code == 200 and replay.json() == {"ok": False}
+    assert client.get("/api/camera/exposure").json() == later
+
+
+def test_given_other_host_action_pending_when_exposure_put_then_409_and_no_mutation(
+    client: TestClient,
+):
+    from app.services import host_bridge
+
+    previous = client.get("/api/camera/exposure").json()
+    host_bridge.enqueue("mediamtx", {}, requested_by="testuser", now=time.time())
+    response = client.put(
+        "/api/camera/exposure",
+        json={
+            **previous,
+            "enabled": True,
+            "compensation": 0.5,
+        },
+    )
+    assert response.status_code == 409
+    assert client.get("/api/camera/exposure").json() == previous
+
+
+def test_given_exposure_apply_expires_when_worker_polls_then_previous_is_requeued(
+    client: TestClient,
+):
+    from dataclasses import asdict
+
+    from app.services import host_bridge
+    from app.services.camera_exposure import CameraExposureConfig, camera_exposure
+
+    previous = camera_exposure.get()
+    desired = CameraExposureConfig(
+        enabled=True,
+        x=0.1,
+        y=0.1,
+        width=0.5,
+        height=0.5,
+        compensation=1.0,
+        locked=True,
+    )
+    camera_exposure.save(desired)
+    stale = host_bridge.enqueue(
+        "exposure_apply",
+        {**asdict(desired), "_previous_config": asdict(previous)},
+        requested_by="testuser",
+        now=0.0,
+    )
+
+    polled = client.get("/api/_internal/host_action")
+    assert polled.status_code == 200
+    rollback = polled.json()["action"]
+    assert rollback["id"] != stale["id"]
+    assert rollback["kind"] == "exposure_apply"
+    assert {
+        key: rollback["args"][key] for key in asdict(previous)
+    } == asdict(previous)
+    assert host_bridge.get(stale["id"])["status"] == "expired"
+    assert client.get("/api/camera/exposure").json() == asdict(previous)
+
+
+def test_given_exposure_region_outside_frame_when_saved_then_rejected(client: TestClient):
+    response = client.put("/api/camera/exposure", json={
+        "enabled": True, "x": 0.7, "y": 0.1, "width": 0.5, "height": 0.5,
+        "compensation": 0, "locked": False,
+    })
+    assert response.status_code == 422
+
+
+def test_given_anon_when_exposure_saved_then_unauthorized(client_anon: TestClient):
+    response = client_anon.put("/api/camera/exposure", json={
+        "enabled": False, "x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5,
+        "compensation": 0, "locked": False,
+    })
+    assert response.status_code == 401
+
+
+def test_given_named_exposure_zone_when_saved_then_thumbnail_and_config_can_be_restored(
+    client: TestClient,
+):
+    config = {
+        "enabled": True, "x": 0.1, "y": 0.2, "width": 0.4, "height": 0.5,
+        "compensation": 0.7, "locked": False,
+    }
+    thumbnail = "data:image/jpeg;base64,AAAA"
+    created = client.post("/api/camera/exposure-presets", json={
+        "name": "  Bright doorway  ", "thumbnail": thumbnail, "config": config,
+    })
+    assert created.status_code == 200, created.text
+    preset = created.json()
+    assert preset["name"] == "Bright doorway"
+    assert preset["thumbnail"] == thumbnail
+    assert preset["config"] == config
+
+    listed = client.get("/api/camera/exposure-presets")
+    assert listed.status_code == 200
+    assert listed.json()["presets"] == [preset]
+
+    deleted = client.delete("/api/camera/exposure-presets/{}".format(preset["id"]))
+    assert deleted.json() == {"deleted": True, "id": preset["id"]}
+    assert client.get("/api/camera/exposure-presets").json() == {"presets": []}
+
+
+def test_given_invalid_exposure_thumbnail_when_preset_saved_then_rejected(client: TestClient):
+    response = client.post("/api/camera/exposure-presets", json={
+        "name": "Door", "thumbnail": "data:text/html;base64,PHNjcmlwdD4=", "config": {
+            "enabled": False, "x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5,
+            "compensation": 0, "locked": False,
+        },
+    })
+    assert response.status_code == 422
 
 
 def test_given_anon_when_fetching_system_logs_then_401(client_anon: TestClient):

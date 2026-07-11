@@ -8,6 +8,7 @@ const fetchLogs = vi.fn()
 const getLogsResult = vi.fn()
 const getRecoverStatus = vi.fn()
 const listSessions = vi.fn()
+const listOutages = vi.fn()
 const recoverHost = vi.fn()
 const useStatus = vi.fn()
 let authUser: { username: string; role: string } | null = {
@@ -21,6 +22,7 @@ vi.mock('../lib/api', () => ({
   getLogsResult: (...a: unknown[]) => getLogsResult(...a),
   getRecoverStatus: (...a: unknown[]) => getRecoverStatus(...a),
   listSessions: () => listSessions(),
+  listOutages: () => listOutages(),
   recoverHost: (...a: unknown[]) => recoverHost(...a),
   revokeSession: (jti: string) => Promise.resolve({ ok: true, jti }),
 }))
@@ -85,6 +87,7 @@ describe('GodView page', () => {
       detail: null,
     })
     listSessions.mockReset().mockResolvedValue({ v: 1, sessions: [] })
+    listOutages.mockReset().mockResolvedValue({ items: [] })
     getAdminAudit.mockReset().mockResolvedValue({
       v: 1,
       logins: [

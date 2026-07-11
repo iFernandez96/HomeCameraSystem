@@ -152,9 +152,11 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
         "seconds_since_last_frame",
         # iter-313 (perf #3): inlined from /api/detection/config so the
         # Live page can read them off the existing 5 s status poll.
-        "camera_label",
-        "audio_enabled",
-    }
+            "camera_label",
+            "audio_enabled",
+            "recording_gb_per_day",
+            "protected_recording_gb",
+        }
 
 
 def test_status_calls_meminfo_once_per_request(

@@ -285,6 +285,14 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
     if not rec_dir.exists():
         return 0
     cutoff = time.time() - (retention_days * 86400)
+    try:
+        from .events_db import protected_event_ids
+        protected_ids = protected_event_ids(settings.events_db_path)
+    except Exception:
+        # Fail closed: if protection state cannot be read, do not risk deleting
+        # footage the owner explicitly retained.
+        log.exception("sweep: could not load protected event ids; skipping sweep")
+        return 0
     deleted = 0
     # iter-356.53: also sweep `.tracks.json` sidecars older than the
     # cutoff. Suffix-match the same way the .mp4 sweep does so a
@@ -300,6 +308,11 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
                 # Don't touch non-mp4 / non-sidecar files — operator
                 # might keep ad-hoc test clips or partial ffmpeg
                 # work-files that share the dir.
+                continue
+            event_id = (
+                entry.name[:-12] if is_tracks_sidecar else entry.stem
+            )
+            if event_id in protected_ids:
                 continue
             try:
                 mtime = entry.stat().st_mtime
@@ -348,6 +361,38 @@ def _list_clips_by_mtime(rec_dir: Path) -> list:
         log.warning("evict: failed to list %s: %s", rec_dir, e)
     out.sort(key=lambda pair: pair[0])
     return out
+
+
+def storage_forecast(now: float | None = None) -> dict:
+    """Measure recent clip growth and protected bytes for runway estimates."""
+    if now is None:
+        now = time.time()
+    rec_dir = settings.recordings_dir
+    recent_bytes = 0
+    protected_bytes = 0
+    try:
+        from .events_db import protected_event_ids
+        protected_ids = protected_event_ids(settings.events_db_path)
+    except Exception:
+        log.exception("storage forecast: could not load protected event ids")
+        protected_ids = set()
+    try:
+        clips = _list_clips_by_mtime(rec_dir) if rec_dir.exists() else []
+        for mtime, path in clips:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if mtime >= now - 86400:
+                recent_bytes += size
+            if Path(path.name).stem in protected_ids:
+                protected_bytes += size
+    except Exception:
+        log.exception("storage forecast: clip scan failed")
+    return {
+        "recording_gb_per_day": recent_bytes / (1024 ** 3),
+        "protected_recording_gb": protected_bytes / (1024 ** 3),
+    }
 
 
 def evict_to_free_space(
@@ -399,9 +444,17 @@ def evict_to_free_space(
 
     # Snapshot oldest-first; delete until free >= floor or we run out.
     clips = list_clips(rec_dir)
+    try:
+        from .events_db import protected_event_ids
+        protected_ids = protected_event_ids(settings.events_db_path)
+    except Exception:
+        log.exception("evict: could not load protected event ids; skipping eviction")
+        return result
     for _mtime, path in clips:
         if _free() >= min_free_bytes:
             break
+        if Path(path.name).stem in protected_ids:
+            continue
         try:
             size = path.stat().st_size
         except OSError:

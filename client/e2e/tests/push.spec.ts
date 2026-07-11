@@ -18,9 +18,9 @@ test.describe('Push — VAPID + test fanout shape', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/login')
     await page.getByLabel(/username/i).fill('admin')
-    await page.getByLabel(/password/i).fill('admin')
+    await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('given an authed session, when /api/push/test is called, then it returns 200 with a numeric sent count', async ({

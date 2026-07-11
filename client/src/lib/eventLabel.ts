@@ -58,8 +58,20 @@ export function eventTitle(e: DetectionEvent): string {
     const others = names.length - 2
     return `${capitalize(names[0])}, ${capitalize(names[1])} & ${others} others at ${where}`
   }
-  const what = capitalize(e.label)
+  const what = eventWhat(e)
   return `${what} at ${where}`
+}
+
+function eventWhat(event: DetectionEvent): string {
+  if (event.package_state === 'delivered') return 'Package delivered'
+  if (event.package_state === 'present') return 'Package still present'
+  if (event.package_state === 'collected') return 'Package collected'
+  if (event.package_state === 'possible_theft') return 'Possible package removal'
+  if (event.source === 'doorbell') return 'Doorbell pressed'
+  if (event.source === 'tamper') return 'Camera tamper'
+  const label = event.label.replaceAll('_', ' ')
+  if (event.source === 'audio') return `${capitalize(label)} sound`
+  return capitalize(event.rule_name ?? label)
 }
 
 /** iter-357: normalize the iter-22 `person_name` + iter-357

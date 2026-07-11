@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { listPeople, type PersonSummary } from '../lib/api'
 import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
@@ -139,14 +139,6 @@ export function People() {
     setPeople(null)
     setTotal(0)
     setRetryNonce((n) => n + 1)
-  }
-
-  const onPersonClick = (name: string) => {
-    // iter-326b: deep-link to Events with the person-name filter
-    // chip pre-selected. Events.tsx reads ?person= on mount and
-    // calls setFilter() so the existing iter-221 chip logic does
-    // the rest (server search + recognized-pill + emerald bbox).
-    navigate(`/events?person=${encodeURIComponent(name)}`)
   }
 
   return (
@@ -330,12 +322,10 @@ export function People() {
               <_PersonSection
                 heading="Recent"
                 people={partitioned.recent}
-                onPersonClick={onPersonClick}
               />
               <_PersonSection
                 heading="Earlier"
                 people={partitioned.earlier}
-                onPersonClick={onPersonClick}
               />
             </>
           ) : (
@@ -343,7 +333,6 @@ export function People() {
             // (everyone recent, or everyone old), or pre-search default.
             <_PersonGrid
               people={filteredPeople ?? people}
-              onPersonClick={onPersonClick}
             />
           )}
         </>
@@ -359,11 +348,9 @@ export function People() {
 function _PersonSection({
   heading,
   people,
-  onPersonClick,
 }: {
   heading: string
   people: PersonSummary[]
-  onPersonClick: (name: string) => void
 }) {
   return (
     // iter-347 (Mobile B1): space-y-3 (not 2) so heading-to-card
@@ -381,7 +368,7 @@ function _PersonSection({
           · {people.length}
         </span>
       </h2>
-      <_PersonGrid people={people} onPersonClick={onPersonClick} />
+      <_PersonGrid people={people} />
     </section>
   )
 }
@@ -392,10 +379,8 @@ function _PersonSection({
 // the main return; extraction is required for the partition refactor.
 function _PersonGrid({
   people,
-  onPersonClick,
 }: {
   people: PersonSummary[]
-  onPersonClick: (name: string) => void
 }) {
   return (
     <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 list-none">
@@ -408,9 +393,8 @@ function _PersonGrid({
         const identity = identityForName(p.name)
         return (
         <li key={p.name}>
-          <button
-            type="button"
-            onClick={() => onPersonClick(p.name)}
+          <Link
+            to={`/people/${encodeURIComponent(p.name)}`}
             // Fix wave F3 (accepted audit finding, flat-paper rule):
             // this card carried shadow-card + shadow-card-inset — a
             // shadow-elevated panel look CLAUDE.md's card-paper
@@ -465,7 +449,7 @@ function _PersonGrid({
                 First seen {_formatAbsolute(p.first_seen_ts)}
               </div>
             </div>
-          </button>
+          </Link>
         </li>
         )
       })}

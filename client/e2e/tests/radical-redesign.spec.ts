@@ -32,7 +32,7 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     await page.locator('input[autocomplete="username"]').fill('admin')
     await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
 
     // act — wait for status poll
     await page.waitForTimeout(2500)
@@ -55,7 +55,7 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     await page.locator('input[autocomplete="username"]').fill('admin')
     await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
     await page.waitForTimeout(1000)
 
     // assert — the .page-title H1 must resolve `font-family` to
@@ -80,7 +80,7 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     await page.locator('input[autocomplete="username"]').fill('admin')
     await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
     await page.goto('/people')
 
     // act
@@ -93,7 +93,7 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     ).toBeVisible({ timeout: 6000 })
   })
 
-  test('given the user is signed in, then the SideNav brand row reads "ISRAEL · ON WATCH" not "Signed in as Israel"', async ({
+  test('given the user is signed in, then the SideNav account marker identifies the current user accessibly', async ({
     page,
   }) => {
     // arrange
@@ -101,19 +101,16 @@ test.describe('Radical redesign — visible identity (iter-356.57)', () => {
     await page.locator('input[autocomplete="username"]').fill('admin')
     await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
 
     // act — desktop sidebar is `hidden lg:flex`; the test viewport
-    // (Desktop Chrome via playwright config) renders it. The brass
-    // uppercase tag is the unmistakable iter-356.57 watchpost-rail
-    // identity marker.
+    // (Desktop Chrome via playwright config) renders it. The compact avatar
+    // keeps the username in its accessible name while avoiding duplicate
+    // visible account chrome beside the Sign out control.
     await page.waitForTimeout(1000)
 
-    // assert — the on-watch attribution row is present. We assert
-    // case-insensitively because the rendered text is uppercased
-    // via CSS letter-spacing + tracking, not via the source string.
-    await expect(
-      page.getByText(/admin\s*· on watch/i).first(),
-    ).toBeVisible({ timeout: 4000 })
+    // assert — account identity and the adjacent action are both discoverable.
+    await expect(page.locator('[aria-label="Signed in as admin"]')).toBeVisible({ timeout: 4000 })
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
   })
 })

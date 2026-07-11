@@ -1266,6 +1266,52 @@ def test_given_event_when_listed_then_row_includes_camera_id(
     assert items[0]["camera_id"] == "back_yard"
 
 
+def test_daily_digest_summarizes_labels_and_recognition(client: TestClient):
+    import time
+
+    day = time.strftime("%Y-%m-%d", time.localtime())
+    _post_event(client, label="person", person_name="israel")
+    _post_event(client, label="person")
+    _post_event(client, label="cat")
+
+    response = client.get("/api/events/digest?day={}".format(day))
+    assert response.status_code == 200
+    assert response.json() == {
+        "day": day,
+        "total": 3,
+        "by_label": {"cat": 1, "person": 2},
+        "unknown_people": 1,
+        "known_people": ["israel"],
+    }
+
+
+def test_owner_can_protect_and_unprotect_event(client: TestClient):
+    response = _post_event(client, camera_id="front_door", label="person")
+    event_id = response.json()["event_id"]
+
+    protected = client.put(
+        "/api/events/{}/protection".format(event_id),
+        json={"protected": True},
+    )
+    assert protected.status_code == 200
+    assert protected.json() == {"protected": True}
+    assert client.get("/api/events?limit=1").json()[0]["protected"] is True
+
+    unprotected = client.put(
+        "/api/events/{}/protection".format(event_id),
+        json={"protected": False},
+    )
+    assert unprotected.status_code == 200
+    assert unprotected.json() == {"protected": False}
+
+
+def test_protection_rejects_unknown_event(client: TestClient):
+    response = client.put(
+        "/api/events/missing/protection", json={"protected": True}
+    )
+    assert response.status_code == 404
+
+
 def test_given_camera_filter_when_searching_then_only_matching_rows(
     client: TestClient,
 ):

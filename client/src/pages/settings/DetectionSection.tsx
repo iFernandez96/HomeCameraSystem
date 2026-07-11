@@ -111,37 +111,6 @@ function SensitivitySlider({
   )
 }
 
-function DisabledToggleDisplay({
-  checked,
-  ariaLabel,
-}: {
-  checked: boolean
-  ariaLabel: string
-}) {
-  return (
-    <button
-      type="button"
-      disabled
-      aria-disabled="true"
-      aria-pressed={checked}
-      aria-label={ariaLabel}
-      className="relative p-2.5 -m-2.5 rounded-full flex items-center opacity-50 cursor-not-allowed"
-    >
-      <span
-        className={`w-11 h-[26px] rounded-full p-0.5 flex items-center ${
-          checked ? 'bg-[var(--color-ink)]' : 'bg-[var(--color-border)]'
-        }`}
-      >
-        <span
-          className={`w-5 h-5 bg-white rounded-full shadow-md ${
-            checked ? 'translate-x-5' : 'translate-x-0'
-          }`}
-        />
-      </span>
-    </button>
-  )
-}
-
 export function DetectionSection() {
   const { showToast } = useToast()
   const reportError = useReportError()
@@ -208,6 +177,31 @@ export function DetectionSection() {
 
   return (
     <>
+      <Section title="Household mode">
+        <p className="px-1 text-xs text-[var(--color-text-secondary)]">
+          Privacy stops detection and new event recording. Home, Away, and Night keep watching and can use different alert rules.
+        </p>
+        <div className="grid grid-cols-2 gap-2 px-1 py-2" role="radiogroup" aria-label="Household mode">
+          {(['home', 'away', 'night', 'privacy'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={(config?.operating_mode ?? 'home') === mode}
+              disabled={config === null}
+              onClick={() => commitConfig({ operating_mode: mode })}
+              className={`min-h-11 rounded-full border px-3 text-sm font-medium capitalize ${
+                (config?.operating_mode ?? 'home') === mode
+                  ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] border-[var(--color-ink)]'
+                  : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)]'
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+      </Section>
+
       {/* iter-305 (user "How do I know which cam is which? Right
           now, I only have 1 camera, but it is not labeled at all"):
           friendly camera name. Used as the Live page header.
@@ -258,15 +252,19 @@ export function DetectionSection() {
         <Row
           label="Let me speak to whoever's outside"
           right={
-            <DisabledToggleDisplay
+            <Toggle
               checked={config?.audio_enabled ?? false}
+              onChange={(audio_enabled) => commitConfig({ audio_enabled })}
+              disabled={config === null || !config.audio_enabled}
               ariaLabel="Enable two-way audio"
             />
           }
         />
         <p className="px-4 -mt-2 pb-3 text-xs text-[var(--color-text-secondary)]">
-          Coming soon. Needs a microphone and speaker on the camera
-          before this can turn on.
+          Unavailable/inactive unless the camera microphone, speaker, MediaMTX
+          talk/listen paths, and scoped media authorization are all configured.
+          This screen has no positive hardware capability report, so it cannot
+          turn audio on; an already-enabled legacy setting can be turned off.
         </p>
       </Section>
 
@@ -529,6 +527,16 @@ export function DetectionSection() {
         />
       </Section>
 
+      <Section title="Privacy masks">
+        <p className="px-1 text-xs text-[var(--color-text-secondary)]">
+          Mask neighboring windows or private areas. Masked regions are excluded from detections and saved still images.
+        </p>
+        <ZoneEditor
+          zones={config?.privacy_masks ?? []}
+          onChange={(privacy_masks) => commitConfig({ privacy_masks })}
+        />
+      </Section>
+
       <Section title="Schedule">
         <Row
           label="Auto-pause overnight"
@@ -581,6 +589,32 @@ export function DetectionSection() {
             />
           </>
         )}
+      </Section>
+
+      <Section title="Daily digest">
+        <Row
+          label="Activity summary"
+          right={
+            <Toggle
+              checked={config?.daily_digest_enabled ?? true}
+              onChange={(daily_digest_enabled) => commitConfig({ daily_digest_enabled })}
+              disabled={config === null}
+              ariaLabel="Send daily camera activity digest"
+            />
+          }
+        />
+        {config?.daily_digest_enabled ? (
+          <Row
+            label="Send after"
+            right={
+              <TimeInput
+                value={config.daily_digest_time}
+                onChange={(daily_digest_time) => commitConfig({ daily_digest_time })}
+                ariaLabel="Daily digest send time"
+              />
+            }
+          />
+        ) : null}
       </Section>
     </>
   )

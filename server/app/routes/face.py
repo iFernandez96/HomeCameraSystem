@@ -300,7 +300,12 @@ def _review_queue_sync(root: Path, limit: int) -> dict:
             conf = sidecar.get("confidence")
             if conf is None:
                 continue
-            if not (_UNCERTAINTY_LO <= conf <= _UNCERTAINTY_HI):
+            # Every explicitly unknown capture belongs in the inbox, even a
+            # strong miss below the active-learning uncertainty band. Named
+            # buckets stay limited to uncertain predictions to avoid asking
+            # the owner to reconfirm confident household matches.
+            is_unknown = child.name == "__unknown__"
+            if not is_unknown and not (_UNCERTAINTY_LO <= conf <= _UNCERTAINTY_HI):
                 continue
             stem = f.stem
             ts_str, _, event_id = stem.partition("_")
@@ -316,10 +321,11 @@ def _review_queue_sync(root: Path, limit: int) -> dict:
                 "confidence": conf,
                 "current_dir": child.name,
                 "url": f"/api/face/captures/{child.name}/{f.name}",
-                "_uncertainty": abs(conf - 0.5),
+                "_uncertainty": -1.0 if is_unknown else abs(conf - 0.5),
+                "_newest": -ts_ms,
             })
 
-    candidates.sort(key=lambda c: c["_uncertainty"])
+    candidates.sort(key=lambda c: (c["_uncertainty"], c["_newest"]))
     total = len(candidates)
     items = [
         {k: v for k, v in c.items() if not k.startswith("_")}

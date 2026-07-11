@@ -21,11 +21,14 @@ The PRESENT/POST_ROLL split is implicit in ``last_seen`` vs ``now`` against
 the (caller-supplied) ``absence_finalize_s``; we keep one record per key.
 
 Transitions (plain dicts, JSON-safe, Python 3.6-safe):
-  {"kind":"open","key":k,"visit_id":vid,"start_ts":t,"segment_index":n}
+  {"kind":"open","key":k,"visit_id":sid,"root_visit_id":vid,
+   "start_ts":t,"segment_index":n}
       t == first_detect_now - pre_roll_s (continuation opens carry no pre-roll;
-      segment_index is 0 for a fresh visit, +1 per max-visit continuation)
-  {"kind":"extend","key":k,"visit_id":vid,"end_ts":t}
-  {"kind":"finalize","key":k,"visit_id":vid,
+      segment_index is 0 for a fresh visit, +1 per max-visit continuation).
+      ``sid`` is the independently playable segment/event id; ``vid`` is the
+      stable physical-visit story id shared by every capped continuation.
+  {"kind":"extend","key":k,"visit_id":sid,"root_visit_id":vid,"end_ts":t}
+  {"kind":"finalize","key":k,"visit_id":sid,"root_visit_id":vid,
    "start_ts":t0,"end_ts":t1,"segment_index":n}
 
 Bias is toward EMITTING / keeping ONE window when unsure: a security camera
@@ -44,7 +47,8 @@ from presence import bbox_iou
 
 # Per-key record keys (kept as a plain dict for snapshot/JSON-serializability):
 #   state          : "IDLE" | "PRESENT" | "POST_ROLL"
-#   visit_id       : current visit id (str) or None
+#   visit_id       : current segment/event id (str) or None
+#   root_visit_id  : physical-visit story id shared by capped continuations
 #   box            : last (left, top, right, bottom) — advisory continuity
 #   started_at     : wall-clock of the FIRST present frame of this visit
 #   last_seen      : wall-clock of the most recent present frame (resets grace)
@@ -129,10 +133,12 @@ class VisitTracker(object):
         if (now - rec["started_at"]) >= max_visit_s:
             boundary = rec["started_at"] + max_visit_s
             seg = rec["segment_index"]
+            root_visit_id = rec.get("root_visit_id") or rec["visit_id"]
             out.append(self._finalize(key, rec, boundary, now,
                                       clamp_to_now=False))
             out.append(self._open(key, box, now, pre_roll_s,
-                                  segment_index=seg + 1, start_ts=boundary))
+                                  segment_index=seg + 1, start_ts=boundary,
+                                  root_visit_id=root_visit_id))
             return out
 
         # 2. A pre-existing visit whose absence deadline already elapsed must
@@ -155,6 +161,7 @@ class VisitTracker(object):
             "kind": "extend",
             "key": key,
             "visit_id": rec["visit_id"],
+            "root_visit_id": rec.get("root_visit_id") or rec["visit_id"],
             "end_ts": now,
         })
         return out
@@ -182,11 +189,23 @@ class VisitTracker(object):
         return out
 
     def active_visit_id(self, key):
-        """The id of the currently-open visit for ``key``, or None."""
+        """The current segment/event id for ``key``, or None."""
         rec = self._visits.get(key)
         if rec is None or rec["state"] == "IDLE":
             return None
         return rec["visit_id"]
+
+    def active_root_visit_id(self, key):
+        """The stable physical-visit story id for ``key``, or None.
+
+        A max-duration cap creates a fresh event/clip id but deliberately keeps
+        this root id, allowing the server to present every adjacent segment as
+        one visit without sacrificing independently playable clips.
+        """
+        rec = self._visits.get(key)
+        if rec is None or rec["state"] == "IDLE":
+            return None
+        return rec.get("root_visit_id") or rec["visit_id"]
 
     def forget(self, key):
         """Drop all state for ``key`` so the next detection on it opens a fresh
@@ -206,6 +225,7 @@ class VisitTracker(object):
             out[key] = {
                 "state": rec["state"],
                 "visit_id": rec["visit_id"],
+                "root_visit_id": rec.get("root_visit_id") or rec["visit_id"],
                 "box": list(rec["box"]) if rec["box"] is not None else None,
                 "started_at": rec["started_at"],
                 "last_seen": rec["last_seen"],
@@ -216,15 +236,19 @@ class VisitTracker(object):
 
     # -- internals ----------------------------------------------------------
 
-    def _open(self, key, box, now, pre_roll_s, segment_index, start_ts):
+    def _open(self, key, box, now, pre_roll_s, segment_index, start_ts,
+              root_visit_id=None):
         """Create a fresh (or continuation) visit record and return its open
         transition. ``start_ts`` is supplied by the caller: ``now - pre_roll_s``
         for a brand-new visit, or the previous window's ``end_ts`` (no pre-roll)
         for a max-visit continuation."""
         vid = self._id_factory()
+        if root_visit_id is None:
+            root_visit_id = vid
         self._visits[key] = {
             "state": "PRESENT",
             "visit_id": vid,
+            "root_visit_id": root_visit_id,
             "box": box,
             "started_at": now,
             "last_seen": now,
@@ -235,6 +259,7 @@ class VisitTracker(object):
             "kind": "open",
             "key": key,
             "visit_id": vid,
+            "root_visit_id": root_visit_id,
             "start_ts": start_ts,
             "segment_index": segment_index,
         }
@@ -254,6 +279,7 @@ class VisitTracker(object):
             "kind": "finalize",
             "key": key,
             "visit_id": rec["visit_id"],
+            "root_visit_id": rec.get("root_visit_id") or rec["visit_id"],
             "start_ts": rec["start_ts"],
             "end_ts": end_ts,
             "segment_index": rec["segment_index"],

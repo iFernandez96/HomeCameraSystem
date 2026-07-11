@@ -226,7 +226,7 @@ describe('DetectionSection', () => {
     ).toBeInTheDocument()
   })
 
-  it('Given two-way audio is coming soon, When the user tries to click the toggle, Then it stays disabled and does not persist a changed setting', async () => {
+  it('Given a legacy two-way audio setting is enabled, When the user turns it off, Then the safe setting persists', async () => {
     // arrange
     const user = userEvent.setup()
     getDetectionConfig.mockResolvedValue(
@@ -242,16 +242,13 @@ describe('DetectionSection', () => {
 
     // assert
     expect(toggle).toBeDisabled()
-    expect(toggle).toHaveAttribute('aria-disabled', 'true')
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
     expect(
       screen.getByText(
-        /coming soon\. needs a microphone and speaker on the camera before this can turn on\./i,
+        /unavailable\/inactive unless the camera microphone, speaker, mediamtx talk\/listen paths, and scoped media authorization are all configured/i,
       ),
     ).toBeInTheDocument()
-    expect(patchDetectionConfig).not.toHaveBeenCalledWith(
-      expect.objectContaining({ audio_enabled: expect.any(Boolean) }),
-    )
+    expect(patchDetectionConfig).toHaveBeenCalledWith({ audio_enabled: false })
   })
 
   it('Given pre-roll is enabled for the current retention preset, When the user drags the slider, Then it PATCHes clip_pre_roll_s', async () => {

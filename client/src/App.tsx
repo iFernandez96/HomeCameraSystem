@@ -6,6 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { LoadingState } from './components/states/LoadingState'
 import { PushDeniedBanner } from './components/PushDeniedBanner'
 import { RequireAuth } from './components/RequireAuth'
+import { RequireOwner } from './components/RequireOwner'
 import { SideRail } from './components/SideRail'
 import { WatchRibbon } from './components/WatchRibbon'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -28,15 +29,39 @@ const Watch = lazy(() => import('./pages/Watch').then((m) => ({ default: m.Watch
 const Events = lazy(() =>
   import('./pages/Events').then((m) => ({ default: m.Events })),
 )
+const Playback = lazy(() =>
+  import('./pages/Playback').then((m) => ({ default: m.Playback })),
+)
+const EventSearch = lazy(() =>
+  import('./pages/EventSearch').then((m) => ({ default: m.EventSearch })),
+)
+const Incidents = lazy(() =>
+  import('./pages/Incidents').then((m) => ({ default: m.Incidents })),
+)
+const IncidentDetail = lazy(() =>
+  import('./pages/IncidentDetail').then((m) => ({ default: m.IncidentDetail })),
+)
+const VisitViewer = lazy(() =>
+  import('./pages/VisitViewer').then((m) => ({ default: m.VisitViewer })),
+)
+const Visits = lazy(() =>
+  import('./pages/Visits').then((m) => ({ default: m.Visits })),
+)
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })))
 const People = lazy(() =>
   import('./pages/People').then((m) => ({ default: m.People })),
+)
+const PersonDetail = lazy(() =>
+  import('./pages/PersonDetail').then((m) => ({ default: m.PersonDetail })),
 )
 const Settings = lazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.Settings })),
 )
 const FocusAssistant = lazy(() =>
   import('./pages/FocusAssistant').then((m) => ({ default: m.FocusAssistant })),
+)
+const ExposureAssistant = lazy(() =>
+  import('./pages/ExposureAssistant').then((m) => ({ default: m.ExposureAssistant })),
 )
 const GodView = lazy(() =>
   import('./pages/GodView').then((m) => ({ default: m.GodView })),
@@ -313,6 +338,12 @@ function AppShell() {
                 </RequireAuth>
               }
             />
+            <Route path="/events/playback" element={<RequireAuth><ErrorBoundary label="Playback"><Playback /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/search" element={<RequireAuth><ErrorBoundary label="Event search"><EventSearch /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/incidents" element={<RequireAuth><ErrorBoundary label="Incidents"><Incidents /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/incidents/:id" element={<RequireAuth><ErrorBoundary label="Incident details"><IncidentDetail /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/visits" element={<RequireAuth><ErrorBoundary label="Visits"><Visits /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/visits/:id" element={<RequireAuth><ErrorBoundary label="Visit story"><VisitViewer /></ErrorBoundary></RequireAuth>} />
             <Route
               path="/people"
               element={
@@ -323,6 +354,7 @@ function AppShell() {
                 </RequireAuth>
               }
             />
+            <Route path="/people/:name" element={<RequireAuth><ErrorBoundary label="Person details"><PersonDetail /></ErrorBoundary></RequireAuth>} />
             <Route
               path="/training"
               element={
@@ -361,6 +393,16 @@ function AppShell() {
                     <FocusAssistant />
                   </ErrorBoundary>
                 </RequireAuth>
+              }
+            />
+            <Route
+              path="/settings/exposure"
+              element={
+                <RequireOwner>
+                  <ErrorBoundary label="Exposure">
+                    <ExposureAssistant />
+                  </ErrorBoundary>
+                </RequireOwner>
               }
             />
             <Route

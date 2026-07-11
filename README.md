@@ -5,7 +5,19 @@ Self-hosted, Ring-style camera viewer + controller for an Nvidia Jetson Nano 2GB
 ## Features
 
 - Live WebRTC video from the Jetson (~200ms glass-to-glass on LAN)
-- Event timeline of person/motion detections with thumbnails
+- Event timeline plus a short-retention continuous-playback archive and bounded range export
+- Home, Away, Night, and Privacy operating modes with mode-aware alerts
+- One notification per visit, followed by a quiet clip-ready update
+- Daily activity digests, unknown-person review, and tamper alerts
+- Recording-time privacy masks that also protect live video and snapshots
+- Line-crossing and loitering rules, plus experimental porch-object delivery/collection tracking
+- Local metadata search, multi-camera visit stories, and incident evidence bundles
+- Face-quality filtering, identity correction/merge tools, and per-person alert preferences
+- Owner-configured push, webhook, and MQTT automations with masked credentials
+- Protected clips, storage-runway forecasting, and expiring revocable share links
+- Software-ready two-way Opus audio, physical doorbell input, and optional acoustic-event watcher
+- Guarded deterrence adapter with foreground confirmation, arming, cooldown, and audit history
+- Recovery-derived outage history with an explicit external-monitor limitation
 - Push notifications to phone when something is detected
 - Remote control of the Jetson: capture photo, reboot, toggle detection, view stats
 - One codebase, two surfaces: Android home screen + any browser
@@ -14,8 +26,9 @@ Self-hosted, Ring-style camera viewer + controller for an Nvidia Jetson Nano 2GB
 ## Architecture
 
 ```
-RPi Camera ─► GStreamer ─► MediaMTX ──WebRTC──► Client <video>
-                  │
+RPi Camera ─► GStreamer ─► MediaMTX ──WebRTC────────► Client <video>
+                  │             ├─fMP4 archive──────► FastAPI timeline
+                  │             └─RTSP audio (opt.)─► acoustic watcher
                   └─► Detection ─► event ─► FastAPI ─WS/Push─► Client / Phone
 Client ──REST──► FastAPI ─► control commands
 ```
@@ -24,7 +37,7 @@ Three processes on the Jetson:
 
 1. **MediaMTX** — video gateway. Owns the camera (`nvarguscamerasrc` + NVENC), serves RTSP for the detection worker and WebRTC for browsers.
 2. **FastAPI server** (`server/`) — control + events + Web Push, in a Docker container.
-3. **Detection worker** (`detection/`) — SSD-MobileNet-v2 via jetson-inference (TensorRT FP16) on the Jetson host, decodes the RTSP feed via NVDEC, POSTs detection events to the FastAPI server.
+3. **Detection worker** (`detection/`) — SSD-MobileNet-v2 via jetson-inference (TensorRT FP16) on the Jetson host, decodes the RTSP feed via NVDEC, evaluates optional spatial rules, and POSTs detection events to the FastAPI server. A separate disabled-by-default watcher handles optional audio metadata so microphone failures cannot destabilize vision.
 
 One static bundle on the client side (`client/dist/`), bind-mounted into the FastAPI container and served as the SPA root with a path-traversal-guarded fallback.
 
@@ -61,6 +74,62 @@ Download the matching arm64 release for the Jetson: https://github.com/bluenviro
 ```bash
 ./mediamtx deploy/mediamtx.yml
 ```
+
+### Optional audio and doorbell hardware
+
+The audio/doorbell paths stay disabled until hardware is configured. On the
+Jetson, set `HOMECAM_MIC_DEVICE` (for example `hw:2,0`) before running
+`deploy/run-camera-microphone.sh`; `HOMECAM_MIC_BITRATE` defaults to `32000`.
+Speaker output is deliberately fail-closed: copy `deploy/mediamtx.env.example`
+to `/etc/homecam/mediamtx.env`, set an explicit `HOMECAM_SPEAKER_DEVICE`, and
+create the configured root-owned enable-marker file. Without both, the
+`deploy/run-talk-speaker.sh` hook exits without opening audio hardware.
+`HOMECAM_SPEAKER_VOLUME` defaults to `1.0`. For a physical button, point the
+detection worker at its GPIO value file with
+`DETECT_DOORBELL_GPIO_VALUE_PATH`; `DETECT_DOORBELL_ACTIVE_LOW=1` is the
+default. These are host-process variables, not FastAPI container settings.
+
+Browser talk/listen sessions use scoped, one-time FastAPI media grants that
+expire after 60 seconds. MediaMTX's HTTP callback allows anonymous WebRTC reads
+only for exact video paths, allows host-only RTSP publishers/readers, and
+requires those grants for remote `talk` publication or `listen` reads. Grant
+issuance and consumption both fail while audio is disabled or Privacy is active.
+
+Secure clip-share links are time-limited bearer URLs. The server stores only a
+hash, marks both link creation and clip delivery `private, no-store`, suppresses
+token-bearing Uvicorn access lines, and supports owner revocation by share ID.
+
+`deploy/systemd/homecam-audio-detect.service` is installed as an available unit
+but is intentionally not enabled or started. Its local signal heuristics are a
+conservative convenience feature, not a certified smoke alarm, glass-break
+detector, or life-safety device. It stores and transmits event metadata only;
+raw microphone audio is discarded rather than recorded by the watcher.
+
+### Continuous playback storage
+
+MediaMTX stream-copies the already encoded `cam` path into five-minute fMP4
+segments under `recordings/continuous/` and deletes them after two hours. At
+the default 2.5 Mbps bitrate the nominal two-hour window is roughly 2.3 GB.
+MediaMTX v1.18's asynchronous cleaner can temporarily retain close to three
+hours (about 3.4 GB), without another decoder, encoder, or CUDA context. The
+authenticated FastAPI timeline indexes and serves those files; MediaMTX's
+unauthenticated playback server remains disabled.
+Configured masks are applied before encoding, and Privacy mode forces a
+full-frame mask, so the continuous archive receives the same redacted pixels
+as Live, snapshots, and event clips. Full-frame Privacy generates black NV12
+streams without opening the physical camera; partial zones use the GPU
+compositor before both hardware encoders.
+
+Timeline MP4s and incident ZIPs share a private export workspace. Defaults allow
+two outstanding timeline jobs, cap retained files plus conservative pending
+reservations at 5 GiB, and preserve at least 4 GiB of free disk. Capacity is
+rechecked before a completed temporary is published; rejected requests return a
+safe actionable error rather than filling storage.
+
+The built-in outage view can persist failures it observes and send a recovery
+summary when service returns. It cannot notify while the Jetson itself has no
+power or network; true immediate offline alerts require an independently
+powered monitor or UPS integration.
 
 ## Repo layout
 
@@ -104,11 +173,11 @@ CLAUDE.md           Architectural notes — read first when editing
 
 Working end-to-end on the Jetson Nano 2GB. Live video (WebRTC, ~200 ms LAN), detection events (SSD-MobileNet-v2 at FP16 with idle-gear thermal management), per-person face recognition (when `encodings.pkl` is present and dlib is unblocked), Web Push with VAPID, persisted detection config, and a Settings page surfacing per-component health (CPU/GPU temp, dropped frames, p95 inference latency, mediamtx-watchdog restart count, etc).
 
-The notable stub is `/api/system/reboot`; wiring it requires a host-side helper because the FastAPI server runs in a container and can't `systemctl reboot` itself.
+Privileged camera recovery and reboot commands are handed to the host-side worker instead of granting the FastAPI container host control.
 
 ## Security
 
-This deployment assumes LAN-only. There is **no auth on `/api/*`**: a single-user trust model is documented in CLAUDE.md and on the [server/README.md](server/README.md#auth) page. Defenses already in place:
+The application uses cookie-based accounts and role checks for its protected API. Internal worker endpoints remain LAN-scoped, and an expiring share URL is an intentionally public bearer capability. Defenses include:
 
 - 1 MB request-body cap (FastAPI middleware)
 - `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` on every response
@@ -119,7 +188,6 @@ This deployment assumes LAN-only. There is **no auth on `/api/*`**: a single-use
 Before exposing this beyond the LAN you still need:
 
 - TLS (Caddy or Nginx in front of FastAPI + MediaMTX)
-- Token / OIDC auth on `/api/*`
 - Network isolation (a separate VLAN for IoT is wise)
 
 Recommended remote-access path: install [Tailscale](https://tailscale.com) on the Jetson and your phone. Free, encrypted, and the Jetson stays off the public internet.

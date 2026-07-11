@@ -340,6 +340,28 @@ def test_evict_ignores_non_mp4_files(rec_dir):
     assert log_file.exists()
 
 
+def test_evict_preserves_protected_clip(rec_dir):
+    from app.config import settings
+    from app.services import events_db, event_bus
+
+    rec_dir.mkdir()
+    protected = _write_clip_with_mtime(rec_dir, "keep.mp4", 100, age_s=300)
+    ordinary = _write_clip_with_mtime(rec_dir, "remove.mp4", 100, age_s=100)
+    event = event_bus.make_detection_event(
+        label="person", score=0.9, boxes=[], event_id="keep"
+    )
+    events_db.insert_event(settings.events_db_path, event)
+    events_db.set_protected(settings.events_db_path, "keep", True)
+
+    result = recording_service.evict_to_free_space(
+        min_free_bytes=10 ** 12, disk_usage=_fake_disk_usage(0)
+    )
+
+    assert protected.exists()
+    assert not ordinary.exists()
+    assert result["deleted"] == 1
+
+
 # --- sweep_and_evict (combined pass: time-sweep THEN byte-evict) ---
 
 

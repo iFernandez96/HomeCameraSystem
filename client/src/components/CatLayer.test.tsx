@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
-import { CatLayer } from './CatLayer'
+import { CatLayer, _resetCatWalkAnimationCacheForTests } from './CatLayer'
 
 type MqlInit = {
   matches: boolean
@@ -63,11 +63,78 @@ function stubGetBattery(level: number, charging: boolean): BatteryStub {
   return battery
 }
 
+type ControlledImage = {
+  src: string
+  onload: (() => void) | null
+  onerror: (() => void) | null
+}
+
+function stubControlledImage(): ControlledImage[] {
+  const images: ControlledImage[] = []
+
+  class ControlledImageMock implements ControlledImage {
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    private currentSrc = ''
+
+    constructor() {
+      images.push(this)
+    }
+
+    get src(): string {
+      return this.currentSrc
+    }
+
+    set src(value: string) {
+      this.currentSrc = value
+    }
+  }
+
+  vi.stubGlobal('Image', ControlledImageMock)
+  return images
+}
+
+function stubAnimationFrameDriver() {
+  let nextFrame: FrameRequestCallback | null = null
+  const rafSpy = vi.fn((callback: FrameRequestCallback): number => {
+    nextFrame = callback
+    return 1
+  })
+  vi.stubGlobal('requestAnimationFrame', rafSpy)
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+  return {
+    rafSpy,
+    runNextFrame(timestamp: number) {
+      const callback = nextFrame as FrameRequestCallback | null
+      if (!callback) throw new Error('No animation frame is queued')
+      nextFrame = null
+      callback(timestamp)
+    },
+  }
+}
+
+function catSprite(container: HTMLElement, catId: string): HTMLImageElement {
+  const sprite = container.querySelector<HTMLImageElement>(
+    `[data-testid="cat-sprite"][data-cat-id="${catId}"]`,
+  )
+  if (!sprite) throw new Error(`Missing ${catId} sprite`)
+  return sprite
+}
+
+function walkFrameUrls(catId: string): string[] {
+  return Array.from(
+    { length: 12 },
+    (_, frame) => `/cats/anim/${catId}/walk_${String(frame + 1).padStart(2, '0')}.png`,
+  )
+}
+
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined
 
   beforeEach(() => {
     originalMatchMedia = window.matchMedia
+    _resetCatWalkAnimationCacheForTests()
   })
 
   afterEach(() => {
@@ -82,6 +149,157 @@ describe('CatLayer', () => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('Given walking cats and fully loaded frame sets, When rAF advances, Then the twelve-frame walk sprites cycle', async () => {
+    // arrange
+    vi.useFakeTimers()
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': false,
+      '(prefers-reduced-data: reduce)': false,
+    })
+    const images = stubControlledImage()
+    const frames = stubAnimationFrameDriver()
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const { container } = render(<CatLayer placement="login" />)
+
+    // assert — initial resting poses do not eagerly fetch walk frames.
+    expect(images).toHaveLength(0)
+
+    // act — the login settling beat expires and all three deterministic
+    // solo rolls enter `walk`. Rich frames still stay off the critical path
+    // until a real interaction; the two-frame fallback remains visible.
+    act(() => frames.runNextFrame(2500))
+    expect(images).toHaveLength(0)
+
+    // act — the first interaction unlocks progressive enhancement. Cat sets
+    // are staggered so one tap never starts a 36-image request burst.
+    act(() => window.dispatchEvent(new Event('pointerdown')))
+    act(() => vi.advanceTimersByTime(0))
+    expect(images).toHaveLength(12)
+    act(() => vi.advanceTimersByTime(6000))
+    expect(images).toHaveLength(24)
+    act(() => vi.advanceTimersByTime(6000))
+
+    // assert — all 12 frames per cat are requested once, while the
+    // visible sprites remain on the built-in two-pose fallback.
+    const expectedUrls = [
+      ...walkFrameUrls('panther'),
+      ...walkFrameUrls('mushu'),
+      ...walkFrameUrls('coco'),
+    ]
+    expect(images).toHaveLength(36)
+    expect(new Set(images.map((image) => image.src))).toEqual(new Set(expectedUrls))
+    const pendingSources: Array<string | null> = []
+    for (const catId of ['panther', 'mushu', 'coco']) {
+      const source = catSprite(container, catId).getAttribute('src')
+      expect(source).toMatch(
+        new RegExp(`^/cats/${catId}-walk_[ab]\\.png$`),
+      )
+      expect(catSprite(container, catId)).not.toHaveAttribute('data-walk-frame')
+      pendingSources.push(source)
+    }
+
+    // act — pending warm-up still uses the existing two-pose rAF cycle.
+    act(() => frames.runNextFrame(2600))
+    act(() => frames.runNextFrame(2700))
+
+    // assert
+    for (const [index, catId] of ['panther', 'mushu', 'coco'].entries()) {
+      const source = catSprite(container, catId).getAttribute('src')
+      expect(source).toMatch(new RegExp(`^/cats/${catId}-walk_[ab]\\.png$`))
+      expect(source).not.toBe(pendingSources[index])
+    }
+
+    // act — a cat only swaps after its complete 12-frame set is ready.
+    await act(async () => {
+      for (const image of images) image.onload?.()
+      await Promise.resolve()
+    })
+
+    // assert
+    const loadedSources = ['panther', 'mushu', 'coco'].map((catId) => {
+      const sprite = catSprite(container, catId)
+      expect(sprite.getAttribute('src')).toMatch(
+        new RegExp(`^/cats/anim/${catId}/walk_(?:0[1-9]|1[0-2])\\.png$`),
+      )
+      expect(sprite).toHaveAttribute('data-walk-frame')
+      return sprite.getAttribute('src')
+    })
+
+    // act — the same rAF/phase path advances at ~100ms, visits all 12
+    // frame numbers, and wraps to the frame at which observation began.
+    const observedFrames = [Number(catSprite(container, 'panther').dataset.walkFrame)]
+    for (let timestamp = 2800; timestamp <= 3900; timestamp += 100) {
+      act(() => frames.runNextFrame(timestamp))
+      observedFrames.push(Number(catSprite(container, 'panther').dataset.walkFrame))
+    }
+
+    // assert
+    expect(new Set(observedFrames)).toEqual(
+      new Set(Array.from({ length: 12 }, (_, index) => index + 1)),
+    )
+    expect(observedFrames[observedFrames.length - 1]).toBe(observedFrames[0])
+    for (const [index, catId] of ['panther', 'mushu', 'coco'].entries()) {
+      expect(catSprite(container, catId).getAttribute('src')).toBe(loadedSources[index])
+    }
+    expect(images).toHaveLength(36)
+  })
+
+  it('Given a walk-frame preload error, When the other requests settle, Then that cat keeps its built-in two-pose fallback', async () => {
+    // arrange
+    vi.useFakeTimers()
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': false,
+      '(prefers-reduced-data: reduce)': false,
+    })
+    const images = stubControlledImage()
+    const frames = stubAnimationFrameDriver()
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { container } = render(<CatLayer placement="login" />)
+    act(() => frames.runNextFrame(2500))
+    act(() => window.dispatchEvent(new Event('pointerdown')))
+    act(() => vi.advanceTimersByTime(12_000))
+    const failedFrame = images.find((image) => image.src.includes('/panther/'))
+    expect(failedFrame).toBeDefined()
+    expect(catSprite(container, 'panther').getAttribute('src')).toMatch(
+      /^\/cats\/panther-walk_[ab]\.png$/,
+    )
+
+    // act — one Panther frame fails; every remaining request succeeds.
+    await act(async () => {
+      failedFrame?.onerror?.()
+      for (const image of images) image.onload?.()
+      await Promise.resolve()
+    })
+
+    // assert — Panther never risks a missing frame, while unaffected
+    // cats progressively enhance after their complete sets load.
+    expect(catSprite(container, 'panther').getAttribute('src')).toMatch(
+      /^\/cats\/panther-walk_[ab]\.png$/,
+    )
+    expect(catSprite(container, 'panther')).not.toHaveAttribute('data-walk-frame')
+    expect(catSprite(container, 'mushu').getAttribute('src')).toMatch(
+      /^\/cats\/anim\/mushu\/walk_(?:0[1-9]|1[0-2])\.png$/,
+    )
+    expect(catSprite(container, 'coco').getAttribute('src')).toMatch(
+      /^\/cats\/anim\/coco\/walk_(?:0[1-9]|1[0-2])\.png$/,
+    )
+
+    // act — the failed cat still alternates the original pair as its
+    // rAF phase advances; no animated URL is ever exposed for it.
+    act(() => frames.runNextFrame(2600))
+    const firstFallback = catSprite(container, 'panther').getAttribute('src')
+    act(() => frames.runNextFrame(2700))
+    const secondFallback = catSprite(container, 'panther').getAttribute('src')
+
+    // assert
+    expect(firstFallback).toMatch(/^\/cats\/panther-walk_[ab]\.png$/)
+    expect(secondFallback).toMatch(/^\/cats\/panther-walk_[ab]\.png$/)
+    expect(secondFallback).not.toBe(firstFallback)
   })
 
   it('given prefers-reduced-motion is false, when the layer mounts and timers advance ~5s, then 3 cat sprites render', () => {
@@ -174,19 +392,38 @@ describe('CatLayer', () => {
     )
   })
 
-  it('given reduced motion and login placement, when the layer mounts, then all three cats remain visible and static', () => {
+  it('Given reduced motion and login placement, When time advances, Then all three cats remain on static built-in sprites', () => {
     // arrange
-    stubMatchMedia({ matches: true })
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': true,
+      '(prefers-reduced-data: reduce)': false,
+    })
+    const images = stubControlledImage()
+    vi.useFakeTimers()
     const rafSpy = vi.fn((_cb: FrameRequestCallback): number => 0)
     vi.stubGlobal('requestAnimationFrame', rafSpy)
 
     // act
     const { container } = render(<CatLayer placement="login" />)
+    const initialSources = Array.from(
+      container.querySelectorAll<HTMLImageElement>('[data-testid="cat-sprite"]'),
+      (sprite) => sprite.getAttribute('src'),
+    )
+    act(() => vi.advanceTimersByTime(5000))
 
     // assert
     expect(container.querySelectorAll('[data-testid="cat-sprite"]')).toHaveLength(3)
     expect(rafSpy).not.toHaveBeenCalled()
     expect(container.firstElementChild).toHaveAttribute('data-motion', 'static')
+    expect(images).toHaveLength(0)
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLImageElement>('[data-testid="cat-sprite"]'),
+        (sprite) => sprite.getAttribute('src'),
+      ),
+    ).toEqual(initialSources)
+    expect(initialSources.every((src) => src?.startsWith('/cats/'))).toBe(true)
+    expect(initialSources.every((src) => !src?.includes('/anim/'))).toBe(true)
   })
 
   it('Given login placement, When the household scene renders, Then it exposes playful props and grounded cats', () => {
@@ -308,7 +545,7 @@ describe('CatLayer', () => {
   // the rAF loop the same way reduced-motion does. The cats stay mounted
   // (brand identity is load-bearing per CLAUDE.md "Don't reintroduce")
   // — only the per-frame state-machine pauses.
-  it('given prefers-reduced-data is true, when the layer mounts, then it does not schedule any animation frame (iter-356-E)', () => {
+  it('Given prefers-reduced-data is true, When the layer mounts, Then it neither animates nor requests walk frames (iter-356-E)', () => {
     // arrange — reduced-MOTION off, reduced-DATA on. Production hooks
     // each call matchMedia with their own query string; the per-query
     // stub returns true only for the data query.
@@ -316,6 +553,7 @@ describe('CatLayer', () => {
       '(prefers-reduced-motion: reduce)': false,
       '(prefers-reduced-data: reduce)': true,
     })
+    const images = stubControlledImage()
     const rafSpy = vi.fn((_cb: FrameRequestCallback): number => 0)
     vi.stubGlobal('requestAnimationFrame', rafSpy)
 
@@ -327,6 +565,10 @@ describe('CatLayer', () => {
     // The brand stays visible: 3 sprites + the habitat both render.
     const sprites = container.querySelectorAll('[data-testid="cat-sprite"]')
     expect(sprites.length).toBe(3)
+    expect(images).toHaveLength(0)
+    for (const sprite of sprites) {
+      expect(sprite.getAttribute('src')).not.toContain('/cats/anim/')
+    }
   })
 
   it('given navigator.getBattery resolves with level<20% AND not charging, when the battery hook settles, then the rAF loop pauses (iter-356-E)', async () => {

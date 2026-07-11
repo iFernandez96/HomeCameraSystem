@@ -11,6 +11,15 @@ export interface WorkerDetectionEvent {
   id?: string | null;
   person_name?: string | null;
   person_names?: string[] | null;
+  source?: 'vision';
+  rule_id?: string | null;
+  rule_name?: string | null;
+  correlation_id?: string | null;
+  related_event_id?: string | null;
+  visit_id?: string | null;
+  start_ts?: number | null;
+  end_ts?: number | null;
+  package_state?: 'delivered' | 'collected' | null;
 }
 export interface WorkerHeartbeat {
   fps?: number;

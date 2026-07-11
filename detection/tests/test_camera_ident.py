@@ -158,6 +158,7 @@ def test_given_env_unset_when_event_posted_then_payload_has_default_camera_id(
 
     # assert — the wire pin: camera_id present, contract default.
     assert payload["camera_id"] == "front_door"
+    assert payload["visit_id"] == payload["id"]
 
 
 def test_given_env_override_when_event_posted_then_payload_has_override(
@@ -179,7 +180,8 @@ def test_given_env_override_when_event_posted_then_payload_has_override(
 # a first open (segment_index 0) must NOT carry the key at all.
 # --------------------------------------------------------------------------
 
-def _open_event_payload_with_segment(monkeypatch, tmp_path, segment_index):
+def _open_event_payload_with_segment(monkeypatch, tmp_path, segment_index,
+                                     root_visit_id=None):
     captured = []
     monkeypatch.setattr(
         detect, "post_event",
@@ -192,7 +194,11 @@ def _open_event_payload_with_segment(monkeypatch, tmp_path, segment_index):
     )
     boxes = [{"label": "person", "score": 0.9,
               "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5}]
-    runner._post_event("visit-1", "person:test", 1000.0, boxes, segment_index)
+    event_id = "visit-1" if segment_index == 0 else "visit-2"
+    runner._post_event(
+        event_id, "person:test", 1000.0, boxes, segment_index,
+        root_visit_id=root_visit_id,
+    )
     assert len(captured) == 1
     return captured[0]
 
@@ -212,10 +218,51 @@ def test_given_cap_split_open_when_event_posted_then_continuation_true(
     monkeypatch, tmp_path,
 ):
     # arrange / act
-    payload = _open_event_payload_with_segment(monkeypatch, tmp_path, 1)
+    payload = _open_event_payload_with_segment(
+        monkeypatch, tmp_path, 1, root_visit_id="visit-1",
+    )
 
     # assert
     assert payload["continuation"] is True
+    assert payload["id"] == "visit-2"
+    assert payload["visit_id"] == "visit-1"
+
+
+def test_visit_open_enrichment_adds_names_once_without_duplicate_visit(monkeypatch, tmp_path):
+    captured = []
+    prepared = []
+    monkeypatch.setattr(
+        detect, "post_event",
+        lambda _url, payload, **_kwargs: captured.append(payload),
+    )
+
+    def prepare(visit_id, key, start_ts, boxes, cuda_img, segment_index):
+        prepared.append((visit_id, key, segment_index, cuda_img))
+        return {"person_name": "Alice", "person_names": ["Alice", "Bob"]}
+
+    runner = detect._build_visit_runner(
+        str(tmp_path), MagicMock(), None,
+        "http://127.0.0.1:8000/api/_internal/event",
+        "front_door", prepare_open_event=prepare,
+    )
+    runner._free_space = lambda _path: 10 ** 12
+    boxes = [{
+        "label": "person", "score": 0.9,
+        "x": 0.1, "y": 0.1, "w": 0.4, "h": 0.6,
+    }]
+    runner.observe(
+        "person:front_door", (10, 10, 50, 70), 100.0, 0.0, 10.0, 150.0,
+        boxes=boxes, cuda_img=object(),
+    )
+    runner.observe(
+        "person:front_door", (11, 10, 51, 70), 101.0, 0.0, 10.0, 150.0,
+        boxes=boxes, cuda_img=object(),
+    )
+
+    assert len(prepared) == 1
+    assert len(captured) == 1
+    assert captured[0]["person_name"] == "Alice"
+    assert captured[0]["person_names"] == ["Alice", "Bob"]
 
 
 def test_given_invalid_env_when_event_posted_then_payload_falls_back(

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import type { DetectionEvent, ServerEvent } from '../lib/types'
 
 const fetchEvents = vi.fn()
@@ -53,6 +53,13 @@ const getDetectionConfigM = vi.fn().mockReturnValue(new Promise(() => {}))
 // tests that don't care render the single-camera layout unchanged;
 // the multicam tests override.
 const getCamerasM = vi.fn().mockReturnValue(new Promise(() => {}))
+const getDailyDigestM = vi.fn().mockResolvedValue({
+  day: '2026-01-01',
+  total: 0,
+  by_label: {},
+  unknown_people: 0,
+  known_people: [],
+})
 vi.mock('../lib/api', () => ({
   fetchEvents: (...a: unknown[]) => fetchEvents(...a),
   searchEvents: (...a: unknown[]) => searchEvents(...a),
@@ -64,6 +71,7 @@ vi.mock('../lib/api', () => ({
   exportEvents: (...a: unknown[]) => exportEventsM(...a),
   getDetectionConfig: (...a: unknown[]) => getDetectionConfigM(...a),
   getCameras: (...a: unknown[]) => getCamerasM(...a),
+  getDailyDigest: (...a: unknown[]) => getDailyDigestM(...a),
   fetchEventTracks: () => Promise.resolve(null),
   fetchEventClipStatus: (eventId: string) => fetchEventClipStatusM(eventId),
   // Event-view jank fix (2026-07-08): ClipModal probes clip existence
@@ -110,6 +118,9 @@ vi.mock('react-router-dom', async () => {
   )
   return {
     ...actual,
+    Link: ({ to, children, ...props }: { to: string; children: React.ReactNode } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+      <a href={to} {...props}>{children}</a>
+    ),
     useSearchParams: () =>
       [new URLSearchParams(_searchSeed), () => {}] as const,
     // Playroom Modern (Task 7): ClipModal (rendered by this page when an
@@ -220,6 +231,29 @@ describe('Events page', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: /^events$/i }),
     ).toBeInTheDocument()
+  })
+
+  it('Given the Events hub, When its tool navigation renders, Then playback, metadata search, and incidents link to their public routes', () => {
+    fetchEvents.mockResolvedValue([])
+    render(<Events />)
+
+    const tools = screen.getByRole('navigation', { name: 'Event tools' })
+    expect(within(tools).getByRole('link', { name: 'Playback' })).toHaveAttribute(
+      'href',
+      '/events/playback',
+    )
+    expect(within(tools).getByRole('link', { name: 'Search' })).toHaveAttribute(
+      'href',
+      '/events/search',
+    )
+    expect(within(tools).getByRole('link', { name: 'Visits' })).toHaveAttribute(
+      'href',
+      '/events/visits',
+    )
+    expect(within(tools).getByRole('link', { name: 'Incidents' })).toHaveAttribute(
+      'href',
+      '/events/incidents',
+    )
   })
 
   it('shows a skeleton loading state then the fetched events', async () => {

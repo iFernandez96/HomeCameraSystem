@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from ..log import RateLimitedLog
 
@@ -61,6 +61,20 @@ class DetectionEventDict(TypedDict):
     # null-default; the worker emit path (iter-205?) sets the value
     # once the recorder confirms file presence.
     clip_url: str | None
+    protected: bool
+    source: NotRequired[
+        Literal["vision", "audio", "doorbell", "tamper", "system"] | None
+    ]
+    rule_id: NotRequired[str | None]
+    rule_name: NotRequired[str | None]
+    correlation_id: NotRequired[str | None]
+    related_event_id: NotRequired[str | None]
+    visit_id: NotRequired[str | None]
+    start_ts: NotRequired[float | None]
+    end_ts: NotRequired[float | None]
+    package_state: NotRequired[
+        Literal["delivered", "present", "collected", "possible_theft"] | None
+    ]
 
 
 class LiveDetectionEventDict(TypedDict):
@@ -177,6 +191,25 @@ class EventBus:
         async with self._persist_lock:
             await asyncio.to_thread(self._persist_event, event)
         await self.publish_live(event)
+
+    async def publish_once(self, event: DetectionEventDict) -> bool:
+        """Persist and fan out only when this event id is new.
+
+        The legacy ``publish`` contract deliberately live-fans duplicate
+        detection retries and is pinned by parity tests. Non-visual signal
+        ingestion needs stronger retry idempotency, so it opts into this
+        separate method without changing existing callers.
+        """
+        from .events_db import insert_event
+        from ..config import settings
+
+        async with self._persist_lock:
+            inserted = await asyncio.to_thread(
+                insert_event, settings.events_db_path, event
+            )
+        if inserted:
+            await self.publish_live(event)
+        return inserted
 
     async def publish_live(self, event: ServerEvent) -> None:
         """Fan out an event to live subscribers without storing history.
@@ -311,6 +344,18 @@ def make_detection_event(
     person_names: list[str] | None = None,
     clip_url: str | None = None,
     event_id: str | None = None,
+    ts: float | None = None,
+    source: Literal["vision", "audio", "doorbell", "tamper", "system"] = "vision",
+    rule_id: str | None = None,
+    rule_name: str | None = None,
+    correlation_id: str | None = None,
+    related_event_id: str | None = None,
+    visit_id: str | None = None,
+    start_ts: float | None = None,
+    end_ts: float | None = None,
+    package_state: Literal[
+        "delivered", "present", "collected", "possible_theft"
+    ] | None = None,
 ) -> DetectionEventDict:
     """Construct a fresh DetectionEventDict.
 
@@ -340,7 +385,7 @@ def make_detection_event(
         "v": 1,
         "type": "detection",
         "id": event_id if event_id else uuid.uuid4().hex,
-        "ts": time.time(),
+        "ts": time.time() if ts is None else ts,
         "camera_id": camera_id,
         "label": label,
         "score": score,
@@ -349,4 +394,14 @@ def make_detection_event(
         "person_name": person_name,
         "person_names": person_names,
         "clip_url": clip_url,
+        "protected": False,
+        "source": source,
+        "rule_id": rule_id,
+        "rule_name": rule_name,
+        "correlation_id": correlation_id,
+        "related_event_id": related_event_id,
+        "visit_id": visit_id or related_event_id,
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "package_state": package_state,
     }

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   captureSnapshot,
+  createCameraExposurePreset,
+  deleteCameraExposurePreset,
   fetchEvents,
   getCameras,
   getDetectionConfig,
@@ -11,11 +13,13 @@ import {
   getLogsResult,
   getMe,
   getRecoverStatus,
+  getCameraExposure,
   getStatus,
   getTimelapseManifest,
   getVapidPublicKey,
   HttpError,
   listSessions,
+  listCameraExposurePresets,
   listTimelapses,
   login,
   logout,
@@ -35,6 +39,7 @@ import {
   triggerRestore,
   triggerTimelapse,
   triggerUpdate,
+  putCameraExposure,
   unsubscribePush,
 } from './api'
 
@@ -63,6 +68,40 @@ describe('lib/api', () => {
   })
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('given exposure settings, when saved, then PUTs the complete bounded wire shape', async () => {
+    const exposure = { enabled: true, x: 0.25, y: 0.25, width: 0.5, height: 0.5, compensation: 0.3, locked: false }
+    mockJson({ ...exposure, request_id: 'ae-1', status: 'pending', worker_online: true })
+    await putCameraExposure(exposure)
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/camera/exposure')
+    expect((call[1] as RequestInit).method).toBe('PUT')
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual(exposure)
+  })
+
+  it('given saved exposure, when fetched, then reads the exposure route', async () => {
+    mockJson({ enabled: false, x: 0.25, y: 0.25, width: 0.5, height: 0.5, compensation: 0, locked: false })
+    await getCameraExposure()
+    expect(asMock().mock.calls[0][0]).toBe('/api/camera/exposure')
+  })
+
+  it('given a named exposure zone, when saved and listed, then uses the preset contract', async () => {
+    const config = { enabled: true, x: 0.25, y: 0.25, width: 0.5, height: 0.5, compensation: 0.3, locked: false }
+    const thumbnail = 'data:image/jpeg;base64,AAAA'
+    mockJson({ id: 'preset-1', name: 'Doorway', thumbnail, config, created_at: 1 })
+    await createCameraExposurePreset('Doorway', thumbnail, config)
+    expect(asMock().mock.calls[0][0]).toBe('/api/camera/exposure-presets')
+    expect(JSON.parse((asMock().mock.calls[0][1] as RequestInit).body as string)).toEqual({ name: 'Doorway', thumbnail, config })
+
+    mockJson({ presets: [] })
+    await listCameraExposurePresets()
+    expect(asMock().mock.calls[1][0]).toBe('/api/camera/exposure-presets')
+
+    mockJson({ deleted: true, id: 'preset-1' })
+    await deleteCameraExposurePreset('preset-1')
+    expect(asMock().mock.calls[2][0]).toBe('/api/camera/exposure-presets/preset-1')
+    expect((asMock().mock.calls[2][1] as RequestInit).method).toBe('DELETE')
   })
 
   it('getStatus GETs /api/status with JSON content type', async () => {
@@ -1738,6 +1777,169 @@ describe('lib/api', () => {
 
     // act / assert
     await expect(probeEventClip('evt-9')).resolves.toBe(false)
+  })
+
+  it('given timeline bounds, when an export starts, then the canonical endpoint receives the exact camera and epoch range', async () => {
+    const bounds = { camera_id: 'front_door', since_ts: 100, until_ts: 200 }
+    mockJson({
+      v: 1,
+      id: 'export-1',
+      status: 'pending',
+      created_ts: 201,
+      updated_ts: 201,
+      requested: bounds,
+      coverage: { recorded_s: 0, gap_s: 0 },
+      size_bytes: null,
+      sha256: null,
+      error: null,
+      status_url: '/api/security/timeline/exports/export-1',
+      file_url: null,
+    }, 202)
+    const { startTimelineExport } = await import('./api')
+
+    await startTimelineExport(bounds)
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/timeline/exports')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(bounds)
+  })
+
+  it('given an incorrect recognition without a replacement name, when feedback is submitted, then it marks the public event endpoint unknown', async () => {
+    mockJson({ ok: true, event: { id: 'evt-1' }, captures_moved: 0 })
+    const { submitIdentityFeedback } = await import('./api')
+
+    await submitIdentityFeedback('evt/1', { verdict: 'incorrect' })
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/events/evt%2F1/identity-feedback')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      verdict: 'incorrect',
+    })
+  })
+
+  it('given two identities, when merged, then the public face route receives source and target and returns retraining truth', async () => {
+    mockJson({
+      ok: true,
+      source_name: 'Alice 2',
+      target_name: 'Alice',
+      files_moved: 4,
+      events_updated: 12,
+      retrain_required: true,
+    })
+    const { mergeFaces } = await import('./api')
+
+    const result = await mergeFaces('Alice 2', 'Alice')
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/face/merge')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      source_name: 'Alice 2',
+      target_name: 'Alice',
+    })
+    expect(result.retrain_required).toBe(true)
+  })
+
+  it('given a deterrence request, when triggered, then explicit confirmation stays in the request body', async () => {
+    mockJson({
+      ok: false,
+      status: 'unavailable',
+      reason: 'hardware adapter is not available',
+      action: 'warning',
+      duration_s: 15,
+      capabilities: {
+        available: false,
+        adapter: null,
+        limitation: 'Configure a supported adapter first',
+      },
+    })
+    const { triggerDeterrence } = await import('./api')
+
+    const result = await triggerDeterrence({
+      action: 'warning',
+      duration_s: 15,
+      confirm: true,
+      event_id: 'evt-2',
+    })
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/deterrence')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      action: 'warning',
+      duration_s: 15,
+      confirm: true,
+      event_id: 'evt-2',
+    })
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'unavailable',
+      capabilities: { available: false, adapter: null },
+    })
+  })
+
+  it('Given an owner opens rules, When deterrence capability is checked, Then the dedicated capability route is used', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      available: true,
+      adapter: 'mounted_executable',
+      limitation: 'Mounted adapter required',
+      armed: false,
+      privacy_blocked: false,
+      supported_actions: ['light', 'warning', 'siren'],
+    })
+    const { getDeterrenceCapabilities } = await import('./api')
+
+    // act
+    const result = await getDeterrenceCapabilities()
+
+    // assert
+    expect(asMock().mock.calls[0][0]).toBe('/api/security/deterrence/capabilities')
+    expect(result).toMatchObject({
+      available: true,
+      adapter: 'mounted_executable',
+      privacy_blocked: false,
+    })
+  })
+
+  it('given an automation toggle, when changed, then enabled-only PATCH never round-trips masked actions', async () => {
+    mockJson({
+      id: 'auto-1',
+      name: 'Webhook alert',
+      enabled: false,
+      triggers: { labels: ['person'], sources: [], camera_ids: [], rule_ids: [] },
+      conditions: { operating_modes: [], person: 'any', min_score: 0 },
+      actions: [{ kind: 'webhook', target: 'https://example.test/hook', secret_set: true }],
+      created_ts: 1,
+      updated_ts: 2,
+    })
+    const { patchAutomationEnabled } = await import('./api')
+
+    await patchAutomationEnabled('auto/1', false)
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/automations/auto%2F1')
+    expect((init as RequestInit).method).toBe('PATCH')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      enabled: false,
+    })
+  })
+
+  it('given a scoped audio media request, when tokenized, then the public API receives only action and path', async () => {
+    mockJson({ token: 'secret-token', expires_ts: 1234 })
+    const { getMediaToken } = await import('./api')
+
+    const result = await getMediaToken('publish', 'talk')
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/media-token')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      action: 'publish',
+      path: 'talk',
+    })
+    expect(result.token).toBe('secret-token')
   })
 
   it('Given a server outage, When probeEventClip gets a 500, Then it throws HttpError (outage must not read as "no clip")', async () => {

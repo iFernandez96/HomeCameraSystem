@@ -1,13 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { EventRow } from '../components/EventRow'
 import { SnapshotPreview } from '../components/SnapshotPreview'
 import { ErrorState } from '../components/states/ErrorState'
+import { PackageStatusCard } from '../components/PackageStatusCard'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
-import { captureSnapshot, getCameras, searchEvents, HttpError, type Camera } from '../lib/api'
+import { captureSnapshot, getCameras, searchEvents, triggerDeterrence, HttpError, type Camera } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
 import { clockTime, recognizedNames, registerCameraNames, relativeTime } from '../lib/eventLabel'
 import { DEFAULT_CAMERA_PATH } from '../lib/streamQuality'
@@ -23,7 +24,16 @@ import {
   type ZoomState,
 } from '../lib/pinchZoom'
 import { useToast } from '../lib/toast'
+import { useConfirm } from '../lib/confirm'
+import { useAuth } from '../lib/auth'
+import { isOwner } from '../lib/roles'
 import { useTicker } from '../lib/useTicker'
+import {
+  startListenSession,
+  startTalkSession,
+  type ListenSession,
+  type TalkSession,
+} from '../lib/twoWayAudio'
 import type { DetectionEvent } from '../lib/types'
 import { useStatus } from '../lib/useStatus'
 import {
@@ -219,7 +229,11 @@ export function Watch() {
   const status = useStatus()
   const sentryCat = useSentryCat()
   const { showToast } = useToast()
+  const { user } = useAuth()
+  const canTalk = isOwner(user)
+  const confirm = useConfirm()
   const navigate = useNavigate()
+  const [actionParams, setActionParams] = useSearchParams()
   const ripple = useRipple()
   const isLandscape = useIsLandscape()
   const nowMs = useTicker()
@@ -256,6 +270,12 @@ export function Watch() {
     }
   }, [])
   const [busy, setBusy] = useState(false)
+  const [talkStarting, setTalkStarting] = useState(false)
+  const [talkActive, setTalkActive] = useState(false)
+  const talkSessionRef = useRef<TalkSession | null>(null)
+  const [listenStarting, setListenStarting] = useState(false)
+  const [listenActive, setListenActive] = useState(false)
+  const listenSessionRef = useRef<ListenSession | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [openEvent, setOpenEvent] = useState<DetectionEvent | null>(null)
   // Status-truth fix (server-restart contradiction, 2026-07-07): a
@@ -284,6 +304,15 @@ export function Watch() {
   )
 
   const detectionActive = status?.detection_active ?? null
+  const audioEnabled = status?.audio_enabled === true
+  const talkIntent = actionParams.get('talk') === '1'
+  const deterrenceRaw = actionParams.get('deterrence')
+  const deterrenceAction =
+    deterrenceRaw === 'light' || deterrenceRaw === 'warning' || deterrenceRaw === 'siren'
+      ? deterrenceRaw
+      : null
+  const deterrenceDuration = Math.max(1, Math.min(60, Number(actionParams.get('duration')) || 15))
+  const intentEventId = actionParams.get('event') ?? undefined
   const workerAlive = status?.worker_alive ?? null
   const streamStaleSeconds = status?.seconds_since_last_frame ?? null
   const lowMemory = status?.worker_metrics?.gear === 'low-memory'
@@ -294,6 +323,117 @@ export function Watch() {
   const cameraLabel = multiCam
     ? selectedCamera?.name ?? _DEFAULT_CAMERA_LABEL
     : status?.camera_label ?? _DEFAULT_CAMERA_LABEL
+
+  const toggleTalk = async () => {
+    if (talkStarting) return
+    if (talkSessionRef.current) {
+      talkSessionRef.current.close()
+      talkSessionRef.current = null
+      setTalkActive(false)
+      showToast('Talk ended', 'info')
+      return
+    }
+    setTalkStarting(true)
+    try {
+      const session = await startTalkSession(undefined, () => {
+        talkSessionRef.current = null
+        setTalkActive(false)
+        showToast('Talk connection ended', 'error')
+      })
+      talkSessionRef.current = session
+      setTalkActive(true)
+      showToast('Microphone is live at the camera', 'success')
+    } catch {
+      showToast('Could not start talk — check microphone and speaker setup', 'error')
+    } finally {
+      setTalkStarting(false)
+    }
+  }
+
+  const toggleListen = async () => {
+    if (listenStarting) return
+    if (listenSessionRef.current) {
+      listenSessionRef.current.close()
+      listenSessionRef.current = null
+      setListenActive(false)
+      return
+    }
+    setListenStarting(true)
+    try {
+      listenSessionRef.current = await startListenSession(undefined, () => {
+        listenSessionRef.current = null
+        setListenActive(false)
+        showToast('Listen connection ended', 'error')
+      })
+      setListenActive(true)
+    } catch {
+      showToast('Could not listen — check camera microphone setup', 'error')
+    } finally {
+      setListenStarting(false)
+    }
+  }
+
+  const clearActionIntent = () => {
+    const next = new URLSearchParams(actionParams)
+    for (const key of ['talk', 'deterrence', 'duration', 'event']) next.delete(key)
+    setActionParams(next, { replace: true })
+  }
+
+  const confirmDeterrence = async () => {
+    if (!deterrenceAction) return
+    const label = deterrenceAction === 'light' ? 'turn on the light' : deterrenceAction === 'warning' ? 'play the warning' : 'sound the siren'
+    const ok = await confirm({
+      title: `${label.charAt(0).toUpperCase()}${label.slice(1)}?`,
+      body: `This will ${label} at the camera for ${deterrenceDuration} seconds.`,
+      confirmLabel: deterrenceAction === 'siren' ? 'Sound siren' : 'Start action',
+      destructive: deterrenceAction === 'siren',
+    })
+    if (!ok) return
+    try {
+      const result = await triggerDeterrence({
+        action: deterrenceAction,
+        duration_s: deterrenceDuration,
+        confirm: true,
+        ...(intentEventId ? { event_id: intentEventId } : {}),
+      })
+      if (!result.ok) {
+        const detail =
+          result.status === 'unavailable'
+            ? result.capabilities.limitation || result.reason
+            : result.reason
+        showToast(
+          `${result.status === 'unavailable' ? 'Action unavailable' : 'Action blocked'}: ${detail}`,
+          'error',
+        )
+        return
+      }
+      showToast('Deterrence action started', 'success')
+      clearActionIntent()
+    } catch {
+      showToast('Could not start deterrence action', 'error')
+    }
+  }
+
+  useEffect(() => () => {
+    talkSessionRef.current?.close()
+    talkSessionRef.current = null
+    listenSessionRef.current?.close()
+    listenSessionRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (audioEnabled) return
+    talkSessionRef.current?.close()
+    talkSessionRef.current = null
+    listenSessionRef.current?.close()
+    listenSessionRef.current = null
+    Promise.resolve().then(() => {
+      setTalkActive(false)
+      setListenActive(false)
+      setTalkStarting(false)
+      setListenStarting(false)
+    })
+  }, [audioEnabled])
 
   // Overhaul W1 item 2 (one state vocabulary): the three-state truth
   // model (status-confirmed down / status unknown with video-truth
@@ -1020,6 +1160,26 @@ export function Watch() {
               >
                 <SnapshotIcon />
               </RailButton>
+              {audioEnabled ? (
+                <>
+                  <RailButton
+                    label={listenStarting ? 'Starting…' : listenActive ? 'Mute' : 'Listen'}
+                    onClick={() => void toggleListen()}
+                    disabled={listenStarting}
+                  >
+                    <span aria-hidden>{listenActive ? '◉' : '◌'}</span>
+                  </RailButton>
+                  {canTalk ? (
+                    <RailButton
+                      label={talkStarting ? 'Starting…' : talkActive ? 'End talk' : 'Talk'}
+                      onClick={() => void toggleTalk()}
+                      disabled={talkStarting}
+                    >
+                      <span aria-hidden>{talkActive ? '■' : '●'}</span>
+                    </RailButton>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           )}
 
@@ -1075,6 +1235,28 @@ export function Watch() {
           the live tile and glance context stay anchored while the
           activity area behaves like a native sheet. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden landscape-phone:col-start-2 landscape-phone:row-start-2 landscape-phone:gap-2 landscape-phone:pr-2 landscape-phone:pl-1 landscape-phone:pt-12 tablet-landscape:col-start-2 tablet-landscape:row-start-2 tablet-landscape:gap-2 tablet-landscape:pr-3 tablet-landscape:pt-12 lg:col-start-2 lg:row-start-2 lg:pt-0 lg:pr-6">
+        {talkIntent || deterrenceAction ? (
+          <section aria-label="Notification action confirmation" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-xl)] border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] p-3 md:mx-auto md:w-full md:max-w-[40rem] lg:mx-0">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {talkIntent ? (canTalk ? 'Ready to talk through the camera?' : 'Talk requires owner access') : `Ready to ${deterrenceAction === 'light' ? 'turn on the light' : deterrenceAction === 'warning' ? 'play a warning' : 'sound the siren'}?`}
+              </p>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                {talkIntent ? (!canTalk ? 'Family and viewer accounts can listen, but only an owner can publish microphone audio.' : audioEnabled ? 'Your microphone starts only after you tap below.' : 'Configure and enable camera audio in Settings first.') : `Foreground confirmation is required for the ${deterrenceDuration}-second action.`}
+              </p>
+            </div>
+            <div className="flex gap-1">
+              <button type="button" onClick={clearActionIntent} className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)]">Cancel</button>
+              <button
+                type="button"
+                onClick={() => talkIntent ? (!canTalk ? clearActionIntent() : audioEnabled ? void toggleTalk().then(clearActionIntent) : navigate('/settings')) : void confirmDeterrence()}
+                className="min-h-11 rounded-full bg-[var(--color-ink)] px-3 text-xs font-semibold text-[var(--color-on-ink)]"
+              >
+                {talkIntent ? (!canTalk ? 'Dismiss' : audioEnabled ? 'Start talk' : 'Open Settings') : 'Review action'}
+              </button>
+            </div>
+          </section>
+        ) : null}
         {/* Overhaul W1 item 9: passive "alerts are off" nudge. Links
             to Settings → Alerts by seeding the tab key Settings
             already reads from localStorage (it has no URL tab param).
@@ -1111,6 +1293,8 @@ export function Watch() {
             </span>
           </button>
         )}
+
+        <PackageStatusCard />
 
         {/* ============ TODAY'S STORY ============ */}
         <TodayTimeline

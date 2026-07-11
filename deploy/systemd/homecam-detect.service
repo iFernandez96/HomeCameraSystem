@@ -48,6 +48,11 @@ Group=israel
 # capture path with EACCES on /dev/nvhost-* nodes.
 SupplementaryGroups=video
 WorkingDirectory=/home/israel/HomeCameraSystem
+# Event clips, thumbnails, visit ledgers, and recovery scratch contain private
+# household camera data. Force newly-created files to 0600 and directories to
+# 0700 instead of inheriting the host user's usual world-readable 0022 mask.
+# The FastAPI container runs as root and retains access through its bind mounts.
+UMask=0077
 Environment=EVENT_URL=http://127.0.0.1:8000/api/_internal/event
 Environment=DETECT_SOURCE=rtsp://localhost:8554/cam
 Environment=DETECT_THRESHOLD=0.55

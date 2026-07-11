@@ -31,3 +31,5 @@ python-multipart>=0.0.20,<1
 # letterbox normalizer in services/training_export.py. Pure-Python
 # image resize + paste; no native build cost on the manylinux wheel.
 Pillow>=10.0.0,<13
+# Optional local automation transport; inert until HOMECAM_MQTT_HOST is set.
+paho-mqtt>=2,<3

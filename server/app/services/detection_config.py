@@ -133,6 +133,37 @@ ZONES_MAX = 16
 ZONE_VERTICES_MIN = 3
 ZONE_VERTICES_MAX = 32
 
+# Household operating mode. This is deliberately explicit and local: phone
+# presence integrations may PATCH it later, but the camera always has one
+# inspectable persisted mode and a manual override remains possible.
+OPERATING_MODES = {"home", "away", "night", "privacy"}
+OPERATING_MODE_DEFAULT = "home"
+
+SMART_RULE_ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+SMART_RULE_KINDS = {"line_crossing", "loitering", "package"}
+SMART_RULE_DIRECTIONS = {"any", "forward", "reverse"}
+SMART_RULES_MAX = 16
+SMART_RULE_LABELS_MAX = 16
+PACKAGE_CHANGE_THRESHOLD_MIN = 0.05
+PACKAGE_CHANGE_THRESHOLD_MAX = 3.0
+PACKAGE_CHANGE_THRESHOLD_DEFAULT = 0.35
+PACKAGE_STABLE_S_MIN = 2.0
+PACKAGE_STABLE_S_MAX = 300.0
+PACKAGE_STABLE_S_DEFAULT = 10.0
+AUDIO_EVENT_LABELS = {
+    "audio_smoke_alarm",
+    "audio_glass_break",
+    "audio_scream",
+    "audio_dog_bark",
+}
+DETERRENCE_ACTIONS = {"light", "warning", "siren"}
+DETERRENCE_DURATION_MIN = 1.0
+DETERRENCE_DURATION_MAX = 60.0
+
+
+def _valid_operating_mode(value, fallback: str = OPERATING_MODE_DEFAULT) -> str:
+    return value if isinstance(value, str) and value in OPERATING_MODES else fallback
+
 
 @dataclass
 class DetectionConfig:
@@ -158,6 +189,7 @@ class DetectionConfig:
     threshold: float = 0.55
     cooldown_s: float = 5.0
     enabled: bool = True
+    operating_mode: str = OPERATING_MODE_DEFAULT
     schedule_off_start: str | None = None
     schedule_off_end: str | None = None
     # iter-254 (Feature #1 polish): per-event clip duration knobs.
@@ -196,6 +228,9 @@ class DetectionConfig:
     # iter-191b wires the worker-side filter via `point_in_polygon`,
     # iter-191c lands the client `<canvas>` editor in Settings.
     zones: list[list[list[float]]] = field(default_factory=list)
+    # Areas that must never contribute detections or saved still imagery.
+    # The worker conservatively redacts each polygon's bounding rectangle.
+    privacy_masks: list[list[list[float]]] = field(default_factory=list)
     # iter-305 (user "How do I know which cam is which? Right now, I
     # only have 1 camera, but it is not labeled at all"): a friendly
     # display name for the camera. Used as the Live page header
@@ -243,6 +278,18 @@ class DetectionConfig:
     # visit clip. NEW field (plan R3) — distinct from clip_post_roll_s.
     # Clamped [ABSENCE_FINALIZE_MIN, ABSENCE_FINALIZE_MAX].
     absence_finalize_s: float = ABSENCE_FINALIZE_DEFAULT
+    daily_digest_enabled: bool = True
+    daily_digest_time: str = "20:00"
+    smart_rules: list[dict[str, object]] = field(default_factory=list)
+    package_change_threshold: float = PACKAGE_CHANGE_THRESHOLD_DEFAULT
+    package_stable_s: float = PACKAGE_STABLE_S_DEFAULT
+    audio_event_enabled: bool = False
+    audio_event_labels: list[str] = field(
+        default_factory=lambda: ["audio_smoke_alarm", "audio_glass_break"]
+    )
+    deterrence_enabled: bool = False
+    deterrence_action: str = "light"
+    deterrence_duration_s: float = 10.0
 
 
 # Length cap for `camera_label`. iter-305: 32 chars covers
@@ -375,6 +422,91 @@ def _valid_classes(values) -> list[str]:
     return seen
 
 
+def _valid_audio_event_labels(values) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    out: list[str] = []
+    for value in values:
+        if isinstance(value, str) and value in AUDIO_EVENT_LABELS and value not in out:
+            out.append(value)
+    return out[: len(AUDIO_EVENT_LABELS)]
+
+
+def _valid_smart_rules(values) -> list[dict[str, object]]:
+    """Sanitize persisted rules while retaining valid siblings."""
+    if not isinstance(values, list):
+        return []
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, dict):
+            continue
+        rule_id = raw.get("id")
+        kind = raw.get("kind")
+        name = raw.get("name")
+        camera_id = raw.get("camera_id", "front_door")
+        if (
+            not isinstance(rule_id, str)
+            or SMART_RULE_ID_RE.fullmatch(rule_id) is None
+            or rule_id in seen
+            or kind not in SMART_RULE_KINDS
+            or not isinstance(name, str)
+            or not name.strip()
+            or len(name.strip()) > 64
+            or not isinstance(camera_id, str)
+            or SMART_RULE_ID_RE.fullmatch(camera_id) is None
+        ):
+            continue
+        points_raw = raw.get("points")
+        min_points = 2 if kind == "line_crossing" else 3
+        max_points = 2 if kind == "line_crossing" else 32
+        if not isinstance(points_raw, list) or not (
+            min_points <= len(points_raw) <= max_points
+        ):
+            continue
+        points: list[list[float]] = []
+        valid = True
+        for point in points_raw:
+            if not isinstance(point, list) or len(point) != 2:
+                valid = False
+                break
+            try:
+                x, y = float(point[0]), float(point[1])
+            except (TypeError, ValueError):
+                valid = False
+                break
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                valid = False
+                break
+            points.append([x, y])
+        direction = raw.get("direction", "any")
+        dwell_s = _safe_float(raw.get("dwell_s", 0.0), 0.0)
+        threshold = _safe_float(raw.get("threshold", 0.5), 0.5)
+        if (
+            not valid
+            or direction not in SMART_RULE_DIRECTIONS
+            or not 0.0 <= dwell_s <= 3600.0
+            or not 0.0 <= threshold <= 1.0
+        ):
+            continue
+        out.append({
+            "id": rule_id,
+            "name": name.strip(),
+            "kind": kind,
+            "enabled": bool(raw.get("enabled", True)),
+            "camera_id": camera_id,
+            "points": points,
+            "labels": _valid_classes(raw.get("labels", []))[:SMART_RULE_LABELS_MAX],
+            "direction": direction,
+            "dwell_s": dwell_s,
+            "threshold": threshold,
+        })
+        seen.add(rule_id)
+        if len(out) >= SMART_RULES_MAX:
+            break
+    return out
+
+
 def in_schedule_off_window(
     start: str | None, end: str | None, hour: int, minute: int
 ) -> bool:
@@ -479,6 +611,9 @@ class DetectionConfigStore:
                 if data.get("enabled") is not None
                 else self.config.enabled
             ),
+            operating_mode=_valid_operating_mode(
+                data.get("operating_mode"), self.config.operating_mode
+            ),
             schedule_off_start=_valid_hhmm(
                 data.get("schedule_off_start", self.config.schedule_off_start)
             ),
@@ -487,6 +622,9 @@ class DetectionConfigStore:
             ),
             classes=_valid_classes(data.get("classes", self.config.classes)),
             zones=_valid_zones(data.get("zones", self.config.zones)),
+            privacy_masks=_valid_zones(
+                data.get("privacy_masks", self.config.privacy_masks)
+            ),
             camera_label=_valid_camera_label(
                 data.get("camera_label", self.config.camera_label),
                 self.config.camera_label,
@@ -558,6 +696,65 @@ class DetectionConfigStore:
                 ABSENCE_FINALIZE_MIN,
                 ABSENCE_FINALIZE_MAX,
             ),
+            daily_digest_enabled=(
+                bool(data["daily_digest_enabled"])
+                if data.get("daily_digest_enabled") is not None
+                else self.config.daily_digest_enabled
+            ),
+            daily_digest_time=(
+                _valid_hhmm(data.get("daily_digest_time"))
+                or self.config.daily_digest_time
+            ),
+            smart_rules=_valid_smart_rules(
+                data.get("smart_rules", self.config.smart_rules)
+            ),
+            package_change_threshold=_clamp(
+                _safe_float(
+                    data.get(
+                        "package_change_threshold",
+                        self.config.package_change_threshold,
+                    ),
+                    self.config.package_change_threshold,
+                ),
+                PACKAGE_CHANGE_THRESHOLD_MIN,
+                PACKAGE_CHANGE_THRESHOLD_MAX,
+            ),
+            package_stable_s=_clamp(
+                _safe_float(
+                    data.get("package_stable_s", self.config.package_stable_s),
+                    self.config.package_stable_s,
+                ),
+                PACKAGE_STABLE_S_MIN,
+                PACKAGE_STABLE_S_MAX,
+            ),
+            audio_event_enabled=(
+                bool(data["audio_event_enabled"])
+                if data.get("audio_event_enabled") is not None
+                else self.config.audio_event_enabled
+            ),
+            audio_event_labels=_valid_audio_event_labels(
+                data.get("audio_event_labels", self.config.audio_event_labels)
+            ),
+            deterrence_enabled=(
+                bool(data["deterrence_enabled"])
+                if data.get("deterrence_enabled") is not None
+                else self.config.deterrence_enabled
+            ),
+            deterrence_action=(
+                data["deterrence_action"]
+                if data.get("deterrence_action") in DETERRENCE_ACTIONS
+                else self.config.deterrence_action
+            ),
+            deterrence_duration_s=_clamp(
+                _safe_float(
+                    data.get(
+                        "deterrence_duration_s", self.config.deterrence_duration_s
+                    ),
+                    self.config.deterrence_duration_s,
+                ),
+                DETERRENCE_DURATION_MIN,
+                DETERRENCE_DURATION_MAX,
+            ),
         )
         log.info("loaded detection config: %s", asdict(self.config))
 
@@ -600,6 +797,11 @@ class DetectionConfigStore:
             if "enabled" in patch and patch["enabled"] is not None
             else cur.enabled
         )
+        operating_mode = (
+            _valid_operating_mode(patch["operating_mode"], cur.operating_mode)
+            if "operating_mode" in patch and patch["operating_mode"] is not None
+            else cur.operating_mode
+        )
         schedule_off_start = (
             _valid_hhmm(patch["schedule_off_start"])
             if "schedule_off_start" in patch
@@ -614,6 +816,10 @@ class DetectionConfigStore:
             _valid_classes(patch["classes"]) if "classes" in patch else cur.classes
         )
         zones = _valid_zones(patch["zones"]) if "zones" in patch else cur.zones
+        privacy_masks = (
+            _valid_zones(patch["privacy_masks"])
+            if "privacy_masks" in patch else cur.privacy_masks
+        )
         camera_label = (
             _valid_camera_label(patch["camera_label"], cur.camera_label)
             if "camera_label" in patch and patch["camera_label"] is not None
@@ -683,14 +889,76 @@ class DetectionConfigStore:
             and patch["absence_finalize_s"] is not None
             else cur.absence_finalize_s
         )
+        daily_digest_enabled = (
+            bool(patch["daily_digest_enabled"])
+            if "daily_digest_enabled" in patch and patch["daily_digest_enabled"] is not None
+            else cur.daily_digest_enabled
+        )
+        daily_digest_time = (
+            _valid_hhmm(patch["daily_digest_time"])
+            if "daily_digest_time" in patch and patch["daily_digest_time"] is not None
+            else cur.daily_digest_time
+        ) or cur.daily_digest_time
+        smart_rules = (
+            _valid_smart_rules(patch["smart_rules"])
+            if "smart_rules" in patch else cur.smart_rules
+        )
+        package_change_threshold = (
+            _clamp(
+                patch["package_change_threshold"],
+                PACKAGE_CHANGE_THRESHOLD_MIN,
+                PACKAGE_CHANGE_THRESHOLD_MAX,
+            )
+            if patch.get("package_change_threshold") is not None
+            else cur.package_change_threshold
+        )
+        package_stable_s = (
+            _clamp(
+                patch["package_stable_s"],
+                PACKAGE_STABLE_S_MIN,
+                PACKAGE_STABLE_S_MAX,
+            )
+            if patch.get("package_stable_s") is not None
+            else cur.package_stable_s
+        )
+        audio_event_enabled = (
+            bool(patch["audio_event_enabled"])
+            if patch.get("audio_event_enabled") is not None
+            else cur.audio_event_enabled
+        )
+        audio_event_labels = (
+            _valid_audio_event_labels(patch["audio_event_labels"])
+            if "audio_event_labels" in patch else cur.audio_event_labels
+        )
+        deterrence_enabled = (
+            bool(patch["deterrence_enabled"])
+            if patch.get("deterrence_enabled") is not None
+            else cur.deterrence_enabled
+        )
+        deterrence_action = (
+            patch["deterrence_action"]
+            if patch.get("deterrence_action") in DETERRENCE_ACTIONS
+            else cur.deterrence_action
+        )
+        deterrence_duration_s = (
+            _clamp(
+                patch["deterrence_duration_s"],
+                DETERRENCE_DURATION_MIN,
+                DETERRENCE_DURATION_MAX,
+            )
+            if patch.get("deterrence_duration_s") is not None
+            else cur.deterrence_duration_s
+        )
         self.config = DetectionConfig(
             threshold=threshold,
             cooldown_s=cooldown_s,
             enabled=enabled,
+            operating_mode=operating_mode,
             schedule_off_start=schedule_off_start,
             schedule_off_end=schedule_off_end,
             classes=classes,
             zones=zones,
+            privacy_masks=privacy_masks,
             clip_post_roll_s=clip_post_roll_s,
             clip_pre_roll_s=clip_pre_roll_s,
             clip_retention_preset=clip_retention_preset,
@@ -701,6 +969,16 @@ class DetectionConfigStore:
             continuous_capture=continuous_capture,
             max_visit_s=max_visit_s,
             absence_finalize_s=absence_finalize_s,
+            daily_digest_enabled=daily_digest_enabled,
+            daily_digest_time=daily_digest_time,
+            smart_rules=smart_rules,
+            package_change_threshold=package_change_threshold,
+            package_stable_s=package_stable_s,
+            audio_event_enabled=audio_event_enabled,
+            audio_event_labels=audio_event_labels,
+            deterrence_enabled=deterrence_enabled,
+            deterrence_action=deterrence_action,
+            deterrence_duration_s=deterrence_duration_s,
         )
         self._save()
         return self.config

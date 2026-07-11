@@ -23,7 +23,7 @@ def render(schema):
         "export interface WorkerBox { x: number; y: number; w: number; h: number; label: string; score: number }",
         "export interface WorkerDetectionEvent {",
     ]
-    ts_types = {"label": "string", "score": "number", "boxes": "WorkerBox[]", "camera_id": "string", "continuation": "boolean", "thumb_url": "string | null", "clip_url": "string | null", "id": "string | null", "person_name": "string | null", "person_names": "string[] | null"}
+    ts_types = {"label": "string", "score": "number", "boxes": "WorkerBox[]", "camera_id": "string", "continuation": "boolean", "thumb_url": "string | null", "clip_url": "string | null", "id": "string | null", "person_name": "string | null", "person_names": "string[] | null", "source": "'vision'", "rule_id": "string | null", "rule_name": "string | null", "correlation_id": "string | null", "related_event_id": "string | null", "visit_id": "string | null", "start_ts": "number | null", "end_ts": "number | null", "package_state": "'delivered' | 'collected' | null"}
     for name in event:
         lines.append("  %s%s: %s;" % (name, "?" if name in optional else "", ts_types[name]))
     lines += ["}", "export interface WorkerHeartbeat {"]

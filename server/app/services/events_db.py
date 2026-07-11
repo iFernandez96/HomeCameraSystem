@@ -88,6 +88,16 @@ CREATE TABLE IF NOT EXISTS events (
     type               TEXT NOT NULL DEFAULT 'detection',
     seen               INTEGER NOT NULL DEFAULT 0,
     person_names_json  TEXT
+    ,protected         INTEGER NOT NULL DEFAULT 0,
+    source             TEXT,
+    rule_id            TEXT,
+    rule_name          TEXT,
+    correlation_id     TEXT,
+    related_event_id   TEXT,
+    visit_id           TEXT,
+    start_ts           REAL,
+    end_ts             REAL,
+    package_state      TEXT
 );
 CREATE INDEX IF NOT EXISTS events_ts_desc ON events(ts DESC);
 CREATE INDEX IF NOT EXISTS events_camera_ts ON events(camera_id, ts DESC);
@@ -99,6 +109,8 @@ CREATE INDEX IF NOT EXISTS events_person_ts ON events(person_name, ts DESC);
 -- until N matching rows were found (O(N) on a 95% person DB).
 -- Idempotent CREATE INDEX IF NOT EXISTS — safe on re-init.
 CREATE INDEX IF NOT EXISTS events_label_ts ON events(label, ts DESC);
+CREATE INDEX IF NOT EXISTS events_correlation_ts ON events(correlation_id, ts DESC);
+CREATE INDEX IF NOT EXISTS events_visit_ts ON events(visit_id, ts DESC);
 """
 
 
@@ -121,6 +133,49 @@ def _ensure_person_names_column(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE events ADD COLUMN person_names_json TEXT"
         )
+
+
+def _ensure_protected_column(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "protected" not in cols:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN protected INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS events_protected_ts "
+        "ON events(protected, ts DESC)"
+    )
+
+
+def _ensure_security_columns(conn: sqlite3.Connection) -> None:
+    """Add metadata used by smart rules, visits and package lifecycle."""
+    exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='events'"
+    ).fetchone()
+    if exists is None:
+        return
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    definitions = {
+        "source": "TEXT",
+        "rule_id": "TEXT",
+        "rule_name": "TEXT",
+        "correlation_id": "TEXT",
+        "related_event_id": "TEXT",
+        "visit_id": "TEXT",
+        "start_ts": "REAL",
+        "end_ts": "REAL",
+        "package_state": "TEXT",
+    }
+    for name, sql_type in definitions.items():
+        if name not in cols:
+            conn.execute("ALTER TABLE events ADD COLUMN {} {}".format(name, sql_type))
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS events_correlation_ts "
+        "ON events(correlation_id, ts DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS events_visit_ts ON events(visit_id, ts DESC)"
+    )
 
 
 # docs/multicam_contract.md (2026-07-07): defensive idempotent
@@ -205,9 +260,12 @@ def init_db(path: Path) -> None:
         # column, _SCHEMA's `events_camera_ts` index would otherwise
         # fail with "no such column: camera_id".
         _ensure_camera_id_column(conn)
+        _ensure_security_columns(conn)
         conn.executescript(_SCHEMA)
         _ensure_seen_column(conn)
         _ensure_person_names_column(conn)
+        _ensure_protected_column(conn)
+        _ensure_security_columns(conn)
         conn.commit()
     # Belt-and-braces chmod for legacy installs where the file
     # already exists with looser perms. No-op on read-only mounts.
@@ -299,8 +357,9 @@ def insert_event(path: Path, event: DetectionEventDict) -> bool:
             "INSERT OR IGNORE INTO events "
             "(id, ts, camera_id, label, score, person_name, "
             "thumb_url, clip_url, boxes_json, v, type, "
-            "person_names_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "person_names_json, source, rule_id, rule_name, correlation_id, "
+            "related_event_id, visit_id, start_ts, end_ts, package_state) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event["id"],
                 event["ts"],
@@ -314,10 +373,31 @@ def insert_event(path: Path, event: DetectionEventDict) -> bool:
                 event.get("v", 1),
                 event.get("type", "detection"),
                 person_names_json,
+                event.get("source"),
+                event.get("rule_id"),
+                event.get("rule_name"),
+                event.get("correlation_id"),
+                event.get("related_event_id"),
+                event.get("visit_id"),
+                event.get("start_ts"),
+                event.get("end_ts"),
+                event.get("package_state"),
             ),
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def _optional_row(row: sqlite3.Row, name: str):
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
+
+
+def _optional_float(row: sqlite3.Row, name: str) -> float | None:
+    value = _optional_row(row, name)
+    return float(value) if value is not None else None
 
 
 def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
@@ -382,6 +462,12 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
             )
     else:
         person_names = None
+    try:
+        protected = bool(row["protected"])
+    except (KeyError, IndexError):
+        # Read-only production snapshots used by parity harnesses may predate
+        # this additive column and cannot be migrated in place.
+        protected = False
     return {
         "v": int(row["v"]),
         "type": row["type"],
@@ -395,6 +481,16 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
         "person_name": row["person_name"],
         "person_names": person_names,
         "clip_url": row["clip_url"],
+        "protected": protected,
+        "source": _optional_row(row, "source") or "vision",
+        "rule_id": _optional_row(row, "rule_id"),
+        "rule_name": _optional_row(row, "rule_name"),
+        "correlation_id": _optional_row(row, "correlation_id"),
+        "related_event_id": _optional_row(row, "related_event_id"),
+        "visit_id": _optional_row(row, "visit_id"),
+        "start_ts": _optional_float(row, "start_ts"),
+        "end_ts": _optional_float(row, "end_ts"),
+        "package_state": _optional_row(row, "package_state"),
     }
 
 
@@ -656,6 +752,64 @@ def get_by_ids(path: Path, ids: list[str]) -> list[dict]:
     return [by_id[i] for i in ids if i in by_id]
 
 
+def update_event_timing(
+    path: Path,
+    event_id: str,
+    *,
+    start_ts: float | None,
+    end_ts: float | None,
+) -> bool:
+    with _db_op("update_event_timing", path, event_id=event_id), _connect(path) as conn:
+        cur = conn.execute(
+            "UPDATE events SET start_ts = COALESCE(?, start_ts), "
+            "end_ts = COALESCE(?, end_ts) WHERE id = ?",
+            (start_ts, end_ts, event_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def update_identity(path: Path, event_id: str, person_name: str | None) -> bool:
+    """Apply operator identity feedback to canonical event metadata."""
+    person_names_json = json.dumps([person_name]) if person_name else None
+    with _db_op("update_identity", path, event_id=event_id), _connect(path) as conn:
+        cur = conn.execute(
+            "UPDATE events SET person_name = ?, person_names_json = ? WHERE id = ?",
+            (person_name, person_names_json, event_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def merge_identity(path: Path, source_name: str, target_name: str) -> int:
+    """Rename historical identity metadata, including multi-person lists."""
+    changed = 0
+    with _db_op("merge_identity", path), _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT id, person_name, person_names_json FROM events "
+            "WHERE person_name = ? OR person_names_json LIKE ?",
+            (source_name, "%{}%".format(source_name)),
+        ).fetchall()
+        for row in rows:
+            primary = target_name if row["person_name"] == source_name else row["person_name"]
+            names_raw = row["person_names_json"]
+            names = None
+            if names_raw:
+                try:
+                    decoded = json.loads(names_raw)
+                    if isinstance(decoded, list):
+                        names = [target_name if name == source_name else name for name in decoded]
+                except ValueError:
+                    names = None
+            cur = conn.execute(
+                "UPDATE events SET person_name = ?, person_names_json = ? WHERE id = ?",
+                (primary, json.dumps(names) if names else None, row["id"]),
+            )
+            changed += cur.rowcount
+        conn.commit()
+    return changed
+
+
 def people_total(path: Path) -> int:
     """iter-328 (R2): count of distinct recognized person_names in
     events. Pairs with `people_summary(limit=N)` so the client can
@@ -791,6 +945,55 @@ def mark_all_seen(path: Path) -> int:
         cur = conn.execute("UPDATE events SET seen = 1 WHERE seen = 0")
         conn.commit()
         return cur.rowcount
+
+
+def set_protected(path: Path, event_id: str, protected: bool) -> bool:
+    """Protect/unprotect an event clip from automatic retention and eviction."""
+    with _db_op("set_protected", path, event_id=event_id), _connect(path) as conn:
+        cur = conn.execute(
+            "UPDATE events SET protected = ? WHERE id = ?",
+            (1 if protected else 0, event_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def protected_event_ids(path: Path) -> set[str]:
+    with _db_op("protected_event_ids", path), _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM events WHERE protected = 1"
+        ).fetchall()
+    return {str(row["id"]) for row in rows}
+
+
+def daily_digest(path: Path, day: str) -> dict:
+    """Return a compact local-day activity summary without reading media."""
+    with _db_op("daily_digest", path, day=day), _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT label, COUNT(*) AS n FROM events "
+            "WHERE date(ts, 'unixepoch', 'localtime') = ? GROUP BY label",
+            (day,),
+        ).fetchall()
+        unknown = conn.execute(
+            "SELECT COUNT(*) AS n FROM events WHERE "
+            "date(ts, 'unixepoch', 'localtime') = ? "
+            "AND label = 'person' AND person_name IS NULL",
+            (day,),
+        ).fetchone()
+        known = conn.execute(
+            "SELECT DISTINCT person_name FROM events WHERE "
+            "date(ts, 'unixepoch', 'localtime') = ? "
+            "AND person_name IS NOT NULL ORDER BY person_name",
+            (day,),
+        ).fetchall()
+    by_label = {str(row["label"]): int(row["n"]) for row in rows}
+    return {
+        "day": day,
+        "total": sum(by_label.values()),
+        "by_label": by_label,
+        "unknown_people": int(unknown["n"]) if unknown else 0,
+        "known_people": [str(row["person_name"]) for row in known],
+    }
 
 
 def delete(path: Path, event_id: str) -> bool:

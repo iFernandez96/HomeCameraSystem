@@ -69,10 +69,30 @@ curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/medi
 sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# 6. Build + start
+# 6. Cross-build + ship the server image from the development machine
+# (run this outside the Jetson shell)
+deploy/cross-deploy-server.sh jetson
+
+# Back on the Jetson, start services without any native image build
 cd ~/HomeCameraSystem
-docker compose -f deploy/docker-compose.yml build
 sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-jetson-perf
+```
+
+MediaMTX delegates every path action to the FastAPI callback on localhost. The
+container must therefore receive the observed host bridge source in
+`MEDIAMTX_AUTH_TRUSTED_CALLERS` (the committed Compose default is the Jetson's
+exact `172.18.0.1`, not a subnet). If Docker networking changes, inspect the
+actual callback peer and update the single address; do not broaden it to a CIDR.
+
+Optional speaker output stays inert after installation. Provision it only when
+hardware exists:
+
+```bash
+sudo install -d -m 0755 /etc/homecam
+sudo install -m 0600 deploy/mediamtx.env.example /etc/homecam/mediamtx.env
+# Edit HOMECAM_SPEAKER_DEVICE, then deliberately arm output:
+sudo install -m 0600 /dev/null /etc/homecam/speaker-enabled
+sudo systemctl restart mediamtx
 ```
 
 Verify:
@@ -147,7 +167,8 @@ async def system_reboot():
 
 - **MediaMTX encoder** (`deploy/mediamtx.yml`): bitrate, GOP, framerate. Inline comments explain what each knob does.
 - **Detection** (`detection/README.md`): threshold, cooldown, model. All env-driven; edit `homecam-detect.service` to change.
-- **WebRTC** (`client/src/lib/webrtc.ts`): no STUN, no audio transceiver — both intentional for LAN.
+- **WebRTC video** (`client/src/lib/webrtc.ts`): receive-only video with STUN/TURN fallback.
+- **WebRTC audio** (`client/src/lib/twoWayAudio.ts`): separate WHIP talk and WHEP listen sessions using one-time FastAPI media grants.
 
 ## Observability stack (opt-in, iter-199)
 

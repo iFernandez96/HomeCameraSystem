@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
+import { DailyDigestCard } from '../components/DailyDigestCard'
 // iter-356-E (Slice E): EventHeatmap lazy-split. The component pulls
 // in ~6 KB gzip of date math + SVG cells and is below-the-fold on
 // mobile (the calendar is opened via the header button OR sits in the
@@ -605,7 +606,17 @@ export function Events() {
   // worker happens to have emitted recently.
   const labels = useMemo(() => {
     if (configClasses !== null) {
-      return [...configClasses].sort((a, b) => a.localeCompare(b))
+      const configuredAndSystem = new Set(configClasses)
+      for (const event of events) {
+        if (
+          (event.source != null && event.source !== 'vision') ||
+          event.package_state != null ||
+          event.rule_id != null
+        ) {
+          configuredAndSystem.add(event.label)
+        }
+      }
+      return Array.from(configuredAndSystem).sort((a, b) => a.localeCompare(b))
     }
     const set = new Set<string>()
     for (const e of events) {
@@ -1207,6 +1218,12 @@ export function Events() {
             </button>
           </div>
         </div>
+        <nav aria-label="Event tools" className="lg:max-w-6xl lg:mx-auto mt-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          <Link to="/events/playback" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Playback</Link>
+          <Link to="/events/search" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Search</Link>
+          <Link to="/events/visits" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Visits</Link>
+          <Link to="/events/incidents" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Incidents</Link>
+        </nav>
         {showFilters && (
           // UI/UX overhaul 2026-07-07 (device run-through #7): on a
           // landscape phone the TYPE and WHO groups used to stack as
@@ -1527,6 +1544,7 @@ export function Events() {
           </div>
         ) : null}
       </header>
+      {selectedDay ? <DailyDigestCard day={selectedDay} /> : null}
       {/* iter-356.16 (Maya 10th + Priya 3rd CRITICAL): pulled
           EventHeatmap out of the sticky <header>. Pre-iter-356.16
           the heatmap lived inside the pin (iter-298) which made the

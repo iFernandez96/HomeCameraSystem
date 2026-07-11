@@ -11,6 +11,7 @@ import {
   YarnBall,
 } from './CatIcons'
 import { CatParticles, type CatParticleType } from './CatParticles'
+import { errFields, log } from '../lib/log'
 
 /**
  * iter-356.4-cats — ambient cat layer with full Animal-Crossing-style
@@ -88,14 +89,163 @@ type CatState = {
   // Last cat I interacted with — avoid instant re-interaction
   lastInteractedWith: CatId | null
   lastInteractedAt: number
-  // iter-356.7: per-cat sprite-frame phase. 0 or 1; toggles to drive
-  // the walk/walk2 alternation (every 67ms while walking) and the
-  // sit/sit2 tail flick (every 600ms while sitting). Computed in
-  // stepCats so the CatRender stays pure (React 19 purity rule
-  // forbids reading performance.now() during render). Bail-out
-  // semantics preserved: phase only counted as change when it
-  // actually flips, so static-activity cats still no-op.
+  // Per-cat sprite-frame phase. Walking uses 0..11 for the raster walk
+  // cycle (100ms normally, 67ms while chasing/fleeing); the built-in
+  // fallback reads the same value modulo 2. Sitting still uses 0/1 for
+  // its 600ms tail flick. Computed in stepCats so CatRender stays pure
+  // (React 19 forbids reading performance.now() during render).
   phase: number
+}
+
+const WALK_FRAME_COUNT = 12
+const WALK_ENHANCEMENT_IDLE_MS = 60_000
+const WALK_PRELOAD_STAGGER_MS: Record<CatId, number> = {
+  panther: 0,
+  mushu: 6_000,
+  coco: 12_000,
+}
+
+type WalkAnimationCacheEntry = {
+  status: 'idle' | 'loading' | 'ready' | 'failed'
+  images: HTMLImageElement[]
+  promise: Promise<boolean> | null
+}
+
+function createWalkAnimationCache(): Record<CatId, WalkAnimationCacheEntry> {
+  const entry = (): WalkAnimationCacheEntry => ({
+    status: 'idle',
+    images: [],
+    promise: null,
+  })
+  return {
+    panther: entry(),
+    mushu: entry(),
+    coco: entry(),
+  }
+}
+
+let walkAnimationCache = createWalkAnimationCache()
+
+function walkFrameUrl(catId: CatId, frame: number): string {
+  return `/cats/anim/${catId}/walk_${String(frame + 1).padStart(2, '0')}.png`
+}
+
+function preloadWalkAnimation(catId: CatId): Promise<boolean> {
+  const cached = walkAnimationCache[catId]
+  if (cached.status === 'ready') return Promise.resolve(true)
+  if (cached.status === 'failed') return Promise.resolve(false)
+  if (cached.promise) return cached.promise
+
+  cached.status = 'loading'
+  cached.promise = new Promise<boolean>((resolve) => {
+    let loaded = 0
+    let settled = false
+
+    const fail = (frame: number, error?: unknown) => {
+      if (settled) return
+      settled = true
+      cached.status = 'failed'
+      log.warn('catLayer:walk-frames-failed', {
+        catId,
+        frame: frame + 1,
+        reason: error ? 'image-construction-failed' : 'image-load-error',
+        ...(error ? errFields(error) : {}),
+      })
+      resolve(false)
+    }
+
+    for (let frame = 0; frame < WALK_FRAME_COUNT; frame += 1) {
+      try {
+        const image = new Image()
+        cached.images.push(image)
+        image.onload = () => {
+          if (settled) return
+          loaded += 1
+          if (loaded === WALK_FRAME_COUNT) {
+            settled = true
+            cached.status = 'ready'
+            resolve(true)
+          }
+        }
+        image.onerror = () => fail(frame)
+        image.src = walkFrameUrl(catId, frame)
+      } catch (error) {
+        fail(frame, error)
+        break
+      }
+    }
+  })
+  return cached.promise
+}
+
+// Narrow test seam: module-scope image caches otherwise outlive each
+// CatLayer render in Vitest. Production never calls this.
+export function _resetCatWalkAnimationCacheForTests(): void {
+  for (const entry of Object.values(walkAnimationCache)) {
+    for (const image of entry.images) {
+      image.onload = null
+      image.onerror = null
+    }
+  }
+  walkAnimationCache = createWalkAnimationCache()
+}
+
+function isWalkingActivity(activity: Activity): boolean {
+  return activity === 'walk' || activity === 'chase' || activity === 'flee'
+}
+
+function useWalkAnimationReady(catId: CatId, shouldPreload: boolean): boolean {
+  const [ready, setReady] = useState(
+    () => walkAnimationCache[catId].status === 'ready',
+  )
+
+  useEffect(() => {
+    if (!shouldPreload) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void preloadWalkAnimation(catId).then((loaded) => {
+        if (!cancelled) setReady(loaded)
+      })
+    }, WALK_PRELOAD_STAGGER_MS[catId])
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [catId, shouldPreload])
+
+  return shouldPreload && (ready || walkAnimationCache[catId].status === 'ready')
+}
+
+/**
+ * Keep the optional 36-frame raster enhancement out of the critical load.
+ * The original two-pose sprites remain animated immediately; the richer walk
+ * cycles progressively warm after the first real interaction, or after one
+ * quiet minute for a passive wall display. This avoids spending hundreds of
+ * kilobytes before the security controls and live scene are usable.
+ */
+function useWalkEnhancementAllowed(enabled: boolean): boolean {
+  const [allowed, setAllowed] = useState(false)
+
+  useEffect(() => {
+    if (!enabled) return
+    let settled = false
+    const allow = () => {
+      if (settled) return
+      settled = true
+      setAllowed(true)
+    }
+    const timer = window.setTimeout(allow, WALK_ENHANCEMENT_IDLE_MS)
+    window.addEventListener('pointerdown', allow, { passive: true })
+    window.addEventListener('keydown', allow)
+    return () => {
+      settled = true
+      window.clearTimeout(timer)
+      window.removeEventListener('pointerdown', allow)
+      window.removeEventListener('keydown', allow)
+    }
+  }, [enabled])
+
+  return enabled && allowed
 }
 
 // === MOOD POOLS — wide vocabulary per personality ============================
@@ -673,6 +823,7 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
   const reducedData = usePrefersReducedData()
   const batteryLow = useBatteryLow()
   const animationsPaused = reducedMotion || reducedData || batteryLow
+  const walkEnhancementAllowed = useWalkEnhancementAllowed(!animationsPaused)
 
   useEffect(() => {
     if (animationsPaused) return
@@ -830,6 +981,7 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
           key={cat.id}
           cat={cat}
           playful={placement === 'login' && !animationsPaused}
+          walkAnimationEnabled={walkEnhancementAllowed}
         />
       ))}
     </div>
@@ -954,17 +1106,32 @@ function HabitatBackground({
 // Net: 0 evaluations/sec instead of 180/sec during long sleep states.
 const CatRender = memo(CatRenderImpl)
 
-function CatRenderImpl({ cat, playful }: { cat: CatState; playful: boolean }) {
+function CatRenderImpl({
+  cat,
+  playful,
+  walkAnimationEnabled,
+}: {
+  cat: CatState
+  playful: boolean
+  walkAnimationEnabled: boolean
+}) {
   const Sprite =
     cat.id === 'panther'
       ? BombaySprite
       : cat.id === 'mushu'
         ? TuxedoSprite
         : CalicoSprite
-  // iter-356.7: phase comes from CatState (computed in stepCats),
-  // not from a render-time performance.now() read. Frame swap rate
-  // depends on activity — see stepCats for the cadence.
+  const walking = isWalkingActivity(cat.activity)
+  const walkAnimationReady = useWalkAnimationReady(
+    cat.id,
+    walkAnimationEnabled,
+  )
+  // Phase comes from CatState (computed in stepCats), not from a
+  // render-time performance.now() read. Before all 12 frames load—or
+  // after any frame errors—activityToSprite keeps the old two-pose
+  // alternation visible, so the cat never disappears.
   const spriteState = activityToSprite(cat.activity, cat.phase)
+  const walkFrame = walkAnimationReady && walking ? cat.phase : undefined
   // Per-activity micro-animation
   const microAnim =
     cat.activity === 'play'
@@ -1055,7 +1222,11 @@ function CatRenderImpl({ cat, playful }: { cat: CatState; playful: boolean }) {
               RasterSprite now renders IMG at `width=size, height=size*1.2`,
               matching the container's SPRITE_WIDTH × SPRITE_HEIGHT
               dimensions exactly. */}
-          <Sprite size={SPRITE_WIDTH} state={spriteState} />
+          <Sprite
+            size={SPRITE_WIDTH}
+            state={spriteState}
+            walkFrame={walkFrame}
+          />
         </div>
       </div>
       {cat.mood && (
@@ -1118,9 +1289,8 @@ function spriteAnim(activity: Activity): string | undefined {
 // iter-356.4-cats-2: route Activity → BodyState. Activities without a
 // dedicated pose collapse to the closest neighbour. Keep this in sync
 // with CatIcons' BodyState union.
-// iter-356.7: phase (0 or 1) drives walk frame alternation AND sit
-// tail-flick. Cadence is set in stepCats based on activity (67ms for
-// walk/chase/flee, 600ms for sit/judge/loaf).
+// Phase drives the 12-frame walk cycle and the built-in two-pose
+// fallback. Sitting activities continue to use it for the tail flick.
 function activityToSprite(
   activity: Activity,
   phase: number,
@@ -1154,7 +1324,7 @@ function activityToSprite(
     case 'chase':
     case 'flee':
     case 'walk':
-      return phase === 0 ? 'walk' : 'walk2'
+      return phase % 2 === 0 ? 'walk' : 'walk2'
     case 'sit':
     case 'judge':
     case 'loaf':
@@ -1164,15 +1334,16 @@ function activityToSprite(
   }
 }
 
-// iter-356.7: per-activity phase cadence. Walking cycles at 15fps
-// (vscode-pets convention); sit/static at 600ms for a slow tail flick.
-// Returns the phase (0 or 1) for the given activity at time `now`.
+// Per-activity phase cadence, driven exclusively by the existing rAF
+// timestamp. Normal walks use ~10fps; chase/flee run at ~15fps. Static
+// poses stay at zero and sitting keeps its 600ms two-frame tail flick.
 function phaseFor(activity: Activity, now: number): number {
   switch (activity) {
     case 'walk':
+      return Math.floor(now / 100) % WALK_FRAME_COUNT
     case 'chase':
     case 'flee':
-      return Math.floor(now / 67) % 2
+      return Math.floor(now / 67) % WALK_FRAME_COUNT
     case 'sit':
     case 'judge':
     case 'loaf':
@@ -1307,10 +1478,10 @@ function stepCats(
       if (direction === 'R') direction = 'L'
     }
     if (x !== oldX || direction !== oldDir) catChanged = true
-    // iter-356.7: per-activity sprite-frame phase. Only counts as a
-    // change when the value flips, so a sleeping cat (always phase=0)
-    // stays ref-stable; a sitting cat updates every 600ms; a walking
-    // cat updates every 67ms (which it would anyway because x moves).
+    // Per-activity sprite-frame phase. Only counts as a change when the
+    // value flips, so a sleeping cat (always phase=0) stays ref-stable;
+    // sitting updates every 600ms, walking every 100ms, and a chase or
+    // flee every ~67ms (moving cats already update because x changes).
     const newPhase = phaseFor(activity, now)
     if (newPhase !== cat.phase) catChanged = true
     // Activity expiry → roll a solo event for the next state. This

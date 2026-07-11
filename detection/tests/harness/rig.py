@@ -196,9 +196,11 @@ class ReplayRig(object):
         self.copies = []
         self.finalizes = []
 
-        def _post_event(visit_id, key, start_ts, boxes, segment_index=0):
+        def _post_event(visit_id, key, start_ts, boxes, segment_index=0,
+                        root_visit_id=None, **_kwargs):
             self.posts.append({
                 "visit_id": visit_id,
+                "root_visit_id": root_visit_id,
                 "key": key,
                 "start_ts": start_ts,
                 "boxes": boxes,

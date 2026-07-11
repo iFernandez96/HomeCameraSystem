@@ -11,9 +11,10 @@ import json
 import logging
 import math
 import time
+from typing import Literal
 
-from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from dataclasses import asdict
 
@@ -25,6 +26,10 @@ from ..services.health import worker_health
 from ..services import audit_db, host_bridge
 from ..config import settings
 from ..services.push_service import push_service
+from ..services.alert_policy import decide_alert
+from ..services import mediamtx_auth
+from ..log import RateLimitedLog
+from ..services.camera_exposure import CameraExposureConfig, camera_exposure
 
 router = APIRouter(prefix="/_internal", tags=["internal"])
 log = logging.getLogger(__name__)
@@ -179,6 +184,72 @@ _CLIENT_LOG_LEVELS = {
     "info": logging.INFO,
     "debug": logging.DEBUG,
 }
+_MEDIAMTX_AUTH_LOG_GATES = {
+    category: RateLimitedLog(60.0)
+    for category in ("untrusted_peer", "malformed", "denied", "internal_error")
+}
+
+
+def _mediamtx_auth_rejected(peer: str, category: str, error_type: str = "-") -> None:
+    gate = _MEDIAMTX_AUTH_LOG_GATES[category]
+    if gate.should_log():
+        # Never log the callback body, exception message, client IP field, or
+        # any credentials. Category + source peer + exception class are enough
+        # to distinguish deployment drift from a denied media grant.
+        log.warning(
+            "MediaMTX auth rejected: peer=%s category=%s error_type=%s",
+            peer,
+            category,
+            error_type,
+        )
+
+
+class _MediaMtxAuthPayload(BaseModel):
+    """Exact bounded shape emitted by MediaMTX v1.18 authMethod=http."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    user: str = Field(max_length=128)
+    password: str = Field(max_length=256)
+    token: str = Field(max_length=256)
+    ip: str = Field(min_length=2, max_length=64)
+    action: Literal["publish", "read", "playback", "api", "metrics", "pprof"]
+    path: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    protocol: str = Field(min_length=1, max_length=32, pattern=r"^[a-z0-9]+$")
+    id: str | None = Field(default=None, max_length=128)
+    query: str = Field(max_length=2048)
+
+
+async def _bounded_auth_json(request: Request) -> object:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 8192:
+            raise ValueError("auth callback payload too large")
+    return json.loads(body.decode("utf-8"))
+
+
+@router.post("/mediamtx-auth")
+async def mediamtx_http_auth(request: Request) -> Response:
+    """Authorize MediaMTX without ever reflecting credentials in errors."""
+    peer = request.client.host if request.client is not None else ""
+    if not mediamtx_auth.trusted_callback_host(peer):
+        _mediamtx_auth_rejected(peer, "untrusted_peer")
+        return Response(status_code=403)
+    try:
+        raw = await _bounded_auth_json(request)
+        payload = _MediaMtxAuthPayload.model_validate(raw).model_dump()
+        allowed = mediamtx_auth.authorize(payload)
+    except (ValidationError, ValueError, TypeError, UnicodeError) as exc:
+        _mediamtx_auth_rejected(peer, "malformed", type(exc).__name__)
+        return Response(status_code=401)
+    except Exception as exc:
+        # Fail closed without logging the body or an exception whose message
+        # could contain user/password/token input.
+        _mediamtx_auth_rejected(peer, "internal_error", type(exc).__name__)
+        return Response(status_code=401)
+    if not allowed:
+        _mediamtx_auth_rejected(peer, "denied")
+    return Response(status_code=204 if allowed else 401)
 
 
 class ClientLog(BaseModel):
@@ -226,9 +297,59 @@ class _ResultBody(BaseModel):
         return self
 
 
+def _previous_exposure_config(record: dict) -> CameraExposureConfig:
+    args = record.get("args") if isinstance(record.get("args"), dict) else {}
+    previous = args.get("_previous_config")
+    if not isinstance(previous, dict):
+        raise ValueError("missing previous exposure configuration")
+    return CameraExposureConfig(**previous)
+
+
+def _restore_exposure_config(record: dict) -> CameraExposureConfig | None:
+    try:
+        previous = _previous_exposure_config(record)
+        camera_exposure.save(previous)
+        return previous
+    except Exception:
+        # Exposure coordinates are household geometry. Log only the stable
+        # request id and exception type/trace, never args or request bodies.
+        log.error(
+            "host_action exposure rollback persistence failed id=%s",
+            record.get("id"),
+            exc_info=True,
+        )
+        return None
+
+
+def _reconcile_expired_exposure(record: dict) -> dict | None:
+    """Return a new rollback action for an unconfirmed expired apply."""
+    if record.get("kind") != "exposure_apply" or record.get("status") != "expired":
+        return None
+    previous = _restore_exposure_config(record)
+    if previous is None:
+        return None
+    args = {**asdict(previous), "_previous_config": asdict(previous)}
+    replacement = host_bridge.enqueue(
+        "exposure_apply",
+        args,
+        requested_by=str(record.get("requested_by") or "exposure-reconcile"),
+        now=time.time(),
+    )
+    log.warning(
+        "expired exposure apply queued fail-closed rollback old_id=%s new_id=%s",
+        record.get("id"),
+        replacement.get("id"),
+    )
+    return replacement
+
+
 @router.get("/host_action")
 async def host_action_poll() -> dict[str, object]:
     rec = host_bridge.peek(time.time(), max_pending_age_s=120.0)
+    if rec is None:
+        latest = host_bridge.latest()
+        if isinstance(latest, dict):
+            rec = _reconcile_expired_exposure(latest)
     if rec is None:
         return {"action": None}
     return {
@@ -257,9 +378,23 @@ async def host_action_result(body: _ResultBody) -> dict[str, bool]:
         body.result,
         now=now,
     )
+    # Apply rollback only after host_bridge accepted the active terminal
+    # transition. Duplicate/replayed callbacks return ok=False and must never
+    # overwrite a newer exposure configuration.
+    if (
+        ok
+        and isinstance(rec, dict)
+        and rec.get("kind") == "exposure_apply"
+        and body.status == "failed"
+    ):
+        _restore_exposure_config(rec)
     if ok:
         action = (rec or host_bridge.get(body.id) or {}).get("kind", "")
-        audit_action = "mediamtx" if action in ("focus_start", "focus_stop") else action
+        audit_action = (
+            "mediamtx"
+            if action in ("focus_start", "focus_stop", "exposure_apply")
+            else action
+        )
         username = (rec or host_bridge.get(body.id) or {}).get("requested_by", "worker")
         try:
             audit_db.insert_host_action_event(
@@ -441,6 +576,23 @@ class DetectionPayload(BaseModel):
     person_names: list[str] | None = Field(
         default=None, max_length=16,
     )
+    source: Literal["vision"] = "vision"
+    rule_id: str | None = Field(
+        default=None, pattern=r"^[a-z0-9_]{1,32}$"
+    )
+    rule_name: str | None = Field(default=None, min_length=1, max_length=64)
+    correlation_id: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$"
+    )
+    related_event_id: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$"
+    )
+    visit_id: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$"
+    )
+    start_ts: float | None = Field(default=None, gt=0)
+    end_ts: float | None = Field(default=None, gt=0)
+    package_state: Literal["delivered", "collected"] | None = None
 
     @model_validator(mode="after")
     def _normalize_person_fields(self) -> "DetectionPayload":
@@ -492,6 +644,50 @@ class DetectionPayload(BaseModel):
                 raise ValueError(
                     "person_name must equal person_names[0] when both are set",
                 )
+        if self.start_ts is not None and self.end_ts is not None:
+            if self.end_ts < self.start_ts:
+                raise ValueError("end_ts must be greater than or equal to start_ts")
+        return self
+
+
+class VisitFinalizedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$", max_length=128)
+    duration_s: float = Field(ge=0.0, le=3600.0)
+    start_ts: float | None = Field(default=None, gt=0)
+    end_ts: float | None = Field(default=None, gt=0)
+
+
+class SignalPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    source: Literal["audio", "doorbell", "tamper", "system"]
+    label: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
+    score: float = Field(ge=0.0, le=1.0)
+    camera_id: str = Field(default="front_door", pattern=r"^[a-z0-9_]{1,32}$")
+    observed_at: float = Field(gt=0)
+    duration_s: float = Field(default=0.0, ge=0.0, le=60.0)
+    correlation_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+
+    @model_validator(mode="after")
+    def _known_label(self) -> "SignalPayload":
+        audio = {
+            "audio_smoke_alarm", "audio_glass_break",
+            "audio_scream", "audio_dog_bark",
+        }
+        by_source = {
+            "audio": audio,
+            "doorbell": {"doorbell"},
+            "tamper": {"camera_covered", "camera_moved"},
+            "system": {"power_loss", "network_outage", "camera_offline", "tamper"},
+        }
+        allowed = by_source[self.source]
+        if self.label not in allowed:
+            raise ValueError("label is not valid for source")
+        if not math.isfinite(self.observed_at):
+            raise ValueError("observed_at must be finite")
+        if abs(time.time() - self.observed_at) > 300.0:
+            raise ValueError("observed_at must be within 5 minutes of server time")
         return self
 
 
@@ -691,8 +887,18 @@ async def publish_detection(payload: DetectionPayload) -> dict[str, object]:
         person_names=payload.person_names,
         clip_url=payload.clip_url,
         event_id=payload.id,
+        source=payload.source,
+        rule_id=payload.rule_id,
+        rule_name=payload.rule_name,
+        correlation_id=payload.correlation_id,
+        related_event_id=payload.related_event_id,
+        visit_id=payload.visit_id,
+        start_ts=payload.start_ts,
+        end_ts=payload.end_ts,
+        package_state=payload.package_state,
     )
     await event_bus.publish(evt)
+    _schedule_security_processing(evt)
 
     # Fan out to push subscriptions in the background so the worker's POST
     # returns quickly. webpush is synchronous and goes over the network; we
@@ -724,6 +930,141 @@ async def publish_detection(payload: DetectionPayload) -> dict[str, object]:
     return {"ok": True, "event_id": evt["id"]}
 
 
+_SIGNAL_RATE: dict[tuple[str, str], list[float]] = {}
+_SIGNAL_RATE_LOCK = asyncio.Lock()
+
+
+@router.post("/signal")
+async def publish_signal(payload: SignalPayload) -> dict[str, object]:
+    """Ingest an audio/system signal with retry-idempotent fanout."""
+    cfg = detection_config.get()
+    if not cfg.enabled:
+        return {"ok": True, "dropped": "detection paused"}
+    if cfg.operating_mode == "privacy":
+        return {"ok": True, "dropped": "privacy mode"}
+    if camera_registry.get(payload.camera_id) is None:
+        raise HTTPException(status_code=422, detail="unknown camera_id")
+    if payload.source == "audio":
+        if not cfg.audio_event_enabled:
+            return {"ok": True, "dropped": "audio events disabled"}
+        if payload.label not in cfg.audio_event_labels:
+            return {"ok": True, "dropped": "audio label disabled"}
+
+    from ..services import events_db
+
+    duplicate = await asyncio.to_thread(
+        events_db.get_by_ids, settings.events_db_path, [payload.id]
+    )
+    if duplicate:
+        return {"ok": True, "event_id": payload.id, "duplicate": True}
+
+    # At most 30 signals per source/camera per minute. Stable retry IDs are
+    # deduplicated below and do not consume additional fanout, but the rate
+    # bound also protects SQLite from floods of distinct attacker IDs.
+    now = time.monotonic()
+    key = (payload.source, payload.camera_id)
+    async with _SIGNAL_RATE_LOCK:
+        recent = [stamp for stamp in _SIGNAL_RATE.get(key, []) if now - stamp < 60.0]
+        if len(recent) >= 30:
+            raise HTTPException(status_code=429, detail="signal rate limit exceeded")
+        recent.append(now)
+        _SIGNAL_RATE[key] = recent
+
+    evt = make_detection_event(
+        label=payload.label,
+        score=payload.score,
+        boxes=[],
+        camera_id=payload.camera_id,
+        event_id=payload.id,
+        ts=payload.observed_at,
+        source=payload.source,
+        correlation_id=payload.correlation_id,
+        start_ts=payload.observed_at,
+        end_ts=payload.observed_at + payload.duration_s,
+    )
+    try:
+        inserted = await event_bus.publish_once(evt)
+    except Exception:
+        log.exception("signal persistence failed (id=%s source=%s)", payload.id, payload.source)
+        raise HTTPException(status_code=503, detail="signal store unavailable")
+    if not inserted:
+        return {"ok": True, "event_id": payload.id, "duplicate": True}
+    _schedule_security_processing(evt)
+    task = asyncio.create_task(_send_push(evt))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_make_push_done_callback(payload.id))
+    return {"ok": True, "event_id": payload.id, "duplicate": False}
+
+
+@router.post("/event/finalized")
+async def publish_visit_finalized(payload: VisitFinalizedPayload) -> dict[str, object]:
+    """Update the opening visit notification once its clip is playable."""
+    from ..services import events_db
+
+    rows = await asyncio.to_thread(
+        events_db.get_by_ids, settings.events_db_path, [payload.event_id]
+    )
+    if not rows:
+        return {"ok": True, "dropped": "event missing"}
+    event = rows[0]
+    start_ts = payload.start_ts or event.get("start_ts") or event.get("ts")
+    end_ts = payload.end_ts or (float(start_ts) + payload.duration_s)
+    await asyncio.to_thread(
+        events_db.update_event_timing,
+        settings.events_db_path,
+        payload.event_id,
+        start_ts=float(start_ts),
+        end_ts=float(end_ts),
+    )
+    minutes, seconds = divmod(int(round(payload.duration_s)), 60)
+    duration = "{}:{:02d}".format(minutes, seconds)
+    decision = decide_alert(event, detection_config.get().operating_mode)
+    push_payload = {
+        "title": "Visit recorded",
+        "body": "{} clip is ready".format(duration),
+        "tag": "visit:{}".format(payload.event_id),
+        "url": "/events",
+        "event_id": payload.event_id,
+        "importance": decision.importance,
+        # This updates an alert already delivered; do not make a second sound.
+        "silent": True,
+        "require_interaction": decision.require_interaction,
+        "notification_kind": "visit_ready",
+        "actions": ["view", "protect"],
+    }
+    task = asyncio.create_task(push_service.send_matching(event, push_payload))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_make_push_done_callback(payload.event_id))
+    return {
+        "ok": True,
+        "event_id": payload.event_id,
+        "duration_s": payload.duration_s,
+        "start_ts": float(start_ts),
+        "end_ts": float(end_ts),
+    }
+
+
+def _schedule_security_processing(evt: dict) -> None:
+    """Run package tracking and automations after canonical publication."""
+    from ..services.security_automation import process_canonical_event
+
+    task = asyncio.create_task(process_canonical_event(evt))
+    _BACKGROUND_TASKS.add(task)
+
+    def _done(done: asyncio.Task) -> None:
+        _BACKGROUND_TASKS.discard(done)
+        if done.cancelled():
+            return
+        exc = done.exception()
+        if exc is not None:
+            log.error(
+                "security event processing failed (event_id=%s): %s",
+                evt.get("id"), exc, exc_info=exc,
+            )
+
+    task.add_done_callback(_done)
+
+
 def _make_push_done_callback(event_id):
     """Build the done-callback for a `_send_push` task (logging-plan §2).
 
@@ -745,6 +1086,21 @@ def _make_push_done_callback(event_id):
             )
 
     return _done
+
+
+def _notification_actions(evt: dict) -> list[str]:
+    """Return the two most useful safe lock-screen action codes."""
+    cfg = detection_config.get()
+    if (
+        (evt.get("source") == "doorbell" or evt.get("label") == "doorbell")
+        and cfg.audio_enabled
+    ):
+        return ["view", "talk"]
+    if evt.get("package_state") or str(evt.get("label", "")).startswith("package_"):
+        return ["view", "protect"]
+    # Physical deterrence is never a lock-screen action: it requires an
+    # owner foreground confirmation and a fresh capability check.
+    return ["view", "mark_seen"]
 
 
 async def _send_push(evt: dict) -> None:
@@ -769,6 +1125,24 @@ async def _send_push(evt: dict) -> None:
     person_names = evt.get("person_names") or []
     label = evt.get("label", "")
     score = float(evt.get("score", 0.0))
+    if person_name:
+        from ..services.security_store import security_store
+
+        preference = security_store.read()["face_preferences"].get(person_name)
+        alerts_enabled = not (
+            preference == "none"
+            or isinstance(preference, dict) and preference.get("alerts_enabled") is False
+        )
+        if not alerts_enabled:
+            log.info("push suppressed by face preference (event_id=%s)", evt.get("id"))
+            return
+    decision = decide_alert(evt, detection_config.get().operating_mode)
+    if decision.importance == "suppressed":
+        log.info(
+            "push suppressed by alert policy (event_id=%s reason=%s)",
+            evt.get("id"), decision.reason,
+        )
+        return
     if person_names and len(person_names) > 1:
         if len(person_names) == 2:
             who = "{} & {}".format(
@@ -811,8 +1185,14 @@ async def _send_push(evt: dict) -> None:
     push_payload: dict[str, object] = {
         "title": title,
         "body": "{} · {}%".format(camera_label, int(score * 100)),
-        "tag": "detection",
+        # Stable visit tag means a later clip-ready/final-summary push updates
+        # this notification instead of stacking another alert for one visit.
+        "tag": "visit:{}".format(evt.get("id")),
         "url": "/events",
+        "importance": decision.importance,
+        "reason": decision.reason,
+        "require_interaction": decision.require_interaction,
+        "silent": decision.silent,
         # iter-276 (widget-usability-auditor C1 server side): include
         # the event id so the SW push handler can use it as the
         # Notification.tag, preventing detection bursts from silently
@@ -820,6 +1200,20 @@ async def _send_push(evt: dict) -> None:
         # Worker generates the id pre-emit (iter-247) so it's always
         # present on the bus payload.
         "event_id": evt.get("id"),
+        "notification_kind": (
+            "package"
+            if evt.get("package_state")
+            else "audio_alert"
+            if evt.get("source") == "audio"
+            else "doorbell"
+            if evt.get("source") == "doorbell"
+            else "tamper"
+            if evt.get("source") == "tamper"
+            else "system_alert"
+            if evt.get("source") == "system"
+            else "detection"
+        ),
+        "actions": _notification_actions(evt),
     }
     thumb_url = evt.get("thumb_url")
     if thumb_url:

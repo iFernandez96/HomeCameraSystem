@@ -36,6 +36,9 @@ vi.mock('./lib/api', () => {
     getCameras: vi.fn().mockResolvedValue({
       cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
     }),
+    getCurrentPackages: vi.fn().mockResolvedValue({ v: 1, items: [] }),
+    triggerDeterrence: vi.fn().mockResolvedValue({ ok: true }),
+    listVisitStories: vi.fn().mockResolvedValue({ items: [] }),
     getUnreadCount: vi.fn().mockResolvedValue(0),
     // W2 scroll-reset test navigates to the real Events page, which
     // pulls in the rest of the events API surface at module scope —
@@ -161,6 +164,26 @@ describe('App routing', () => {
     const nav = await screen.findByRole('navigation', { name: 'Bottom navigation' })
     expect(nav).toBeInTheDocument()
     expect(document.body.textContent?.trim().length).toBeGreaterThan(0)
+  })
+
+  it('GIVEN the public event-search path WHEN the app mounts THEN the routed search page renders', async () => {
+    goTo('/events/search')
+
+    render(<App />)
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Search events' }),
+    ).toBeInTheDocument()
+  })
+
+  it('GIVEN the public visits path WHEN the app mounts THEN the visit-story list renders', async () => {
+    goTo('/events/visits')
+
+    render(<App />)
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Visits' }),
+    ).toBeInTheDocument()
   })
 
   it('GIVEN the legacy /live bookmark WHEN the app mounts THEN it redirects to Home, not a blank page', async () => {

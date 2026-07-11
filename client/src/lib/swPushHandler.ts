@@ -26,6 +26,47 @@ export type PushPayload = {
    *  fanout; SW forwards to setAppBadge so a closed PWA's badge
    *  doesn't stale. */
   unread_count?: unknown
+  importance?: unknown
+  require_interaction?: unknown
+  silent?: unknown
+  /** Optional server-selected notification action codes. */
+  actions?: unknown
+  deterrence_duration_s?: unknown
+}
+
+export type PushActionCode =
+  | 'view'
+  | 'dismiss'
+  | 'protect'
+  | 'talk'
+  | 'light'
+  | 'warning'
+  | 'siren'
+
+const ACTION_TITLES: Record<PushActionCode, string> = {
+  view: 'View',
+  dismiss: 'Mark seen',
+  protect: 'Protect clip',
+  talk: 'Talk',
+  light: 'Turn on light',
+  warning: 'Play warning',
+  siren: 'Sound siren',
+}
+
+function actionCodes(value: unknown): PushActionCode[] {
+  if (!Array.isArray(value)) return []
+  const result: PushActionCode[] = []
+  for (const item of value) {
+    const code = item === 'mark_seen' ? 'dismiss' : item
+    if (
+      typeof code === 'string' &&
+      Object.hasOwn(ACTION_TITLES, code) &&
+      !result.includes(code as PushActionCode)
+    ) {
+      result.push(code as PushActionCode)
+    }
+  }
+  return result
 }
 
 type PushReceiptFields = {
@@ -168,7 +209,8 @@ export function buildNotification(
     null
   // iter-275 per-event tag fallback chain (eventId first so detection bursts
   // stack per-event; else the caller-supplied tag; else the generic default).
-  const tag = eventId || (typeof data.tag === 'string' && data.tag) || 'event'
+  const tag =
+    (typeof data.tag === 'string' && data.tag) || eventId || 'event'
   const url = typeof data.url === 'string' ? data.url : '/events'
   const image = typeof data.image === 'string' ? data.image : undefined
 
@@ -180,7 +222,15 @@ export function buildNotification(
     // iter-332: event_id (only when a real event) lets the notificationclick
     // "Mark seen" branch POST /api/events/{id}/seen. null for non-event
     // notifications (timelapse), which have nothing to mark seen.
-    data: { url, event_id: eventId },
+    data: {
+      url,
+      event_id: eventId,
+      deterrence_duration_s:
+        typeof data.deterrence_duration_s === 'number'
+          ? data.deterrence_duration_s
+          : 15,
+    },
+    silent: data.silent === true,
   }
   if (image) {
     ;(options as unknown as { image: string }).image = image
@@ -197,9 +247,18 @@ export function buildNotification(
   // carry an event_id). A user-directed notification (timelapse ready /
   // failed) or a test push has no event to mark seen.
   if (eventId) {
+    const requested = actionCodes(data.actions)
+    const selected: PushActionCode[] =
+      requested.length > 0 ? requested : ['view', 'dismiss']
+    const maxActions = (() => {
+      const ctor = globalThis.Notification as typeof Notification & { maxActions?: number }
+      return typeof ctor?.maxActions === 'number' ? Math.max(0, ctor.maxActions) : 2
+    })()
     ;(options as unknown as { actions: NotificationAction[] }).actions = [
-      { action: 'view', title: 'View' },
-      { action: 'dismiss', title: 'Mark seen' },
+      ...selected.slice(0, maxActions).map((action) => ({
+        action,
+        title: ACTION_TITLES[action],
+      })),
     ]
     // iter-342 (widget-usability C2 from iter-333 broad audit):
     // requireInteraction keeps the notification pinned in the shade
@@ -208,8 +267,8 @@ export function buildNotification(
     // ~5s and the user never sees the iter-332 action buttons in
     // the brief render window. iOS 16.4 silently ignores both
     // `actions` and `requireInteraction` — graceful no-op there.
-    ;(options as unknown as { requireInteraction: boolean })
-      .requireInteraction = true
+    ;(options as unknown as { requireInteraction: boolean }).requireInteraction =
+      data.require_interaction !== false
   }
   return { title, options }
 }

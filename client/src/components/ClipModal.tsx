@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   ZOOM_IDENTITY,
   isZoomed,
@@ -8,13 +9,22 @@ import {
   type ZoomState,
 } from '../lib/pinchZoom'
 import {
+  addIncidentEvents,
+  createIncident,
+  createClipShare,
   fetchEventClipStatus,
   fetchEventTracks,
   probeEventClip,
   searchEvents,
+  setEventProtection,
+  submitIdentityFeedback,
+  listIncidents,
+  type IncidentSummary,
   type EventClipStatus,
 } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { isOwner } from '../lib/roles'
+import { useToast } from '../lib/toast'
 import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
 import {
   absoluteTime,
@@ -114,6 +124,9 @@ export function ClipModal({
   const [event, setEvent] = useState(eventProp)
   const [syncedEventId, setSyncedEventId] = useState(eventProp.id)
   const { user } = useAuth()
+  const { showToast } = useToast()
+  const canManage = isOwner(user)
+  const [eventAction, setEventAction] = useState<'protect' | 'share' | null>(null)
   useEventViewTelemetry(user?.username, event.id)
   const clipUrl = `/api/events/${event.id}/clip`
   // Event-view jank fix round 2 (2026-07-08): the worker marks
@@ -126,6 +139,43 @@ export function ClipModal({
   // optimistic — only an explicit null is the worker saying "no clip
   // of its own, by design".
   const hasOwnClip = event.clip_url !== null
+
+  const toggleProtection = async () => {
+    if (eventAction) return
+    setEventAction('protect')
+    try {
+      const result = await setEventProtection(event.id, !event.protected)
+      setEvent((current) => ({ ...current, protected: result.protected }))
+      showToast(result.protected ? 'Clip protected from cleanup' : 'Clip protection removed', 'success')
+    } catch (error) {
+      log.warn('clipModal:protection-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not change clip protection', 'error')
+    } finally {
+      setEventAction(null)
+    }
+  }
+
+  const shareSecurely = async () => {
+    if (eventAction) return
+    setEventAction('share')
+    try {
+      const grant = await createClipShare(event.id)
+      const url = new URL(grant.url, window.location.origin).toString()
+      const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> }
+      if (typeof nav.share === 'function') {
+        await nav.share({ title: 'HomeCam clip', url })
+      } else {
+        await navigator.clipboard.writeText(url)
+        showToast('Secure one-hour link copied', 'success')
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      log.warn('clipModal:share-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not create secure share link', 'error')
+    } finally {
+      setEventAction(null)
+    }
+  }
   // Track which clip URL has errored. If the prop event changes
   // (parent passed a new event), `clipErrored` naturally becomes
   // false because `erroredClipUrl !== clipUrl`.
@@ -346,6 +396,14 @@ export function ClipModal({
   // there's a single source of truth instead of two derivations drifting.
   const matchedNames = recognizedNames(event)
   const personLabel = matchedNames.length > 0 ? matchedNames[0] : null
+  const [feedbackFor, setFeedbackFor] = useState<string | null>(null)
+  const [feedbackMode, setFeedbackMode] = useState<'idle' | 'correcting' | 'done'>('idle')
+  const [correctName, setCorrectName] = useState('')
+  const [feedbackBusy, setFeedbackBusy] = useState(false)
+  const [incidentOptions, setIncidentOptions] = useState<IncidentSummary[] | null>(null)
+  const [incidentChoice, setIncidentChoice] = useState('__new__')
+  const [incidentTitle, setIncidentTitle] = useState('')
+  const [incidentBusy, setIncidentBusy] = useState(false)
   const identity = useMemo(() => identityOf(event), [event])
   // resolveIdColor reads getComputedStyle once per identity change (NOT
   // per animation frame) — the resolved rgb/hex string is what the canvas
@@ -356,6 +414,68 @@ export function ClipModal({
   // `${personName} score%`) by handing it a display name even though no
   // real name was recognized, rather than adding a second labeling mode.
   const boxLabelName = personLabel ?? (identity.kind === 'person' ? 'Someone' : null)
+
+  const sendIdentityFeedback = async (
+    verdict: 'correct' | 'incorrect',
+    corrected?: string,
+  ) => {
+    if (feedbackBusy) return
+    setFeedbackBusy(true)
+    try {
+      const result = await submitIdentityFeedback(event.id, {
+        verdict,
+        ...(corrected?.trim() ? { correct_name: corrected.trim() } : {}),
+      })
+      setEvent(result.event)
+      setFeedbackFor(event.id)
+      setFeedbackMode('done')
+      setCorrectName('')
+      showToast('Recognition feedback saved', 'success')
+    } catch (error) {
+      log.warn('clipModal:identity-feedback-failed', {
+        eventId: event.id,
+        ...errFields(error),
+      })
+      showToast('Could not save recognition feedback', 'error')
+    } finally {
+      setFeedbackBusy(false)
+    }
+  }
+
+  const openIncidentPicker = async () => {
+    if (incidentBusy) return
+    setIncidentBusy(true)
+    try {
+      const result = await listIncidents()
+      setIncidentOptions(result.items)
+      setIncidentChoice(result.items[0]?.id ?? '__new__')
+      setIncidentTitle(`Incident ${new Date(event.ts * 1000).toLocaleDateString()}`)
+    } catch (error) {
+      log.warn('clipModal:incident-list-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not load incidents', 'error')
+    } finally {
+      setIncidentBusy(false)
+    }
+  }
+
+  const addToIncident = async () => {
+    if (incidentOptions === null || incidentBusy) return
+    setIncidentBusy(true)
+    try {
+      const incident = incidentChoice === '__new__'
+        ? await createIncident(incidentTitle.trim() || 'New incident')
+        : incidentOptions.find((item) => item.id === incidentChoice)
+      if (!incident) throw new Error('incident unavailable')
+      await addIncidentEvents(incident.id, [event.id])
+      setIncidentOptions(null)
+      showToast(`Added to ${incident.title}`, 'success')
+    } catch (error) {
+      log.warn('clipModal:incident-add-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not add event to incident', 'error')
+    } finally {
+      setIncidentBusy(false)
+    }
+  }
 
   // Playroom Modern (Task 7, "More from tonight"): sibling events within
   // ±2h of the active event, so a household member reviewing one clip can
@@ -1260,6 +1380,31 @@ export function ClipModal({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {canManage ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void toggleProtection()}
+                disabled={eventAction !== null}
+                aria-label={event.protected ? 'Remove clip protection' : 'Protect clip from cleanup'}
+                aria-pressed={event.protected === true}
+                className="inline-flex min-h-11 items-center rounded-full px-3 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
+              >
+                {event.protected ? 'Protected' : 'Keep'}
+              </button>
+              {hasOwnClip ? (
+                <button
+                  type="button"
+                  onClick={() => void shareSecurely()}
+                  disabled={eventAction !== null}
+                  aria-label="Share clip securely for one hour"
+                  className="inline-flex min-h-11 items-center rounded-full px-3 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                >
+                  Share
+                </button>
+              ) : null}
+            </>
+          ) : null}
           <button
             ref={closeRef}
             type="button"
@@ -1383,7 +1528,42 @@ export function ClipModal({
                   with {matchedNames.slice(1).join(' & ')}
                 </div>
               ) : null}
+              {matchedNames[0] ? (
+                <Link
+                  to={`/people/${encodeURIComponent(matchedNames[0])}`}
+                  className="mt-2 inline-flex min-h-11 items-center text-xs font-semibold text-[var(--color-accent-deep)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]"
+                >
+                  Person details
+                </Link>
+              ) : null}
             </div>
+            {canManage ? (
+              <div className="min-w-0 text-right">
+                {feedbackFor === event.id && feedbackMode === 'done' ? (
+                  <p role="status" className="text-xs font-semibold text-[var(--color-success)]">Feedback saved</p>
+                ) : feedbackFor === event.id && feedbackMode === 'correcting' ? (
+                  <div className="w-48 max-w-full space-y-2 text-left">
+                    <label className="block text-xs text-[var(--color-text-secondary)]">
+                      Correct person, or leave blank for unknown
+                      <input
+                        value={correctName}
+                        onChange={(feedbackEvent) => setCorrectName(feedbackEvent.target.value)}
+                        className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-base text-[var(--color-text-primary)]"
+                      />
+                    </label>
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <button type="button" className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)]" onClick={() => setFeedbackMode('idle')}>Cancel</button>
+                      <button type="button" disabled={feedbackBusy} className="min-h-11 rounded-full bg-[var(--color-ink)] px-3 text-xs font-semibold text-[var(--color-on-ink)] disabled:opacity-60" onClick={() => void sendIdentityFeedback('incorrect', correctName)}>Save correction</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div aria-label="Recognition feedback" className="flex flex-wrap justify-end gap-1">
+                    <button type="button" disabled={feedbackBusy} className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-success)] hover:bg-[var(--color-success-bg)] disabled:opacity-60" onClick={() => void sendIdentityFeedback('correct')}>Correct</button>
+                    <button type="button" className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]" onClick={() => { setFeedbackFor(event.id); setFeedbackMode('correcting') }}>Wrong person</button>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
         {/* Content dedupe pass (Frank phone-round finding): the header
@@ -1406,6 +1586,35 @@ export function ClipModal({
             {relativeTime(event.ts, nowMs)}
           </div>
         </div>
+        {canManage ? (
+          <div className="space-y-2 border-b border-[var(--color-border-subtle)] px-5 py-4">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
+              Incident
+            </div>
+            {incidentOptions === null ? (
+              <button type="button" disabled={incidentBusy} onClick={() => void openIncidentPicker()} className="min-h-11 rounded-full border border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-primary)] disabled:opacity-60">
+                {incidentBusy ? 'Loading…' : 'Add to incident'}
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <label className="block text-xs text-[var(--color-text-secondary)]">
+                  Destination
+                  <select value={incidentChoice} onChange={(incidentEvent) => setIncidentChoice(incidentEvent.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-base text-[var(--color-text-primary)]">
+                    {incidentOptions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+                    <option value="__new__">Create new incident…</option>
+                  </select>
+                </label>
+                {incidentChoice === '__new__' ? (
+                  <label className="block text-xs text-[var(--color-text-secondary)]">New incident title<input value={incidentTitle} onChange={(incidentEvent) => setIncidentTitle(incidentEvent.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-base text-[var(--color-text-primary)]" /></label>
+                ) : null}
+                <div className="flex flex-wrap gap-1">
+                  <button type="button" onClick={() => setIncidentOptions(null)} className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)]">Cancel</button>
+                  <button type="button" disabled={incidentBusy || (incidentChoice === '__new__' && !incidentTitle.trim())} onClick={() => void addToIncident()} className="min-h-11 rounded-full bg-[var(--color-ink)] px-3 text-xs font-semibold text-[var(--color-on-ink)] disabled:opacity-60">Add event</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
         {/* Playroom Modern (Task 7): "More from tonight" — siblings within
             ±2h of the active event. Tapping a row swaps the WHOLE modal
             (video, evidence pane, and this rail itself) to that event

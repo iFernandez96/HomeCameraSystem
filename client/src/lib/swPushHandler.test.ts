@@ -108,6 +108,43 @@ describe('buildNotification', () => {
     expect(options.tag).toBe('detection')
   })
 
+  it('given a visit tag and event id, when built, then the stable visit tag wins for notification updates', () => {
+    const { options } = buildNotification({
+      event_id: 'evt-1',
+      tag: 'visit:evt-1',
+    })
+
+    expect(options.tag).toBe('visit:evt-1')
+  })
+
+  it('given an urgent alert, when built, then it is audible and remains visible', () => {
+    const { options } = buildNotification({
+      event_id: 'evt-urgent',
+      require_interaction: true,
+      silent: false,
+    })
+
+    expect(options.silent).toBe(false)
+    expect(
+      (options as unknown as { requireInteraction?: boolean })
+        .requireInteraction,
+    ).toBe(true)
+  })
+
+  it('given a routine known-person alert, when built, then it is silent and non-persistent', () => {
+    const { options } = buildNotification({
+      event_id: 'evt-routine',
+      silent: true,
+      require_interaction: false,
+    })
+
+    expect(options.silent).toBe(true)
+    expect(
+      (options as unknown as { requireInteraction?: boolean })
+        .requireInteraction,
+    ).toBe(false)
+  })
+
   it('given a payload with no event_id/id/tag, when built, then tag defaults to "event"', () => {
     // act
     const { options } = buildNotification({})
@@ -391,5 +428,81 @@ describe('buildNotification — iter-332 actions', () => {
     expect((options.data as { url?: string }).url).toBe('/settings')
     expect((options.data as { event_id?: unknown }).event_id).toBeNull()
     expect(actions).toBeUndefined()
+  })
+
+  it('given server-selected urgent actions, when built, then validated actions keep their requested order and browser limit', () => {
+    // arrange
+    vi.stubGlobal('Notification', { maxActions: 3 })
+
+    // act
+    const { options } = buildNotification({
+      event_id: 'evt-urgent',
+      actions: ['protect', 'talk', 'siren', 'not-a-real-action'],
+      deterrence_duration_s: 20,
+    })
+    const actions = (
+      options as unknown as {
+        actions: Array<{ action: string; title: string }>
+      }
+    ).actions
+
+    // assert
+    expect(actions).toEqual([
+      { action: 'protect', title: 'Protect clip' },
+      { action: 'talk', title: 'Talk' },
+      { action: 'siren', title: 'Sound siren' },
+    ])
+    expect(options.data).toMatchObject({
+      event_id: 'evt-urgent',
+      deterrence_duration_s: 20,
+    })
+  })
+
+  it('given the exact server view and mark_seen payload, when built, then mark_seen maps to the local authenticated dismiss handler', () => {
+    const { options } = buildNotification({
+      event_id: 'evt-server-actions',
+      actions: ['view', 'mark_seen'],
+    })
+
+    expect(
+      (options as unknown as { actions: Array<{ action: string; title: string }> })
+        .actions,
+    ).toEqual([
+      { action: 'view', title: 'View' },
+      { action: 'dismiss', title: 'Mark seen' },
+    ])
+  })
+
+  it('given siren in one of Android default action slots, when built, then it remains a foreground action code rather than actuating in the push handler', () => {
+    vi.stubGlobal('Notification', { maxActions: 2 })
+
+    const { options } = buildNotification({
+      event_id: 'evt-siren',
+      actions: ['view', 'siren', 'mark_seen'],
+    })
+
+    expect(
+      (options as unknown as { actions: Array<{ action: string; title: string }> })
+        .actions,
+    ).toEqual([
+      { action: 'view', title: 'View' },
+      { action: 'siren', title: 'Sound siren' },
+    ])
+  })
+
+  it('given only unknown server actions, when built, then safe View and Mark seen actions are used', () => {
+    // act
+    const { options } = buildNotification({
+      event_id: 'evt-safe-fallback',
+      actions: ['snooze', 'launch-missiles'],
+    })
+
+    // assert
+    expect(
+      (options as unknown as { actions: Array<{ action: string }> }).actions,
+    ).toEqual([
+      { action: 'view', title: 'View' },
+      { action: 'dismiss', title: 'Mark seen' },
+    ])
   })
 })

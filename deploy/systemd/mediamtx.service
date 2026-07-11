@@ -33,7 +33,15 @@ Type=simple
 User=israel
 Group=israel
 WorkingDirectory=/home/israel/HomeCameraSystem
+# Optional, root-managed audio hardware activation. An absent file leaves all
+# speaker output disabled; never place browser media grants in this file.
+EnvironmentFile=-/etc/homecam/mediamtx.env
 ExecStart=/home/israel/HomeCameraSystem/mediamtx /home/israel/HomeCameraSystem/deploy/mediamtx.yml
+# Continuous archive segments contain private camera frames. MediaMTX creates
+# them with os.Create(0666), so force 0600 files (and 0700 newly-created
+# directories) instead of inheriting the host's usual world-readable 0022.
+# The FastAPI container runs as root and can still read the bind mount.
+UMask=0077
 Restart=on-failure
 # iter (camera-recovery 2026-06-20): 5s→15s. A short delay hammers a still-
 # wedged Argus on restart-on-failure (deep research: use an explicit longer

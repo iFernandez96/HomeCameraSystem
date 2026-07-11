@@ -8,6 +8,15 @@
 logLevel: info
 logDestinations: [stdout]
 
+# Every MediaMTX action is authorized by FastAPI. The callback itself is
+# unauthenticated at HTTP level but accepts requests only from the exact
+# host-to-container source addresses configured in
+# MEDIAMTX_AUTH_TRUSTED_CALLERS. Keep the exclusion list empty: even local
+# publishers are evaluated by the explicit loopback RTSP policy.
+authMethod: http
+authHTTPAddress: http://127.0.0.1:8000/api/_internal/mediamtx-auth
+authHTTPExclude: []
+
 # Protocols we don't use — disable to reduce attack surface.
 rtmp: no
 hls: no
@@ -34,6 +43,10 @@ webrtcEncryption: no
 # Allow the PWA's origin to issue WHEP requests. (key was webrtcAllowOrigin
 # pre-v1.18 — current MediaMTX uses webrtcAllowOrigins, plural.)
 webrtcAllowOrigins: ['*']
+# Tailscale Serve / the local reverse proxy forwards the original client in
+# X-Forwarded-For. Trust only loopback proxy hops so auth decisions never use a
+# caller-supplied forwarding header from a direct remote connection.
+webrtcTrustedProxies: ['127.0.0.1/32', '::1/128']
 # iter-265 (live-cam fix): announce the Jetson's Tailscale IP as an
 # additional ICE host candidate. Without this, MediaMTX only
 # advertises its LAN IP (10.0.0.9) — phones connecting through the
@@ -74,8 +87,44 @@ webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 
 paths:
+  # Browser microphone ingress. The PWA publishes Opus through WHIP; when a
+  # speaker is installed this consumer pulls the path to ALSA. With no
+  # publisher or no configured hardware it remains dormant.
+  talk:
+    source: publisher
+    runOnReady: /home/israel/HomeCameraSystem/deploy/run-talk-speaker.sh
+    # Never turn an absent/disabled speaker into a restart loop. The hook also
+    # requires an explicit enable marker and ALSA device before it consumes.
+    runOnReadyRestart: no
+
+  # Optional camera-side microphone publication. The hardware helper
+  # deploy/run-camera-microphone.sh publishes Opus here when configured.
+  listen:
+    source: publisher
+
   cam:
     source: publisher
+
+    # Short-retention continuous history (security timeline). MediaMTX writes
+    # the already-encoded H.264 stream as fragmented MP4, so this adds disk I/O
+    # only: no decoder, no third encoder, and no extra CUDA/TensorRT context.
+    # Five-minute segments bound seek/export work and let the server render
+    # honest recording gaps when the publisher was unavailable. At the current
+    # ~2.5 Mbps camera bitrate, two hours is nominally roughly 2.3 GB. MediaMTX
+    # v1.18's asynchronous cleaner can briefly retain close to three hours
+    # (~3.4 GB), which is covered by the server's 4 GiB minimum-free guard.
+    # Event clips continue to follow their independent protected/retention policy.
+    # Privacy masks are upstream in run-camera-pipeline.sh, so recorded segments
+    # contain the same redacted pixels as Live and event clips.
+    record: yes
+    # Unix-epoch filenames avoid local-time/DST ambiguity and make the FastAPI
+    # timeline index cheap to parse. MediaMTX adds the .mp4 extension.
+    recordPath: ./recordings/continuous/%path/%s
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordMaxPartSize: 50M
+    recordSegmentDuration: 5m
+    recordDeleteAfter: 2h
 
     # Jetson Nano 2GB + Arducam IMX477 (1/2.3", 12.3MP) + 96° M12 wide-angle
     # CCTV lens (F2.0, 3MP-rated). Camera swap landed iter-356.31; DTB

@@ -79,3 +79,23 @@ def test_does_not_match_prefix_requests():
     f = _SuppressNoisyAccess()
     rec = _make_record('10.0.0.50:1234 - "GET /api/status-page HTTP/1.1" 404')
     assert f.filter(rec) is True
+
+
+def test_drops_every_shared_clip_bearer_request_line():
+    f = _SuppressNoisyAccess()
+    token = "opaque-share-token-that-must-not-enter-journald"
+    for method, status in (("GET", 200), ("HEAD", 405), ("DELETE", 405)):
+        rec = _make_record(
+            '10.0.0.50:1234 - "{} /api/shared/{} HTTP/1.1" {}'.format(
+                method, token, status
+            )
+        )
+        assert f.filter(rec) is False
+
+
+def test_keeps_non_token_shared_prefix_lookalike():
+    f = _SuppressNoisyAccess()
+    rec = _make_record(
+        '10.0.0.50:1234 - "GET /api/shared HTTP/1.1" 404'
+    )
+    assert f.filter(rec) is True

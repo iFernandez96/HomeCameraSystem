@@ -56,11 +56,23 @@ async def test_given_canonical_event_without_thumb_when_push_payload_built_then_
         "url",
         "event_id",
         "unread_count",
+        "importance",
+        "reason",
+        "require_interaction",
+        "silent",
+        "notification_kind",
+        "actions",
     }
+    assert payload["notification_kind"] == "detection"
+    assert payload["actions"] == ["view", "mark_seen"]
     assert "image" not in payload
     assert payload["title"] == "Person detected"
     assert payload["body"] == "Front Door · 91%"
-    assert payload["tag"] == "detection"
+    assert payload["tag"] == "visit:harness_p4_event_001"
     assert payload["url"] == "/events"
     assert payload["event_id"] == "harness_p4_event_001"
     assert payload["unread_count"] == 1
+    assert payload["importance"] == "notable"
+    assert payload["reason"] == "unknown_person"
+    assert payload["require_interaction"] is False
+    assert payload["silent"] is False

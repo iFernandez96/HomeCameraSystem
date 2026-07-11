@@ -510,6 +510,19 @@ def validate_restored_state(staging: RestoreStaging) -> None:
 
         DetectionConfigStore(path=detection_config_path).get()
 
+    security_state_path = role_paths.get("security_state")
+    if security_state_path is not None:
+        payload = _require_json_type(security_state_path, dict)
+        # Generated exports are deliberately absent from backups. Never revive
+        # their absolute paths or transient reservations from a restored state
+        # file; a normal server restart may preserve live ready jobs, while a
+        # restore always resets this explicitly ephemeral collection.
+        if isinstance(payload.get("timeline_exports"), dict) and payload[
+            "timeline_exports"
+        ]:
+            payload["timeline_exports"] = {}
+            _atomic_write_json(security_state_path, payload)
+
     push_subs_path = role_paths.get("push_subs")
     if push_subs_path is not None:
         _require_json_type(push_subs_path, list)
@@ -630,6 +643,23 @@ def _require_json_type(path: Path, expected_type: type) -> object:
     if not isinstance(payload, expected_type):
         raise RestoreBlocked("invalid restored json shape", path=path)
     return payload
+
+
+def _atomic_write_json(path: Path, payload: object) -> None:
+    temp = path.with_suffix(path.suffix + ".normalize.tmp")
+    data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    try:
+        with temp.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _validate_vapid_keys(private_path: Path | None, public_path: Path | None) -> None:

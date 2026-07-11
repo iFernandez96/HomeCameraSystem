@@ -47,11 +47,16 @@ import pytest
 _GUARDED_MODULES = (
     "detection/detect.py",
     "detection/applog.py",
+    "detection/activity_rules.py",
+    "detection/audio_events.py",
+    "detection/audio_watch.py",
     "detection/box_norm.py",
     "detection/backfill_tracks.py",
     "detection/camera_ident.py",
     "detection/clip_state.py",
     "detection/decision_ledger.py",
+    "detection/doorbell.py",
+    "detection/scene_guard.py",
     "detection/shadow_presence.py",
     "detection/tools/shadow_diff.py",
     "detection/memory_guard.py",
@@ -70,10 +75,12 @@ _GUARDED_MODULES = (
     "detection/visit_runtime.py",
     "detection/wedge_diagnostics.py",
     "detection/sdnotify.py",
+    "detection/signal_retry.py",
     "detection/face_recog/recognizer.py",
     "detection/face_recog/encode_known_faces.py",
     "detection/face_recog/capture.py",
     "detection/face_recog/detector.py",
+    "detection/face_recog/quality.py",
 )
 
 # Builtins whose subscripted form (`list[X]`) is PEP 585 — Python 3.9+

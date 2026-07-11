@@ -31,7 +31,16 @@
         "clip_url": {"type": ["string", "null"], "pattern": "^/api/events/[A-Za-z0-9_-]+/clip$"},
         "id": {"type": ["string", "null"], "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$"},
         "person_name": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
-        "person_names": {"type": ["array", "null"], "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 64}}
+        "person_names": {"type": ["array", "null"], "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 64}},
+        "source": {"type": "string", "const": "vision", "default": "vision"},
+        "rule_id": {"type": ["string", "null"], "pattern": "^[a-z0-9_]{1,32}$"},
+        "rule_name": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+        "correlation_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "related_event_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "visit_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "start_ts": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "end_ts": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "package_state": {"type": ["string", "null"], "enum": ["delivered", "collected", null]}
       }
     },
     "Heartbeat": {

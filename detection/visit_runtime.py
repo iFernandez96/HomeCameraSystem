@@ -31,6 +31,7 @@ import json
 import os
 import shutil
 import threading
+import time
 
 import applog
 import clip_state
@@ -431,7 +432,9 @@ class VisitRunner(object):
 
     Side effects are INJECTED so the whole class is offline-testable:
 
-      * ``post_event(visit_id, key, start_ts)`` — POST the open event today
+      * ``post_event(segment_id, key, start_ts, root_visit_id=...)`` — POST the
+        open event today. The segment id remains the event/clip id while the
+        root id groups capped continuations into one physical visit story.
         (clip_url still points at ``/api/events/<id>/clip``; R4's no-clip-url-
         at-open is S6's job, not here). When observe() supplies cuda_img, the
         live detect.py adapter may save the first-frame thumb before posting.
@@ -443,16 +446,24 @@ class VisitRunner(object):
 
     The on-disk ``.open_visits.json`` record per live visit carries the fields
     recovery needs: ``state``, ``key``, ``start_ts``, ``last_extend``,
-    ``segment_index``, ``absence_finalize_s``, ``last_seen``.
+    ``segment_index``, ``root_visit_id``, ``absence_finalize_s``, ``last_seen``.
     """
 
     def __init__(self, recordings_dir, post_event, copy_segments,
                  finalize_visit, tracker=None, spawn=None,
-                 free_space=None, min_free_bytes=WORKER_MIN_FREE_BYTES):
+                 free_space=None, min_free_bytes=WORKER_MIN_FREE_BYTES,
+                 on_finalized=None, notification_attempts=5,
+                 notification_sleep=None, prepare_open_event=None):
         self.recordings_dir = str(recordings_dir)
         self._post_event = post_event
         self._copy_segments = copy_segments
         self._finalize_visit = finalize_visit
+        self._on_finalized = on_finalized
+        self._prepare_open_event = prepare_open_event
+        self._notification_attempts = max(1, int(notification_attempts))
+        self._notification_sleep = (
+            notification_sleep if notification_sleep is not None else time.sleep
+        )
         # Disk floor (plan S4.5 / B2). ``free_space(path) -> int free bytes`` is
         # injectable for offline tests; default wraps ``shutil.disk_usage`` so
         # the live worker reads the real card. ``min_free_bytes`` is the refuse
@@ -484,6 +495,7 @@ class VisitRunner(object):
         # observe / on tick-driven paths (which never open).
         self._pending_boxes = None
         self._pending_cuda_img = None
+        self._pending_event_meta = None
         # Observability counters (plan S6). Incremented at their main-thread
         # choke points and mirrored onto the metrics heartbeat by detect.py.
         #  - visits_finalized: visits handed to a (de-duped) finalize.
@@ -524,7 +536,7 @@ class VisitRunner(object):
         self._handle(transitions, now)
 
     def observe(self, key, box, now, pre_roll_s, absence_finalize_s,
-                max_visit_s, boxes=None, cuda_img=None):
+                max_visit_s, boxes=None, cuda_img=None, event_meta=None):
         """Present-frame observe: feed the detection into the tracker and
         handle its open/extend/finalize transitions.
 
@@ -537,6 +549,7 @@ class VisitRunner(object):
         """
         self._pending_boxes = boxes
         self._pending_cuda_img = cuda_img
+        self._pending_event_meta = event_meta
         transitions = self.tracker.observe(
             key, box, now, pre_roll_s, absence_finalize_s, max_visit_s,
         )
@@ -561,6 +574,7 @@ class VisitRunner(object):
 
     def _on_open(self, tr, now):
         visit_id = tr["visit_id"]
+        root_visit_id = tr.get("root_visit_id") or visit_id
         key = tr["key"]
         start_ts = tr["start_ts"]
         # Disk floor (plan S4.5 / B2): REFUSE to open a new visit when free
@@ -587,6 +601,7 @@ class VisitRunner(object):
             "state": STATE_OPEN,
             "key": key,
             "visit_id": visit_id,
+            "root_visit_id": root_visit_id,
             "start_ts": start_ts,
             "last_extend": start_ts,
             "last_seen": now,
@@ -605,22 +620,55 @@ class VisitRunner(object):
             last_seen=now,
             last_extend=start_ts,
             segment_index=rec["segment_index"],
+            root_visit_id=root_visit_id,
         )
         # POST the open event today (clip_url points at /api/events/<id>/clip;
         # the no-clip-url-at-open + clip-ready WS update is S6/R4, not here).
         # _pending_boxes is the frame's server-valid box list from observe()
         # (the server requires >=1 box); None on a tick-driven/test path.
+        event_meta = self._pending_event_meta
+        if self._prepare_open_event is not None:
+            try:
+                prepared = self._prepare_open_event(
+                    visit_id, key, start_ts, self._pending_boxes,
+                    self._pending_cuda_img, rec["segment_index"],
+                )
+                if isinstance(prepared, dict):
+                    event_meta = prepared
+            except Exception as error:
+                applog.emit(
+                    "visit",
+                    "open-event enrichment failed for visit {}: {} "
+                    "(posting generic event)".format(
+                        visit_id, type(error).__name__,
+                    ),
+                )
         try:
             if self._pending_cuda_img is None:
-                self._post_event(
-                    visit_id, key, start_ts, self._pending_boxes,
-                    rec["segment_index"],
-                )
+                if event_meta:
+                    self._post_event(
+                        visit_id, key, start_ts, self._pending_boxes,
+                        rec["segment_index"], event_meta=event_meta,
+                        root_visit_id=root_visit_id,
+                    )
+                else:
+                    self._post_event(
+                        visit_id, key, start_ts, self._pending_boxes,
+                        rec["segment_index"], root_visit_id=root_visit_id,
+                    )
             else:
-                self._post_event(
-                    visit_id, key, start_ts, self._pending_boxes,
-                    rec["segment_index"], cuda_img=self._pending_cuda_img,
-                )
+                if event_meta:
+                    self._post_event(
+                        visit_id, key, start_ts, self._pending_boxes,
+                        rec["segment_index"], cuda_img=self._pending_cuda_img,
+                        event_meta=event_meta, root_visit_id=root_visit_id,
+                    )
+                else:
+                    self._post_event(
+                        visit_id, key, start_ts, self._pending_boxes,
+                        rec["segment_index"], cuda_img=self._pending_cuda_img,
+                        root_visit_id=root_visit_id,
+                    )
         except Exception as e:
             applog.emit(
                 "visit",
@@ -780,6 +828,13 @@ class VisitRunner(object):
                         end_ts=end_ts,
                         reason="finalize_returned_false",
                     )
+                elif self._on_finalized is not None:
+                    # Notification is a separate best-effort side effect. A
+                    # valid published MP4 must never become `failed` because
+                    # loopback was briefly unavailable after finalization.
+                    self._spawn_finalized_notification(
+                        visit_id, start_ts, end_ts,
+                    )
             except Exception as e:
                 clip_state.set_state(
                     self.recordings_dir,
@@ -801,6 +856,35 @@ class VisitRunner(object):
                 self._finalizing_ids.discard(visit_id)
 
         self._spawn(_run, visit_id)
+
+    def _spawn_finalized_notification(self, visit_id, start_ts, end_ts):
+        def _notify():
+            for attempt in range(self._notification_attempts):
+                try:
+                    self._on_finalized(visit_id, start_ts, end_ts)
+                    return
+                except Exception as error:
+                    if attempt + 1 >= self._notification_attempts:
+                        applog.emit(
+                            "visit",
+                            "finalized notification abandoned for visit {} "
+                            "after {} attempts: {}".format(
+                                visit_id, self._notification_attempts,
+                                type(error).__name__,
+                            ),
+                        )
+                        return
+                    self._notification_sleep(min(30.0, float(2 ** attempt)))
+
+        try:
+            self._spawn(_notify, "notify-{}".format(visit_id))
+        except Exception as error:
+            applog.emit(
+                "visit",
+                "finalized notification spawn failed for visit {}: {}".format(
+                    visit_id, type(error).__name__,
+                ),
+            )
 
     def _spawn_thread(self, target, visit_id):
         t = threading.Thread(target=target, daemon=True,

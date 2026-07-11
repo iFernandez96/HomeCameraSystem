@@ -150,6 +150,74 @@ def pytest_or_skip_numpy():
         pytest.skip("numpy not available")
 
 
+class _FakeCropArray(object):
+    shape = (100, 100, 3)
+    size = 30000
+
+    def __getitem__(self, _key):
+        return self
+
+
+def test_face_capture_write_path_rejects_bad_quality_before_save(monkeypatch):
+    import recognizer as recognizer_module
+    import face_recog.capture as capture_module
+    import face_recog.quality as quality_module
+
+    saved = []
+    monkeypatch.setattr(
+        quality_module, "face_crop_quality",
+        lambda _crop: (False, "blurry", {"sharpness": 0.1}),
+    )
+    monkeypatch.setattr(
+        capture_module, "save_face_capture",
+        lambda **kwargs: saved.append(kwargs),
+    )
+    recognizer_module._FACE_QUALITY_REJECTIONS.clear()
+
+    assert recognizer_module._save_face_capture(
+        _FakeCropArray(), (10, 80, 80, 10), None, 0.0,
+        "/tmp/unused", "event1", 1,
+    ) is False
+    assert saved == []
+    assert recognizer_module.face_quality_rejection_counts() == {"blurry": 1}
+
+
+def test_accepted_face_quality_metrics_are_added_to_capture_sidecar_meta(monkeypatch):
+    import recognizer as recognizer_module
+    import face_recog.capture as capture_module
+    import face_recog.quality as quality_module
+    from PIL import Image
+
+    saved = []
+
+    class _EncodedImage(object):
+        def save(self, buffer, format=None, quality=None):
+            buffer.write(b"jpeg")
+
+    monkeypatch.setattr(
+        quality_module, "face_crop_quality",
+        lambda _crop: (True, "ok", {
+            "width": 70, "height": 70,
+            "contrast": 22.5, "sharpness": 7.25,
+        }),
+    )
+    monkeypatch.setattr(Image, "fromarray", lambda _crop: _EncodedImage())
+    monkeypatch.setattr(
+        capture_module, "save_face_capture",
+        lambda **kwargs: saved.append(kwargs) or "/tmp/capture.jpg",
+    )
+
+    assert recognizer_module._save_face_capture(
+        _FakeCropArray(), (10, 80, 80, 10), "alice", 0.8,
+        "/tmp/unused", "event2", 2, meta={"source": {"camera_id": "cam1"}},
+    ) is True
+    assert saved[0]["meta"]["quality"] == {
+        "width": 70, "height": 70,
+        "contrast": 22.5, "sharpness": 7.25,
+    }
+    assert saved[0]["meta"]["source"] == {"camera_id": "cam1"}
+
+
 # --- iter-355b1b cv2-fallback recognize path ---
 
 

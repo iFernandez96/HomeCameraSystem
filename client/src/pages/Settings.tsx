@@ -11,6 +11,7 @@ import { JetsonSection } from './settings/JetsonSection'
 import { NotificationsSection } from './settings/NotificationsSection'
 import { TimelapsesSection } from './settings/TimelapsesSection'
 import { CameraSetupSection } from './settings/CameraSetupSection'
+import { RulesSection } from './settings/RulesSection'
 import { useAuth } from '../lib/auth'
 import { useStatus } from '../lib/useStatus'
 import { isOwner } from '../lib/roles'
@@ -36,7 +37,7 @@ import { isOwner } from '../lib/roles'
 // now means the localStorage key + tab guard already accept it
 // when the actual tab body lands. The only change today: type
 // signature accepts the value; nothing renders for it yet.
-type SettingsTab = 'camera' | 'cameras' | 'notifications' | 'system'
+type SettingsTab = 'camera' | 'cameras' | 'rules' | 'notifications' | 'system'
 const _SETTINGS_TAB_KEY = 'homecam:settingsTab'
 
 function _readInitialTab(isOwner: boolean): SettingsTab {
@@ -53,12 +54,13 @@ function _readInitialTab(isOwner: boolean): SettingsTab {
   if (
     stored === 'camera' ||
     stored === 'cameras' ||
+    stored === 'rules' ||
     stored === 'notifications' ||
     stored === 'system'
   ) {
     // Family/viewer can't land on the Camera tab — its content is
     // entirely owner-gated. Fall through to Notifications.
-    if (stored === 'camera' && !isOwner) return 'notifications'
+    if ((stored === 'camera' || stored === 'rules') && !isOwner) return 'notifications'
     // iter-356.x: 'cameras' slot reserved for multi-cam (today no
     // tab body) — fall through to Notifications until the tab lands.
     if (stored === 'cameras') return 'notifications'
@@ -95,7 +97,7 @@ export function Settings() {
     _readInitialTab(canManageOwnerSettings),
   )
   const activeTab: SettingsTab =
-    storedTab === 'camera' && !canManageOwnerSettings ? 'notifications' : storedTab
+    (storedTab === 'camera' || storedTab === 'rules') && !canManageOwnerSettings ? 'notifications' : storedTab
   const onTabChange = (next: SettingsTab) => {
     setStoredTab(next)
     if (typeof window !== 'undefined') {
@@ -112,6 +114,9 @@ export function Settings() {
   const showCameraPanel = _renderAllTabs || activeTab === 'camera'
   const showNotificationsPanel =
     _renderAllTabs || activeTab === 'notifications'
+  // New security tooling is independently covered; do not mount its live
+  // API requests in Settings' legacy render-all-tabs test mode.
+  const showRulesPanel = activeTab === 'rules'
   const showSystemPanel = _renderAllTabs || activeTab === 'system'
 
   return (
@@ -197,6 +202,18 @@ export function Settings() {
           </div>
         )}
 
+        {showRulesPanel && canManageOwnerSettings && (
+          <div
+            role="tabpanel"
+            id="settings-panel-rules"
+            aria-labelledby="settings-tab-rules"
+            tabIndex={0}
+            className="focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
+          >
+            <RulesSection />
+          </div>
+        )}
+
         {showSystemPanel && (
           <div
             role="tabpanel"
@@ -255,6 +272,7 @@ function SettingsTabs({
   // different panel and is intentionally left alone.
   const tabs: { id: SettingsTab; label: string }[] = []
   if (showCamera) tabs.push({ id: 'camera', label: 'Watching' })
+  if (showCamera) tabs.push({ id: 'rules', label: 'Rules' })
   tabs.push({ id: 'notifications', label: 'Alerts' })
   // iter-355ac (Maya Nit): tab label was "Account & Maintenance" for
   // owners — awkward two-noun construction that advertised the
@@ -285,6 +303,8 @@ function SettingsTabs({
   const activeDescription =
     active === 'camera'
       ? 'What the camera looks for and records'
+      : active === 'rules'
+        ? 'Activity rules, automations and deterrence'
       : active === 'notifications'
         ? 'How HomeCam notifies you'
         : 'People, appearance and the box in the closet'

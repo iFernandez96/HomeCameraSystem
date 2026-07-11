@@ -19,6 +19,19 @@ import { defineConfig, devices } from '@playwright/test'
 //   npm run test:e2e -- --headed
 export default defineConfig({
   testDir: './e2e/tests',
+  // These journeys own special fixtures, devices, or live infrastructure and
+  // are run through their dedicated Playwright configs.  Keeping them out of
+  // the normal desktop suite prevents a phone-only touch journey (and the
+  // self-hosted harnesses) from accidentally inheriting Desktop Chrome plus
+  // this config's shared FastAPI server.
+  testIgnore: [
+    /auth-session-lifecycle\.spec\.ts/,
+    /mobile-smoke\.spec\.ts/,
+    /multicam-switch\.spec\.ts/,
+    /sw-lifecycle\.spec\.ts/,
+    /whep-errors\.spec\.ts/,
+    /whep-live\.spec\.ts/,
+  ],
   // Sequential. The server is single-process and stateful (one
   // shared sqlite, one DetectionService gate). Cross-test
   // isolation would require per-test fixture dirs, deferred.
