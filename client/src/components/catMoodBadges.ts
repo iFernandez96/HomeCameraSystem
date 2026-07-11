@@ -2,10 +2,13 @@ import type { CatAnimId } from './catAnimSequences'
 
 // Cat-personalized mood badges (user directive 2026-07-11): mood bubbles
 // show THIS cat's face wearing the emotion instead of a generic emoji.
-// Face emojis map to emotion archetypes; symbol glyphs (💤 ✨ 💢 🐾 ⚡ 💨
-// 👀 💕) stay as text beside the badge. Every lookup falls back to the
-// original emoji when a badge is missing or fails to load, so moods can
-// never go blank.
+// Face emojis map to emotion archetypes; symbol glyphs (✨ 💢 🐾 ⚡ 💨
+// 👀 💕) stay as text beside the badge. 💤 maps to the 'sleepy' face
+// when it is the PRIMARY mood glyph (user ask 2026-07-11 "cat emotions
+// instead of emojis") — as a secondary glyph it stays text, because
+// moodBadgeParts only badges the first mapped glyph. Every lookup falls
+// back to the original emoji when a badge is missing or fails to load,
+// so moods can never go blank.
 
 export type MoodEmotion =
   | 'smug'
@@ -35,6 +38,7 @@ export const EMOJI_TO_EMOTION: Readonly<Record<string, MoodEmotion>> = {
   '😱': 'shock',
   '😡': 'furious',
   '😴': 'sleepy',
+  '💤': 'sleepy',
   '🥱': 'yawn',
   '😿': 'sad',
   '😢': 'sad',
@@ -58,9 +62,13 @@ export function moodBadgeUrl(catId: CatAnimId, emotion: MoodEmotion): string {
 // cat, and they take priority over the per-cat face table so a prop glyph
 // always renders as its prop. CatMoodBubble's img onError fallback still
 // covers a missing/broken file by showing the raw emoji.
-export const SHARED_MOOD_BADGES: Readonly<Record<string, string>> = {
-  '💩': '/cats/props/poop.png',
-}
+//
+// Currently EMPTY, deliberately: the one entry it ever held ('💩' →
+// poop.png) was removed 2026-07-11 when pooping became a GROUND OBJECT
+// with its own lifecycle (components/GroundPoop.tsx) — user: "Poop
+// shouldn't be an emoji that flys upward. It should be on the ground."
+// The mechanism stays so a future prop glyph can plug straight in.
+export const SHARED_MOOD_BADGES: Readonly<Record<string, string>> = {}
 
 export type MoodBadgeParts = {
   /** Badge image URL for the first mapped face emoji, if available. */

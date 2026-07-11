@@ -59,6 +59,16 @@ export const PLAYGROUND_CAT_FRAME_NAMES = [
   'eat_a',
   'eat_b',
   'purr',
+  // Interaction wave 2026-07-11: scratch/climb ride 160-tall canvases
+  // (standing stretch / vertical cling); the rest stay 128-tall.
+  'scratch_a',
+  'scratch_b',
+  'climb_a',
+  'climb_b',
+  'drink_a',
+  'drink_b',
+  'hammock_lie',
+  'window_watch',
 ] as const
 export type PlaygroundCatFrameName = (typeof PLAYGROUND_CAT_FRAME_NAMES)[number]
 

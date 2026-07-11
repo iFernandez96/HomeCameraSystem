@@ -4,6 +4,12 @@ import {
   FURNITURE_GAP_PX,
   HOME_ANCHOR,
   SCENE_ANCHORS,
+  TREE_MID_ELEV_FRAC,
+  TREE_MID_FRAC_X,
+  TREE_TOP_ELEV_FRAC,
+  TREE_TOP_FRAC_X,
+  WINDOW_PERCH_ELEV_FRAC,
+  WINDOW_PERCH_FRAC_X,
   anchorById,
   anchorCatX,
   anchorCatY,
@@ -188,6 +194,19 @@ describe('sceneModel furniture packing (the overlap pin, iter Slice D)', () => {
     }
   })
 
+  it('Given the phone-width compact layouts, When the front lane packs, Then the climbable cat tree keeps its full 120px slot width (no dollhouse tree under a full-size cat)', () => {
+    // arrange — the live 390px burst audit showed the tree scaled down
+    // while cats stayed 44px, so a perched cat dwarfed its platform.
+    const widths = [360, 390]
+
+    // act + assert — CLIMBABLE furniture is exempt from the fit scale
+    for (const w of widths) {
+      const tree = packedSpotFor('cat_tree_deluxe', w, true)
+      expect(tree, `tree missing at ${w}px`).not.toBeNull()
+      expect(tree?.width, `tree width @${w}px compact`).toBeGreaterThanOrEqual(120)
+    }
+  })
+
   it('Given the full layout, When the back wall packs, Then window, feeder, and shelves hang in the upper third (elevated), using the vertical space', () => {
     // act
     const back = packFurnitureLayout(800, false).filter((s) => s.lane === 'back')
@@ -230,6 +249,27 @@ describe('sceneModel geometry', () => {
     expect(clampCatX(300, W)).toBe(300)
   })
 
+  it('Given the full-height tree, When the back wall packs, Then every back-lane prop starts right of the tree (r3 audit: tree top vs window collision)', () => {
+    // arrange — the tree keeps full width/height (CLIMBABLE), so its
+    // canopy reaches the back wall band; back-lane props packed over it
+    // read as the perched cat sitting on the window cushion.
+    const widths = [360, 390, 480, 640, 800]
+
+    // act + assert
+    for (const w of widths) {
+      const compact = w < 480
+      const spots = packFurnitureLayout(w, compact)
+      const tree = spots.find((s) => s.name === 'cat_tree_deluxe')
+      if (!tree) continue
+      for (const spot of spots.filter((s) => s.lane === 'back')) {
+        expect(
+          spot.left,
+          `${spot.name} @${w}px starts left of the tree edge`,
+        ).toBeGreaterThanOrEqual(tree.left + tree.width)
+      }
+    }
+  })
+
   it('Given both tree perches occupied, When their cat positions are computed, Then two perched cats never merge into one blob (10Hz audit, 2026-07-11)', () => {
     // arrange — the failure mode: tree_mid and tree_top rendered within
     // one sprite of each other on compact-scaled art, so two perched
@@ -252,6 +292,33 @@ describe('sceneModel geometry', () => {
         ).toBe(true)
       }
     }
+  })
+
+  it('Given the measured platform surfaces, When the perch anchors are read, Then each carries EXACTLY the PIL-measured geometry (feet land ON the art surfaces)', () => {
+    // arrange — measured 2026-07-11 by scanning the shipped PNGs for
+    // flat opaque-top runs (cat_tree_deluxe.png 190×256: low-left disc
+    // surface y≈127 cx≈0.11, top platform y≈2 cx≈0.50) and the cushion
+    // color band (window_perch.png 157×170: cushion top row 108 cx≈0.50).
+    const expected = {
+      tree_mid: { fracX: TREE_MID_FRAC_X, elevFrac: TREE_MID_ELEV_FRAC },
+      tree_top: { fracX: TREE_TOP_FRAC_X, elevFrac: TREE_TOP_ELEV_FRAC },
+      window_perch: { fracX: WINDOW_PERCH_FRAC_X, elevFrac: WINDOW_PERCH_ELEV_FRAC },
+    }
+
+    // act + assert
+    for (const [id, geo] of Object.entries(expected)) {
+      const a = anchorById(id)
+      expect(a.fracX, `${id} fracX`).toBe(geo.fracX)
+      expect(a.elevFrac, `${id} elevFrac`).toBe(geo.elevFrac)
+    }
+    // The measured constants themselves pin the measurement session —
+    // re-measure before changing these.
+    expect(TREE_MID_FRAC_X).toBe(0.11)
+    expect(TREE_MID_ELEV_FRAC).toBe(0.5)
+    expect(TREE_TOP_FRAC_X).toBe(0.5)
+    expect(TREE_TOP_ELEV_FRAC).toBe(0.99)
+    expect(WINDOW_PERCH_FRAC_X).toBe(0.5)
+    expect(WINDOW_PERCH_ELEV_FRAC).toBe(0.365)
   })
 
   it('Given the tunnel nook, When Coco rests there, Then she sits beside the tunnel mouth instead of clipped on top of the art', () => {

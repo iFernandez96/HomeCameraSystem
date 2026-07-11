@@ -118,6 +118,13 @@ const BACK_SLOTS: readonly LaneSlot[] = [
 const FRONT_DROPPABLE: readonly PlaygroundFurnitureName[] = ['scratching_post', 'hammock']
 const BACK_DROPPABLE: readonly PlaygroundFurnitureName[] = ['plant', 'wall_shelf_set']
 
+/** CLIMBABLE furniture cats PERCH ON keeps its full slot width instead
+    of taking the lane's fit scale (live 390px burst audit 2026-07-11:
+    the tree scaled to dollhouse size while cats stayed 44px, so a
+    perched cat dwarfed its platform). Its width is treated as FIXED in
+    the fit computation; only the rest of the lane shrinks. */
+const CLIMBABLE: readonly PlaygroundFurnitureName[] = ['cat_tree_deluxe']
+
 /** Below this fit scale, drop the next droppable prop instead of
     shrinking everything into dollhouse furniture. */
 const DROP_BELOW_SCALE = 0.72
@@ -129,26 +136,42 @@ function packLane(
   lane: PlaygroundLane,
   sceneW: number,
   compact: boolean,
+  leftInset = 0,
 ): PackedSpot[] {
-  const inner = Math.max(120, sceneW - 2 * SCENE_MARGIN_PX)
+  const inner = Math.max(120, sceneW - 2 * SCENE_MARGIN_PX - leftInset)
   let kept = compact ? slots.filter((s) => !droppable.includes(s.name)) : [...slots]
   let dropIndex = 0
+  // Fit scale for the SCALABLE props only: climbable slot widths are
+  // subtracted from the budget as fixed costs, so a tight lane shrinks
+  // (or drops) the decor around the tree rather than the tree itself.
   const fitScale = () => {
     const gaps = FURNITURE_GAP_PX * (kept.length - 1)
-    const sum = kept.reduce((total, s) => total + s.width, 0)
-    return Math.min(1, (inner - gaps) / sum)
+    const fixedSum = kept
+      .filter((s) => CLIMBABLE.includes(s.name))
+      .reduce((total, s) => total + s.width, 0)
+    const scalableSum = kept
+      .filter((s) => !CLIMBABLE.includes(s.name))
+      .reduce((total, s) => total + s.width, 0)
+    if (scalableSum <= 0) return 1
+    return Math.min(1, (inner - gaps - fixedSum) / scalableSum)
   }
   while (fitScale() < DROP_BELOW_SCALE && dropIndex < droppable.length) {
     const name = droppable[dropIndex++]
     kept = kept.filter((s) => s.name !== name)
   }
   const scale = Math.max(fitScale(), MIN_FIT_SCALE)
-  const widths = kept.map((s) => Math.round(s.width * scale))
+  // floor (not round) the scaled widths: with the climbable slot fixed
+  // the budget can land within a fraction of a px of `inner`, and
+  // rounding up across several props would push the last one through
+  // the right wall.
+  const widths = kept.map((s) =>
+    CLIMBABLE.includes(s.name) ? s.width : Math.floor(s.width * scale),
+  )
   const usedByProps = widths.reduce((total, w) => total + w, 0)
   const minGaps = FURNITURE_GAP_PX * (kept.length - 1)
   const extra = Math.max(0, inner - usedByProps - minGaps)
   const weightTotal = kept.slice(0, -1).reduce((total, s) => total + s.gapAfter, 0)
-  let cursor = SCENE_MARGIN_PX
+  let cursor = SCENE_MARGIN_PX + leftInset
   return kept.map((s, i) => {
     const width = widths[i]
     const natural = FURNITURE_NATURAL[s.name]
@@ -174,9 +197,17 @@ let packCacheValue: readonly PackedSpot[] = []
 export function packFurnitureLayout(sceneW: number, compact: boolean): readonly PackedSpot[] {
   const key = `${Math.round(sceneW)}|${compact}`
   if (key === packCacheKey) return packCacheValue
+  // The tree keeps full width and height (CLIMBABLE), so its canopy
+  // reaches the back wall's elevation band — pack the back lane to START
+  // right of the tree, so the window/feeder/shelves never sit visually
+  // behind the tree top (r3 burst audit 2026-07-11: Panther perched on
+  // tree_top read as sitting on the window cushion).
+  const front = packLane(FRONT_SLOTS, FRONT_DROPPABLE, 'front', sceneW, compact)
+  const tree = front.find((s) => s.name === 'cat_tree_deluxe')
+  const backInset = tree ? tree.left + tree.width + FURNITURE_GAP_PX - SCENE_MARGIN_PX : 0
   packCacheValue = [
-    ...packLane(BACK_SLOTS, BACK_DROPPABLE, 'back', sceneW, compact),
-    ...packLane(FRONT_SLOTS, FRONT_DROPPABLE, 'front', sceneW, compact),
+    ...packLane(BACK_SLOTS, BACK_DROPPABLE, 'back', sceneW, compact, backInset),
+    ...front,
   ]
   packCacheKey = key
   return packCacheValue
@@ -208,12 +239,24 @@ export type SceneAnchor = {
   elevFrac: number
   /** All playground anchors hold exactly one cat. */
   capacity: 1
-  /** Transition played on arrival (perches hop up via jump_post). */
+  /** Legacy arrival-transition metadata (unused at runtime since the
+      2026-07-11 interaction wave: vertical mounts play the climb loop
+      DURING the lerp instead of an arrival pop). */
   entrySequence: CatAnimSequenceName | null
   /** Anchor ids a floor-bound cat traverses IN ORDER before this
       one — the tree is the on/off ramp to the shelf superhighway. */
   approach: readonly string[]
 }
+
+// Measured perch surfaces (PIL scan 2026-07-11 — see the mid/high tier
+// comment in SCENE_ANCHORS). Exported so the pin test can assert the
+// anchors carry EXACTLY the measured geometry.
+export const TREE_MID_FRAC_X = 0.11
+export const TREE_MID_ELEV_FRAC = 0.5
+export const TREE_TOP_FRAC_X = 0.5
+export const TREE_TOP_ELEV_FRAC = 0.99
+export const WINDOW_PERCH_FRAC_X = 0.5
+export const WINDOW_PERCH_ELEV_FRAC = 0.365
 
 const anchor = (
   id: string,
@@ -250,19 +293,28 @@ export const SCENE_ANCHORS: readonly SceneAnchor[] = [
   anchor('litter_box', 'floor', 'front', 'litter_box', 0.5, 0),
   anchor('scratch_post', 'floor', 'front', 'scratching_post', 0.5, 0),
   // --- mid tier -------------------------------------------------------------
-  // Perch separation (10Hz live audit 2026-07-11): tree_mid and tree_top
-  // sat within one sprite-width of each other on compact-scaled art, so
-  // two perched cats merged into a single blob. The perches now occupy
-  // OPPOSITE corners of the artwork (low-left platform vs top-right
-  // platform) — the maximum diagonal separation the art offers.
-  anchor('tree_mid', 'mid', 'front', 'cat_tree_deluxe', 0.14, 0.38, 'jump_post'),
+  // Perch geometry is MEASURED from the art, not eyeballed (user report
+  // 2026-07-11 "the positions of the cats do not make sense"): a PIL
+  // scan of cat_tree_deluxe.png (190×256) finds the topmost opaque
+  // pixel per column and groups flat runs = platform surfaces:
+  //   top platform    surface y≈2   over x=[42,146] → elevFrac 0.99, cx 0.50
+  //   mid-right disc  surface y≈74  over x=[147,188]
+  //   low-left disc   surface y≈127 over x=[0,41]   → elevFrac 0.50, cx 0.11
+  // tree_mid takes the low-left disc, tree_top the top platform — still
+  // the maximum diagonal separation the art offers (two perched cats
+  // must never merge into one blob, 10Hz audit 2026-07-11), and now the
+  // cat's FEET (container bottom) land ON the measured surfaces.
+  anchor('tree_mid', 'mid', 'front', 'cat_tree_deluxe', TREE_MID_FRAC_X, TREE_MID_ELEV_FRAC, 'jump_post'),
   anchor('hammock', 'mid', 'front', 'hammock', 0.5, 0.5, 'jump_post'),
   // --- high tier ------------------------------------------------------------
-  anchor('tree_top', 'high', 'front', 'cat_tree_deluxe', 0.74, 0.88, 'jump_post', ['tree_mid']), // Panther's home (Tree Dweller)
+  anchor('tree_top', 'high', 'front', 'cat_tree_deluxe', TREE_TOP_FRAC_X, TREE_TOP_ELEV_FRAC, 'jump_post', ['tree_mid']), // Panther's home (Tree Dweller)
   anchor('shelf_1', 'high', 'back', 'wall_shelf_set', 0.2, 0.2, 'jump_post', ['tree_mid', 'tree_top']),
   anchor('shelf_2', 'high', 'back', 'wall_shelf_set', 0.52, 0.5, 'jump_post', ['tree_mid', 'tree_top']),
   anchor('shelf_3', 'high', 'back', 'wall_shelf_set', 0.82, 0.8, 'jump_post', ['tree_mid', 'tree_top']),
-  anchor('window_perch', 'high', 'back', 'window_perch', 0.5, 0.5, 'jump_post', ['tree_mid']), // Cat TV
+  // Cat TV: window_perch.png (157×170) — the red cushion band starts at
+  // row 108 (color-scan for the r-dominant cushion), centered x≈0.50,
+  // so the seat surface is (170-108)/170 ≈ 0.365 of the art height.
+  anchor('window_perch', 'high', 'back', 'window_perch', WINDOW_PERCH_FRAC_X, WINDOW_PERCH_ELEV_FRAC, 'jump_post', ['tree_mid']),
 ]
 
 const ANCHOR_BY_ID: ReadonlyMap<string, SceneAnchor> = new Map(
@@ -273,6 +325,12 @@ export function anchorById(id: string): SceneAnchor {
   const found = ANCHOR_BY_ID.get(id)
   if (!found) throw new Error(`unknown playground anchor: ${id}`)
   return found
+}
+
+/** True when the id names a mid/high-tier anchor — the mounts whose
+    travel legs play the climb loop and whose stays are dwell-capped. */
+export function isElevatedAnchor(anchorId: string | null): boolean {
+  return anchorId !== null && anchorById(anchorId).tier !== 'floor'
 }
 
 /** Anchors available under the current layout: an anchor exists only

@@ -1,7 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import type { BeatContext } from './catBrain.beats'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { travelToAnchor, type BeatContext } from './catBrain.beats'
 import {
+  PLAY_HOLD_FRAME,
+  PLAY_ONGOING_SEQUENCE,
   initialPlaygroundState,
+  playgroundAnimationPlanFor,
   type PlayCat,
   type PlaygroundState,
 } from './playgroundState'
@@ -27,7 +30,7 @@ function freshState(now = START): PlaygroundState {
 }
 
 function ctxFor(cats: readonly PlayCat[]): BeatContext {
-  return { cats, ambient: [], sceneW: W, sceneH: H, compact: false, random: () => 0.5 }
+  return { cats, ambient: [], sceneW: W, sceneH: H, compact: false, now: START, random: () => 0.5 }
 }
 
 function stim(catId: PlayCat['id'], request: VerbStimulus['request']): VerbStimulus {
@@ -37,6 +40,134 @@ function stim(catId: PlayCat['id'], request: VerbStimulus['request']): VerbStimu
 beforeEach(() => {
   // The toy layer's verb brain is module-level session state.
   resetToyLayer()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+function lcg(seed: number): () => number {
+  let s = seed >>> 0
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 2 ** 32
+  }
+}
+
+describe('stepPlayground ground-poop lifecycle (2026-07-11: poop is a ground object, not a bubble)', () => {
+  function poopedCat(cat: PlayCat, over: Partial<PlayCat> = {}): PlayCat {
+    return {
+      ...cat,
+      x: 300,
+      y: laneFloorY('front', H),
+      lane: 'front',
+      activity: 'pooped',
+      previousActivity: 'pooped',
+      direction: 'L',
+      activityStartedAt: START - 4500,
+      activityUntil: START,
+      anchorId: null,
+      targetAnchor: null,
+      route: [],
+      arrival: null,
+      mood: null,
+      focus: null,
+      ...over,
+    }
+  }
+
+  function withCat(state: PlaygroundState, next: PlayCat): PlaygroundState {
+    return { ...state, cats: state.cats.map((c) => (c.id === next.id ? next : c)) }
+  }
+
+  function mushuOf(state: PlaygroundState): PlayCat {
+    const mushu = state.cats.find((c) => c.id === 'mushu')
+    if (!mushu) throw new Error('missing mushu')
+    return mushu
+  }
+
+  it('Given a floor squat whose bout completes, When the beat expires, Then the poop appears ON THE GROUND at the trailing edge and the cat moves on to its next beat', () => {
+    // arrange — mushu mid-squat on the open floor, bout just ended
+    const base = freshState()
+    const state = withCat(base, poopedCat(mushuOf(base)))
+
+    // act — expiry tick (dt after activityUntil)
+    const stepped = stepPlayground(state, makeInput(), 16, START + 1, W, H, {
+      compact: false,
+      random: () => 0.5,
+    })
+
+    // assert — spawned at bout END, trailing the left-facing cat
+    const mushu = mushuOf(stepped)
+    expect(mushu.poop).not.toBeNull()
+    expect(mushu.poop?.x).toBe(336) // 300 + 44 - round(44*0.42)*0.45
+    expect(mushu.poop?.y).toBe(laneFloorY('front', H))
+    expect(mushu.poop?.lane).toBe('front')
+    expect(mushu.poop?.spawnedAt).toBe(START + 1)
+    expect(mushu.poop?.fadeAt).toBe(START + 1 + 7000) // 6000 + 0.5 * 2000
+    // the squat itself ended — a new beat rolled
+    expect(mushu.lastBeatId).not.toBeNull()
+  })
+
+  it('Given a live poop, When the cat walks away on later ticks, Then the poop persists past the activity at its original spot', () => {
+    // arrange — poop already down, cat off doing something else
+    const base = freshState()
+    const walkingAway = poopedCat(mushuOf(base), {
+      activity: 'walk',
+      previousActivity: 'pooped',
+      activityUntil: START + 60_000,
+      targetX: 500,
+      targetY: laneFloorY('front', H),
+      moveRampAt: START,
+      poop: { x: 336, y: laneFloorY('front', H), lane: 'front', spawnedAt: START, fadeAt: START + 7000 },
+    })
+
+    // act — a mid-lifecycle tick (before fadeAt)
+    const stepped = stepPlayground(withCat(base, walkingAway), makeInput(), 16, START + 3000, W, H, {
+      compact: false,
+      random: () => 0.5,
+    })
+
+    // assert — untouched, still anchored to its scene spot
+    const after = mushuOf(stepped)
+    expect(after.poop).toEqual(walkingAway.poop)
+    expect(after.activity).not.toBe('pooped')
+  })
+
+  it('Given the visible window and fade have fully played out, When the world steps, Then the poop leaves state', () => {
+    // arrange
+    const base = freshState()
+    const sitting = poopedCat(mushuOf(base), {
+      activity: 'sit',
+      previousActivity: 'sit',
+      activityUntil: START + 60_000,
+      poop: { x: 336, y: laneFloorY('front', H), lane: 'front', spawnedAt: START, fadeAt: START + 7000 },
+    })
+
+    // act — beyond fadeAt + the 600ms fade
+    const stepped = stepPlayground(withCat(base, sitting), makeInput(), 16, START + 7601, W, H, {
+      compact: false,
+      random: () => 0.5,
+    })
+
+    // assert
+    expect(mushuOf(stepped).poop).toBeNull()
+  })
+
+  it('Given a squat AT the litter box, When the bout completes, Then no visible ground poop spawns (the box masks it)', () => {
+    // arrange — anchored litter visit
+    const base = freshState()
+    const state = withCat(base, poopedCat(mushuOf(base), { anchorId: 'litter_box' }))
+
+    // act
+    const stepped = stepPlayground(state, makeInput(), 16, START + 1, W, H, {
+      compact: false,
+      random: () => 0.5,
+    })
+
+    // assert
+    expect(mushuOf(stepped).poop).toBeNull()
+  })
 })
 
 describe('stepPlayground interaction proximity gate', () => {
@@ -393,5 +524,180 @@ describe('stepPlayground toy-layer ctx pass-through (the Slice C seam)', () => {
     const panther = next.cats.find((c) => c.id === 'panther')
     expect(panther?.activity).toBe('sit')
     expect(panther?.focus).toEqual({ type: 'toy', toy: 'laser' })
+  })
+})
+
+describe('stepPlayground vertical mounts play the climb loop (interaction wave 2026-07-11)', () => {
+  it('Given a floor cat mounting the tree top, When the travel steps, Then climb_a AND climb_b render during the ascent and the loop ends on arrival', () => {
+    // arrange — mushu (rug home) sent up the tree; ramp opened so paws
+    // move immediately; ambient spawns pushed out of the window
+    const state = freshState()
+    const base = state.cats.find((c) => c.id === 'mushu')
+    if (!base) throw new Error('missing mushu')
+    const mounted = travelToAnchor(base, START, ctxFor(state.cats), 'tree_top', 'perch', 16000)
+    const walking: PlayCat = { ...mounted, moveRampAt: START }
+    let sim: PlaygroundState = {
+      ...state,
+      cats: state.cats.map((c) => (c.id === 'mushu' ? walking : c)),
+      ambientNextAt: START + 10_000_000,
+    }
+
+    // act — step until arrival, collecting rendered frames + the flag
+    const framesWhileClimbing = new Set<string>()
+    let sawClimbFlag = false
+    let mushu: PlayCat = walking
+    let now = START
+    for (let i = 0; i < 1200 && mushu.anchorId !== 'tree_top'; i++) {
+      now += 33
+      sim = stepPlayground(sim, makeInput(), 33, now, W, H, { random: () => 0.5 })
+      const next = sim.cats.find((c) => c.id === 'mushu')
+      if (!next) throw new Error('missing mushu')
+      mushu = next
+      if (mushu.climbing) {
+        sawClimbFlag = true
+        const frame = playgroundAnimationPlanFor(mushu, mushu.phaseTime).frame
+        if (frame) framesWhileClimbing.add(frame)
+      }
+    }
+
+    // assert — the cling loop alternated during the vertical lerp…
+    expect(sawClimbFlag).toBe(true)
+    expect(framesWhileClimbing.has('climb_a')).toBe(true)
+    expect(framesWhileClimbing.has('climb_b')).toBe(true)
+    // …and the mount completed with the loop shut off
+    expect(mushu.anchorId).toBe('tree_top')
+    expect(mushu.activity).toBe('perch')
+    expect(mushu.climbing).toBe(false)
+  })
+
+  it('Given a perched cat dismounting to the floor, When the descent steps, Then the climb loop plays on the way DOWN too', () => {
+    // arrange — panther travels from her tree-top home to the rug
+    const state = freshState()
+    const base = state.cats.find((c) => c.id === 'panther')
+    if (!base) throw new Error('missing panther')
+    const descent = travelToAnchor(base, START, ctxFor(state.cats), 'rug', 'sit', 5000)
+    const walking: PlayCat = { ...descent, moveRampAt: START }
+    let sim: PlaygroundState = {
+      ...state,
+      cats: state.cats.map((c) => (c.id === 'panther' ? walking : c)),
+      ambientNextAt: START + 10_000_000,
+    }
+
+    // act — a few early steps while the drop is still in progress
+    let sawClimb = false
+    let now = START
+    for (let i = 0; i < 12; i++) {
+      now += 33
+      sim = stepPlayground(sim, makeInput(), 33, now, W, H, { random: () => 0.5 })
+      const panther = sim.cats.find((c) => c.id === 'panther')
+      if (panther?.climbing) {
+        sawClimb = true
+        expect(playgroundAnimationPlanFor(panther, panther.phaseTime).frame).toMatch(/^climb_/)
+      }
+    }
+
+    // assert
+    expect(sawClimb).toBe(true)
+  })
+})
+
+describe('stepPlayground perch dwell cap (RESIDUAL B: Panther glued to the tree)', () => {
+  it('Given a perch stay past its jittered dwell deadline, When the bout expires, Then a FORCED dismount stroll starts and the vacated anchor cools down ~20s', () => {
+    // arrange — panther perched with both clocks expired
+    const state = freshState()
+    const cats = state.cats.map((c): PlayCat =>
+      c.id === 'panther'
+        ? {
+            ...c,
+            activity: 'perch',
+            previousActivity: 'perch',
+            activityStartedAt: START - 20_000,
+            activityUntil: START,
+            anchorSince: START - 20_000,
+            perchDwellDeadline: START - 1,
+            focus: { type: 'anchor', anchorId: 'tree_top' },
+          }
+        : c,
+    )
+
+    // act — expiry tick
+    const next = stepPlayground({ ...state, cats }, makeInput(), 16, START + 1, W, H, {
+      random: () => 0.5,
+    })
+
+    // assert — off the perch, strolling to the floor, tree cooling down
+    const panther = next.cats.find((c) => c.id === 'panther')
+    expect(panther?.activity).toBe('walk')
+    expect(panther?.anchorId).toBeNull()
+    expect(panther?.targetY).toBe(laneFloorY('front', H))
+    expect(panther?.anchorCooldownId).toBe('tree_top')
+    expect(panther?.anchorCooldownUntil).toBe(START + 1 + 20_000)
+    expect(panther?.climbTravel).toBe(true) // the descent plays climb frames
+    expect(panther?.arrival).toMatchObject({ activity: 'sit' })
+  })
+
+  it('Given a seeded 2-minute autonomous run, When tree-top occupancy is measured, Then Panther holds it at most 70% of the run (the cap guarantees movement)', () => {
+    // arrange — deterministic: beat rolls (Math.random) AND jitter both
+    // ride seeded LCGs
+    vi.spyOn(Math, 'random').mockImplementation(lcg(1234))
+    const random = lcg(99)
+    let now = START
+    let state = initialPlaygroundState(now, W, H, random)
+
+    // act — 2 simulated minutes at ~30fps
+    const totalTicks = 3600
+    let treeTicks = 0
+    for (let i = 0; i < totalTicks; i++) {
+      now += 33.4
+      state = stepPlayground(state, makeInput(), 33.4, now, W, H, { random })
+      const panther = state.cats.find((c) => c.id === 'panther')
+      if (panther?.anchorId === 'tree_top') treeTicks++
+    }
+
+    // assert — she starts there (Tree Dweller home) but the dwell cap +
+    // no-repeat window force her to live a rounder life
+    expect(treeTicks).toBeGreaterThan(0)
+    expect(treeTicks / totalTicks).toBeLessThanOrEqual(0.7)
+  })
+})
+
+describe('stepPlayground new-frame beat wiring (scratch / drink / hammock / window)', () => {
+  it('Given the activity maps, When the new beats are resolved, Then scratch and drink loop their bouts and hammock/window hold their dedicated frames', () => {
+    // arrange / act / assert — the sequence-table bindings
+    expect(PLAY_ONGOING_SEQUENCE.scratch).toBe('scratch_bout')
+    expect(PLAY_ONGOING_SEQUENCE.drink).toBe('drink_bout')
+    expect(PLAY_HOLD_FRAME.hammock).toBe('hammock_lie')
+    expect(PLAY_HOLD_FRAME.watch).toBe('window_watch')
+  })
+
+  it('Given cats settled into the new activities, When their animation plans are read, Then the rendered frames come from the new art', () => {
+    // arrange — long-settled activities (transitions fully behind)
+    const state = freshState()
+    const settled = (id: PlayCat['id'], activity: PlayCat['activity']): PlayCat => {
+      const cat = state.cats.find((c) => c.id === id)
+      if (!cat) throw new Error(`missing ${id}`)
+      return {
+        ...cat,
+        activity,
+        previousActivity: activity,
+        activityStartedAt: START - 30_000,
+        idleSequence: null,
+      }
+    }
+
+    // act / assert — scratch and drink loop their bouts…
+    expect(
+      playgroundAnimationPlanFor(settled('mushu', 'scratch'), START).frame,
+    ).toMatch(/^scratch_|^seated$/)
+    expect(
+      playgroundAnimationPlanFor(settled('coco', 'drink'), START).frame,
+    ).toMatch(/^drink_|^seated$/)
+    // …the holds pin the dedicated single frames
+    expect(playgroundAnimationPlanFor(settled('coco', 'hammock'), START).frame).toBe(
+      'hammock_lie',
+    )
+    expect(playgroundAnimationPlanFor(settled('panther', 'watch'), START).frame).toBe(
+      'window_watch',
+    )
   })
 })

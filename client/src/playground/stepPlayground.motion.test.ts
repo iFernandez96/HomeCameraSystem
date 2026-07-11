@@ -36,7 +36,7 @@ function makeInput(over: Partial<PlaygroundInput> = {}): PlaygroundInput {
 }
 
 function ctxFor(cats: readonly PlayCat[], random: () => number = () => 0.5): BeatContext {
-  return { cats, ambient: [], sceneW: W, sceneH: H, compact: false, random }
+  return { cats, ambient: [], sceneW: W, sceneH: H, compact: false, now: START, random }
 }
 
 beforeEach(() => {

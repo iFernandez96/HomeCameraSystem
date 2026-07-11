@@ -51,9 +51,10 @@ describe('playgroundSequences', () => {
     const wave1 = new Set(PLAYGROUND_PRELOAD_WAVE_1)
     const wave2 = new Set(PLAYGROUND_PRELOAD_WAVE_2)
 
-    // assert — 12 furniture pieces; 6 toys + 4 ambient + 3 cats × 5 frames.
+    // assert — 12 furniture pieces; 6 toys + 4 ambient + 3 cats × 13
+    // frames (5 original + the 8-frame interaction wave 2026-07-11).
     expect(wave1.size).toBe(12)
-    expect(wave2.size).toBe(6 + 4 + 3 * 5)
+    expect(wave2.size).toBe(6 + 4 + 3 * 13)
     for (const url of wave1) {
       expect(url).toMatch(/^\/cats\/playground\/furniture\/[a-z_]+\.png$/)
       expect(wave2.has(url)).toBe(false)
@@ -62,5 +63,39 @@ describe('playgroundSequences', () => {
     expect(playgroundCatFrameUrl('mushu', 'bat_a')).toBe(
       '/cats/playground/mushu/bat_a.png',
     )
+  })
+
+  it('Given the interaction-wave bouts, When their rhythms are read, Then scratch strokes 3× at 280/240, drink laps 4× at 260/300, and both settle to the seated hold', () => {
+    // arrange / act
+    const scratch = PLAYGROUND_SEQUENCES.scratch_bout
+    const drink = PLAYGROUND_SEQUENCES.drink_bout
+
+    // assert — deliberate alternating strokes, seated hold last
+    expect(scratch.slice(0, 6)).toEqual([
+      { frame: 'scratch_a', ms: 280 },
+      { frame: 'scratch_b', ms: 240 },
+      { frame: 'scratch_a', ms: 280 },
+      { frame: 'scratch_b', ms: 240 },
+      { frame: 'scratch_a', ms: 280 },
+      { frame: 'scratch_b', ms: 240 },
+    ])
+    expect(scratch[scratch.length - 1]).toEqual({ frame: 'seated', ms: 1 })
+    // lapping rhythm ×4
+    expect(drink.filter((s) => s.frame === 'drink_a')).toHaveLength(4)
+    expect(drink.filter((s) => s.frame === 'drink_b')).toHaveLength(4)
+    expect(drink[0]).toEqual({ frame: 'drink_a', ms: 260 })
+    expect(drink[1]).toEqual({ frame: 'drink_b', ms: 300 })
+    expect(drink[drink.length - 1]).toEqual({ frame: 'seated', ms: 1 })
+  })
+
+  it('Given the climb loop and the two new holds, When read, Then climb is a bare a/b 200ms loop and the holds are single hold-pose steps', () => {
+    // arrange / act / assert — climb has NO trailing hold: it loops for
+    // exactly as long as the vertical travel runs
+    expect(PLAYGROUND_SEQUENCES.climb).toEqual([
+      { frame: 'climb_a', ms: 200 },
+      { frame: 'climb_b', ms: 200 },
+    ])
+    expect(PLAYGROUND_SEQUENCES.hammock_hold).toEqual([{ frame: 'hammock_lie', ms: 1 }])
+    expect(PLAYGROUND_SEQUENCES.window_hold).toEqual([{ frame: 'window_watch', ms: 1 }])
   })
 })
