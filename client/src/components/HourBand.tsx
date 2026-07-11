@@ -162,10 +162,10 @@ export function HourBand({
       <div
         role="group"
         aria-label={summary}
-        className="relative pt-5 pb-7"
+        className="relative"
         data-testid="day-activity-ruler"
       >
-        <div className="absolute inset-x-0 top-5 h-11 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+        <div className="relative h-12 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)]">
           {nowInDay ? (
             <div
               aria-hidden="true"
@@ -181,63 +181,56 @@ export function HourBand({
               style={{ left: `${position}%` }}
             />
           ))}
+          {clusters.map((cluster) => {
+            const startPercent = pct(cluster.startTs, dayStartTs)
+            const endPercent = pct(cluster.endTs, dayStartTs)
+            const durationWidth = endPercent - startPercent
+            const markerPercent = durationWidth > 0
+              ? startPercent + durationWidth / 2
+              : startPercent
+            const count = cluster.events.length
+            const label = count === 1
+              ? `${clockTime(cluster.events[0].event.ts)}, ${eventTitle(cluster.events[0].event)}, ${videoStatusLabel(cluster.events[0].event)}`
+              : `${count} events from ${rangeLabel(cluster)}`
+            return (
+              <span key={cluster.id}>
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-2 z-[1] min-w-[3px] rounded-sm opacity-85"
+                  style={{
+                    background: cluster.color,
+                    left: `${startPercent}%`,
+                    width: durationWidth > 0 ? `${durationWidth}%` : '4px',
+                    transform: durationWidth > 0 ? undefined : 'translateX(-50%)',
+                  }}
+                  data-testid="timeline-marker-fill"
+                />
+                <button
+                  type="button"
+                  aria-label={label}
+                  aria-expanded={count > 1 ? expandedClusterId === cluster.id : undefined}
+                  onClick={() => activateCluster(cluster)}
+                  className="absolute inset-y-0 z-[2] min-w-8 -translate-x-1/2 rounded-md bg-transparent focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-[-2px]"
+                  style={{ left: `${markerPercent}%` }}
+                  data-testid="timeline-marker"
+                />
+              </span>
+            )
+          })}
+
+          {nowInDay ? (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 z-[3] w-px bg-[var(--color-brass-default)]"
+              style={{ left: `${nowPercent}%` }}
+              data-testid="now-cursor"
+            >
+              <span className="absolute -left-1 -top-px h-2 w-2 rounded-full bg-[var(--color-brass-default)]" />
+            </span>
+          ) : null}
         </div>
 
-        {clusters.map((cluster) => {
-          const startPercent = pct(cluster.startTs, dayStartTs)
-          const endPercent = pct(cluster.endTs, dayStartTs)
-          const durationWidth = endPercent - startPercent
-          const markerPercent = durationWidth > 0
-            ? startPercent + durationWidth / 2
-            : startPercent
-          const count = cluster.events.length
-          const label = count === 1
-            ? `${clockTime(cluster.events[0].event.ts)}, ${eventTitle(cluster.events[0].event)}, ${videoStatusLabel(cluster.events[0].event)}`
-            : `${count} events from ${rangeLabel(cluster)}`
-          return (
-            <span key={cluster.id}>
-              <span
-                aria-hidden="true"
-                className="absolute top-7 z-[1] h-7 min-w-[4px] rounded-full shadow-[0_0_0_1px_var(--color-bg)]"
-                style={{
-                  background: cluster.color,
-                  left: `${startPercent}%`,
-                  width: durationWidth > 0 ? `${durationWidth}%` : '6px',
-                  transform: durationWidth > 0 ? undefined : 'translateX(-50%)',
-                }}
-                data-testid="timeline-marker-fill"
-              />
-              <button
-                type="button"
-                aria-label={label}
-                aria-expanded={count > 1 ? expandedClusterId === cluster.id : undefined}
-                onClick={() => activateCluster(cluster)}
-                className="absolute top-5 z-[2] flex h-11 min-w-6 -translate-x-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
-                style={{ left: `${markerPercent}%` }}
-                data-testid="timeline-marker"
-              >
-                {count > 1 ? (
-                  <span className="relative z-[1] rounded-full bg-[var(--color-ink)] px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-[var(--color-on-ink)]">
-                    {count}
-                  </span>
-                ) : null}
-              </button>
-            </span>
-          )
-        })}
-
-        {nowInDay ? (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute top-3 z-[3] h-[3.25rem] w-px bg-[var(--color-brass-default)]"
-            style={{ left: `${nowPercent}%` }}
-            data-testid="now-cursor"
-          >
-            <span className="absolute -left-1 top-0 h-2 w-2 rounded-full bg-[var(--color-brass-default)]" />
-          </span>
-        ) : null}
-
-        <div aria-hidden="true" className="absolute inset-x-0 bottom-0 text-[10px] font-medium tabular-nums text-[var(--color-text-tertiary)]">
+        <div aria-hidden="true" className="relative mt-1 h-4 text-[10px] font-medium tabular-nums text-[var(--color-text-tertiary)]">
           {_AXIS_LABELS.map(([label, position], index) => (
             <span
               key={`${label}-${position}`}
