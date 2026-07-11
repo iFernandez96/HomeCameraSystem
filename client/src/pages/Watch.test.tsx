@@ -364,6 +364,43 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(strip.textContent).not.toMatch(/[·…]/)
   })
 
+  it('Given no power sensor is installed, Then Home keeps an honest ambient power placeholder', async () => {
+    // arrange / act
+    renderWatch()
+    const strip = screen.getByTestId('live-glance-strip')
+
+    // assert
+    await waitFor(() => {
+      expect(within(strip).getByText('Power —')).toHaveAttribute(
+        'aria-label',
+        'External power sensor needed',
+      )
+    })
+  })
+
+  it('Given a fresh sensor sample, Then Home shows the real watt draw at a glance', async () => {
+    // arrange
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      power_sample_age_s: 2,
+      worker_metrics: {
+        power_sensor_status: 1,
+        power_watts: 6.287,
+        power_volts: 5.03,
+        power_amps: 1.25,
+      },
+    })
+
+    // act
+    renderWatch()
+
+    // assert
+    expect(await screen.findByText('Power 6.3 W')).toHaveAttribute(
+      'aria-label',
+      '6.29 W · 5.03 V · 1.25 A',
+    )
+  })
+
   it('Given no events yet today, When the timeline loads, Then the cat empty state explains the quiet', async () => {
     // arrange / act
     renderWatch()

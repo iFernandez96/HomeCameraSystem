@@ -124,6 +124,12 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         "wedge_diag_gpu_temp_c",
         "wedge_diag_mem_avail_mb",
         "wedge_diag_argus_pending",
+        "power_sensor_status",
+        "power_volts",
+        "power_amps",
+        "power_watts",
+        "power_sample_ts",
+        "power_read_failures",
     }
 )
 

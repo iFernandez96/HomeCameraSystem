@@ -177,6 +177,25 @@ async def metrics_prom() -> str:
                 "homecam_worker_uptime_seconds", wm.get("uptime_s"),
                 "Worker process uptime in seconds",
             ))
+            power_sample_ts = wm.get("power_sample_ts", 0.0)
+            power_age_s = (
+                max(0.0, time.time() - power_sample_ts)
+                if isinstance(power_sample_ts, (int, float)) and power_sample_ts > 0.0
+                else None
+            )
+            if wm.get("power_sensor_status") == 1 and power_age_s is not None and power_age_s <= 15.0:
+                parts.append(_line(
+                    "homecam_input_power_watts", wm.get("power_watts"),
+                    "Measured Jetson input power in watts",
+                ))
+                parts.append(_line(
+                    "homecam_input_voltage_volts", wm.get("power_volts"),
+                    "Measured Jetson input voltage in volts",
+                ))
+                parts.append(_line(
+                    "homecam_input_current_amps", wm.get("power_amps"),
+                    "Measured Jetson input current in amps",
+                ))
         # Counters — Prometheus convention is *_total suffix. iter-302:
         # emit even when worker_alive is false so rate() graphs don't
         # blank at exactly the moment of failure.
@@ -199,6 +218,12 @@ async def metrics_prom() -> str:
             "homecam_worker_argus_restarts_total",
             wm.get("argus_restarts"),
             "Cumulative nvargus-daemon escalations since worker start (iter-302)",
+            "counter",
+        ))
+        parts.append(_line(
+            "homecam_power_read_failures_total",
+            wm.get("power_read_failures"),
+            "Cumulative input-power sensor read failures since worker start",
             "counter",
         ))
         # iter-302: stream-stale signal. seconds since the worker's

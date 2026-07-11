@@ -32,6 +32,7 @@ function baseStatus(over: Partial<ServerStatus> = {}): ServerStatus {
     detection_active: true,
     worker_alive: true,
     worker_last_seen_s: 1.5,
+    power_sample_age_s: null,
     cpu_temp_c: 50,
     gpu_temp_c: 47,
     cpu_freq_pct: 100,
@@ -219,7 +220,7 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
       screen.getByText(/what the ai is watching for/i),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/cpu, memory, and storage/i),
+      screen.getByText(/power, cpu, memory, and storage/i),
     ).toBeInTheDocument()
   })
 
@@ -239,6 +240,7 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
       'Watching for people',
       'Face recognition',
       'Detection process',
+      'Power draw',
       'CPU temp',
       'GPU temp',
       'CPU clock',
@@ -260,6 +262,35 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
     // surfaces a helper "(1m · 5m · 15m)" so a homeowner who
     // doesn't know Unix-load-avg semantics has context.
     expect(screen.getByText(/load avg \(1m · 5m · 15m\)/i)).toBeInTheDocument()
+  })
+
+  it('Given the Nano 2GB has no input monitor, Then Settings explains why watts are unavailable', () => {
+    // arrange / act
+    render(<JetsonSection status={baseStatus()} />)
+
+    // assert
+    expect(screen.getByText('External power sensor needed')).toBeInTheDocument()
+    expect(screen.getByText(/nano 2gb has no onboard power monitor/i)).toBeInTheDocument()
+  })
+
+  it('Given a fresh power sample, Then Settings shows watts, volts, and amps together', () => {
+    // arrange / act
+    render(
+      <JetsonSection
+        status={baseStatus({
+          power_sample_age_s: 1,
+          worker_metrics: {
+            power_sensor_status: 1,
+            power_watts: 6.287,
+            power_volts: 5.03,
+            power_amps: 1.25,
+          },
+        })}
+      />,
+    )
+
+    // assert
+    expect(screen.getByText('6.29 W · 5.03 V · 1.25 A')).toBeInTheDocument()
   })
 
   it('Given the panel renders, When the user scans the Camera box group, Then it contains exactly the camera-identity rows (no detection or system rows leak in)', () => {

@@ -1586,6 +1586,12 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         "wedge_diag_gpu_temp_c": 67.5,
         "wedge_diag_mem_avail_mb": 384.0,
         "wedge_diag_argus_pending": 2.0,
+        "power_sensor_status": 1,
+        "power_volts": 5.03,
+        "power_amps": 1.25,
+        "power_watts": 6.287,
+        "power_sample_ts": 1700000102.0,
+        "power_read_failures": 0,
     }
     # If this assertion fires, _ALLOWED_METRIC_FIELDS has grown a key
     # the test doesn't know about — add it to `payload` above.

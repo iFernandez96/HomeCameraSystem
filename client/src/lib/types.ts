@@ -508,6 +508,16 @@ export type WorkerMetrics = {
   wedge_diag_gpu_temp_c?: number
   wedge_diag_mem_avail_mb?: number
   wedge_diag_argus_pending?: number
+  /** Input-power sensor state: 0 unavailable, 1 live, 2 read error. */
+  power_sensor_status?: number
+  /** Real electrical readings from an INA2xx input-power monitor. */
+  power_volts?: number
+  power_amps?: number
+  power_watts?: number
+  /** Unix epoch of the latest successful electrical sample. */
+  power_sample_ts?: number
+  /** Cumulative sensor read failures since worker start. */
+  power_read_failures?: number
 }
 
 /**
@@ -557,6 +567,8 @@ export type ServerStatus = {
    * the UI never shows stale telemetry.
    */
   worker_metrics: WorkerMetrics | null
+  /** Age of the latest real power sample, or null before one exists. */
+  power_sample_age_s?: number | null
   cpu_temp_c: number | null
   /**
    * GPU thermal zone (`GPU-therm` on Tegra). Distinct from

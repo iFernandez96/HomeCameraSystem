@@ -134,6 +134,7 @@ describe('lib/api', () => {
       uptime_s: 12,
       camera: 'ok',
       detection_active: false,
+      power_sample_age_s: 2.1,
       cpu_temp_c: null,
       fps: 0,
       worker_metrics: {
@@ -147,12 +148,20 @@ describe('lib/api', () => {
         wedge_diag_gpu_temp_c: 67.5,
         wedge_diag_mem_avail_mb: 384,
         wedge_diag_argus_pending: 2,
+        power_sensor_status: 1,
+        power_volts: 5.03,
+        power_amps: 1.25,
+        power_watts: 6.15,
+        power_sample_ts: 1700000111,
+        power_read_failures: 0,
       },
     })
     const s = await getStatus()
     expect(s.ok).toBe(true)
     expect(s.worker_metrics?.watchdog_last_action).toBe('restart_nvargus')
     expect(s.worker_metrics?.wedge_diag_mem_avail_mb).toBe(384)
+    expect(s.power_sample_age_s).toBe(2.1)
+    expect(s.worker_metrics?.power_watts).toBe(6.15)
     expect(asMock()).toHaveBeenCalledWith(
       '/api/status',
       expect.objectContaining({

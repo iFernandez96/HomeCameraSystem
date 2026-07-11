@@ -505,6 +505,11 @@ def _build_status() -> dict[str, object]:
     # inconsistent responses (alive=True with last_seen_s>30, or
     # vice versa).
     worker_alive, worker_last_seen_s, worker_metrics = worker_health.snapshot()
+    power_sample_age_s = None
+    if worker_metrics:
+        power_sample_ts = worker_metrics.get("power_sample_ts", 0.0)
+        if isinstance(power_sample_ts, (int, float)) and power_sample_ts > 0.0:
+            power_sample_age_s = round(max(0.0, time.time() - power_sample_ts), 1)
     if _status_probe_failed:
         # Recovered — re-arm the once-flag so a later failure logs again.
         _status_probe_failed = False
@@ -520,6 +525,7 @@ def _build_status() -> dict[str, object]:
         "worker_alive": worker_alive,
         "worker_last_seen_s": worker_last_seen_s,
         "worker_metrics": worker_metrics,
+        "power_sample_age_s": power_sample_age_s,
         "cpu_temp_c": _cpu_temp(),
         "gpu_temp_c": _gpu_temp(),
         "cpu_freq_pct": _cpu_freq_pct(),

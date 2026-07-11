@@ -164,6 +164,7 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
         "worker_alive",
         "worker_last_seen_s",
         "worker_metrics",
+        "power_sample_age_s",
         "cpu_temp_c",
         "gpu_temp_c",
         "cpu_freq_pct",

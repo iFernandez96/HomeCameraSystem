@@ -13,6 +13,7 @@ function status(over: Partial<ServerStatus> = {}): ServerStatus {
     worker_alive: true,
     worker_last_seen_s: 5,
     worker_metrics: null,
+    power_sample_age_s: null,
     cpu_temp_c: 50,
     gpu_temp_c: 47,
     cpu_freq_pct: 100,

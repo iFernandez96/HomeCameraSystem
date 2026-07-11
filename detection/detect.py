@@ -82,6 +82,7 @@ from activity_rules import ActivityRuleEngine, sanitize_rules  # noqa: E402
 from audio_events import sanitize_audio_labels  # noqa: E402
 from scene_guard import SceneGuard  # noqa: E402
 from doorbell import DebouncedButton  # noqa: E402
+from power_monitor import start_power_sampler  # noqa: E402
 
 # Leaf-style logger for the worker. `applog.configure()` (called first
 # thing in main()) installs the root handler so these records reach
@@ -2988,6 +2989,10 @@ def main():
     liveness = Liveness()
     metrics = Metrics()
     metrics.face_recog_names = metrics_known_names
+    # Independent, low-rate sysfs sampler. It keeps probing while detection is
+    # manually paused and automatically begins reporting if an external INA2xx
+    # sensor appears later. Readings are carried on the existing heartbeat.
+    start_power_sampler(metrics)
 
     def _prepare_visit_open_event(visit_id, key, _start_ts, boxes,
                                   cuda_img, segment_index):

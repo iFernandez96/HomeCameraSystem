@@ -1,5 +1,6 @@
 import { formatUptime } from '../../lib/format'
 import type { ServerStatus, WorkerMetrics } from '../../lib/types'
+import { powerDisplay } from '../../lib/power'
 import { Mono, Row, Section } from './parts'
 
 // iter-269: read-only Jetson health-and-status panel pulled out of
@@ -151,8 +152,9 @@ export function JetsonSection({
 
       <Section
         title="System resources"
-        subtitle="CPU, memory, and storage on the camera box."
+        subtitle="Power, CPU, memory, and storage on the camera box."
       >
+        <PowerRow status={status} />
         <Row
           label="CPU temp"
           right={<Temperature kind="cpu" celsius={status?.cpu_temp_c ?? null} />}
@@ -188,6 +190,31 @@ export function JetsonSection({
         <Row label="System SD free" right={<DiskFree gb={status?.system_disk_free_gb ?? null} />} />
       </Section>
     </div>
+  )
+}
+
+function PowerRow({ status }: { status: ServerStatus | null }) {
+  const power = powerDisplay(status)
+  const color =
+    power.state === 'error' || power.state === 'stale'
+      ? 'text-[var(--color-warning)]'
+      : power.state === 'live'
+        ? 'text-[var(--color-text-primary)]'
+        : 'text-[var(--color-text-tertiary)]'
+  return (
+    <Row
+      label="Power draw"
+      right={
+        <span className={`text-right ${color}`}>
+          <Mono>{power.detail}</Mono>
+          {power.state === 'unavailable' ? (
+            <span className="mt-0.5 block text-xs font-normal text-[var(--color-text-tertiary)]">
+              Nano 2GB has no onboard power monitor.
+            </span>
+          ) : null}
+        </span>
+      }
+    />
   )
 }
 

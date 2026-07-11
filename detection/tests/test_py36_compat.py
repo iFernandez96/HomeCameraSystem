@@ -71,6 +71,7 @@ _GUARDED_MODULES = (
     "detection/preroll.py",
     "detection/tracks.py",
     "detection/presence.py",
+    "detection/power_monitor.py",
     "detection/visit.py",
     "detection/visit_runtime.py",
     "detection/wedge_diagnostics.py",

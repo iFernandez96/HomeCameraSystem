@@ -36,6 +36,7 @@ import {
 } from '../lib/twoWayAudio'
 import type { DetectionEvent } from '../lib/types'
 import { useStatus } from '../lib/useStatus'
+import { powerDisplay } from '../lib/power'
 import {
   WATCH_STATE_LABEL,
   watchStateDotClass,
@@ -1226,6 +1227,7 @@ export function Watch() {
             canManageDetection={canManageDetection}
             detectionToggleBusy={detectionToggleBusy}
             onToggleDetection={toggleDetectionFromWatchPanel}
+            power={powerDisplay(status)}
           />
         )}
 
@@ -1359,6 +1361,7 @@ function LiveGlanceStrip({
   canManageDetection,
   detectionToggleBusy,
   onToggleDetection,
+  power,
 }: {
   unhealthy: boolean
   stateLabel: string
@@ -1368,6 +1371,7 @@ function LiveGlanceStrip({
   canManageDetection: boolean
   detectionToggleBusy: boolean
   onToggleDetection: () => void
+  power: ReturnType<typeof powerDisplay>
 }) {
   const watchState = (
     <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1379,6 +1383,20 @@ function LiveGlanceStrip({
           {detectionToggleBusy ? 'Updating watch status' : watchingDetail}
         </p>
       </div>
+      <div className="flex flex-none items-center gap-1.5">
+        <span
+          aria-label={power.detail}
+          title={power.detail}
+          className={`whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold tabular-nums ${
+            power.state === 'live'
+              ? 'border-white/25 bg-white/8 text-white/85'
+              : power.state === 'error' || power.state === 'stale'
+                ? 'border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
+                : 'border-white/18 bg-white/5 text-white/60'
+          }`}
+        >
+          {power.compact}
+        </span>
       {canManageDetection && detectionActive != null ? (
         <span
           aria-hidden="true"
@@ -1399,6 +1417,7 @@ function LiveGlanceStrip({
           {detectionToggleBusy ? 'Saving' : detectionActive ? 'Pause' : 'Resume'}
         </span>
       ) : null}
+      </div>
     </div>
   )
   return (

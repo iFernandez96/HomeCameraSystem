@@ -137,6 +137,16 @@ class Metrics:
         self.wedge_diag_gpu_temp_c = 0.0
         self.wedge_diag_mem_avail_mb = 0.0
         self.wedge_diag_argus_pending = 0.0
+        # Real input-power telemetry from an approved INA2xx sensor. Nano 2GB
+        # has no onboard monitor, so status starts unavailable (0) and the
+        # values remain zero until power_monitor.py obtains a real sample.
+        # status: 0=unavailable, 1=live, 2=read error.
+        self.power_sensor_status = 0
+        self.power_volts = 0.0
+        self.power_amps = 0.0
+        self.power_watts = 0.0
+        self.power_sample_ts = 0.0
+        self.power_read_failures = 0
         self.started = time.time()
 
     def fps(self):
@@ -226,4 +236,10 @@ class Metrics:
             "wedge_diag_gpu_temp_c": round(self.wedge_diag_gpu_temp_c, 1),
             "wedge_diag_mem_avail_mb": round(self.wedge_diag_mem_avail_mb, 1),
             "wedge_diag_argus_pending": round(self.wedge_diag_argus_pending, 1),
+            "power_sensor_status": self.power_sensor_status,
+            "power_volts": round(self.power_volts, 3),
+            "power_amps": round(self.power_amps, 3),
+            "power_watts": round(self.power_watts, 3),
+            "power_sample_ts": round(self.power_sample_ts, 1),
+            "power_read_failures": self.power_read_failures,
         }
