@@ -221,7 +221,7 @@ def test_Given_hq_cam_path_When_inspected_Then_records_bounded_continuous_histor
     # act / assert
     assert cam["record"] is True
     assert cam["recordFormat"] == "fmp4"
-    assert cam["recordPath"] == "./recordings/continuous/%path/%s"
+    assert cam["recordPath"] == "/srv/homecam-media/recordings/continuous/%path/%s"
     assert cam["recordPartDuration"] == "1s"
     assert cam["recordSegmentDuration"] == "5m"
     assert cam["recordDeleteAfter"] == "2h"

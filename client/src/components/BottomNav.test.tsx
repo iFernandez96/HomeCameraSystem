@@ -88,15 +88,21 @@ describe('BottomNav', () => {
     })
   })
 
-  it('Given an owner user, When BottomNav renders, Then God View is visible from the role-based gate', () => {
+  it('Given the Israel owner account, When BottomNav renders, Then God View is visible', () => {
     // arrange
-    authUser = { username: 'not-admin', role: 'owner' }
+    authUser = { username: 'Israel', role: 'owner' }
 
     // act
     renderAt('/')
 
     // assert
     expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
+  })
+
+  it('Given another owner account, When BottomNav renders, Then God View is undiscoverable', () => {
+    authUser = { username: 'not-admin', role: 'owner' }
+    renderAt('/')
+    expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
   })
 
   it('GIVEN the docked landscape-phone rail WHEN BottomNav renders THEN tab labels stay accessible but become visually hidden', () => {

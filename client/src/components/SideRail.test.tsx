@@ -55,15 +55,21 @@ describe('SideRail', () => {
     })
   })
 
-  it('Given an owner user, When SideRail renders, Then God View is visible from the role-based gate', () => {
+  it('Given the admin operator account, When SideRail renders, Then God View is visible', () => {
     // arrange
-    authUser = { username: 'not-admin', role: 'owner' }
+    authUser = { username: 'admin', role: 'admin' }
 
     // act
     renderRail()
 
     // assert
     expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
+  })
+
+  it('Given another owner account, When SideRail renders, Then God View is undiscoverable', () => {
+    authUser = { username: 'not-admin', role: 'owner' }
+    renderRail()
+    expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
   })
 
   it('GIVEN the rail renders WHEN screen readers walk the landmarks THEN a "Main navigation" nav landmark is announced and every icon is aria-hidden (shared NavIcons module keeps the Dana #2 treatment on both nav surfaces)', () => {

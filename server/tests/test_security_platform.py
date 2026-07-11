@@ -173,10 +173,16 @@ def test_visits_group_known_adjacent_but_never_unknown_by_time(client):
     assert all(set(item) == {"id", "start_ts", "end_ts", "camera_ids", "people", "labels", "events"} for item in items)
 
 
-def test_incident_lifecycle_and_event_protection(client):
+def test_given_admin_owns_incident_when_mutating_then_full_lifecycle_succeeds(client):
+    # arrange
     _event(client, "incident-event")
+
+    # act
     created = client.post("/api/security/incidents", json={"title": "Porch", "notes": "Review"})
+
+    # assert
     assert created.status_code == 201
+    assert created.json()["owner_username"] == "testuser"
     incident_id = created.json()["id"]
     added = client.post(
         "/api/security/incidents/{}/events/incident-event".format(incident_id)
@@ -189,6 +195,64 @@ def test_incident_lifecycle_and_event_protection(client):
     assert removed.status_code == 200
     deleted = client.delete("/api/security/incidents/{}".format(incident_id))
     assert deleted.json() == {"deleted": True}
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["Israel-owned", "legacy"])
+def test_given_israel_or_legacy_incident_when_admin_mutates_then_every_write_is_forbidden(
+    client, legacy
+):
+    # arrange
+    from app.config import settings
+    from app.services.security_store import security_store
+
+    _event(client, "protected-event")
+    _event(client, "new-event")
+    incident_id = "legacy-incident" if legacy else "israel-incident"
+    row = {
+        "id": incident_id,
+        "title": "Israel evidence",
+        "notes": "Do not let another admin alter this.",
+        "status": "open",
+        "event_ids": ["protected-event"],
+        "created_ts": 100.0,
+        "updated_ts": 100.0,
+        "audit": [],
+    }
+    if not legacy:
+        row["owner_username"] = "Israel"
+    security_store.transact(
+        lambda state: state["incidents"].__setitem__(incident_id, row)
+    )
+    detail = client.get("/api/security/incidents/{}".format(incident_id))
+    assert detail.status_code == 200
+    assert detail.json()["owner_username"] == "Israel"
+
+    # act
+    responses = [
+        client.patch(
+            "/api/security/incidents/{}".format(incident_id),
+            json={"notes": "unauthorized"},
+        ),
+        client.post(
+            "/api/security/incidents/{}/events/new-event".format(incident_id)
+        ),
+        client.delete(
+            "/api/security/incidents/{}/events/protected-event".format(incident_id)
+        ),
+        client.post("/api/security/incidents/{}/export".format(incident_id)),
+        client.delete("/api/security/incidents/{}".format(incident_id)),
+    ]
+
+    # assert
+    assert [response.status_code for response in responses] == [403] * 5
+    persisted = security_store.read()["incidents"][incident_id]
+    assert persisted["owner_username"] == "Israel"
+    assert persisted["notes"] == "Do not let another admin alter this."
+    assert persisted["event_ids"] == ["protected-event"]
+    assert persisted["audit"] == []
+    assert not list(settings.security_exports_dir.glob("incident-*.zip"))
+    on_disk = json.loads(settings.security_state_path.read_text(encoding="utf-8"))
+    assert on_disk["incidents"][incident_id]["owner_username"] == "Israel"
 
 
 def test_identity_alias_rejects_unsafe_name_and_face_pref_suppresses(client):

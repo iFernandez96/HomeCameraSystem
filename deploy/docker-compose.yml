@@ -45,7 +45,11 @@ services:
       # Bind-mount the snapshots dir so the host-side detection worker can
       # write thumbnails into the same location the server serves from.
       # (Docker named volumes can't be written from outside the container.)
-      - ../snapshots:/app/snapshots
+      - type: bind
+        source: /srv/homecam-media/snapshots
+        target: /app/snapshots
+        bind:
+          create_host_path: false
       # iter-247 (Feature #1 slice 2b): same shape for clip recordings.
       # Worker (host-side) writes `<event_id>.mp4` via ffmpeg subprocess;
       # server (container) reads via FileResponse on
@@ -55,15 +59,27 @@ services:
       # `../recordings/continuous/`; the same mount lets the authenticated
       # timeline API index and serve those fMP4 segments without exposing
       # MediaMTX's unauthenticated playback port.
-      - ../recordings:/app/recordings
+      - type: bind
+        source: /srv/homecam-media/recordings
+        target: /app/recordings
+        bind:
+          create_host_path: false
       # iter-263 (systems-engineering-auditor A1): same fix for
       # backups (iter-210) and timelapses (iter-213). Pre-iter-263
       # both defaulted to `./backups` and `./timelapses` inside the
       # container WORKDIR, so every `up -d --build` wiped operator
       # backups and timelapse outputs. Mirror of the iter-244e
       # users.db / jwt_secret / events.db relocation.
-      - ../backups:/app/backups
-      - ../timelapses:/app/timelapses
+      - type: bind
+        source: /srv/homecam-media/backups
+        target: /app/backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/homecam-media/timelapses
+        target: /app/timelapses
+        bind:
+          create_host_path: false
       # iter-351 (face-capture-for-retraining): host-side detection
       # worker writes face crops into ./face_captures via
       # detection/face_recog/capture.py; container server reads via
@@ -71,7 +87,11 @@ services:
       # iter-263 backups/timelapses bind-mount pattern. The
       # FACE_CAPTURES_DIR env var defaults to /app/face_captures so
       # this matches without any extra config.
-      - ../face_captures:/app/face_captures
+      - type: bind
+        source: /srv/homecam-media/face_captures
+        target: /app/face_captures
+        bind:
+          create_host_path: false
       # iter-356.62 (tiered-capture slices 1+2+3): parallel root for
       # full-person crops the worker saves alongside each face crop.
       # Same bind-mount + 0o600 pattern as face_captures. NOT a subdir
@@ -79,7 +99,19 @@ services:
       # route walks face_captures/<name>/ and would treat a nested
       # _person subtree as a name bucket. Read by /api/training/export
       # (kind=person) and swept by face_capture_sweeper.
-      - ../person_captures:/app/person_captures
+      - type: bind
+        source: /srv/homecam-media/person_captures
+        target: /app/person_captures
+        bind:
+          create_host_path: false
+      # Generated timeline and incident exports are write-heavy media too.
+      # Mount them below the secrets volume while keeping databases and keys
+      # on the SD card. Refuse to create a fallback host path if USB is absent.
+      - type: bind
+        source: /srv/homecam-media/security-exports
+        target: /app/secrets/security-exports
+        bind:
+          create_host_path: false
       # rw since OTA (harness #11, 2026-07-08): the owner-only update route
       # applies the client tier by atomic swap into this mount (checksummed
       # artifact, byte backups, rollback). Was :ro pre-OTA.
@@ -105,9 +137,10 @@ services:
       - SECURITY_EXPORT_MAX_TOTAL_BYTES=${SECURITY_EXPORT_MAX_TOTAL_BYTES:-5368709120}
       - SECURITY_EXPORT_MIN_FREE_BYTES=${SECURITY_EXPORT_MIN_FREE_BYTES:-4294967296}
       # Exact source addresses allowed to invoke MediaMTX's unauthenticated
-      # auth callback. The live Jetson's host-to-container source is
-      # 172.18.0.1; adjacent containers such as 172.18.0.3 remain denied.
-      - MEDIAMTX_AUTH_TRUSTED_CALLERS=${MEDIAMTX_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.18.0.1}
+      # auth callback. The dedicated network below pins the host gateway so a
+      # Compose recreate cannot silently rotate this exact-address allowlist.
+      # Adjacent containers such as 172.30.0.2 remain denied.
+      - MEDIAMTX_AUTH_TRUSTED_CALLERS=${MEDIAMTX_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.30.0.1}
       - AUTOMATION_WEBHOOK_TIMEOUT_S=${AUTOMATION_WEBHOOK_TIMEOUT_S:-5}
       # Optional automation adapters. Empty values keep MQTT and physical
       # deterrence explicitly unavailable. A deterrence executable also needs
@@ -144,3 +177,11 @@ services:
 
 volumes:
   homecam-secrets:
+
+networks:
+  default:
+    name: homecam-net
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1

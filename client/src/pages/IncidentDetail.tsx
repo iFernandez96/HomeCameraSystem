@@ -17,7 +17,7 @@ import type { DetectionEvent } from '../lib/types'
 import { useConfirm } from '../lib/confirm'
 import { useToast } from '../lib/toast'
 import { useAuth } from '../lib/auth'
-import { isOwner } from '../lib/roles'
+import { canManageIncident } from '../lib/roles'
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -36,7 +36,7 @@ export function IncidentDetail() {
   const [busy, setBusy] = useState(false)
   const confirm = useConfirm()
   const { user } = useAuth()
-  const canManage = isOwner(user)
+  const canManage = canManageIncident(user, incident?.owner_username)
   const navigate = useNavigate()
   const { showToast } = useToast()
 
@@ -112,7 +112,7 @@ export function IncidentDetail() {
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="page-title text-2xl text-[var(--color-text-primary)]">Incident details</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{incident.event_count} evidence events</p>
+          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{incident.event_count} evidence events · owned by {incident.owner_username}</p>
         </div>
         <Link to="/events/incidents" className="inline-flex min-h-11 items-center rounded-full px-3 text-sm font-semibold text-[var(--color-accent-deep)]">Back</Link>
       </header>

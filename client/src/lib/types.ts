@@ -57,6 +57,10 @@ export type DetectionEvent = {
   label: string
   score: number
   boxes: DetectionBox[]
+  /** Authoritative server-side clip lifecycle for list/search rows.
+   * Never infer availability from clip_url: that URL can exist before
+   * finalization and after retention removes the file. */
+  video_status?: 'recording' | 'finalizing' | 'available' | 'failed' | 'unknown'
   /**
    * URL of the saved thumbnail captured at detection time. Server emits
    * the key always; value is null when no thumbnail was written (idle
@@ -525,6 +529,7 @@ export type MeResponse = {
 
 export type ServerStatus = {
   ok: boolean
+  /** FastAPI process uptime. */
   uptime_s: number
   camera: 'ok' | 'missing' | 'error'
   detection_active: boolean
@@ -561,7 +566,12 @@ export type ServerStatus = {
   load_avg: [number, number, number] | null
   memory_used_mb: number | null
   memory_total_mb: number | null
+  /** Jetson host uptime from /proc/uptime. */
+  host_uptime_s?: number | null
+  /** Free space on the filesystem that stores recordings. */
   disk_free_gb: number | null
+  /** Free space on the Jetson SD/root filesystem. */
+  system_disk_free_gb?: number | null
   /** Measured bytes created by clips during the previous 24 hours. */
   recording_gb_per_day?: number
   /** Clip storage currently excluded from automatic eviction. */

@@ -290,13 +290,7 @@ export function EventList({
                 >
                   {clockTime(e.ts)}
                 </span>
-                {/* AXIS tick — small filled circle on the axis line */}
-                <span
-                  aria-hidden="true"
-                  data-testid="event-axis-dot"
-                  className="absolute left-[3.875rem] top-3.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg)]"
-                  style={{ backgroundColor: identityOf(e).colorVar }}
-                />
+                <VideoStatusIcon status={e.video_status ?? 'unknown'} />
                 <EventCard
                   event={e}
                   now={now}
@@ -317,6 +311,39 @@ export function EventList({
 
 function eventCanOpen(e: DetectionEvent, onSelect?: (event: DetectionEvent) => void) {
   return !!e.thumb_url && !!onSelect
+}
+
+function VideoStatusIcon({ status }: { status: NonNullable<DetectionEvent['video_status']> }) {
+  const loading = status === 'recording' || status === 'finalizing'
+  const label =
+    status === 'available'
+      ? 'Video available'
+      : status === 'recording'
+        ? 'Recording video'
+        : status === 'finalizing'
+          ? 'Finalizing video'
+          : status === 'failed'
+            ? 'Video unavailable'
+            : 'Video status unknown'
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      data-testid="event-video-status"
+      data-video-status={status}
+      className="absolute left-[3.45rem] top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-bg)] text-[var(--color-text-secondary)] ring-1 ring-[var(--color-border-subtle)]"
+    >
+      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2.5" y="6" width="13" height="12" rx="2" />
+        <path d="m15.5 10 6-3v10l-6-3" />
+        {status === 'failed' ? <path d="M4 4 20 20" strokeWidth="2.4" /> : null}
+        {status === 'unknown' ? <path d="M10 10.1a2.2 2.2 0 1 1 3.5 1.8c-.9.6-1.5 1-1.5 2M12 17h.01" /> : null}
+      </svg>
+      {loading ? (
+        <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-spin rounded-full border-2 border-[var(--color-bg)] border-t-[var(--color-accent-default)]" />
+      ) : null}
+    </span>
+  )
 }
 
 function EventTile({
@@ -341,7 +368,7 @@ function EventTile({
     | 'button'
     | 'div'
   const title = eventTitle(e)
-  const hasClip = !!e.clip_url
+  const hasClip = e.video_status === 'available'
   return (
     <div className="group relative h-full">
       <Wrapper

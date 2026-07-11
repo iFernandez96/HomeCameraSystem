@@ -60,6 +60,17 @@ def test_api_detection_toggle_authed_returns_200(client):
     assert res.status_code == 200
 
 
+def test_api_detection_enabled_anon_returns_401(client_anon):
+    res = client_anon.put("/api/detection/enabled", json={"enabled": False})
+    assert res.status_code == 401
+
+
+def test_api_detection_enabled_authed_returns_200(client):
+    res = client.put("/api/detection/enabled", json={"enabled": False})
+    assert res.status_code == 200
+    assert res.json() == {"active": False}
+
+
 # --- /api/push/* — router-level gate ----------------------------------
 
 
@@ -543,3 +554,14 @@ def test_detection_toggle_open_to_family(client_anon):
         cookies={COOKIE_ACCESS: token},
     )
     assert res.status_code == 200
+
+
+def test_detection_enabled_open_to_family(client_anon):
+    token = _seed_and_token("family")
+    res = client_anon.put(
+        "/api/detection/enabled",
+        json={"enabled": False},
+        cookies={COOKIE_ACCESS: token},
+    )
+    assert res.status_code == 200
+    assert res.json() == {"active": False}

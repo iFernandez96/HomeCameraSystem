@@ -38,6 +38,7 @@ def test_given_session_when_created_then_it_can_be_listed_and_read(tmp_path):
     row = sessions_db.get_session(path, "access1")
     assert row is not None
     assert row["username"] == "alice"
+    assert row["session_id"] == "access1"
     assert row["refresh_jti"] == "refresh1"
     assert sessions_db.list_sessions(path, include_revoked=True, now=101.0)[0][
         "device_label"
@@ -98,8 +99,36 @@ def test_given_session_when_rotated_then_same_row_gets_new_jtis(tmp_path):
     row = sessions_db.get_session(path, "new_access")
     assert row is not None
     assert row["refresh_jti"] == "new_refresh"
+    assert row["session_id"] == "old_access"
     assert row["created_ts"] == 100.0
     assert row["last_seen_ts"] == 160.0
+
+
+def test_given_legacy_database_when_initialized_then_stable_session_ids_are_backfilled(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "sessions.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                jti TEXT PRIMARY KEY, refresh_jti TEXT, username TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'session', device_ua_raw TEXT NOT NULL,
+                device_label TEXT NOT NULL, ip_class TEXT NOT NULL,
+                created_ts REAL NOT NULL, last_seen_ts REAL NOT NULL,
+                revoked_ts REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("legacy_access", "legacy_refresh", "alice", "session", "UA",
+             "Android", "lan", 100.0, 101.0, None),
+        )
+
+    sessions_db.init_db(path)
+
+    assert sessions_db.get_session(path, "legacy_access")["session_id"] == "legacy_access"
 
 
 def test_given_session_when_revoked_by_refresh_jti_then_access_row_is_revoked(tmp_path):

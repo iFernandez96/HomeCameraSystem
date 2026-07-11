@@ -976,6 +976,12 @@ export const getFaceCapabilities = () =>
 export const toggleDetection = () =>
   req<{ active: boolean }>('/api/detection/toggle', { method: 'POST' })
 
+export const setDetectionEnabled = (enabled: boolean) =>
+  req<{ active: boolean }>('/api/detection/enabled', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
+
 export const getDetectionConfig = () =>
   req<DetectionConfig>('/api/detection/config')
 
@@ -1040,6 +1046,7 @@ export type AdminAuditLogin = {
 export type AdminAuditView = {
   ts: number
   username: string
+  session_id: string | null
   kind: 'page' | 'event'
   name: string
   dwell_ms: number
@@ -1049,13 +1056,46 @@ export type AdminAuditUserSummary = {
   logins: number
   page_dwell_ms: number
   event_views: number
+  actions: number
   top: [string, number][]
 }
 
+export type AdminAuditAction = {
+  ts: number
+  username: string
+  session_id: string | null
+  name: string
+}
+
+export type UsageSession = {
+  id: string
+  username: string
+  device_label: string
+  ip_class: 'lan' | 'tailscale' | 'cellular' | 'other'
+  started_ts: number
+  last_activity_ts: number
+  screen_time_ms: number
+  page_view_count: number
+  event_view_count: number
+  action_count: number
+  legacy: boolean
+  pages: { name: string; dwell_ms: number; views: number }[]
+  events: { name: string; dwell_ms: number; views: number }[]
+  actions: { name: string; count: number }[]
+  timeline: {
+    ts: number
+    kind: 'page' | 'event' | 'action'
+    name: string
+    dwell_ms: number
+  }[]
+}
+
 export type AdminAuditResponse = {
-  v: 1
+  v: 2
   logins: AdminAuditLogin[]
   views: AdminAuditView[]
+  actions: AdminAuditAction[]
+  sessions: UsageSession[]
   summary: {
     by_user: Record<string, AdminAuditUserSummary>
   }
@@ -1333,6 +1373,7 @@ export const getVisitStory = (visitId: string) =>
 
 export type IncidentSummary = {
   id: string
+  owner_username: string
   title: string
   notes: string
   created_ts: number

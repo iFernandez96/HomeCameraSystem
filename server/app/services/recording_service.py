@@ -35,8 +35,10 @@ import re
 import shutil
 import time
 from pathlib import Path
+from typing import Iterable
 
 from ..config import settings
+from ..log import RateLimitedLog
 
 
 log = logging.getLogger(__name__)
@@ -73,6 +75,8 @@ SERVER_MIN_FREE_BYTES = 300 * 1024 * 1024  # ~300 MB
 # event_id from outside the route layer can validate against it.
 _VALID_EVENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 _CLIP_STATE_LEDGER = ".clip_state.json"
+_CLIP_LIFECYCLE_STATES = {"recording", "finalizing", "failed"}
+_clip_status_scan_gate = RateLimitedLog(60.0)
 
 
 def _is_safe_event_id(event_id: str) -> bool:
@@ -162,6 +166,70 @@ def clip_state(event_id: str) -> dict:
         out.setdefault("source", "ledger")
         return out
     return {"event_id": event_id, "state": "unknown", "source": "missing"}
+
+
+def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
+    """Return truthful clip lifecycle states for a batch of events.
+
+    The event list and search routes can return up to 1,000 rows. Reading the
+    worker ledger separately for every row would turn one request into 1,000
+    JSON reads, while making the client poll ``/clip/status`` per card would
+    create the same N+1 problem over HTTP. This helper reads the ledger once
+    and scans the recordings directory once.
+
+    A final MP4 on disk is the only proof of ``available``. In particular, an
+    old ledger record that says ``available`` is ignored after retention or
+    manual cleanup removes the file. ``recording``, ``finalizing``, and
+    ``failed`` remain authoritative worker lifecycle states; malformed or
+    missing records degrade to ``unknown`` rather than making a claim the UI
+    cannot substantiate.
+    """
+    safe_ids = {
+        event_id
+        for event_id in event_ids
+        if isinstance(event_id, str) and _is_safe_event_id(event_id)
+    }
+    statuses = {event_id: "unknown" for event_id in safe_ids}
+    if not safe_ids:
+        return statuses
+
+    ledger_events = read_clip_state_ledger()["events"]
+    for event_id in safe_ids:
+        rec = ledger_events.get(event_id)
+        if not isinstance(rec, dict):
+            continue
+        state = rec.get("state")
+        if state in _CLIP_LIFECYCLE_STATES:
+            statuses[event_id] = state
+
+    try:
+        with os.scandir(settings.recordings_dir) as entries:
+            for entry in entries:
+                name = entry.name
+                if not name.endswith(".mp4"):
+                    continue
+                event_id = name[:-4]
+                if event_id not in safe_ids:
+                    continue
+                try:
+                    if entry.is_file():
+                        statuses[event_id] = "available"
+                except OSError as exc:
+                    if _clip_status_scan_gate.should_log():
+                        log.warning(
+                            "clip status scan could not inspect %s: %s",
+                            entry.path,
+                            exc,
+                        )
+    except OSError as exc:
+        if _clip_status_scan_gate.should_log():
+            log.warning(
+                "clip status scan failed for recordings dir %s: %s",
+                settings.recordings_dir,
+                exc,
+            )
+
+    return statuses
 
 
 def tracks_path(event_id: str) -> Path:

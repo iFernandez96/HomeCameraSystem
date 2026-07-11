@@ -111,6 +111,72 @@ def test_clip_state_unknown_when_no_file_or_ledger_entry(rec_dir):
     }
 
 
+def test_given_mixed_clip_lifecycle_when_batch_read_then_disk_is_only_available_truth(
+    rec_dir,
+):
+    # arrange
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-recording": {"state": "recording"},
+            "evt-finalizing": {"state": "finalizing"},
+            "evt-failed": {"state": "failed"},
+            # Retention already removed this file; the stale ledger must not
+            # make the event claim a playable video still exists.
+            "evt-stale": {"state": "available"},
+            "evt-bad": {"state": "invented"},
+        },
+    }))
+    (rec_dir / "evt-recording.mp4").write_bytes(b"published")
+
+    # act
+    statuses = recording_service.clip_statuses([
+        "evt-recording",
+        "evt-finalizing",
+        "evt-failed",
+        "evt-stale",
+        "evt-bad",
+        "evt-missing",
+    ])
+
+    # assert
+    assert statuses == {
+        "evt-recording": "available",
+        "evt-finalizing": "finalizing",
+        "evt-failed": "failed",
+        "evt-stale": "unknown",
+        "evt-bad": "unknown",
+        "evt-missing": "unknown",
+    }
+
+
+def test_given_many_event_ids_when_batch_read_then_ledger_is_read_once(
+    rec_dir, monkeypatch
+):
+    # arrange
+    rec_dir.mkdir()
+    calls = 0
+    real_read = recording_service.read_clip_state_ledger
+
+    def _counted_read():
+        nonlocal calls
+        calls += 1
+        return real_read()
+
+    monkeypatch.setattr(recording_service, "read_clip_state_ledger", _counted_read)
+
+    # act
+    statuses = recording_service.clip_statuses(
+        ["evt-{}".format(index) for index in range(1000)]
+    )
+
+    # assert
+    assert calls == 1
+    assert len(statuses) == 1000
+    assert set(statuses.values()) == {"unknown"}
+
+
 def test_delete_clip_removes_existing(rec_dir):
     rec_dir.mkdir()
     p = rec_dir / "evt-002.mp4"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isGodModeUser, isOwner, isOwnerRole } from './roles'
+import { canManageIncident, isGodModeUser, isOwner, isOwnerRole } from './roles'
 import type { User } from './types'
 
 describe('role helpers', () => {
@@ -32,10 +32,12 @@ describe('role helpers', () => {
     expect(isOwner(undefined)).toBe(false)
   })
 
-  it('Given the same role matrix, When isGodModeUser is called, Then owner and admin pass', () => {
+  it('Given the God View account policy, When isGodModeUser is called, Then only Israel and admin owners pass', () => {
     // arrange / act / assert
-    expect(isGodModeUser({ username: 'owner-user', role: 'owner' })).toBe(true)
-    expect(isGodModeUser({ username: 'legacy-admin', role: 'admin' })).toBe(true)
+    expect(isGodModeUser({ username: 'Israel', role: 'owner' })).toBe(true)
+    expect(isGodModeUser({ username: 'admin', role: 'admin' })).toBe(true)
+    expect(isGodModeUser({ username: 'owner-user', role: 'owner' })).toBe(false)
+    expect(isGodModeUser({ username: 'Israel', role: 'family' })).toBe(false)
     expect(isGodModeUser({ username: 'family', role: 'viewer' })).toBe(false)
     expect(isGodModeUser(null)).toBe(false)
   })
@@ -46,5 +48,13 @@ describe('role helpers', () => {
     expect(isOwnerRole('admin')).toBe(true)
     expect(isOwnerRole('viewer')).toBe(false)
     expect(isOwnerRole(null)).toBe(false)
+  })
+
+  it('Given an incident owner, When mutation access is checked, Then role and case-insensitive username must both match', () => {
+    // arrange / act / assert
+    expect(canManageIncident({ username: 'Admin', role: 'admin' }, 'admin')).toBe(true)
+    expect(canManageIncident({ username: 'israel', role: 'owner' }, 'admin')).toBe(false)
+    expect(canManageIncident({ username: 'admin', role: 'viewer' }, 'admin')).toBe(false)
+    expect(canManageIncident({ username: 'admin', role: 'admin' }, undefined)).toBe(false)
   })
 })

@@ -232,7 +232,8 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
     // refactor drops a row this test catches it before it ships.
     const labels = [
       'Camera box',
-      'On since',
+      'Jetson running',
+      'API running',
       'Detection running',
       'Camera',
       'Watching for people',
@@ -242,7 +243,8 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
       'GPU temp',
       'CPU clock',
       'Memory',
-      'Disk free',
+      'Capture storage free',
+      'System SD free',
       'FPS',
       'Inference',
       'Dropped frames',
@@ -276,7 +278,8 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
     expect(section).not.toBeNull()
     const within_ = within(section!)
     // Within the Camera box section we expect the 3 identity rows.
-    expect(within_.getByText('On since')).toBeInTheDocument()
+    expect(within_.getByText('Jetson running')).toBeInTheDocument()
+    expect(within_.getByText('API running')).toBeInTheDocument()
     expect(within_.getByText('Camera')).toBeInTheDocument()
     // Hardware-resource rows belong elsewhere — they should NOT
     // be inside this group's section.
@@ -322,7 +325,8 @@ describe('JetsonSection — grouped panels (premium-launch slice)', () => {
     expect(within_.getByText('GPU temp')).toBeInTheDocument()
     expect(within_.getByText('CPU clock')).toBeInTheDocument()
     expect(within_.getByText('Memory')).toBeInTheDocument()
-    expect(within_.getByText('Disk free')).toBeInTheDocument()
+    expect(within_.getByText('Capture storage free')).toBeInTheDocument()
+    expect(within_.getByText('System SD free')).toBeInTheDocument()
     expect(within_.getByText(/load avg/i)).toBeInTheDocument()
     // Detection rows belong elsewhere.
     expect(within_.queryByText('Detection process')).not.toBeInTheDocument()

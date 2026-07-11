@@ -22,6 +22,19 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 
+def _enrich_video_status(items: list[dict]) -> list[dict]:
+    """Attach one truthful, point-in-time clip state to every event."""
+    from ..services import recording_service
+
+    statuses = recording_service.clip_statuses(
+        item.get("id") for item in items if isinstance(item, dict)
+    )
+    for item in items:
+        event_id = item.get("id")
+        item["video_status"] = statuses.get(event_id, "unknown")
+    return items
+
+
 def _origin_matches_host(origin: str | None, host: str | None) -> bool:
     """Same-origin check for the WS handshake (iter-168).
 
@@ -65,7 +78,8 @@ async def list_events(
     # closes the last gap. Empirical benchmarks (iter-315) showed
     # p99 spikes on `/api/_internal/event` (72 ms) suggestive of
     # event-loop contention under concurrent reads.
-    return await asyncio.to_thread(event_bus.recent, limit)
+    items = await asyncio.to_thread(event_bus.recent, limit)
+    return await asyncio.to_thread(_enrich_video_status, items)
 
 
 @router.get("/events/search")
@@ -152,6 +166,8 @@ async def search_events(
             face_unrecognized,
         )
         raise
+    items = await asyncio.to_thread(_enrich_video_status, items)
+
     # next_cursor convention: only set when this page is full
     # (len == limit) so the client can stop paginating cleanly on
     # the last page. Cursor value = oldest item's ts on this page,

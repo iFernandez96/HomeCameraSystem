@@ -13,8 +13,10 @@ Description=Home Camera detection worker (jetson-inference)
 # suicide when it restarts its own dependency — which is the whole point of the
 # escalation ladder. Pairs with detect.py persisting the level BEFORE the action.
 Wants=mediamtx.service
-After=mediamtx.service homecam-server.service
+After=mediamtx.service homecam-server.service srv-homecam\x2dmedia.mount
 Wants=homecam-server.service
+RequiresMountsFor=/srv/homecam-media
+BindsTo=srv-homecam\x2dmedia.mount
 # Restart-storm guard: if the worker fails 5 times within 60 s (i.e. an
 # unrecoverable bug like a Python syntax error or a missing module),
 # systemd stops auto-restarting and surfaces the failure rather than
@@ -58,6 +60,12 @@ Environment=DETECT_SOURCE=rtsp://localhost:8554/cam
 Environment=DETECT_THRESHOLD=0.55
 Environment=DETECT_COOLDOWN_S=5.0
 Environment=DETECT_MODEL=ssd-mobilenet-v2
+Environment=RECORDINGS_DIR=/srv/homecam-media/recordings
+Environment=DETECT_THUMB_DIR=/srv/homecam-media/snapshots
+Environment=FACE_CAPTURES_DIR=/srv/homecam-media/face_captures
+Environment=PERSON_CAPTURES_DIR=/srv/homecam-media/person_captures
+ExecStartPre=/bin/mountpoint -q /srv/homecam-media
+ExecStartPre=/usr/bin/test -f /srv/homecam-media/.homecam-media
 ExecStart=/home/israel/HomeCameraSystem/detection/run-detect.sh
 Restart=on-failure
 RestartSec=5

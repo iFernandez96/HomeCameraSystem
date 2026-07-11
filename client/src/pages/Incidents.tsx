@@ -111,6 +111,7 @@ export function Incidents() {
                 <span className="min-w-0 flex-1">
                   <span className="block font-semibold text-[var(--color-text-primary)]">{item.title}</span>
                   <span className="mt-1 block text-xs text-[var(--color-text-secondary)]">{item.event_count} events · updated {dateLabel(item.updated_ts)}</span>
+                  <span className="mt-1 block text-xs font-semibold text-[var(--color-text-tertiary)]">Owned by {item.owner_username}</span>
                 </span>
                 <span aria-hidden="true">›</span>
               </Link>

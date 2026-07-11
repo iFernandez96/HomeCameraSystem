@@ -1,6 +1,7 @@
 """Tests for the detection-config endpoint + persistence layer."""
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.services.detection_config import (
@@ -235,6 +236,21 @@ def test_disabled_state_survives_a_reload(tmp_path):
     s.update(enabled=False)
     s2 = DetectionConfigStore(path=path)
     assert s2.get().enabled is False
+
+
+@pytest.mark.asyncio
+async def test_detection_service_start_preserves_persisted_disabled_state(monkeypatch):
+    """API startup must not undo an owner pause."""
+    from app.services import detection as detection_module
+    from app.services.detection_config import detection_config
+
+    detection_config.update(enabled=False)
+    service = detection_module.DetectionService()
+    monkeypatch.setattr(service, "_simulator_enabled", False)
+
+    await service.start()
+
+    assert service.active is False
 
 
 def test_legacy_config_file_without_enabled_defaults_to_true(tmp_path):

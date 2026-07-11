@@ -119,7 +119,7 @@ paths:
     record: yes
     # Unix-epoch filenames avoid local-time/DST ambiguity and make the FastAPI
     # timeline index cheap to parse. MediaMTX adds the .mp4 extension.
-    recordPath: ./recordings/continuous/%path/%s
+    recordPath: /srv/homecam-media/recordings/continuous/%path/%s
     recordFormat: fmp4
     recordPartDuration: 1s
     recordMaxPartSize: 50M

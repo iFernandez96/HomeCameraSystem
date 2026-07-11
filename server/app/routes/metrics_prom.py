@@ -71,6 +71,7 @@ async def metrics_prom() -> str:
         _meminfo,
     )
     from ..services.camera import camera_service
+    from ..config import settings
     from ..services.detection import detection_service
     from ..services.health import worker_health
     from ..services.push_service import push_service
@@ -119,8 +120,13 @@ async def metrics_prom() -> str:
     ))
     parts.append(_line(
         "homecam_disk_free_gb",
+        _disk_free_gb(str(settings.recordings_dir)),
+        "Free disk space on the recording filesystem in GB",
+    ))
+    parts.append(_line(
+        "homecam_system_disk_free_gb",
         _disk_free_gb("/"),
-        "Free disk space at / in GB",
+        "Free disk space on the Jetson root filesystem in GB",
     ))
 
     # Camera + push.

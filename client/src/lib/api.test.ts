@@ -20,6 +20,7 @@ import {
   HttpError,
   listSessions,
   listCameraExposurePresets,
+  listIncidents,
   listTimelapses,
   login,
   logout,
@@ -30,6 +31,7 @@ import {
   refreshSession,
   revokeSession,
   searchEvents,
+  setDetectionEnabled,
   sendTestPushReq,
   subscribePush,
   toggleDetection,
@@ -104,6 +106,28 @@ describe('lib/api', () => {
     expect((asMock().mock.calls[2][1] as RequestInit).method).toBe('DELETE')
   })
 
+  it('given incidents from multiple owners, when listed, then preserves the ownership wire field', async () => {
+    // arrange
+    mockJson({
+      items: [{
+        id: 'inc-1',
+        owner_username: 'admin',
+        title: 'Front door',
+        notes: '',
+        created_ts: 1,
+        updated_ts: 2,
+        event_count: 0,
+      }],
+    })
+
+    // act
+    const result = await listIncidents()
+
+    // assert
+    expect(asMock().mock.calls[0][0]).toBe('/api/security/incidents')
+    expect(result.items[0].owner_username).toBe('admin')
+  })
+
   it('getStatus GETs /api/status with JSON content type', async () => {
     mockJson({
       ok: true,
@@ -152,9 +176,11 @@ describe('lib/api', () => {
   it('Given audit bounds, When getAdminAudit runs, Then it GETs the pinned admin audit route with since and until', async () => {
     // arrange
     mockJson({
-      v: 1,
+      v: 2,
       logins: [],
       views: [],
+      actions: [],
+      sessions: [],
       summary: { by_user: {} },
     })
 
@@ -162,7 +188,7 @@ describe('lib/api', () => {
     const r = await getAdminAudit({ since: 1714000000, until: 1714086400 })
 
     // assert
-    expect(r.v).toBe(1)
+    expect(r.v).toBe(2)
     expect(asMock()).toHaveBeenCalledWith(
       '/api/admin/audit?since=1714000000&until=1714086400',
       expect.objectContaining({
@@ -175,15 +201,18 @@ describe('lib/api', () => {
   it('Given no audit bounds, When getAdminAudit runs, Then it omits the query string', async () => {
     // arrange
     mockJson({
-      v: 1,
+      v: 2,
       logins: [{ ts: 1714000000, username: 'admin', action: 'login', ua: 'Chrome' }],
-      views: [{ ts: 1714000010, username: 'admin', kind: 'page', name: '/', dwell_ms: 1200 }],
+      views: [{ ts: 1714000010, username: 'admin', session_id: null, kind: 'page', name: '/', dwell_ms: 1200 }],
+      actions: [],
+      sessions: [],
       summary: {
         by_user: {
           admin: {
             logins: 1,
             page_dwell_ms: 1200,
             event_views: 0,
+            actions: 0,
             top: [['/', 1200]],
           },
         },
@@ -886,6 +915,16 @@ describe('lib/api', () => {
     )
     // GET — no method override means default GET. Confirm by absence.
     expect(asMock().mock.calls[0][1].method).toBeUndefined()
+  })
+
+  it('setDetectionEnabled PUTs only the explicit enabled state to the narrow all-user route', async () => {
+    mockJson({ active: false })
+    const result = await setDetectionEnabled(false)
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/detection/enabled')
+    expect(call[1].method).toBe('PUT')
+    expect(JSON.parse(call[1].body as string)).toEqual({ enabled: false })
+    expect(result).toEqual({ active: false })
   })
 
   it('patchDetectionConfig PATCHes /api/detection/config with serialized body', async () => {

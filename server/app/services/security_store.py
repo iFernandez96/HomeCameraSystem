@@ -20,6 +20,12 @@ from ..config import settings
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
+# Incidents created before per-creator ownership existed belong to the
+# household's canonical owner. Keep the spelling stable: ownership checks are
+# exact and an admin must never acquire legacy incidents merely because the
+# legacy admin role is temporarily treated as an effective owner role.
+LEGACY_INCIDENT_OWNER = "Israel"
+
 
 def _default_state() -> dict[str, Any]:
     return {
@@ -42,10 +48,37 @@ class SecurityStore:
 
     def _select_path(self) -> None:
         path = settings.security_state_path
-        if path == self._path:
-            return
-        self._path = path
-        self._state = self._load(path)
+        if path != self._path:
+            self._path = path
+            self._state = self._load(path)
+        normalized = copy.deepcopy(self._state)
+        if self._normalize_incident_owners(normalized):
+            previous = self._state
+            self._state = normalized
+            try:
+                self._save_locked()
+            except Exception:
+                # Leave the in-memory ownerless row intact so the next access
+                # retries the migration instead of falsely treating an
+                # unpersisted backfill as complete.
+                self._state = previous
+                raise
+
+    @staticmethod
+    def _normalize_incident_owners(state: dict[str, Any]) -> bool:
+        """Persist one deterministic owner for pre-ownership incidents."""
+        changed = False
+        incidents = state.get("incidents")
+        if not isinstance(incidents, dict):
+            return changed
+        for row in incidents.values():
+            if not isinstance(row, dict):
+                continue
+            owner = row.get("owner_username")
+            if not isinstance(owner, str) or not owner:
+                row["owner_username"] = LEGACY_INCIDENT_OWNER
+                changed = True
+        return changed
 
     @staticmethod
     def _load(path: Path) -> dict[str, Any]:

@@ -457,6 +457,8 @@ async def _add_security_headers(request: Request, call_next):
         "/api/timelapses/"
     ):
         response.headers["Cache-Control"] = "no-store"
+    if response.status_code < 400:
+        telemetry.record_successful_action(request)
     return response
 
 
@@ -512,6 +514,7 @@ def _build_status() -> dict[str, object]:
     return {
         "ok": True,
         "uptime_s": time.time() - START_TIME,
+        "host_uptime_s": _host_uptime_s(),
         "camera": camera_service.health(),
         "detection_active": detection_service.active,
         "worker_alive": worker_alive,
@@ -523,7 +526,10 @@ def _build_status() -> dict[str, object]:
         "load_avg": _load_avg(),
         "memory_used_mb": used_mb,
         "memory_total_mb": total_mb,
-        "disk_free_gb": _disk_free_gb("/"),
+        # Recording runway must follow the filesystem that actually owns the
+        # clips. This can be a USB bind mount while `/` remains the SD card.
+        "disk_free_gb": _disk_free_gb(str(settings.recordings_dir)),
+        "system_disk_free_gb": _disk_free_gb("/"),
         **recording_forecast,
         # iter-246: top-level fps mirrors worker_metrics["fps"] when
         # available. Pre-iter-246 this read `camera_service.fps`, a
@@ -754,6 +760,16 @@ def _load_avg(path: str = _LOADAVG_PATH) -> list[float] | None:
         )
     except (OSError, ValueError, IndexError):
         return _note_probe("load_avg", None)
+
+
+def _host_uptime_s(path: str = "/proc/uptime") -> float | None:
+    """Linux host uptime, distinct from this FastAPI process uptime."""
+    try:
+        with open(path) as f:
+            value = float(f.read().split()[0])
+        return _note_probe("host_uptime", round(max(0.0, value), 1))
+    except (OSError, ValueError, IndexError):
+        return _note_probe("host_uptime", None)
 
 
 _MEMINFO_PATH = "/proc/meminfo"

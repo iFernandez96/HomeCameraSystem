@@ -25,7 +25,7 @@ import { Mono, Row, Section } from './parts'
 //   │   Camera box, detection, and resources running smoothly │
 //   ├───────────────────────────────────────────────────────┤
 //   │ CAMERA BOX                                           │
-//   │   Camera box · On since · Camera                      │
+//   │   Camera box · Jetson running · API running · Camera  │
 //   ├───────────────────────────────────────────────────────┤
 //   │ DETECTION                                             │
 //   │   Detection process · Detection running · Watching    │
@@ -33,7 +33,7 @@ import { Mono, Row, Section } from './parts'
 //   ├───────────────────────────────────────────────────────┤
 //   │ SYSTEM RESOURCES                                      │
 //   │   CPU temp · GPU temp · CPU clock · Load avg · Memory │
-//   │   Disk free                                           │
+//   │   Capture storage free · System SD free               │
 //   └───────────────────────────────────────────────────────┘
 
 // Playroom Modern (Task 8 copy pass): plain-language nickname for the
@@ -80,12 +80,16 @@ export function JetsonSection({
       >
         <Row label="Camera box" right={<Mono>{status?.ok ? 'online' : '—'}</Mono>} />
         <Row
-          label="On since"
+          label="Jetson running"
           right={
             <Mono>
-              {status?.uptime_s ? formatUptime(status.uptime_s) : '—'}
+              {status?.host_uptime_s != null ? formatUptime(status.host_uptime_s) : '—'}
             </Mono>
           }
+        />
+        <Row
+          label="API running"
+          right={<Mono>{status?.uptime_s != null ? formatUptime(status.uptime_s) : '—'}</Mono>}
         />
         <Row label="Camera" right={<Mono>{status?.camera ?? '—'}</Mono>} />
       </Section>
@@ -180,10 +184,8 @@ export function JetsonSection({
             />
           }
         />
-        <Row
-          label="Disk free"
-          right={<DiskFree gb={status?.disk_free_gb ?? null} />}
-        />
+        <Row label="Capture storage free" right={<DiskFree gb={status?.disk_free_gb ?? null} />} />
+        <Row label="System SD free" right={<DiskFree gb={status?.system_disk_free_gb ?? null} />} />
       </Section>
     </div>
   )

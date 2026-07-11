@@ -651,6 +651,44 @@ describe('ClipModal', () => {
     expect(screen.queryByText(/^with /i)).not.toBeInTheDocument()
   })
 
+  it('Given household incidents, When the destination picker opens, Then it offers only the signed-in owners incidents plus create', async () => {
+    // arrange
+    vi.spyOn(await import('../lib/api'), 'listIncidents').mockResolvedValue({
+      items: [
+        {
+          id: 'mine',
+          owner_username: 'TestUser',
+          title: 'My incident',
+          notes: '',
+          created_ts: 1,
+          updated_ts: 1,
+          event_count: 0,
+        },
+        {
+          id: 'theirs',
+          owner_username: 'israel',
+          title: 'Israel incident',
+          notes: '',
+          created_ts: 1,
+          updated_ts: 1,
+          event_count: 0,
+        },
+      ],
+    })
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // act
+    fireEvent.click(screen.getByRole('button', { name: 'Add to incident' }))
+
+    // assert
+    expect(await screen.findByRole('option', { name: 'My incident' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Israel incident' })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Create new incident…' })).toBeInTheDocument()
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
   it('Given a multi-person event, When the dialog aria-label is queried, Then the title fans out to multiple names so the SR announcement is "Israel & Sheenal at the front door, ..."', () => {
     // arrange / act
     const ev = makeEvent({

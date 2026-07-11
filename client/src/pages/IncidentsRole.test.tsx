@@ -20,7 +20,7 @@ vi.mock('../lib/api', () => ({
 
 vi.mock('../lib/auth', () => ({
   useAuth: () => ({
-    user: { username: 'family-user', role: 'family' },
+    user: authUser,
   }),
 }))
 
@@ -35,8 +35,14 @@ vi.mock('../lib/confirm', () => ({
 import { Incidents } from './Incidents'
 import { IncidentDetail } from './IncidentDetail'
 
+const authUser: { username: string; role: string } = {
+  username: 'family-user',
+  role: 'family',
+}
+
 const summary = {
   id: 'inc-1',
+  owner_username: 'israel',
   title: 'Porch activity',
   notes: 'Keep for review',
   created_ts: 1,
@@ -46,6 +52,8 @@ const summary = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  authUser.username = 'family-user'
+  authUser.role = 'family'
   api.listIncidents.mockResolvedValue({ v: 1, items: [summary], total: 1 })
   api.getIncident.mockResolvedValue({
     ...summary,
@@ -60,6 +68,68 @@ beforeEach(() => {
       boxes: [],
       thumb_url: null,
     }],
+  })
+})
+
+describe('incident ownership controls', () => {
+  it('lets an owner-equivalent account create incidents while labeling ownership', async () => {
+    // arrange
+    authUser.username = 'admin'
+    authUser.role = 'admin'
+
+    // act
+    render(
+      <MemoryRouter>
+        <Incidents />
+      </MemoryRouter>,
+    )
+
+    // assert
+    expect(await screen.findByText('Owned by israel')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New incident' })).toBeInTheDocument()
+  })
+
+  it('keeps another owner account read-only on an incident it does not own', async () => {
+    // arrange
+    authUser.username = 'admin'
+    authUser.role = 'admin'
+
+    // act
+    render(
+      <MemoryRouter initialEntries={['/events/incidents/inc-1']}>
+        <Routes>
+          <Route path="/events/incidents/:id" element={<IncidentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // assert
+    expect(await screen.findByText('Read-only incident access')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+  })
+
+  it('lets an owner-equivalent account manage its own incident case-insensitively', async () => {
+    // arrange
+    authUser.username = 'Admin'
+    authUser.role = 'admin'
+    api.getIncident.mockResolvedValue({
+      ...summary,
+      owner_username: 'admin',
+      events: [],
+    })
+
+    // act
+    render(
+      <MemoryRouter initialEntries={['/events/incidents/inc-1']}>
+        <Routes>
+          <Route path="/events/incidents/:id" element={<IncidentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // assert
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete incident' })).toBeInTheDocument()
   })
 })
 

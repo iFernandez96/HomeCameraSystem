@@ -199,7 +199,7 @@ class Settings:
     )
     # Source addresses allowed to call the otherwise unauthenticated MediaMTX
     # auth callback. Docker deployments must explicitly include the observed
-    # host-to-container bridge gateway (172.18.0.1 in the Jetson compose).
+    # host-to-container bridge gateway (fixed at 172.30.0.1 in Compose).
     mediamtx_auth_trusted_callers: str = os.getenv(
         "MEDIAMTX_AUTH_TRUSTED_CALLERS", "127.0.0.1,::1"
     )

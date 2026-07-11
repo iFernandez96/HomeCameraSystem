@@ -81,7 +81,7 @@ sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-jetso
 MediaMTX delegates every path action to the FastAPI callback on localhost. The
 container must therefore receive the observed host bridge source in
 `MEDIAMTX_AUTH_TRUSTED_CALLERS` (the committed Compose default is the Jetson's
-exact `172.18.0.1`, not a subnet). If Docker networking changes, inspect the
+fixed HomeCam network gateway `172.30.0.1`, not a subnet). If Docker networking changes, inspect the
 actual callback peer and update the single address; do not broaden it to a CIDR.
 
 Optional speaker output stays inert after installation. Provision it only when

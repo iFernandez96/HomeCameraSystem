@@ -32,6 +32,7 @@ class AuthEvent(TypedDict):
 class ViewEvent(TypedDict):
     ts: float
     username: str
+    session_id: str | None
     kind: ViewKind
     name: str
     dwell_ms: int
@@ -45,6 +46,13 @@ class HostActionEvent(TypedDict):
     phase: HostActionPhase
     status: str | None
     detail: str | None
+
+
+class ActionEvent(TypedDict):
+    ts: float
+    username: str
+    session_id: str | None
+    name: str
 
 
 _SCHEMA = """
@@ -61,11 +69,22 @@ CREATE TABLE IF NOT EXISTS view_events (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     ts        REAL NOT NULL,
     username  TEXT NOT NULL,
+    session_id TEXT,
     kind      TEXT NOT NULL CHECK(kind IN ('page','event')),
     name      TEXT NOT NULL,
     dwell_ms  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS view_events_ts ON view_events(ts DESC);
+
+CREATE TABLE IF NOT EXISTS action_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         REAL NOT NULL,
+    username   TEXT NOT NULL,
+    session_id TEXT,
+    name       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS action_events_ts ON action_events(ts DESC);
+CREATE INDEX IF NOT EXISTS action_events_session ON action_events(session_id, ts DESC);
 
 CREATE TABLE IF NOT EXISTS host_action_events (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +108,15 @@ def init_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
+        view_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(view_events)")
+        }
+        if "session_id" not in view_columns:
+            conn.execute("ALTER TABLE view_events ADD COLUMN session_id TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS view_events_session "
+            "ON view_events(session_id, ts DESC)"
+        )
         conn.commit()
     try:
         path.chmod(0o600)
@@ -138,14 +166,35 @@ def insert_view_event(
     kind: ViewKind,
     name: str,
     dwell_ms: int,
+    session_id: str | None = None,
 ) -> None:
     with _connect(path) as conn:
         conn.execute(
             """
-            INSERT OR IGNORE INTO view_events (ts, username, kind, name, dwell_ms)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO view_events
+              (ts, username, session_id, kind, name, dwell_ms)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (ts, username, kind, name, dwell_ms),
+            (ts, username, session_id, kind, name, dwell_ms),
+        )
+        conn.commit()
+
+
+def insert_action_event(
+    path: Path,
+    *,
+    ts: float,
+    username: str,
+    name: str,
+    session_id: str | None = None,
+) -> None:
+    with _connect(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO action_events (ts, username, session_id, name)
+            VALUES (?, ?, ?, ?)
+            """,
+            (ts, username, session_id, name[:128]),
         )
         conn.commit()
 
@@ -220,7 +269,7 @@ def view_events_between(
     with _connect(path) as conn:
         rows = conn.execute(
             """
-            SELECT ts, username, kind, name, dwell_ms
+            SELECT ts, username, session_id, kind, name, dwell_ms
             FROM view_events
             WHERE ts >= ? AND ts <= ?
             ORDER BY ts DESC
@@ -232,9 +281,39 @@ def view_events_between(
         {
             "ts": float(row["ts"]),
             "username": str(row["username"]),
+            "session_id": row["session_id"],
             "kind": row["kind"],
             "name": str(row["name"]),
             "dwell_ms": int(row["dwell_ms"]),
+        }
+        for row in rows
+    ]
+
+
+def action_events_between(
+    path: Path,
+    *,
+    since: float,
+    until: float,
+    limit: int = 5000,
+) -> list[ActionEvent]:
+    with _connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT ts, username, session_id, name
+            FROM action_events
+            WHERE ts >= ? AND ts <= ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (since, until, limit),
+        ).fetchall()
+    return [
+        {
+            "ts": float(row["ts"]),
+            "username": str(row["username"]),
+            "session_id": row["session_id"],
+            "name": str(row["name"]),
         }
         for row in rows
     ]
@@ -278,4 +357,5 @@ def reset(path: Path) -> None:
         conn.execute("DELETE FROM auth_events")
         conn.execute("DELETE FROM view_events")
         conn.execute("DELETE FROM host_action_events")
+        conn.execute("DELETE FROM action_events")
         conn.commit()

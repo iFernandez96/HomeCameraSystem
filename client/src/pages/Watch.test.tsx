@@ -16,6 +16,7 @@ const getStatusM = vi.fn()
 const getCamerasM = vi.fn()
 const getCurrentPackagesM = vi.fn()
 const triggerDeterrenceM = vi.fn()
+const setDetectionEnabledM = vi.fn()
 let authRole: 'owner' | 'family' = 'owner'
 
 vi.mock('../lib/auth', () => ({
@@ -44,6 +45,7 @@ vi.mock('../lib/api', () => {
     getCameras: (...a: unknown[]) => getCamerasM(...a),
     getCurrentPackages: (...a: unknown[]) => getCurrentPackagesM(...a),
     triggerDeterrence: (...a: unknown[]) => triggerDeterrenceM(...a),
+    setDetectionEnabled: (...a: unknown[]) => setDetectionEnabledM(...a),
     HttpError,
   }
 })
@@ -189,11 +191,36 @@ beforeEach(() => {
       limitation: '',
     },
   })
+  setDetectionEnabledM.mockImplementation(async (enabled: boolean) => ({ active: enabled }))
   registerCameraNames([])
   window.localStorage.removeItem('homecam:cameraId')
 })
 
 describe('Watch — Home screen (Playroom Modern)', () => {
+  it('Given an owner taps the On watch panel, When they confirm, Then detection and classification pause explicitly', async () => {
+    const user = userEvent.setup()
+    renderWatch()
+
+    const watchPanel = await screen.findByRole('button', {
+      name: /pause detection and classification .* is on watch/i,
+    })
+    await user.click(watchPanel)
+    expect(await screen.findByText(/live video and continuous recording will stay on/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Pause detection' }))
+
+    await waitFor(() => {
+      expect(setDetectionEnabledM).toHaveBeenCalledWith(false)
+    })
+  })
+
+  it('Given a family user views Home, Then the On watch panel can pause detection too', async () => {
+    authRole = 'family'
+    renderWatch()
+    expect(await screen.findByRole('button', {
+      name: /pause detection and classification .* is on watch/i,
+    })).toBeInTheDocument()
+  })
+
   it('Given a healthy single camera, When the page renders, Then docked video omits the redundant camera-name pill and the glance card owns armed state', async () => {
     // arrange / act
     renderWatch()

@@ -14,12 +14,26 @@ export function isOwnerRole(role: string | null | undefined): boolean {
   return role === 'owner' || role === 'admin'
 }
 
-/**
- * God-View / god-mode visibility. TODAY this is username-based
- * (`admin`) for historical reasons; unify onto the owner role so god
- * mode tracks RBAC instead of a magic username. Behaviour change:
- * a seeded `owner` (non-`admin`) now also sees God View — intended.
+/** Incident mutation is both role- and ownership-scoped. Incidents remain
+ * readable household-wide, but an owner-equivalent account may only change
+ * the incidents that account created. */
+export function canManageIncident(
+  user: User | null | undefined,
+  ownerUsername: string | null | undefined,
+): boolean {
+  return isOwner(user)
+    && typeof ownerUsername === 'string'
+    && ownerUsername.trim().toLocaleLowerCase('en-US')
+      === user?.username.trim().toLocaleLowerCase('en-US')
+}
+
+/** Household-wide usage surveillance is intentionally narrower than RBAC.
+ * Only the two named operator accounts may discover or render God View, and
+ * they must still hold an owner-equivalent role. The API enforces the same
+ * rule so hiding navigation is never the security boundary.
  */
 export function isGodModeUser(user: User | null | undefined): boolean {
-  return isOwner(user)
+  if (!isOwner(user)) return false
+  const username = user?.username.trim().toLocaleLowerCase('en-US')
+  return username === 'israel' || username === 'admin'
 }

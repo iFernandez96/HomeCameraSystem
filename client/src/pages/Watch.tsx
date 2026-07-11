@@ -8,7 +8,7 @@ import { ErrorState } from '../components/states/ErrorState'
 import { PackageStatusCard } from '../components/PackageStatusCard'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
-import { captureSnapshot, getCameras, searchEvents, triggerDeterrence, HttpError, type Camera } from '../lib/api'
+import { captureSnapshot, getCameras, searchEvents, setDetectionEnabled, triggerDeterrence, HttpError, type Camera } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
 import { clockTime, recognizedNames, registerCameraNames, relativeTime } from '../lib/eventLabel'
 import { DEFAULT_CAMERA_PATH } from '../lib/streamQuality'
@@ -231,6 +231,7 @@ export function Watch() {
   const { showToast } = useToast()
   const { user } = useAuth()
   const canTalk = isOwner(user)
+  const canManageDetection = user != null
   const confirm = useConfirm()
   const navigate = useNavigate()
   const [actionParams, setActionParams] = useSearchParams()
@@ -248,6 +249,7 @@ export function Watch() {
   const [full, setFull] = useState(false)
   const [dockedControlsTarget, setDockedControlsTarget] = useState<HTMLElement | null>(null)
   const [dockedChromeVisible, setDockedChromeVisible] = useState(true)
+  const [detectionToggleBusy, setDetectionToggleBusy] = useState(false)
   // Fullscreen chrome auto-hide (fullscreen contract item 4): controls
   // fade out ~3.5 s after the last interaction so fullscreen is for
   // WATCHING; any tap brings them back. All state changes happen in
@@ -482,6 +484,34 @@ export function Watch() {
             : detectionActive === false
               ? 'Turn alerts on in Settings.'
               : 'Checking the camera…'
+
+  const toggleDetectionFromWatchPanel = async () => {
+    if (!canManageDetection || detectionToggleBusy || detectionActive == null) return
+    const enabled = !detectionActive
+    if (!enabled) {
+      const ok = await confirm({
+        title: 'Pause detection and classification?',
+        body: 'Live video and continuous recording will stay on. New detections, classifications, and alerts will stop until you resume them.',
+        confirmLabel: 'Pause detection',
+        destructive: true,
+      })
+      if (!ok) return
+    }
+    setDetectionToggleBusy(true)
+    try {
+      await setDetectionEnabled(enabled)
+      showToast(
+        enabled
+          ? `${sentryCatName(sentryCat)} is back on watch`
+          : 'Detection and classification paused',
+        'success',
+      )
+    } catch {
+      showToast('Could not change detection — try again', 'error')
+    } finally {
+      setDetectionToggleBusy(false)
+    }
+  }
   const todayCount = events?.length ?? 0
   // Painfix wave B #1: this used to read "N person · M cat sightings",
   // which reads as N DISTINCT PEOPLE — but `persons` counts EVENTS, so
@@ -1200,6 +1230,11 @@ export function Watch() {
             watchingDetail={watchingDetail}
             todayCount={todayCount}
             todayBreakdown={todayBreakdown}
+            sentryName={sentryCatName(sentryCat)}
+            detectionActive={detectionActive}
+            canManageDetection={canManageDetection}
+            detectionToggleBusy={detectionToggleBusy}
+            onToggleDetection={toggleDetectionFromWatchPanel}
           />
         )}
 
@@ -1328,34 +1363,88 @@ function LiveGlanceStrip({
   watchingDetail,
   todayCount,
   todayBreakdown,
+  sentryName,
+  detectionActive,
+  canManageDetection,
+  detectionToggleBusy,
+  onToggleDetection,
 }: {
   unhealthy: boolean
   stateLabel: string
   watchingDetail: string
   todayCount: number
   todayBreakdown: string
+  sentryName: string
+  detectionActive: boolean | null
+  canManageDetection: boolean
+  detectionToggleBusy: boolean
+  onToggleDetection: () => void
 }) {
+  const watchState = (
+    <div className="flex min-w-0 items-center justify-between gap-2 pr-2">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
+          {stateLabel}
+        </p>
+        <GlanceDetail text={detectionToggleBusy ? 'Updating watch status…' : watchingDetail} />
+      </div>
+      {canManageDetection && detectionActive != null ? (
+        <span
+          aria-hidden="true"
+          className="inline-flex flex-none items-center gap-1 rounded-full border border-white/35 bg-white/10 px-2 py-1 text-[11px] font-bold text-white shadow-sm transition-colors group-hover:bg-white/16 group-active:bg-white/22"
+        >
+          {detectionToggleBusy ? (
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/35 border-t-white" />
+          ) : detectionActive ? (
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="3" y="3" width="3.5" height="10" rx="1" />
+              <rect x="9.5" y="3" width="3.5" height="10" rx="1" />
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4 2.8v10.4L13 8 4 2.8Z" />
+            </svg>
+          )}
+          {detectionToggleBusy ? 'Saving' : detectionActive ? 'Pause' : 'Resume'}
+        </span>
+      ) : null}
+    </div>
+  )
   return (
     <div
       data-testid="live-glance-strip"
       className="shrink-0 border-t border-white/10 bg-black/88 px-3 py-2 text-white backdrop-blur-md landscape-phone:px-2.5 landscape-phone:py-1.5 tablet-landscape:px-3 tablet-landscape:py-2 lg:px-4"
     >
       <div className="grid grid-cols-2 items-center gap-3 landscape-phone:gap-2">
-        <div
-          className={`min-w-0 border-l-2 pl-2.5 ${
+        {canManageDetection && detectionActive != null ? (
+          <button
+            type="button"
+            disabled={detectionToggleBusy}
+            onClick={onToggleDetection}
+            aria-label={
+              detectionActive
+                ? `Pause detection and classification — ${sentryName} is on watch`
+                : `Resume detection and classification — bring ${sentryName} back on watch`
+            }
+            className={`group min-h-11 min-w-0 cursor-pointer rounded-r-lg border-l-2 pl-2.5 text-left transition-colors hover:bg-white/8 active:bg-white/12 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-70 ${
+              unhealthy
+                ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
+                : 'border-[var(--color-accent-bright)] text-white'
+            }`}
+          >
+            {watchState}
+          </button>
+        ) : (
+          <div
+            className={`min-w-0 border-l-2 pl-2.5 ${
             unhealthy
               ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
               : 'border-[var(--color-accent-bright)] text-white'
-          }`}
-        >
-          {/* Overhaul W1 items 2+6: headline speaks the shared ribbon
-              vocabulary while this bottom strip keeps the state tied
-              directly to the live camera surface. */}
-          <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
-            {stateLabel}
-          </p>
-          <GlanceDetail text={watchingDetail} />
-        </div>
+            }`}
+          >
+            {watchState}
+          </div>
+        )}
         <div className="min-w-0 border-l-2 border-white/18 pl-2.5 text-white">
           <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
             {todayCount} today

@@ -405,6 +405,14 @@ def _incident_audit(row: dict[str, Any], action: str, username: str, **detail: A
     })
 
 
+def _require_incident_owner(row: dict[str, Any], username: str) -> None:
+    if row.get("owner_username") != username:
+        raise HTTPException(
+            status_code=403,
+            detail="only the incident owner may change or export this incident",
+        )
+
+
 @router.get("/incidents")
 async def incidents() -> dict[str, Any]:
     rows = security_store.read()["incidents"].values()
@@ -423,6 +431,7 @@ async def create_incident(
     now = time.time()
     row = {
         "id": uuid.uuid4().hex,
+        "owner_username": username,
         "title": body.title,
         "notes": body.notes,
         "status": "open",
@@ -461,6 +470,7 @@ async def update_incident(
         row = state["incidents"].get(incident_id)
         if not isinstance(row, dict):
             raise KeyError
+        _require_incident_owner(row, username)
         row.update(patch)
         row["updated_ts"] = time.time()
         _incident_audit(row, "updated", username, fields=sorted(patch))
@@ -475,10 +485,15 @@ async def update_incident(
 @router.delete("/incidents/{incident_id}")
 async def delete_incident(
     incident_id: str,
-    _username: str = Depends(require_role("owner")),
+    username: str = Depends(require_role("owner")),
 ) -> dict[str, bool]:
     def _delete(state: dict[str, Any]) -> bool:
-        return state["incidents"].pop(incident_id, None) is not None
+        row = state["incidents"].get(incident_id)
+        if not isinstance(row, dict):
+            return False
+        _require_incident_owner(row, username)
+        del state["incidents"][incident_id]
+        return True
     if not security_store.transact(_delete):
         raise _not_found("incident not found")
     return {"deleted": True}
@@ -496,6 +511,7 @@ async def add_incident_event(
         row = state["incidents"].get(incident_id)
         if not isinstance(row, dict):
             raise KeyError
+        _require_incident_owner(row, username)
         if event_id not in row["event_ids"]:
             row["event_ids"].append(event_id)
             _incident_audit(row, "event_added", username, event_id=event_id)
@@ -519,6 +535,7 @@ async def remove_incident_event(
         row = state["incidents"].get(incident_id)
         if not isinstance(row, dict):
             raise KeyError
+        _require_incident_owner(row, username)
         if event_id in row.get("event_ids", []):
             row["event_ids"].remove(event_id)
             _incident_audit(row, "event_removed", username, event_id=event_id)
@@ -632,6 +649,7 @@ async def export_incident(
         row = state["incidents"].get(incident_id)
         if not isinstance(row, dict):
             raise KeyError
+        _require_incident_owner(row, username)
         _incident_audit(row, "evidence_export_requested", username)
         row["updated_ts"] = time.time()
         return row
@@ -662,6 +680,7 @@ async def export_incident(
     def _audit_success(state: dict[str, Any]) -> None:
         current = state["incidents"].get(incident_id)
         if isinstance(current, dict):
+            _require_incident_owner(current, username)
             _incident_audit(current, "evidence_exported", username)
             current["updated_ts"] = time.time()
 

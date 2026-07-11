@@ -19,6 +19,7 @@ REVOKED_GRACE_S = 24 * 60 * 60
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     jti           TEXT PRIMARY KEY,
+    session_id    TEXT,
     refresh_jti   TEXT,
     username      TEXT NOT NULL,
     kind          TEXT NOT NULL DEFAULT 'session',
@@ -43,6 +44,21 @@ def init_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(sessions)")
+        }
+        if "session_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN session_id TEXT")
+        # Existing rows predate stable session ids. Their current access JTI
+        # is the best durable seed; later token rotations leave this value
+        # untouched, so one device session no longer fragments every refresh.
+        conn.execute(
+            "UPDATE sessions SET session_id = jti "
+            "WHERE session_id IS NULL OR session_id = ''"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS sessions_stable_id ON sessions(session_id)"
+        )
         conn.commit()
     try:
         path.chmod(0o600)
@@ -76,12 +92,13 @@ def create_session(
         conn.execute(
             """
             INSERT OR IGNORE INTO sessions (
-                jti, refresh_jti, username, kind, device_ua_raw, device_label,
+                jti, session_id, refresh_jti, username, kind, device_ua_raw, device_label,
                 ip_class, created_ts, last_seen_ts, revoked_ts
             )
-            VALUES (?, ?, ?, 'session', ?, ?, ?, ?, ?, NULL)
+            VALUES (?, ?, ?, ?, 'session', ?, ?, ?, ?, ?, NULL)
             """,
             (
+                jti,
                 jti,
                 refresh_jti,
                 username,
@@ -146,7 +163,7 @@ def get_session(path: Path, jti: str) -> dict | None:
     with _connect(path) as conn:
         row = conn.execute(
             """
-            SELECT jti, refresh_jti, username, kind, device_ua_raw,
+            SELECT jti, session_id, refresh_jti, username, kind, device_ua_raw,
                    device_label, ip_class, created_ts, last_seen_ts, revoked_ts
             FROM sessions
             WHERE jti = ?
@@ -160,7 +177,7 @@ def get_session_by_refresh_jti(path: Path, refresh_jti: str) -> dict | None:
     with _connect(path) as conn:
         row = conn.execute(
             """
-            SELECT jti, refresh_jti, username, kind, device_ua_raw,
+            SELECT jti, session_id, refresh_jti, username, kind, device_ua_raw,
                    device_label, ip_class, created_ts, last_seen_ts, revoked_ts
             FROM sessions
             WHERE refresh_jti = ?
@@ -195,7 +212,7 @@ def list_sessions(
     with _connect(path) as conn:
         rows = conn.execute(
             """
-            SELECT jti, refresh_jti, username, kind, device_ua_raw,
+            SELECT jti, session_id, refresh_jti, username, kind, device_ua_raw,
                    device_label, ip_class, created_ts, last_seen_ts, revoked_ts
             FROM sessions
             {where}

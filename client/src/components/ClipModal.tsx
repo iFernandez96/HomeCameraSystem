@@ -447,8 +447,12 @@ export function ClipModal({
     setIncidentBusy(true)
     try {
       const result = await listIncidents()
-      setIncidentOptions(result.items)
-      setIncidentChoice(result.items[0]?.id ?? '__new__')
+      const username = user?.username.trim().toLocaleLowerCase('en-US')
+      const ownedIncidents = result.items.filter(
+        (item) => item.owner_username.trim().toLocaleLowerCase('en-US') === username,
+      )
+      setIncidentOptions(ownedIncidents)
+      setIncidentChoice(ownedIncidents[0]?.id ?? '__new__')
       setIncidentTitle(`Incident ${new Date(event.ts * 1000).toLocaleDateString()}`)
     } catch (error) {
       log.warn('clipModal:incident-list-failed', { eventId: event.id, ...errFields(error) })

@@ -61,6 +61,13 @@ class DetectionEventDict(TypedDict):
     # null-default; the worker emit path (iter-205?) sets the value
     # once the recorder confirms file presence.
     clip_url: str | None
+    # Added by the REST list/search routes from the worker's clip lifecycle
+    # ledger plus the recordings directory. It is intentionally absent from
+    # freshly published WebSocket events because finalization changes after
+    # the event is emitted.
+    video_status: NotRequired[
+        Literal["recording", "finalizing", "available", "failed", "unknown"]
+    ]
     protected: bool
     source: NotRequired[
         Literal["vision", "audio", "doorbell", "tamper", "system"] | None

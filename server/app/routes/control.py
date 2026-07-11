@@ -358,6 +358,23 @@ async def toggle_detection() -> dict[str, bool]:
     return {"active": detection_service.active}
 
 
+class DetectionEnabledPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
+@router.put("/detection/enabled")
+async def set_detection_enabled(payload: DetectionEnabledPayload) -> dict[str, bool]:
+    """Narrow, race-free pause/resume control for any signed-in user.
+
+    Broader detection configuration remains owner-only below. This endpoint
+    changes exactly one boolean so family/viewer accounts can operate the
+    live-view On watch panel without gaining threshold/zone/schedule access.
+    """
+    detection_service.active = payload.enabled
+    return {"active": detection_service.active}
+
+
 @router.get("/detection/config")
 async def get_detection_config() -> dict[str, object]:
     # Returning `dict[str, float]` (the previous shape) made FastAPI coerce
