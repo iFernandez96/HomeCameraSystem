@@ -1276,4 +1276,15 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
   })
+
+  it('Given a phone with no playground nav tab, When Home renders, Then the brand cats link to the playground (mobile entry, 2026-07-11)', async () => {
+    // arrange / act
+    renderWatch()
+
+    // assert — BottomNav cannot fit a 6th tab at 360px and the SideRail
+    // is desktop-only, so the header's brand-cat row IS the mobile way
+    // into /playground. Losing this link strands phones on URL entry.
+    const link = await screen.findByRole('link', { name: 'Open the cat playground' })
+    expect(link).toHaveAttribute('href', '/playground')
+  })
 })
