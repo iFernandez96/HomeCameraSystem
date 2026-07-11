@@ -743,10 +743,15 @@ html {
   .cat-box-rustle { animation: cat-box-rustle 420ms ease-in-out 2; }
 }
 
+/* NOTE: entrance keyframes must never include scaleX(-1) — facing is
+   owned exclusively by the direction-flip div (CatLayer). These
+   animations use `fill: both`, which keeps the final keyframe applied
+   forever and OVERRIDES inline transforms on the same element; the
+   baked-in mirror froze Panther facing right permanently. */
 @keyframes cat-arrive-left {
-  from { opacity: 0; transform: translateX(-54px) scaleX(-1); }
-  70% { opacity: 1; transform: translateX(3px) scaleX(-1); }
-  to { opacity: 1; transform: translateX(0) scaleX(-1); }
+  from { opacity: 0; transform: translateX(-54px); }
+  70% { opacity: 1; transform: translateX(3px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 @keyframes cat-arrive-right {
   from { opacity: 0; transform: translateX(54px); }

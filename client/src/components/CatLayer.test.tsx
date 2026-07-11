@@ -674,4 +674,28 @@ describe('CatLayer', () => {
     // loop happened from a gate flip after settle.
     expect(rafSpy).toHaveBeenCalled()
   })
+
+  it('Given the entrance animation classes, When a cat renders, Then no cat-entrance-* class sits on the element that owns the direction flip (facing bug 2026-07-11)', () => {
+    // arrange — the cat-arrive-* keyframes use `fill: both`, and a filled
+    // CSS animation overrides inline `transform` on its own element
+    // forever. When cat-entrance-panther lived on the flip div, its final
+    // keyframe pinned Panther mirrored permanently, so she faced RIGHT
+    // while walking left. jsdom cannot compute animation fill, so this
+    // pin is structural: entrance class and direction transform must
+    // live on different elements.
+    stubMatchMedia({ matches: false })
+
+    // act
+    const { container } = render(<CatLayer placement="login" />)
+
+    // assert
+    const entranceEls = container.querySelectorAll('[class*="cat-entrance-"]')
+    expect(entranceEls.length).toBeGreaterThan(0)
+    for (const el of entranceEls) {
+      const style = el.getAttribute('style') ?? ''
+      expect(style).not.toMatch(/scaleX/)
+      const flipChild = el.querySelector('[data-testid="cat-direction-flip"]')
+      expect(flipChild).not.toBeNull()
+    }
+  })
 })

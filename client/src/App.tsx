@@ -48,6 +48,11 @@ const Visits = lazy(() =>
   import('./pages/Visits').then((m) => ({ default: m.Visits })),
 )
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })))
+// Dev/QA harness for the cat animation system — public but unlisted
+// (no nav entry). Static art only; no data access.
+const AnimLab = lazy(() =>
+  import('./pages/AnimLab').then((m) => ({ default: m.AnimLab })),
+)
 const People = lazy(() =>
   import('./pages/People').then((m) => ({ default: m.People })),
 )
@@ -316,6 +321,7 @@ function AppShell() {
           <Suspense fallback={<PageFallback pathname={location.pathname} />}>
             <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/anim-lab" element={<AnimLab />} />
             <Route
               path="/"
               element={

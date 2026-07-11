@@ -1399,8 +1399,21 @@ function CatRenderImpl({
           transformOrigin: 'center',
         }}
       />
+      {/* Entrance wrapper — MUST stay a separate element from the
+          direction-flip div below. `cat-arrive-*` animations use
+          `fill: both`, and a filled CSS animation overrides inline
+          `transform` on its own element FOREVER after it finishes.
+          When this class lived on the flip div, Panther's arrive-left
+          fill pinned her at its final keyframe permanently, so
+          `cat.direction` was ignored and she faced RIGHT while
+          walking left (user-reported 2026-07-11). */}
       <div
         className={playful ? `cat-micro-life cat-entrance-${cat.id}` : undefined}
+        data-testid="cat-entrance-wrapper"
+        style={{ width: '100%', height: '100%' }}
+      >
+      <div
+        data-testid="cat-direction-flip"
         style={{
           width: '100%',
           height: '100%',
@@ -1457,6 +1470,7 @@ function CatRenderImpl({
             />
           )}
         </div>
+      </div>
       </div>
       {cat.mood && (
         <span
