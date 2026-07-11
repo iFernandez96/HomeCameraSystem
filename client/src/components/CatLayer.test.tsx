@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
-import { CatLayer, _resetCatWalkAnimationCacheForTests } from './CatLayer'
+import {
+  CatLayer,
+  _catSequenceNamesForTransitionForTests,
+  _resetCatWalkAnimationCacheForTests,
+} from './CatLayer'
 
 type MqlInit = {
   matches: boolean
@@ -129,6 +133,18 @@ function walkFrameUrls(catId: string): string[] {
   )
 }
 
+function sitToWalkUrls(catId: string): string[] {
+  return [
+    `/cats/anim/${catId}/seated.png`,
+    `/cats/anim/${catId}/sit_b.png`,
+    `/cats/anim/${catId}/sit_a.png`,
+    `/cats/anim/${catId}/stand.png`,
+    `/cats/anim/${catId}/turn.png`,
+    `/cats/anim/${catId}/side_stand.png`,
+    ...walkFrameUrls(catId),
+  ]
+}
+
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined
 
@@ -149,6 +165,18 @@ describe('CatLayer', () => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('Given walk and sit activities, When their transitions are planned, Then both directions use the stop-and-turn bridge', () => {
+    // arrange
+    const leavingWalk = _catSequenceNamesForTransitionForTests('walk', 'sit')
+
+    // act
+    const resumingWalk = _catSequenceNamesForTransitionForTests('sit', 'walk')
+
+    // assert
+    expect(leavingWalk).toEqual(['walk_to_front', 'stand_to_seated'])
+    expect(resumingWalk).toEqual(['seated_to_stand', 'front_to_walk'])
   })
 
   it('Given walking cats and fully loaded frame sets, When rAF advances, Then the twelve-frame walk sprites cycle', async () => {
@@ -177,19 +205,19 @@ describe('CatLayer', () => {
     // are staggered so one tap never starts a 36-image request burst.
     act(() => window.dispatchEvent(new Event('pointerdown')))
     act(() => vi.advanceTimersByTime(0))
-    expect(images).toHaveLength(12)
+    expect(images).toHaveLength(18)
     act(() => vi.advanceTimersByTime(6000))
-    expect(images).toHaveLength(24)
+    expect(images).toHaveLength(36)
     act(() => vi.advanceTimersByTime(6000))
 
     // assert — all 12 frames per cat are requested once, while the
     // visible sprites remain on the built-in two-pose fallback.
     const expectedUrls = [
-      ...walkFrameUrls('panther'),
-      ...walkFrameUrls('mushu'),
-      ...walkFrameUrls('coco'),
+      ...sitToWalkUrls('panther'),
+      ...sitToWalkUrls('mushu'),
+      ...sitToWalkUrls('coco'),
     ]
-    expect(images).toHaveLength(36)
+    expect(images).toHaveLength(54)
     expect(new Set(images.map((image) => image.src))).toEqual(new Set(expectedUrls))
     const pendingSources: Array<string | null> = []
     for (const catId of ['panther', 'mushu', 'coco']) {
@@ -203,7 +231,7 @@ describe('CatLayer', () => {
 
     // act — pending warm-up still uses the existing two-pose rAF cycle.
     act(() => frames.runNextFrame(2600))
-    act(() => frames.runNextFrame(2700))
+    act(() => frames.runNextFrame(2790))
 
     // assert
     for (const [index, catId] of ['panther', 'mushu', 'coco'].entries()) {
@@ -218,6 +246,16 @@ describe('CatLayer', () => {
       await Promise.resolve()
     })
 
+    // assert — the reverse sit/turn bridge is visible before locomotion.
+    for (const catId of ['panther', 'mushu', 'coco']) {
+      expect(catSprite(container, catId).getAttribute('src')).toMatch(
+        new RegExp(`^/cats/anim/${catId}/(?:seated|sit_[ab]|stand|turn|side_stand)\\.png$`),
+      )
+    }
+
+    // act — finish the bridge, then observe the full 95ms walk cycle.
+    act(() => frames.runNextFrame(3700))
+
     // assert
     const loadedSources = ['panther', 'mushu', 'coco'].map((catId) => {
       const sprite = catSprite(container, catId)
@@ -228,10 +266,10 @@ describe('CatLayer', () => {
       return sprite.getAttribute('src')
     })
 
-    // act — the same rAF/phase path advances at ~100ms, visits all 12
+    // act — the same rAF/phase path advances at 95ms, visits all 12
     // frame numbers, and wraps to the frame at which observation began.
     const observedFrames = [Number(catSprite(container, 'panther').dataset.walkFrame)]
-    for (let timestamp = 2800; timestamp <= 3900; timestamp += 100) {
+    for (let timestamp = 3795; timestamp <= 4840; timestamp += 95) {
       act(() => frames.runNextFrame(timestamp))
       observedFrames.push(Number(catSprite(container, 'panther').dataset.walkFrame))
     }
@@ -244,7 +282,7 @@ describe('CatLayer', () => {
     for (const [index, catId] of ['panther', 'mushu', 'coco'].entries()) {
       expect(catSprite(container, catId).getAttribute('src')).toBe(loadedSources[index])
     }
-    expect(images).toHaveLength(36)
+    expect(images).toHaveLength(54)
   })
 
   it('Given a walk-frame preload error, When the other requests settle, Then that cat keeps its built-in two-pose fallback', async () => {
@@ -282,6 +320,13 @@ describe('CatLayer', () => {
       /^\/cats\/panther-walk_[ab]\.png$/,
     )
     expect(catSprite(container, 'panther')).not.toHaveAttribute('data-walk-frame')
+    expect(catSprite(container, 'mushu').getAttribute('src')).toContain('/cats/anim/mushu/')
+    expect(catSprite(container, 'coco').getAttribute('src')).toContain('/cats/anim/coco/')
+
+    // act — unaffected cats complete the bridge and enter the rich walk loop.
+    act(() => frames.runNextFrame(3700))
+
+    // assert
     expect(catSprite(container, 'mushu').getAttribute('src')).toMatch(
       /^\/cats\/anim\/mushu\/walk_(?:0[1-9]|1[0-2])\.png$/,
     )
@@ -291,9 +336,9 @@ describe('CatLayer', () => {
 
     // act — the failed cat still alternates the original pair as its
     // rAF phase advances; no animated URL is ever exposed for it.
-    act(() => frames.runNextFrame(2600))
+    act(() => frames.runNextFrame(3795))
     const firstFallback = catSprite(container, 'panther').getAttribute('src')
-    act(() => frames.runNextFrame(2700))
+    act(() => frames.runNextFrame(3890))
     const secondFallback = catSprite(container, 'panther').getAttribute('src')
 
     // assert

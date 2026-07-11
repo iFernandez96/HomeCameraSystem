@@ -12,6 +12,15 @@ import {
 } from './CatIcons'
 import { CatParticles, type CatParticleType } from './CatParticles'
 import { errFields, log } from '../lib/log'
+import {
+  CAT_ANIM_SEQUENCES,
+  CYCLE_DURATION_MS,
+  catAnimFrameUrl,
+  gaitVelocityPxPerMs,
+  sequenceDurationMs,
+  type CatAnimFrame,
+  type CatAnimSequenceName,
+} from './catAnimSequences'
 
 /**
  * iter-356.4-cats — ambient cat layer with full Animal-Crossing-style
@@ -80,6 +89,8 @@ type CatState = {
   y: number
   direction: 'L' | 'R'
   activity: Activity
+  previousActivity: Activity
+  activityStartedAt: number
   activityUntil: number
   mood: string | null
   moodSecondary: string | null // optional second emoji (😻💕)
@@ -95,6 +106,11 @@ type CatState = {
   // its 600ms tail flick. Computed in stepCats so CatRender stays pure
   // (React 19 forbids reading performance.now() during render).
   phase: number
+  phaseTime: number
+  idleSequence: CatAnimSequenceName | null
+  idleSequenceStartedAt: number
+  nextIdleLifeAt: number
+  lastIdleLifeWasSpecial: boolean
 }
 
 const WALK_FRAME_COUNT = 12
@@ -105,33 +121,28 @@ const WALK_PRELOAD_STAGGER_MS: Record<CatId, number> = {
   coco: 12_000,
 }
 
-type WalkAnimationCacheEntry = {
+type AnimationCacheEntry = {
   status: 'idle' | 'loading' | 'ready' | 'failed'
   images: HTMLImageElement[]
   promise: Promise<boolean> | null
 }
 
-function createWalkAnimationCache(): Record<CatId, WalkAnimationCacheEntry> {
-  const entry = (): WalkAnimationCacheEntry => ({
-    status: 'idle',
-    images: [],
-    promise: null,
-  })
-  return {
-    panther: entry(),
-    mushu: entry(),
-    coco: entry(),
+let animationCache = new Map<string, AnimationCacheEntry>()
+
+function animationCacheKey(catId: CatId, frames: readonly CatAnimFrame[]): string {
+  return `${catId}:${frames.join(',')}`
+}
+
+function preloadAnimationFrames(
+  catId: CatId,
+  frames: readonly CatAnimFrame[],
+): Promise<boolean> {
+  const key = animationCacheKey(catId, frames)
+  let cached = animationCache.get(key)
+  if (!cached) {
+    cached = { status: 'idle', images: [], promise: null }
+    animationCache.set(key, cached)
   }
-}
-
-let walkAnimationCache = createWalkAnimationCache()
-
-function walkFrameUrl(catId: CatId, frame: number): string {
-  return `/cats/anim/${catId}/walk_${String(frame + 1).padStart(2, '0')}.png`
-}
-
-function preloadWalkAnimation(catId: CatId): Promise<boolean> {
-  const cached = walkAnimationCache[catId]
   if (cached.status === 'ready') return Promise.resolve(true)
   if (cached.status === 'failed') return Promise.resolve(false)
   if (cached.promise) return cached.promise
@@ -141,34 +152,34 @@ function preloadWalkAnimation(catId: CatId): Promise<boolean> {
     let loaded = 0
     let settled = false
 
-    const fail = (frame: number, error?: unknown) => {
+    const fail = (frame: CatAnimFrame, error?: unknown) => {
       if (settled) return
       settled = true
       cached.status = 'failed'
       log.warn('catLayer:walk-frames-failed', {
         catId,
-        frame: frame + 1,
+        frame,
         reason: error ? 'image-construction-failed' : 'image-load-error',
         ...(error ? errFields(error) : {}),
       })
       resolve(false)
     }
 
-    for (let frame = 0; frame < WALK_FRAME_COUNT; frame += 1) {
+    for (const frame of frames) {
       try {
         const image = new Image()
         cached.images.push(image)
         image.onload = () => {
           if (settled) return
           loaded += 1
-          if (loaded === WALK_FRAME_COUNT) {
+          if (loaded === frames.length) {
             settled = true
             cached.status = 'ready'
             resolve(true)
           }
         }
         image.onerror = () => fail(frame)
-        image.src = walkFrameUrl(catId, frame)
+        image.src = catAnimFrameUrl(catId, frame)
       } catch (error) {
         fail(frame, error)
         break
@@ -181,39 +192,43 @@ function preloadWalkAnimation(catId: CatId): Promise<boolean> {
 // Narrow test seam: module-scope image caches otherwise outlive each
 // CatLayer render in Vitest. Production never calls this.
 export function _resetCatWalkAnimationCacheForTests(): void {
-  for (const entry of Object.values(walkAnimationCache)) {
+  for (const entry of animationCache.values()) {
     for (const image of entry.images) {
       image.onload = null
       image.onerror = null
     }
   }
-  walkAnimationCache = createWalkAnimationCache()
+  animationCache = new Map()
 }
 
-function isWalkingActivity(activity: Activity): boolean {
-  return activity === 'walk' || activity === 'chase' || activity === 'flee'
-}
-
-function useWalkAnimationReady(catId: CatId, shouldPreload: boolean): boolean {
-  const [ready, setReady] = useState(
-    () => walkAnimationCache[catId].status === 'ready',
+function useAnimationFramesReady(
+  catId: CatId,
+  frames: readonly CatAnimFrame[],
+  shouldPreload: boolean,
+): boolean {
+  const cacheKey = animationCacheKey(catId, frames)
+  const [loadedKey, setLoadedKey] = useState<string | null>(
+    () => animationCache.get(cacheKey)?.status === 'ready' ? cacheKey : null,
   )
 
   useEffect(() => {
-    if (!shouldPreload) return
+    if (!shouldPreload || frames.length === 0) return
     let cancelled = false
+    const requestedFrames = cacheKey.slice(cacheKey.indexOf(':') + 1).split(',') as CatAnimFrame[]
     const timer = window.setTimeout(() => {
-      void preloadWalkAnimation(catId).then((loaded) => {
-        if (!cancelled) setReady(loaded)
+      void preloadAnimationFrames(catId, requestedFrames).then((loaded) => {
+        if (!cancelled && loaded) setLoadedKey(cacheKey)
       })
     }, WALK_PRELOAD_STAGGER_MS[catId])
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [catId, shouldPreload])
+  }, [cacheKey, catId, frames.length, shouldPreload])
 
-  return shouldPreload && (ready || walkAnimationCache[catId].status === 'ready')
+  return frames.length > 0 && shouldPreload && (
+    loadedKey === cacheKey || animationCache.get(cacheKey)?.status === 'ready'
+  )
 }
 
 /**
@@ -317,7 +332,17 @@ function setMood(c: CatState, mood: string, durationMs: number, now: number, sec
   return { ...c, mood, moodSecondary: secondary ?? null, moodUntil: now + durationMs }
 }
 function setActivity(c: CatState, activity: Activity, durationMs: number, now: number): CatState {
-  return { ...c, activity, activityUntil: now + durationMs }
+  return {
+    ...c,
+    previousActivity: c.activity,
+    activity,
+    activityStartedAt: now,
+    activityUntil: now + durationMs,
+    phaseTime: now,
+    idleSequence: null,
+    nextIdleLifeAt: now + rand(3000, 7000),
+    lastIdleLifeWasSpecial: false,
+  }
 }
 
 // === Mushu + Coco — the love story ===
@@ -717,17 +742,6 @@ function rollLoginSolo(c: CatState, now: number, w: number): CatState {
 
 // === Personality knobs (movement only — emotional outcomes are above) ========
 
-// iter-356.13 (user directive: less walking): per-cat base speeds
-// dropped roughly 30-40%. The point of less walking is also less
-// fast walking — cats meander when they DO walk, like real cats.
-const SPEED: Record<CatId, number> = {
-  panther: 0.25,
-  mushu: 0.7,
-  coco: 0.35,
-}
-const CHASE_SPEED = 1.5
-const FLEE_SPEED = 1.8
-
 // iter-356.41: cat tree x position (% of layer width). Matches
 // HabitatBackground's <CatTree> CSS `left: {CAT_TREE_X_PCT * 100}%`.
 // When a cat enters 'on_post' activity, its container snaps to this
@@ -1106,6 +1120,201 @@ function HabitatBackground({
 // Net: 0 evaluations/sec instead of 180/sec during long sleep states.
 const CatRender = memo(CatRenderImpl)
 
+type PoseGroup = 'walking' | 'seated' | 'sleeping' | 'crouched' | 'standing'
+
+const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
+  walk: 'walking',
+  chase: 'walking',
+  flee: 'walking',
+  sit: 'seated',
+  judge: 'seated',
+  loaf: 'seated',
+  snuggle: 'seated',
+  groom: 'seated',
+  in_box: 'seated',
+  sleep: 'sleeping',
+  stretch: 'crouched',
+  play: 'crouched',
+  pounce: 'crouched',
+  on_post: 'crouched',
+  hiss: 'standing',
+  scared: 'standing',
+}
+
+const POSE_TRANSITIONS: Record<PoseGroup, Record<PoseGroup, readonly CatAnimSequenceName[]>> = {
+  walking: {
+    walking: [],
+    seated: ['walk_to_front', 'stand_to_seated'],
+    sleeping: ['walk_to_front', 'stand_to_seated', 'sleep_down'],
+    crouched: ['walk_to_front', 'stand_to_seated', 'crouch_down'],
+    standing: ['walk_to_front'],
+  },
+  seated: {
+    walking: ['seated_to_stand', 'front_to_walk'],
+    seated: [],
+    sleeping: ['sleep_down'],
+    crouched: ['crouch_down'],
+    standing: ['seated_to_stand'],
+  },
+  sleeping: {
+    walking: ['wake_up', 'seated_to_stand', 'front_to_walk'],
+    seated: ['wake_up'],
+    sleeping: [],
+    crouched: ['wake_up', 'crouch_down'],
+    standing: ['wake_up', 'seated_to_stand'],
+  },
+  crouched: {
+    walking: ['crouch_up', 'seated_to_stand', 'front_to_walk'],
+    seated: ['crouch_up'],
+    sleeping: ['crouch_up', 'sleep_down'],
+    crouched: [],
+    standing: ['crouch_up', 'seated_to_stand'],
+  },
+  standing: {
+    walking: ['front_to_walk'],
+    seated: ['stand_to_seated'],
+    sleeping: ['stand_to_seated', 'sleep_down'],
+    crouched: ['stand_to_seated', 'crouch_down'],
+    standing: [],
+  },
+}
+
+const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenceName[]>> = {
+  on_post: ['jump_post'],
+}
+
+export function _catSequenceNamesForTransitionForTests(
+  from: Activity,
+  to: Activity,
+): readonly CatAnimSequenceName[] {
+  const fromGroup = POSE_GROUP_BY_ACTIVITY[from]
+  const toGroup = POSE_GROUP_BY_ACTIVITY[to]
+  if (to === 'scared') return []
+  if (to === 'hiss') {
+    return fromGroup === 'walking'
+      ? ['walk_to_front', 'hiss_windup']
+      : ['hiss_windup']
+  }
+  return [
+    ...POSE_TRANSITIONS[fromGroup][toGroup],
+    ...(ACTIVITY_ENTRY_SEQUENCES[to] ?? []),
+  ]
+}
+
+type AnimationPlan = {
+  frame: CatAnimFrame | null
+  framesToPreload: readonly CatAnimFrame[]
+  walkFrame: number | undefined
+}
+
+function frameFromSteps(
+  steps: readonly { frame: CatAnimFrame; ms: number }[],
+  elapsedMs: number,
+  loop: boolean,
+): CatAnimFrame {
+  const duration = sequenceDurationMs(steps)
+  let cursor = loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1)
+  for (const step of steps) {
+    if (cursor < step.ms) return step.frame
+    cursor -= step.ms
+  }
+  return steps[steps.length - 1].frame
+}
+
+function transitionFrame(
+  catId: CatId,
+  sequenceNames: readonly CatAnimSequenceName[],
+  elapsedMs: number,
+): CatAnimFrame | null {
+  let cursor = elapsedMs
+  for (const name of sequenceNames) {
+    const steps = CAT_ANIM_SEQUENCES[name][catId]
+    const duration = sequenceDurationMs(steps)
+    if (cursor < duration) return frameFromSteps(steps, cursor, false)
+    cursor -= duration
+  }
+  return null
+}
+
+function uniqueFrames(
+  catId: CatId,
+  sequenceNames: readonly CatAnimSequenceName[],
+): CatAnimFrame[] {
+  return Array.from(new Set(
+    sequenceNames.flatMap((name) => CAT_ANIM_SEQUENCES[name][catId].map((step) => step.frame)),
+  ))
+}
+
+const ONGOING_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName>> = {
+  walk: 'walk',
+  chase: 'run',
+  flee: 'run',
+  groom: 'groom_bout',
+  play: 'pounce',
+  pounce: 'pounce',
+}
+
+const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
+  sit: 'seated',
+  judge: 'seated',
+  loaf: 'seated',
+  snuggle: 'seated',
+  in_box: 'seated',
+  sleep: 'sleep',
+  stretch: 'crouch',
+}
+
+function animationPlanFor(cat: CatState, now: number): AnimationPlan {
+  const transitionNames = _catSequenceNamesForTransitionForTests(
+    cat.previousActivity,
+    cat.activity,
+  )
+  const elapsed = Math.max(0, now - cat.activityStartedAt)
+  const transitioningFrame = transitionFrame(cat.id, transitionNames, elapsed)
+  const ongoingName = ONGOING_SEQUENCE_BY_ACTIVITY[cat.activity]
+  const idleName = cat.idleSequence
+  const sequenceNames = [
+    ...transitionNames,
+    ...(ongoingName ? [ongoingName] : []),
+    ...(idleName ? [idleName] : []),
+  ]
+  const framesToPreload = uniqueFrames(cat.id, sequenceNames)
+
+  if (transitioningFrame) {
+    return { frame: transitioningFrame, framesToPreload, walkFrame: undefined }
+  }
+
+  const transitionDuration = transitionNames.reduce(
+    (total, name) => total + sequenceDurationMs(CAT_ANIM_SEQUENCES[name][cat.id]),
+    0,
+  )
+  if (idleName) {
+    const steps = CAT_ANIM_SEQUENCES[idleName][cat.id]
+    if (steps.length > 0) {
+      return {
+        frame: frameFromSteps(steps, Math.max(0, now - cat.idleSequenceStartedAt), false),
+        framesToPreload,
+        walkFrame: undefined,
+      }
+    }
+  }
+  if (ongoingName) {
+    const steps = CAT_ANIM_SEQUENCES[ongoingName][cat.id]
+    const frame = frameFromSteps(steps, Math.max(0, elapsed - transitionDuration), true)
+    const walkFrame = ongoingName === 'walk'
+      ? Number(frame.slice('walk_'.length)) - 1
+      : undefined
+    return { frame, framesToPreload, walkFrame }
+  }
+  return {
+    frame: HOLD_FRAME_BY_ACTIVITY[cat.activity] ?? null,
+    framesToPreload: HOLD_FRAME_BY_ACTIVITY[cat.activity]
+      ? [HOLD_FRAME_BY_ACTIVITY[cat.activity]] as CatAnimFrame[]
+      : framesToPreload,
+    walkFrame: undefined,
+  }
+}
+
 function CatRenderImpl({
   cat,
   playful,
@@ -1121,9 +1330,10 @@ function CatRenderImpl({
       : cat.id === 'mushu'
         ? TuxedoSprite
         : CalicoSprite
-  const walking = isWalkingActivity(cat.activity)
-  const walkAnimationReady = useWalkAnimationReady(
+  const plan = animationPlanFor(cat, cat.phaseTime)
+  const animationReady = useAnimationFramesReady(
     cat.id,
+    plan.framesToPreload,
     walkAnimationEnabled,
   )
   // Phase comes from CatState (computed in stepCats), not from a
@@ -1131,7 +1341,8 @@ function CatRenderImpl({
   // after any frame errors—activityToSprite keeps the old two-pose
   // alternation visible, so the cat never disappears.
   const spriteState = activityToSprite(cat.activity, cat.phase)
-  const walkFrame = walkAnimationReady && walking ? cat.phase : undefined
+  const richFrame = animationReady ? plan.frame : null
+  const walkFrame = animationReady ? plan.walkFrame : undefined
   // Per-activity micro-animation
   const microAnim =
     cat.activity === 'play'
@@ -1222,11 +1433,29 @@ function CatRenderImpl({
               RasterSprite now renders IMG at `width=size, height=size*1.2`,
               matching the container's SPRITE_WIDTH × SPRITE_HEIGHT
               dimensions exactly. */}
-          <Sprite
-            size={SPRITE_WIDTH}
-            state={spriteState}
-            walkFrame={walkFrame}
-          />
+          {richFrame ? (
+            <img
+              src={catAnimFrameUrl(cat.id, richFrame)}
+              alt=""
+              width={SPRITE_WIDTH}
+              height={SPRITE_HEIGHT}
+              data-testid="cat-sprite"
+              data-cat-id={cat.id}
+              data-cat-state={spriteState}
+              data-anim-frame={richFrame}
+              data-walk-frame={walkFrame === undefined ? undefined : walkFrame + 1}
+              decoding="async"
+              loading="lazy"
+              className="cat-sprite-img"
+              style={{ objectFit: 'contain', objectPosition: 'center bottom', display: 'block' }}
+            />
+          ) : (
+            <Sprite
+              size={SPRITE_WIDTH}
+              state={spriteState}
+              walkFrame={walkFrame}
+            />
+          )}
         </div>
       </div>
       {cat.mood && (
@@ -1273,12 +1502,12 @@ function CatRenderImpl({
 function spriteAnim(activity: Activity): string | undefined {
   switch (activity) {
     case 'walk':
-      return 'cat-walk-bob 200ms steps(2) infinite'
+      return 'cat-walk-bob 570ms steps(2) infinite'
     case 'chase':
     case 'flee':
       // Faster cadence for chase/flee — the urgency reads as a
       // sprint vs a normal walk. Same keyframe; tighter period.
-      return 'cat-walk-bob 140ms steps(2) infinite'
+      return 'cat-walk-bob 150ms steps(2) infinite'
     case 'sleep':
       return 'cat-breathe 2600ms ease-in-out infinite'
     default:
@@ -1340,10 +1569,10 @@ function activityToSprite(
 function phaseFor(activity: Activity, now: number): number {
   switch (activity) {
     case 'walk':
-      return Math.floor(now / 100) % WALK_FRAME_COUNT
+      return Math.floor(now / (CYCLE_DURATION_MS.walk / WALK_FRAME_COUNT)) % WALK_FRAME_COUNT
     case 'chase':
     case 'flee':
-      return Math.floor(now / 67) % WALK_FRAME_COUNT
+      return Math.floor(now / (CYCLE_DURATION_MS.run / 2)) % 2
     case 'sit':
     case 'judge':
     case 'loaf':
@@ -1410,6 +1639,8 @@ function initialCats(placement: 'app' | 'login'): CatState[] {
     // spending React work during first-paint and form submission. The
     // high-energy scheduler takes over after this gentle two-second beat.
     activity: placement === 'login' ? (id === 'coco' ? 'in_box' : 'sit') : (id === 'coco' ? 'loaf' : 'sit'),
+    previousActivity: placement === 'login' ? (id === 'coco' ? 'in_box' : 'sit') : (id === 'coco' ? 'loaf' : 'sit'),
+    activityStartedAt: now,
     activityUntil: now + (placement === 'login' ? rand(1900, 2400) : rand(1400, 2600)),
     mood: placement === 'login' ? (id === 'panther' ? '👀' : id === 'mushu' ? '🐾' : '✨') : null,
     moodSecondary: null,
@@ -1418,7 +1649,53 @@ function initialCats(placement: 'app' | 'login'): CatState[] {
     lastInteractedWith: null,
     lastInteractedAt: 0,
     phase: 0,
+    phaseTime: now,
+    idleSequence: null,
+    idleSequenceStartedAt: 0,
+    nextIdleLifeAt: now + rand(3000, 7000),
+    lastIdleLifeWasSpecial: false,
   }))
+}
+
+const SEATED_IDLE_ACTIVITIES = new Set<Activity>([
+  'sit',
+  'judge',
+  'loaf',
+  'snuggle',
+])
+
+const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; weight: number }[]> = {
+  panther: [
+    { name: 'blink', weight: 12 },
+    { name: 'tailflick', weight: 4 },
+    { name: 'groom_bout', weight: 2 },
+    { name: 'yawn', weight: 1 },
+  ],
+  mushu: [
+    { name: 'blink', weight: 12 },
+    { name: 'tailflick', weight: 4 },
+    { name: 'groom_bout', weight: 3 },
+    { name: 'yawn', weight: 1 },
+  ],
+  coco: [
+    { name: 'tailflick', weight: 8 },
+    { name: 'groom_bout', weight: 3 },
+    { name: 'yawn', weight: 1 },
+  ],
+}
+
+function pickSeatedIdleSequence(catId: CatId): CatAnimSequenceName {
+  const choices = SEATED_IDLE_CHOICES[catId]
+  let roll = Math.random() * choices.reduce((total, choice) => total + choice.weight, 0)
+  for (const choice of choices) {
+    roll -= choice.weight
+    if (roll <= 0) return choice.name
+  }
+  return choices[choices.length - 1].name
+}
+
+function isSpecialIdleSequence(name: CatAnimSequenceName): boolean {
+  return name !== 'blink'
 }
 
 function stepCats(
@@ -1443,8 +1720,26 @@ function stepCats(
   // from 180/sec to 0/sec.
   let anyChanged = false
   const stepped = cats.map((cat) => {
-    let { x, direction, mood, moodSecondary } = cat
+    let {
+      x,
+      direction,
+      mood,
+      moodSecondary,
+      idleSequence,
+      idleSequenceStartedAt,
+      nextIdleLifeAt,
+      lastIdleLifeWasSpecial,
+    } = cat
     const { y, activity, activityUntil, moodUntil, targetX } = cat
+    const transitionNames = _catSequenceNamesForTransitionForTests(
+      cat.previousActivity,
+      activity,
+    )
+    const transitionDuration = transitionNames.reduce(
+      (total, name) => total + sequenceDurationMs(CAT_ANIM_SEQUENCES[name][cat.id]),
+      0,
+    )
+    const locomotionReady = now - cat.activityStartedAt >= transitionDuration
     let catChanged = false
     if (mood && now > moodUntil) {
       mood = null
@@ -1453,15 +1748,16 @@ function stepCats(
     }
     const oldX = x
     const oldDir = direction
-    if (activity === 'walk') {
-      x += direction === 'R' ? SPEED[cat.id] * dtNorm : -SPEED[cat.id] * dtNorm
-    } else if (activity === 'chase') {
-      const speed = CHASE_SPEED * dtNorm
-      x += direction === 'R' ? speed : -speed
-    } else if (activity === 'flee') {
-      const speed = FLEE_SPEED * dtNorm
-      x += direction === 'R' ? speed : -speed
-    } else if (activity === 'pounce' && targetX !== null) {
+    if (activity === 'walk' && locomotionReady) {
+      const distance = gaitVelocityPxPerMs('walk', SPRITE_WIDTH) * dt
+      x += direction === 'R' ? distance : -distance
+    } else if (activity === 'chase' && locomotionReady) {
+      const distance = gaitVelocityPxPerMs('run', SPRITE_WIDTH) * dt
+      x += direction === 'R' ? distance : -distance
+    } else if (activity === 'flee' && locomotionReady) {
+      const distance = gaitVelocityPxPerMs('run', SPRITE_WIDTH) * dt
+      x += direction === 'R' ? distance : -distance
+    } else if (activity === 'pounce' && targetX !== null && locomotionReady) {
       const distance = targetX - x
       if (Math.abs(distance) > 2) {
         direction = distance > 0 ? 'R' : 'L'
@@ -1484,17 +1780,48 @@ function stepCats(
     // flee every ~67ms (moving cats already update because x changes).
     const newPhase = phaseFor(activity, now)
     if (newPhase !== cat.phase) catChanged = true
+    const timelineActive =
+      now - cat.activityStartedAt < transitionDuration ||
+      ONGOING_SEQUENCE_BY_ACTIVITY[activity] !== undefined ||
+      idleSequence !== null
+    const phaseTime = timelineActive ? now : cat.phaseTime
+    if (phaseTime !== cat.phaseTime) catChanged = true
+
+    if (SEATED_IDLE_ACTIVITIES.has(activity)) {
+      if (idleSequence) {
+        const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES[idleSequence][cat.id])
+        if (now - idleSequenceStartedAt >= duration) {
+          idleSequence = null
+          nextIdleLifeAt = now + rand(3000, 7000)
+          catChanged = true
+        }
+      } else if (now >= nextIdleLifeAt) {
+        if (lastIdleLifeWasSpecial) {
+          idleSequence = cat.id === 'coco' ? null : 'blink'
+          lastIdleLifeWasSpecial = false
+        } else {
+          idleSequence = pickSeatedIdleSequence(cat.id)
+          lastIdleLifeWasSpecial = isSpecialIdleSequence(idleSequence)
+        }
+        idleSequenceStartedAt = now
+        nextIdleLifeAt = now + rand(3000, 7000)
+        catChanged = true
+      }
+    } else if (idleSequence) {
+      idleSequence = null
+      catChanged = true
+    }
     // Activity expiry → roll a solo event for the next state. This
     // ALWAYS counts as a change because rollSolo returns a new state.
     if (now > activityUntil) {
-      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase }
+      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial }
       const next = placement === 'login' ? rollLoginSolo(base, now, w) : rollSolo(base, now, w)
       anyChanged = true
       return next
     }
     if (catChanged) {
       anyChanged = true
-      return { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX, phase: newPhase }
+      return { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial }
     }
     // No change — return original ref so React.memo bails out.
     return cat
