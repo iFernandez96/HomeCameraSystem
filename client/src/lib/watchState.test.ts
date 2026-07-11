@@ -54,6 +54,31 @@ describe('watchStateOf — shared armed-state vocabulary (overhaul W1 item 2)', 
     expect(kind).toBe('armed')
   })
 
+  it('Given the worker is alive but detector frames are stale while video plays, Then detection is unavailable and the camera is not called offline', () => {
+    // arrange / act
+    const kind = watchStateOf({
+      statusKnown: true,
+      workerAlive: true,
+      detectionActive: true,
+      detectionFramesStale: true,
+      videoPlaying: true,
+    })
+    // assert
+    expect(kind).toBe('detection-unavailable')
+  })
+
+  it('Given status is healthy but video playback confirms failure, Then the actual media failure is camera offline', () => {
+    // arrange / act
+    const kind = watchStateOf({
+      statusKnown: true,
+      workerAlive: true,
+      detectionActive: true,
+      videoPlaying: false,
+    })
+    // assert
+    expect(kind).toBe('offline')
+  })
+
   it('Given the status API is unreachable but video confirms frames, When classified, Then it is the low-alarm reconnecting state', () => {
     // arrange / act
     const kind = watchStateOf({

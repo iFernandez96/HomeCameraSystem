@@ -61,6 +61,17 @@ function computeHealth(status: ServerStatus, sentryCat: SentryCat): HealthSummar
     }
   }
 
+  if (
+    status.seconds_since_last_frame != null &&
+    status.seconds_since_last_frame > 60
+  ) {
+    return {
+      level: 'warn',
+      label: 'Detection feed stalled',
+      hint: `No detection frame for ${formatAge(status.seconds_since_last_frame)}. Live video is checked separately; events and alerts are paused.`,
+    }
+  }
+
   // 2. Hard pauses from the worker side.
   if (isLowMemory) {
     return {
@@ -263,7 +274,7 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
  * ServerStatus fields (no new backend route required).
  *
  * Row 1: FPS · Inference · Dropped frames (only if nonzero)
- * Row 2: Last frame age · Disk free
+ * Row 2: Last detection-frame age · Disk free
  *
  * When `worker_alive=false`, every stat falls to em-dash so the
  * layout doesn't collapse and the offline state reads consistent.
@@ -297,7 +308,7 @@ function StatStrip({ status }: { status: ServerStatus }) {
     <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs border-t border-[var(--color-border-subtle)] pt-3">
       <StatCell label="Frame rate" value={fps} />
       <StatCell label="Inference" value={inferMs} />
-      <StatCell label="Last frame" value={lastFrame} />
+      <StatCell label="Detection frame" value={lastFrame} />
       <StatCell label="Disk free" value={diskFree} />
       {dropped && (
         <div className="col-span-2 text-[var(--color-warning)]">
@@ -343,7 +354,7 @@ function CompactStatStrip({ status }: { status: ServerStatus }) {
         <dd className="font-semibold tabular-nums">{inferMs}</dd>
       </div>
       <div>
-        <dt className="uppercase tracking-wider text-[9px] text-white/55">Last frame</dt>
+        <dt className="uppercase tracking-wider text-[9px] text-white/55">Detection frame</dt>
         <dd className="font-semibold tabular-nums">{lastFrame}</dd>
       </div>
       <div>
@@ -470,6 +481,10 @@ function workerStateLabel(status: ServerStatus): string {
       ? `Detection unavailable (last heartbeat ${formatAge(status.worker_last_seen_s)} ago)`
       : 'Detection unavailable'
   }
+  if (
+    status.seconds_since_last_frame != null &&
+    status.seconds_since_last_frame > 60
+  ) return `Detection feed stalled (${formatAge(status.seconds_since_last_frame)})`
   const m = status.worker_metrics
   if (m?.gear === 'off') return 'Watching: paused'
   if (m?.gear === 'scheduled-off') return 'Watching: paused on schedule'

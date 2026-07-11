@@ -40,13 +40,16 @@ function status(overrides: Partial<ServerStatus> = {}): ServerStatus {
 }
 
 describe('God View crash-cart panels', () => {
-  it('Given a stale stream, When PipelinePanel renders, Then the down node exposes the reason as an accessible name', () => {
+  it('Given detector frames are stale, When PipelinePanel renders, Then detection is down while MediaMTX stays unknown', () => {
     // arrange / act
     render(<PipelinePanel status={status({ seconds_since_last_frame: 120 })} />)
 
     // assert
     expect(
-      screen.getByRole('listitem', { name: /mediamtx down: stream stale/i }),
+      screen.getByRole('listitem', { name: /mediamtx unknown: no direct media probe/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('listitem', { name: /detect down: frame intake stalled/i }),
     ).toBeInTheDocument()
   })
 

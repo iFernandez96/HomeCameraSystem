@@ -665,6 +665,27 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
+  it('Given detector intake is stale while the worker is alive, When the page renders, Then it reports detection unavailable without calling the live stream stalled', async () => {
+    // arrange
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      worker_alive: true,
+      detection_active: true,
+      seconds_since_last_frame: 120,
+    })
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/detection is not receiving frames/i)).toBeInTheDocument()
+    expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
+  })
+
   // Fuzz F4: landscape fullscreen wasted ~45% of the width because
   // `object-contain` letterboxes a 16:9 stream inside a much-wider
   // landscape phone viewport. Fix flips to `object-cover` only when

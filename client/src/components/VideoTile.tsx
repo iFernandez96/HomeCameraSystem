@@ -75,7 +75,7 @@ export function VideoTile({
   workerAlive = null,
   lowMemory = null,
   thermal = null,
-  streamStaleSeconds = null,
+  detectionFrameAgeSeconds = null,
   fit = 'cover',
   showStatusPill = true,
   onPlayingChange,
@@ -133,12 +133,11 @@ export function VideoTile({
    * (from `/api/status.seconds_since_last_frame`). null = unknown
    * or worker hasn't reported a frame yet. The iter-300 outage had
    * worker_alive=true while this would have climbed to 50,000 —
-   * so when this exceeds ~60 we show a "STREAM STALE" pill that
-   * takes precedence over OFFLINE/LOW-MEMORY/THERMAL/PAUSED
-   * (because none of those describe the actual failure: video
-   * isn't flowing).
+   * This measures the detector's RTSP intake, not WebRTC playback.
+   * When it exceeds ~60s, warn that detection is stalled while the
+   * independently confirmed live video remains visible.
    */
-  streamStaleSeconds?: number | null
+  detectionFrameAgeSeconds?: number | null
   /**
    * Structural overhaul (Watch): how the <video> fills the tile.
    * 'cover' (default) crops to fill — right when the WRAPPER owns a
@@ -326,24 +325,22 @@ export function VideoTile({
   // state with amber, no-action-implied copy. "Camera offline" red
   // copy is reserved for when the VIDEO path itself is confirmed dead
   // (status === 'error', the OfflineState overlay further below).
-  // `streamStale`: worker is heartbeating, but the stream has gone
-  //   silent for >60s — iter-300 outage signature. YELLOW. The
-  //   existing Retry button is the natural recovery (it tears down
-  //   WHEP and reconnects).
+  // A stale detector frame means the worker's intake is stuck. It does
+  // not mean this component's separately observed WebRTC video is stuck.
   const workerDead = workerAlive === false
-  const streamStale =
+  const detectionFeedStalled =
     workerAlive === true &&
-    streamStaleSeconds !== null &&
-    streamStaleSeconds !== undefined &&
-    streamStaleSeconds > 60
-  // Carry the legacy `offline` name for the bbox-clear logic below —
-  // a dead worker means the boxes array is stale regardless of the
-  // video's own state.
-  const offline = workerDead
-  const lowMem = !offline && !streamStale && lowMemory === true
-  const therm = !offline && !streamStale && !lowMem && thermal === true
+    detectionFrameAgeSeconds !== null &&
+    detectionFrameAgeSeconds !== undefined &&
+    detectionFrameAgeSeconds > 60
+  // Clear boxes whenever detection cannot produce fresh results; stale
+  // overlays must never remain painted over an otherwise-live feed.
+  const detectionUnavailable = workerDead || detectionFeedStalled
+  const offline = detectionUnavailable
+  const lowMem = !offline && lowMemory === true
+  const therm = !offline && !lowMem && thermal === true
   const paused =
-    !offline && !streamStale && !lowMem && !therm && detectionActive === false
+    !offline && !lowMem && !therm && detectionActive === false
 
   useEffect(() => {
     const video = videoRef.current
@@ -1008,22 +1005,6 @@ export function VideoTile({
         aria-live="polite"
         className="absolute top-3 right-3 pointer-events-none"
       >
-        {/* iter-302: stream-stale takes precedence — see comment block
-            on `streamStale` derivation above. The label is plain English
-            so a non-technical user understands what's wrong: "no video
-            from the camera".
-            iter-302b (accessibility-auditor #1): seconds count moved
-            into the visible text and aria-label dropped. Pre-iter-302b
-            the aria-label said "No video for N seconds" while visible
-            text said "No video — stream stalled" — VoiceOver read the
-            label, NVDA read the text, two users got two different
-            messages. One string for both channels. */}
-        {/* iter-356.C: stream-stale = yellow (worker alive, video
-            silent — Reconnect via the existing error-overlay Retry
-            below). Visible text now reads "Stream stalled" with the
-            Reconnect hint; the precise seconds count moves to the
-            aria-label only so SR users still hear how long it's been
-            stale, and the visible UI stays calm. */}
         {/* Premium-launch slice (Dana #2 partial-sight redundancy):
             each precedence-ladder pill carries a distinctive glyph
             in addition to its severity color. Pre-fix all five pills
@@ -1034,31 +1015,20 @@ export function VideoTile({
             Now: glyph distinguishes the kind regardless of color
             perception, and the colored dot is reused at 8 px so the
             pre-existing iter-356.C visual contract is preserved. */}
-        {/* Defect-3 fix (WebRTC lifecycle audit): this pill's "Reconnect"
-            copy was PASSIVE text — the only actual Retry control lives in
-            the status==='error' overlay below, which never renders while
-            status is 'live' (streamStale only shows when status==='live').
-            The suggested recovery was unreachable. Now a real button that
-            bumps retryNonce — the exact same manual-retry path the error
-            overlay's Retry button uses — so pressing it tears down the
-            stalled WHEP session and reconnects. Still manual-only: one
-            press, one attempt, no auto-retry loop. */}
-        {streamStale && status === 'live' && (
-          <button
-            type="button"
-            onClick={() => setRetryNonce((n) => n + 1)}
+        {detectionFeedStalled && status === 'live' && (
+          <div
             className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
+            aria-label={`Detection feed stalled for ${Math.round((detectionFrameAgeSeconds ?? 0) / 10) * 10} seconds. Live video is still on.`}
           >
             <span className="inline-flex items-center gap-2">
-              <PillSeverityIcon kind="stream-stale" tone="warning" />
+              <PillSeverityIcon kind="detection-stale" tone="warning" />
               <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" />
-              Stream stalled
+              Detection delayed
             </span>
             <span className="text-xs text-white/80 font-normal">
-              Reconnect
+              Live video is on
             </span>
-          </button>
+          </div>
         )}
         {/* Status-truth fix (server-restart contradiction, 2026-07-07):
             single honest pill for "the detection worker isn't
@@ -1200,7 +1170,7 @@ function StatusPill({ status }: { status: Status }) {
  * the glyph is purely visual reinforcement.
  *
  * Glyph vocabulary, picked to read at 12 px on a glassy dark backdrop:
- *  - stream-stale  → broken-signal (3 ascending bars, last one slashed)
+ *  - detection-stale → broken-signal (3 ascending bars, last one slashed)
  *  - camera-offline → camera body with a diagonal slash through it
  *  - worker-offline → eye with a diagonal slash through it
  *  - low-memory    → memory-chip outline with a center dot
@@ -1208,7 +1178,7 @@ function StatusPill({ status }: { status: Status }) {
  *  - paused        → two parallel pause bars
  */
 type PillKind =
-  | 'stream-stale'
+  | 'detection-stale'
   | 'camera-offline'
   | 'worker-offline'
   | 'low-memory'
@@ -1245,7 +1215,7 @@ function PillSeverityIcon({
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        {kind === 'stream-stale' && (
+        {kind === 'detection-stale' && (
           // Three ascending bars + a slash — "signal interrupted".
           <>
             <line x1="6" y1="20" x2="6" y2="16" />

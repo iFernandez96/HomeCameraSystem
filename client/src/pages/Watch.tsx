@@ -326,7 +326,11 @@ export function Watch() {
   const deterrenceDuration = Math.max(1, Math.min(60, Number(actionParams.get('duration')) || 15))
   const intentEventId = actionParams.get('event') ?? undefined
   const workerAlive = status?.worker_alive ?? null
-  const streamStaleSeconds = status?.seconds_since_last_frame ?? null
+  const detectionFrameAgeSeconds = status?.seconds_since_last_frame ?? null
+  const detectionFramesStale =
+    workerAlive === true &&
+    detectionFrameAgeSeconds !== null &&
+    detectionFrameAgeSeconds > 60
   const lowMemory = status?.worker_metrics?.gear === 'low-memory'
   const thermal = status?.worker_metrics?.gear === 'thermal-throttled'
   // Multicam: the registry name for the SELECTED camera wins when
@@ -457,6 +461,7 @@ export function Watch() {
     statusKnown: status != null,
     workerAlive,
     detectionActive,
+    detectionFramesStale,
     videoPlaying,
   })
   const dangerDown = stateKind === 'offline'
@@ -481,9 +486,13 @@ export function Watch() {
   const watchingDetail = dangerDown
     ? "Can't reach the camera. Check its connection."
     : detectionUnavailable
-      ? videoPlaying === true
-        ? 'Live video is on. Events and alerts are paused.'
-        : 'Events and alerts are paused. Checking live video…'
+      ? detectionFramesStale
+        ? videoPlaying === true
+          ? 'Live video is on. Detection is not receiving frames.'
+          : 'Detection is not receiving frames. Checking live video…'
+        : videoPlaying === true
+          ? 'Live video is on. Events and alerts are paused.'
+          : 'Events and alerts are paused. Checking live video…'
     : reconnecting
       ? 'Status reconnecting'
       : lowMemory
@@ -1039,7 +1048,7 @@ export function Watch() {
             workerAlive={workerAlive}
             lowMemory={lowMemory}
             thermal={thermal}
-            streamStaleSeconds={streamStaleSeconds}
+            detectionFrameAgeSeconds={detectionFrameAgeSeconds}
             // Fuzz F4: landscape fullscreen switches to `cover` so the
             // stream fills the wide viewport instead of leaving ~45%
             // dead black bars (see useIsLandscape comment above).

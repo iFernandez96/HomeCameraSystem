@@ -71,6 +71,24 @@ describe('WatchRibbon a11y', () => {
     expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
   })
 
+  it('given detector frames are stale, when the ribbon renders, then it says detection unavailable and labels the age as detection delay', () => {
+    // arrange
+    useStatusMock.mockReturnValue({
+      detection_active: true,
+      worker_alive: true,
+      camera_label: 'Front Door',
+      seconds_since_last_frame: 90,
+    })
+
+    // act
+    renderRibbon()
+
+    // assert
+    expect(screen.getByRole('status')).toHaveTextContent('Detection unavailable')
+    expect(screen.getByText('Detection delayed')).toBeInTheDocument()
+    expect(screen.queryByText(/live now/i)).not.toBeInTheDocument()
+  })
+
   it('Given a notched landscape iPhone PWA, When the ribbon renders, Then it carries lateral safe-area-inset padding so the armed-state cluster never sits behind the Dynamic Island (premium-launch slice — mobile-view-auditor A1)', () => {
     // arrange — Pre-fix the ribbon set `paddingTop` for the notch
     // but had no `safe-area-inset-left/right`. In landscape on a

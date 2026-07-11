@@ -1709,11 +1709,17 @@ export function Events() {
                 //   offline = worker_alive === false        (danger)
                 //   "off duty" = !offline && detection_active===false (calm)
                 detectionUnavailable={
-                  status !== null && status.worker_alive === false
+                  status !== null &&
+                  (status.worker_alive === false ||
+                    (status.worker_alive === true &&
+                      status.seconds_since_last_frame != null &&
+                      status.seconds_since_last_frame > 60))
                 }
                 detectionOff={
                   status !== null &&
                   status.worker_alive !== false &&
+                  (status.seconds_since_last_frame == null ||
+                    status.seconds_since_last_frame <= 60) &&
                   status.detection_active === false
                 }
                 filterHint={filterComboEmptyHint}
