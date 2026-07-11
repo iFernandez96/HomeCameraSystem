@@ -131,7 +131,30 @@ export function HourBand({
   const clusters = useMemo(() => clusterEvents(events, dayStartTs), [events, dayStartTs])
   const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null)
   const expandedCluster = clusters.find((cluster) => cluster.id === expandedClusterId) ?? null
-  const eventCount = clusters.reduce((total, cluster) => total + cluster.events.length, 0)
+  const { eventCount, peopleCount, catCount, otherCount, latestEvent } = useMemo(() => {
+    let total = 0
+    let people = 0
+    let cats = 0
+    let other = 0
+    let latest: TimelineEvent | null = null
+    for (const cluster of clusters) {
+      for (const item of cluster.events) {
+        total += 1
+        const kind = identityOf(item.event).kind
+        if (kind === 'person' || kind === 'named-person') people += 1
+        else if (kind === 'cat') cats += 1
+        else other += 1
+        if (latest == null || item.startTs > latest.startTs) latest = item
+      }
+    }
+    return {
+      eventCount: total,
+      peopleCount: people,
+      catCount: cats,
+      otherCount: other,
+      latestEvent: latest,
+    }
+  }, [clusters])
   const nowInDay = effectiveNowTs >= dayStartTs && effectiveNowTs < dayStartTs + DAY_S
   const nowPercent = pct(effectiveNowTs, dayStartTs)
   const summary = clusters.length === 0
@@ -148,13 +171,13 @@ export function HourBand({
 
   return (
     <div>
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <span className="text-xs text-[var(--color-text-secondary)]">
-          Events at their exact time
+      <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
+        <span className="font-semibold text-[var(--color-text-primary)]">
+          {eventCount} {eventCount === 1 ? 'sighting' : 'sightings'}
         </span>
-        {nowInDay ? (
-          <span className="shrink-0 text-xs font-semibold tabular-nums text-[var(--color-brass-default)]">
-            Now · {clockTime(effectiveNowTs)}
+        {latestEvent ? (
+          <span className="shrink-0 tabular-nums text-[var(--color-text-secondary)]">
+            Latest {clockTime(latestEvent.event.ts)}
           </span>
         ) : null}
       </div>
@@ -165,7 +188,7 @@ export function HourBand({
         className="relative"
         data-testid="day-activity-ruler"
       >
-        <div className="relative h-12 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+        <div className="relative h-10 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)]">
           {nowInDay ? (
             <div
               aria-hidden="true"
@@ -181,6 +204,10 @@ export function HourBand({
               style={{ left: `${position}%` }}
             />
           ))}
+          <span
+            aria-hidden="true"
+            className="absolute inset-x-0 top-1/2 h-px bg-[var(--color-border)]"
+          />
           {clusters.map((cluster) => {
             const startPercent = pct(cluster.startTs, dayStartTs)
             const endPercent = pct(cluster.endTs, dayStartTs)
@@ -196,7 +223,7 @@ export function HourBand({
               <span key={cluster.id}>
                 <span
                   aria-hidden="true"
-                  className="absolute inset-y-2 z-[1] min-w-[3px] rounded-sm opacity-85"
+                  className={`absolute top-1/2 z-[1] min-w-[3px] -translate-y-1/2 rounded-full opacity-90 ${count > 1 ? 'h-5' : 'h-3'} ${expandedClusterId === cluster.id ? 'ring-2 ring-[var(--color-accent-default)] ring-offset-1 ring-offset-[var(--color-surface-raised)]' : ''}`}
                   style={{
                     background: cluster.color,
                     left: `${startPercent}%`,
@@ -210,7 +237,7 @@ export function HourBand({
                   aria-label={label}
                   aria-expanded={count > 1 ? expandedClusterId === cluster.id : undefined}
                   onClick={() => activateCluster(cluster)}
-                  className="absolute inset-y-0 z-[2] min-w-8 -translate-x-1/2 rounded-md bg-transparent focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-[-2px]"
+                  className="absolute inset-y-0 z-[2] min-w-11 -translate-x-1/2 rounded-md bg-transparent focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-[-2px]"
                   style={{ left: `${markerPercent}%` }}
                   data-testid="timeline-marker"
                 />
@@ -281,16 +308,26 @@ export function HourBand({
       ) : null}
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)]">
-        <span className="inline-flex items-center gap-1">
-          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[var(--color-id-person)]" />
-          People
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[var(--color-id-mushu)]" />
-          Cats
-        </span>
+        {peopleCount > 0 ? (
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[var(--color-id-person)]" />
+            People {peopleCount}
+          </span>
+        ) : null}
+        {catCount > 0 ? (
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[var(--color-id-mushu)]" />
+            Cats {catCount}
+          </span>
+        ) : null}
+        {otherCount > 0 ? (
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[var(--color-id-panther)]" />
+            Other {otherCount}
+          </span>
+        ) : null}
         <span className="text-[10px] text-[var(--color-text-tertiary)]">
-          Empty space = no recorded event
+          Tap a mark for exact time
         </span>
       </div>
     </div>
