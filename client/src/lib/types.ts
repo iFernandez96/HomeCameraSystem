@@ -61,6 +61,12 @@ export type DetectionEvent = {
    * Never infer availability from clip_url: that URL can exist before
    * finalization and after retention removes the file. */
   video_status?: 'recording' | 'finalizing' | 'available' | 'failed' | 'unknown'
+  /** Conservative Unix-second ready-time bounds supplied by the
+   * server for recording/finalizing clips. Both are required before
+   * the client presents a range; either may be absent when the worker
+   * cannot yet estimate completion. */
+  video_eta_min_ts?: number
+  video_eta_max_ts?: number
   /**
    * URL of the saved thumbnail captured at detection time. Server emits
    * the key always; value is null when no thumbnail was written (idle

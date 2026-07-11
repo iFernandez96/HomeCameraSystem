@@ -621,6 +621,7 @@ class VisitRunner(object):
             last_extend=start_ts,
             segment_index=rec["segment_index"],
             root_visit_id=root_visit_id,
+            **self._recording_eta_fields(rec, now)
         )
         # POST the open event today (clip_url points at /api/events/<id>/clip;
         # the no-clip-url-at-open + clip-ready WS update is S6/R4, not here).
@@ -710,6 +711,7 @@ class VisitRunner(object):
                 last_seen=now,
                 last_extend=rec.get("last_extend"),
                 disk_floor=True,
+                **self._recording_eta_fields(rec, now)
             )
             return
         rec["last_extend"] = end_ts
@@ -737,6 +739,7 @@ class VisitRunner(object):
             start_ts=rec.get("start_ts"),
             last_seen=now,
             last_extend=end_ts,
+            **self._recording_eta_fields(rec, now)
         )
 
     def _on_finalize(self, tr, now):
@@ -820,14 +823,22 @@ class VisitRunner(object):
             try:
                 ok = bool(self._finalize_visit(visit_id, scratch, start_ts, end_ts))
                 if not ok:
-                    clip_state.set_state(
-                        self.recordings_dir,
-                        visit_id,
-                        "failed",
-                        start_ts=start_ts,
-                        end_ts=end_ts,
-                        reason="finalize_returned_false",
-                    )
+                    # ClipRecorder records the precise failure before it
+                    # returns False. Preserve that explanation; only supply a
+                    # generic fallback for injected/legacy finalizers that do
+                    # not write the ledger themselves.
+                    current = clip_state.get_state(
+                        self.recordings_dir, visit_id,
+                    ) or {}
+                    if current.get("state") != "failed":
+                        clip_state.set_state(
+                            self.recordings_dir,
+                            visit_id,
+                            "failed",
+                            start_ts=start_ts,
+                            end_ts=end_ts,
+                            reason="finalize_returned_false",
+                        )
                 elif self._on_finalized is not None:
                     # Notification is a separate best-effort side effect. A
                     # valid published MP4 must never become `failed` because
@@ -836,16 +847,20 @@ class VisitRunner(object):
                         visit_id, start_ts, end_ts,
                     )
             except Exception as e:
-                clip_state.set_state(
-                    self.recordings_dir,
-                    visit_id,
-                    "failed",
-                    start_ts=start_ts,
-                    end_ts=end_ts,
-                    reason="finalize_exception",
-                    error_type=type(e).__name__,
-                    error=str(e),
-                )
+                current = clip_state.get_state(
+                    self.recordings_dir, visit_id,
+                ) or {}
+                if current.get("state") != "failed":
+                    clip_state.set_state(
+                        self.recordings_dir,
+                        visit_id,
+                        "failed",
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        reason="finalize_exception",
+                        error_type=type(e).__name__,
+                        error=str(e),
+                    )
                 applog.emit(
                     "visit",
                     "ERROR finalize thread raised for visit {}: {}: {}".format(
@@ -948,6 +963,38 @@ class VisitRunner(object):
     # carries the value recovery should reuse. Updated by detect.py before each
     # observe via `set_absence_finalize_s`; defaults to the plan default.
     _last_absence_s = DEFAULT_ABSENCE_FINALIZE_S
+    _last_max_visit_s = DEFAULT_MAX_VISIT_S
+
+    @staticmethod
+    def _processing_eta_s(duration_s):
+        """Conservative Nano estimate for concat + full-decode validation."""
+        try:
+            duration = max(0.0, float(duration_s))
+        except (TypeError, ValueError):
+            duration = 0.0
+        return max(30.0, duration / 3.0 + 20.0)
+
+    def _recording_eta_fields(self, rec, last_seen):
+        start_ts = float(rec.get("start_ts") or last_seen)
+        elapsed = max(0.0, float(last_seen) - start_ts)
+        earliest_end = float(last_seen) + self._last_absence_s
+        latest_end = start_ts + self._last_max_visit_s
+        return {
+            "eta_min_ts": earliest_end + self._processing_eta_s(elapsed) * 0.65,
+            "eta_max_ts": latest_end + self._processing_eta_s(
+                self._last_max_visit_s,
+            ) * 1.75,
+        }
+
+    def set_runtime_bounds(self, absence_finalize_s, max_visit_s):
+        """Mirror live capture bounds into truthful per-event ETA ranges."""
+        self.set_absence_finalize_s(absence_finalize_s)
+        try:
+            value = float(max_visit_s)
+        except (TypeError, ValueError):
+            return
+        if value > 0:
+            self._last_max_visit_s = value
 
     def set_absence_finalize_s(self, value):
         """Record the live absence knob so newly-opened visits persist it (used

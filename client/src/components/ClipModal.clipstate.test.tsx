@@ -205,6 +205,11 @@ describe('ClipModal honest clip states', () => {
       state: 'failed',
       source: 'ledger',
       reason: 'finalize_failed',
+      failure_code: 'concat_timeout',
+      failure_stage: 'processing',
+      failure_summary: 'Video assembly took too long.',
+      failure_detail: 'The recorder stopped assembly after its safety time limit.',
+      retryable: false,
     })
 
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
@@ -212,7 +217,11 @@ describe('ClipModal honest clip states', () => {
     await waitFor(() =>
       expect(screen.getAllByText(/video failed/i).length).toBeGreaterThan(0),
     )
-    expect(screen.getAllByText(/finalize_failed/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/why is there no video/i)).toBeInTheDocument()
+    expect(screen.getAllByText('Video assembly took too long.').length).toBeGreaterThan(0)
+    expect(screen.getByText(/stopped assembly after its safety time limit/i)).toBeInTheDocument()
+    expect(screen.getByText('concat_timeout')).toBeInTheDocument()
+    expect(screen.queryByText(/finalize_failed/i)).not.toBeInTheDocument()
   })
 
   it('given a coalesced event (clip_url null, worker says no clip by design), when the modal opens, then the covering-recording copy shows instantly and nothing is probed', async () => {

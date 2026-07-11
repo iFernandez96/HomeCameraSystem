@@ -25,9 +25,8 @@ export function getClipStatePresentation({
     case 'failed':
       return {
         label: 'Video failed',
-        detail: clipStatus.reason
-          ? `The server could not save this video (${clipStatus.reason}). The snapshot remains captured evidence.`
-          : 'The server could not save this video. The snapshot remains captured evidence.',
+        detail: clipStatus.failure_summary
+          ?? 'The server could not save this video. The snapshot remains captured evidence.',
         tone: 'bad',
       }
     case 'unknown':

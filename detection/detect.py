@@ -2302,6 +2302,18 @@ def _arm_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
         prepare_open_event=prepare_open_event,
     )
     try:
+        reconciled = clip_state.reconcile_stale(recordings_dir)
+        if reconciled:
+            log.warning(
+                "marked %s abandoned clip lifecycle record(s) failed",
+                reconciled,
+            )
+    except Exception as e:
+        log.error(
+            "clip lifecycle reconciliation failed: %s: %s",
+            type(e).__name__, e,
+        )
+    try:
         _recover_open_visits(
             recordings_dir, clip_recorder, _vr, runtime.absence_finalize_s,
         )
@@ -3429,7 +3441,9 @@ def main():
         # runner is armed; no-op on the legacy path. The tracker is pure, so a
         # frame where the subject is gone still drives finalize at the deadline.
         if _VISIT_RUNNER is not None:
-            _VISIT_RUNNER.set_absence_finalize_s(runtime.absence_finalize_s)
+            _VISIT_RUNNER.set_runtime_bounds(
+                runtime.absence_finalize_s, runtime.max_visit_s,
+            )
             _VISIT_RUNNER.tick(
                 now, runtime.absence_finalize_s, runtime.max_visit_s,
             )

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
@@ -474,16 +474,16 @@ export function Watch() {
       ? 'Check its power, then see Settings.'
       : "Can't reach the camera. Check its connection."
     : reconnecting
-      ? 'Status reconnecting…'
+      ? 'Status reconnecting'
       : lowMemory
         ? 'Paused: the system is low on memory.'
         : thermal
           ? 'Slowed down: the camera is running warm.'
           : watching
-            ? `${sentryCatName(sentryCat)} is on watch · alerts on`
+            ? `${sentryCatName(sentryCat)} is watching`
             : detectionActive === false
               ? 'Turn alerts on in Settings.'
-              : 'Checking the camera…'
+              : 'Checking camera status'
 
   const toggleDetectionFromWatchPanel = async () => {
     if (!canManageDetection || detectionToggleBusy || detectionActive == null) return
@@ -512,22 +512,6 @@ export function Watch() {
       setDetectionToggleBusy(false)
     }
   }
-  const todayCount = events?.length ?? 0
-  // Painfix wave B #1: this used to read "N person · M cat sightings",
-  // which reads as N DISTINCT PEOPLE — but `persons` counts EVENTS, so
-  // one person walking by 50 times over a day showed "50 people". Every
-  // event.label === 'person' row is a SIGHTING, not a unique visitor
-  // (no dedup by identity happens here), so both halves now say
-  // "sighting(s)" consistently.
-  const todayBreakdown = useMemo(() => {
-    if (events == null) return 'Loading…'
-    const persons = events.filter((e) => e.label === 'person').length
-    const cats = events.filter((e) => e.label === 'cat').length
-    const personWord = persons === 1 ? 'person sighting' : 'person sightings'
-    const catWord = cats === 1 ? 'cat sighting' : 'cat sightings'
-    return `${persons} ${personWord} · ${cats} ${catWord}`
-  }, [events])
-
   // Fullscreen contract (2026-07-07, user session): entering pushes a
   // history entry so the Android back gesture exits FULLSCREEN, not
   // the app — the number-one "acts like a real camera app"
@@ -1228,8 +1212,6 @@ export function Watch() {
             unhealthy={unhealthy}
             stateLabel={stateLabel}
             watchingDetail={watchingDetail}
-            todayCount={todayCount}
-            todayBreakdown={todayBreakdown}
             sentryName={sentryCatName(sentryCat)}
             detectionActive={detectionActive}
             canManageDetection={canManageDetection}
@@ -1361,8 +1343,6 @@ function LiveGlanceStrip({
   unhealthy,
   stateLabel,
   watchingDetail,
-  todayCount,
-  todayBreakdown,
   sentryName,
   detectionActive,
   canManageDetection,
@@ -1372,8 +1352,6 @@ function LiveGlanceStrip({
   unhealthy: boolean
   stateLabel: string
   watchingDetail: string
-  todayCount: number
-  todayBreakdown: string
   sentryName: string
   detectionActive: boolean | null
   canManageDetection: boolean
@@ -1381,12 +1359,14 @@ function LiveGlanceStrip({
   onToggleDetection: () => void
 }) {
   const watchState = (
-    <div className="flex min-w-0 items-center justify-between gap-2 pr-2">
+    <div className="flex min-w-0 items-center justify-between gap-3">
       <div className="min-w-0">
         <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
-          {stateLabel}
+          {stateLabel.replace(/…/g, '')}
         </p>
-        <GlanceDetail text={detectionToggleBusy ? 'Updating watch status…' : watchingDetail} />
+        <p className="text-xs font-medium leading-tight text-white/78">
+          {detectionToggleBusy ? 'Updating watch status' : watchingDetail}
+        </p>
       </div>
       {canManageDetection && detectionActive != null ? (
         <span
@@ -1415,7 +1395,7 @@ function LiveGlanceStrip({
       data-testid="live-glance-strip"
       className="shrink-0 border-t border-white/10 bg-black/88 px-3 py-2 text-white backdrop-blur-md landscape-phone:px-2.5 landscape-phone:py-1.5 tablet-landscape:px-3 tablet-landscape:py-2 lg:px-4"
     >
-      <div className="grid grid-cols-2 items-center gap-3 landscape-phone:gap-2">
+      <div className="flex items-center">
         {canManageDetection && detectionActive != null ? (
           <button
             type="button"
@@ -1426,58 +1406,46 @@ function LiveGlanceStrip({
                 ? `Pause detection and classification — ${sentryName} is on watch`
                 : `Resume detection and classification — bring ${sentryName} back on watch`
             }
-            className={`group min-h-11 min-w-0 cursor-pointer rounded-r-lg border-l-2 pl-2.5 text-left transition-colors hover:bg-white/8 active:bg-white/12 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-70 ${
+            className={`group min-h-11 w-full min-w-0 cursor-pointer rounded-xl border px-3 py-2 text-left shadow-sm transition-colors hover:bg-white/8 active:bg-white/12 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-70 ${
               unhealthy
-                ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
-                : 'border-[var(--color-accent-bright)] text-white'
+                ? 'border-[var(--color-danger)] bg-white/5 text-[var(--color-danger)]'
+                : 'border-white/18 bg-white/5 text-white'
             }`}
           >
             {watchState}
           </button>
         ) : (
           <div
-            className={`min-w-0 border-l-2 pl-2.5 ${
+            className={`min-h-11 w-full min-w-0 rounded-xl border px-3 py-2 ${
             unhealthy
               ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
-              : 'border-[var(--color-accent-bright)] text-white'
+              : 'border-white/18 bg-white/5 text-white'
             }`}
           >
             {watchState}
           </div>
         )}
-        <div className="min-w-0 border-l-2 border-white/18 pl-2.5 text-white">
-          <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
-            {todayCount} today
-          </p>
-          <GlanceDetail text={todayBreakdown} muted />
-        </div>
       </div>
     </div>
   )
 }
 
-function GlanceDetail({ text, muted = false }: { text: string; muted?: boolean }) {
-  const parts = text.split(' · ')
-  const color = muted ? 'text-white/78' : ''
-  if (parts.length < 2) {
-    return (
-      <p
-        className={`text-sm font-semibold landscape-phone:text-[11px] landscape-phone:leading-tight tablet-landscape:truncate tablet-landscape:text-xs ${color}`}
-      >
-        {text}
-      </p>
-    )
+function sightingBreakdown(events: DetectionEvent[]): string {
+  const persons = events.filter((event) => event.label === 'person').length
+  const cats = events.filter((event) => event.label === 'cat').length
+  const others = events.length - persons - cats
+  const parts: string[] = []
+  if (persons > 0) {
+    parts.push(`${persons} person ${persons === 1 ? 'sighting' : 'sightings'}`)
   }
-
-  return (
-    <p
-      className={`text-sm font-semibold landscape-phone:text-[11px] landscape-phone:leading-tight tablet-landscape:truncate tablet-landscape:text-xs ${color}`}
-    >
-      <span>{parts[0]}</span>
-      <span className="landscape-phone:hidden"> · </span>
-      <span className="landscape-phone:block">{parts.slice(1).join(' · ')}</span>
-    </p>
-  )
+  if (cats > 0) {
+    parts.push(`${cats} cat ${cats === 1 ? 'sighting' : 'sightings'}`)
+  }
+  if (others > 0) {
+    parts.push(`${others} other ${others === 1 ? 'sighting' : 'sightings'}`)
+  }
+  if (parts.length < 2) return parts[0] ?? ''
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
 }
 
 /**
@@ -1546,11 +1514,19 @@ const TodayTimeline = memo(function TodayTimeline({
       </div>
       <p className="text-xs text-[var(--color-text-secondary)] mt-0.5 mb-4 landscape-phone:mb-2">
         {events == null
-          ? 'Loading today…'
+          ? 'Loading today'
           : events.length === 0
-            ? 'No events yet today'
-            : 'Newest first'}
+            ? 'No sightings yet today'
+            : `${events.length} ${events.length === 1 ? 'sighting' : 'sightings'} today`}
       </p>
+      {events != null && events.length > 0 ? (
+        <p
+          data-testid="today-sightings-summary"
+          className="-mt-3 mb-4 text-xs font-medium text-[var(--color-text-tertiary)] landscape-phone:-mt-1 landscape-phone:mb-2"
+        >
+          {sightingBreakdown(events)}
+        </p>
+      ) : null}
       {/* Overhaul W1 item 3 (mira#4, hari GESTURE-4/STATE-1): the
           designed ErrorState with a real Retry button replaces the
           bare red <p> — whose copy told users to "pull to refresh",
@@ -1582,6 +1558,8 @@ const TodayTimeline = memo(function TodayTimeline({
               event={e}
               subline={eventSubline(e, nowMs)}
               onOpen={() => onOpen(e)}
+              leading="video-status"
+              nowMs={nowMs}
             />
           </li>
         ))}

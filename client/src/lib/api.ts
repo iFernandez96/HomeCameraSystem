@@ -229,11 +229,17 @@ export type EventClipStatus = {
   updated_ts?: number
   start_ts?: number
   end_ts?: number
-  path?: string
   bytes?: number
   reason?: string
   error_type?: string
   error?: string
+  failure_code?: string
+  failure_stage?: string
+  failure_summary?: string
+  failure_detail?: string
+  retryable?: boolean
+  eta_min_ts?: number
+  eta_max_ts?: number
 }
 
 export const fetchEventClipStatus = (eventId: string) =>

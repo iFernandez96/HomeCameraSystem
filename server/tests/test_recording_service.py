@@ -88,6 +88,71 @@ def test_clip_state_reads_worker_ledger_when_clip_missing(rec_dir):
     assert state["last_seen"] == 105.0
 
 
+def test_clip_state_turns_abandoned_loading_into_safe_plain_failure(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-001": {
+                "state": "finalizing",
+                "updated_ts": 100.0,
+                "scratch_dir": "/private/scratch/path",
+                "error": "secret raw command output",
+            },
+        },
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 2000.0)
+
+    state = recording_service.clip_state("evt-001")
+
+    assert state["state"] == "failed"
+    assert state["failure_code"] == "worker_restarted"
+    assert "Waiting longer" in state["failure_detail"]
+    assert "scratch_dir" not in state
+    assert "error" not in state
+
+
+def test_batch_status_marks_abandoned_loading_failed(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"evt-old": {"state": "recording", "updated_ts": 1.0}},
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 2000.0)
+
+    assert recording_service.clip_statuses(["evt-old"])["evt-old"] == "failed"
+
+
+def test_clip_eta_ranges_only_returns_valid_active_bounds(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "active": {
+                "state": "finalizing", "updated_ts": 950.0,
+                "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+            },
+            "failed": {
+                "state": "failed", "updated_ts": 950.0,
+                "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+            },
+            "stale": {
+                "state": "recording", "updated_ts": 1.0,
+                "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+            },
+            "bad-range": {
+                "state": "recording", "updated_ts": 950.0,
+                "eta_min_ts": 1200.0, "eta_max_ts": 1100.0,
+            },
+        },
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 1000.0)
+
+    assert recording_service.clip_eta_ranges(
+        ["active", "failed", "stale", "bad-range"],
+    ) == {"active": {"min_ts": 1060.0, "max_ts": 1120.0}}
+
+
 def test_clip_state_disk_available_wins_over_stale_ledger(rec_dir):
     rec_dir.mkdir()
     (rec_dir / ".clip_state.json").write_text(json.dumps({

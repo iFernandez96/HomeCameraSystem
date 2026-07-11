@@ -3,6 +3,7 @@ import { clockTime, eventTitle } from '../lib/eventLabel'
 import { identityOf } from '../lib/identity'
 import { useRipple } from '../lib/ripple'
 import { WhoMark } from './WhoMark'
+import { EventVideoStatusIcon } from './EventVideoStatusIcon'
 
 /**
  * EventRow — the shared Playroom event card row (Watch story, Events
@@ -17,10 +18,18 @@ export function EventRow({
   event,
   subline,
   onOpen,
+  leading = 'identity',
+  nowMs,
 }: {
   event: DetectionEvent
   subline: string
   onOpen?: () => void
+  /** Home's Today list uses the explicit server video lifecycle;
+   * other EventRow surfaces retain the decorative identity mark. */
+  leading?: 'identity' | 'video-status'
+  /** Shared page ticker for aging ETA ranges without one interval
+   * per event row. Defaults to render time outside Home. */
+  nowMs?: number
 }) {
   const ripple = useRipple()
   const identity = identityOf(event)
@@ -33,9 +42,18 @@ export function EventRow({
           title text below, so a nested role="img" here would double-
           announce ("A cat, Cat at the front door…"). Matches
           EventList.tsx's EventCard WhoMark wrapper. */}
-      <span aria-hidden="true">
-        <WhoMark identity={identity} />
-      </span>
+      {leading === 'video-status' ? (
+        <EventVideoStatusIcon
+          status={event.video_status ?? 'unknown'}
+          etaMinTs={event.video_eta_min_ts}
+          etaMaxTs={event.video_eta_max_ts}
+          nowMs={nowMs}
+        />
+      ) : (
+        <span aria-hidden="true">
+          <WhoMark identity={identity} />
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         {/* Overhaul W1 item 6 (mira#2): 13.5px was a one-off size —
             mapped onto the --text-sm token (14px). */}

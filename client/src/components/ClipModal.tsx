@@ -1508,6 +1508,38 @@ export function ClipModal({
         // scrolls, so the WHEN/WHO context stays anchored.
         className="relative shrink-0 w-full min-w-0 lg:w-96 landscape-phone:w-[38%] tablet-landscape:w-[36%] lg:h-full landscape-phone:h-full tablet-landscape:h-full lg:min-h-0 landscape-phone:min-h-0 tablet-landscape:min-h-0 lg:flex landscape-phone:flex tablet-landscape:flex lg:flex-col landscape-phone:flex-col tablet-landscape:flex-col lg:overflow-hidden landscape-phone:overflow-hidden tablet-landscape:overflow-hidden lg:border-l landscape-phone:border-l tablet-landscape:border-l border-t lg:border-t-0 landscape-phone:border-t-0 tablet-landscape:border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)]"
       >
+        {activeClipStatus?.state === 'failed' ? (
+          <details className="border-b border-[var(--color-border-subtle)] bg-[var(--color-danger-bg)] px-5 py-3 text-sm">
+            <summary className="min-h-11 cursor-pointer select-none content-center font-semibold text-[var(--color-danger)]">
+              Why is there no video?
+            </summary>
+            <div className="space-y-2 pb-2 text-[var(--color-text-secondary)]">
+              <p className="font-medium text-[var(--color-text-primary)]">
+                {activeClipStatus.failure_summary ?? 'No playable video was saved.'}
+              </p>
+              <p>
+                {activeClipStatus.failure_detail
+                  ?? 'The recorder reported a failure but did not save a more specific explanation.'}
+              </p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                {activeClipStatus.failure_stage ? (
+                  <><dt className="font-semibold">Stage</dt><dd>{activeClipStatus.failure_stage}</dd></>
+                ) : null}
+                {activeClipStatus.failure_code ? (
+                  <><dt className="font-semibold">Issue code</dt><dd className="font-mono">{activeClipStatus.failure_code}</dd></>
+                ) : null}
+                {activeClipStatus.updated_ts ? (
+                  <><dt className="font-semibold">Last update</dt><dd>{absoluteTime(activeClipStatus.updated_ts)}</dd></>
+                ) : null}
+              </dl>
+              <p className="text-xs">
+                {activeClipStatus.retryable
+                  ? 'The system can retry this processing step.'
+                  : 'Waiting longer will not make this video appear.'}
+              </p>
+            </div>
+          </details>
+        ) : null}
         {personLabel && (
           <div className="px-5 py-4 border-b border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
             <div className="min-w-0">

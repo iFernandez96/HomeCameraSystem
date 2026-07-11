@@ -233,7 +233,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await waitFor(() => {
       expect(screen.getByText('On watch')).toBeInTheDocument()
     })
-    expect(document.body).toHaveTextContent(/is on watch · alerts on/)
+    expect(document.body).toHaveTextContent(/is watching/)
     const strip = screen.getByTestId('live-glance-strip')
     expect(screen.getByTestId('live-viewport')).toContainElement(strip)
     expect(strip.className).toMatch(/border-t/)
@@ -264,6 +264,52 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.getByRole('dialog', { name: 'clip:k1' })).toBeInTheDocument()
   })
 
+  it.each([
+    ['available', 'Video available'],
+    ['recording', 'Recording video'],
+    ['finalizing', 'Finalizing video'],
+    ['failed', 'Video unavailable'],
+    ['unknown', 'Video status unknown'],
+  ] as const)(
+    'Given Today at home receives video status %s, Then its leading icon truthfully says %s',
+    async (video_status, label) => {
+      // arrange — a clip URL is present for every state on purpose:
+      // Home must trust video_status rather than infer availability.
+      searchEvents.mockResolvedValue({
+        items: [ev({ id: `today-${video_status}`, clip_url: '/api/events/x/clip', video_status })],
+        next_cursor: null,
+      })
+
+      // act
+      renderWatch()
+
+      // assert
+      expect(await screen.findByRole('img', { name: label })).toHaveAttribute(
+        'data-video-status',
+        video_status,
+      )
+    },
+  )
+
+  it('Given Today at home receives authoritative ETA bounds, Then the row shows their conservative range', async () => {
+    const nowTs = Date.now() / 1000
+    searchEvents.mockResolvedValue({
+      items: [
+        ev({
+          id: 'today-eta',
+          video_status: 'finalizing',
+          video_eta_min_ts: nowTs + 70,
+          video_eta_max_ts: nowTs + 110,
+        }),
+      ],
+      next_cursor: null,
+    })
+
+    renderWatch()
+
+    expect(await screen.findByText('~1–2 min')).toBeInTheDocument()
+  })
+
   it('Given repeat sightings of one person today, When the live summary renders, Then the count reads as sightings not distinct people (painfix wave B #1)', async () => {
     // arrange — the same person crossing the porch many times in one
     // day used to read "50 people"; every row here is label 'person'
@@ -279,8 +325,26 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(document.body).toHaveTextContent('3 person sightings · 1 cat sighting')
+      expect(screen.getByText('4 sightings today')).toBeInTheDocument()
     })
+    const today = screen.getByLabelText("Today's activity")
+    expect(within(today).getByTestId('today-sightings-summary')).toHaveTextContent(
+      '3 person sightings and 1 cat sighting',
+    )
+    expect(
+      within(screen.getByTestId('live-glance-strip')).queryByText(/sighting/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('Given On watch is actionable, Then it has a graceful Pause affordance without ellipsis or middot clutter', async () => {
+    // arrange / act
+    renderWatch()
+    const strip = screen.getByTestId('live-glance-strip')
+
+    // assert
+    expect(await within(strip).findByText('Pause')).toBeInTheDocument()
+    expect(strip).toHaveTextContent(/is watching/i)
+    expect(strip.textContent).not.toMatch(/[·…]/)
   })
 
   it('Given no events yet today, When the timeline loads, Then the cat empty state explains the quiet', async () => {
@@ -459,12 +523,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await user.click(screen.getByRole('button', { name: 'simulate-video-playing' }))
 
     // assert — headline is the low-alarm shared-vocabulary
-    // "Reconnecting…", sublabel is honest about the API, no danger
+    // "Reconnecting", sublabel is honest about the API, no danger
     // copy anywhere.
     await waitFor(() => {
-      expect(screen.getByText('Status reconnecting…')).toBeInTheDocument()
+      expect(screen.getByText('Status reconnecting')).toBeInTheDocument()
     })
-    expect(screen.getByText('Reconnecting…')).toBeInTheDocument()
+    expect(screen.getByText('Reconnecting')).toBeInTheDocument()
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
@@ -516,9 +580,9 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // act
     renderWatch()
 
-    // assert — neutral "Checking…" (shared vocabulary), no danger copy.
+    // assert — neutral "Checking" (shared vocabulary), no danger copy.
     await waitFor(() => {
-      expect(screen.getByText('Checking…')).toBeInTheDocument()
+      expect(screen.getByText('Checking')).toBeInTheDocument()
     })
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
@@ -916,7 +980,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(list!.className).not.toMatch(/overflow-y-auto/)
   })
 
-  it('Given a landscape phone viewport, When Watch renders, Then the live bottom cards stay compact so Today at home remains visible', () => {
+  it('Given a landscape phone viewport, When Watch renders, Then the live bottom cards stay compact so Today at home remains visible', async () => {
     // arrange / act
     const { container } = renderWatch()
 
@@ -948,9 +1012,13 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(strip.className).toMatch(/shrink-0/)
     expect(strip.className).toMatch(/landscape-phone:py-1\.5/)
     expect(strip.className).not.toMatch(/absolute/)
-    const stripGrid = strip.querySelector('.grid') as HTMLElement | null
-    expect(stripGrid).not.toBeNull()
-    expect(stripGrid!.className).toMatch(/grid-cols-2/)
+    const stripRow = strip.firstElementChild as HTMLElement | null
+    expect(stripRow).not.toBeNull()
+    expect(stripRow!.className).toMatch(/flex/)
+    const watchButton = await within(strip).findByRole('button', {
+      name: /pause detection and classification/i,
+    })
+    expect(watchButton.className).toMatch(/w-full/)
 
     const lowerPane = container.querySelector(
       '.landscape-phone\\:col-start-2',

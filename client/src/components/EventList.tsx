@@ -4,6 +4,7 @@ import { WhoMark } from './WhoMark'
 import type { DetectionEvent } from '../lib/types'
 import { identityOf } from '../lib/identity'
 import { useTicker } from '../lib/useTicker'
+import { EventVideoStatusIcon } from './EventVideoStatusIcon'
 
 // iter-249 (UX overhaul, fix for iter-247): card-style layout that
 // answers "what am I looking at" at a glance. The previous list-row
@@ -290,7 +291,13 @@ export function EventList({
                 >
                   {clockTime(e.ts)}
                 </span>
-                <VideoStatusIcon status={e.video_status ?? 'unknown'} />
+                <EventVideoStatusIcon
+                  status={e.video_status ?? 'unknown'}
+                  placement="axis"
+                  etaMinTs={e.video_eta_min_ts}
+                  etaMaxTs={e.video_eta_max_ts}
+                  nowMs={now}
+                />
                 <EventCard
                   event={e}
                   now={now}
@@ -311,39 +318,6 @@ export function EventList({
 
 function eventCanOpen(e: DetectionEvent, onSelect?: (event: DetectionEvent) => void) {
   return !!e.thumb_url && !!onSelect
-}
-
-function VideoStatusIcon({ status }: { status: NonNullable<DetectionEvent['video_status']> }) {
-  const loading = status === 'recording' || status === 'finalizing'
-  const label =
-    status === 'available'
-      ? 'Video available'
-      : status === 'recording'
-        ? 'Recording video'
-        : status === 'finalizing'
-          ? 'Finalizing video'
-          : status === 'failed'
-            ? 'Video unavailable'
-            : 'Video status unknown'
-  return (
-    <span
-      role="img"
-      aria-label={label}
-      data-testid="event-video-status"
-      data-video-status={status}
-      className="absolute left-[3.45rem] top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-bg)] text-[var(--color-text-secondary)] ring-1 ring-[var(--color-border-subtle)]"
-    >
-      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2.5" y="6" width="13" height="12" rx="2" />
-        <path d="m15.5 10 6-3v10l-6-3" />
-        {status === 'failed' ? <path d="M4 4 20 20" strokeWidth="2.4" /> : null}
-        {status === 'unknown' ? <path d="M10 10.1a2.2 2.2 0 1 1 3.5 1.8c-.9.6-1.5 1-1.5 2M12 17h.01" /> : null}
-      </svg>
-      {loading ? (
-        <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-spin rounded-full border-2 border-[var(--color-bg)] border-t-[var(--color-accent-default)]" />
-      ) : null}
-    </span>
-  )
 }
 
 function EventTile({

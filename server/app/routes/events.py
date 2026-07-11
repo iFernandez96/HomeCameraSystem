@@ -29,9 +29,16 @@ def _enrich_video_status(items: list[dict]) -> list[dict]:
     statuses = recording_service.clip_statuses(
         item.get("id") for item in items if isinstance(item, dict)
     )
+    eta_ranges = recording_service.clip_eta_ranges(
+        item.get("id") for item in items if isinstance(item, dict)
+    )
     for item in items:
         event_id = item.get("id")
         item["video_status"] = statuses.get(event_id, "unknown")
+        eta = eta_ranges.get(event_id)
+        if eta is not None:
+            item["video_eta_min_ts"] = eta["min_ts"]
+            item["video_eta_max_ts"] = eta["max_ts"]
     return items
 
 

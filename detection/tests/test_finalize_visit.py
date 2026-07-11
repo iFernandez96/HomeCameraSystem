@@ -76,7 +76,9 @@ def test_given_empty_scratch_when_finalize_then_false_and_no_output(tmp_path):
     assert not (Path(rec.recordings_dir) / "abc.mp4.tmp").exists()
     ledger = json.loads((Path(rec.recordings_dir) / ".clip_state.json").read_text())
     assert ledger["events"]["abc"]["state"] == "failed"
-    assert ledger["events"]["abc"]["reason"] == "finalize_failed"
+    assert ledger["events"]["abc"]["reason"] == "no_segments"
+    assert ledger["events"]["abc"]["failure_stage"] == "capture"
+    assert ledger["events"]["abc"]["failure_summary"] == "No video pieces were captured."
 
 
 def test_given_missing_scratch_dir_when_finalize_then_false_no_crash(tmp_path):

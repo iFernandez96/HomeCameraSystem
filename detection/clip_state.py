@@ -15,6 +15,7 @@ import time
 
 LEDGER_NAME = ".clip_state.json"
 _MAX_EVENTS = 5000
+STALE_ACTIVE_AFTER_S = 15 * 60
 
 
 def ledger_path(recordings_dir):
@@ -111,3 +112,61 @@ def set_state(recordings_dir, event_id, state, **fields):
 
 def get_state(recordings_dir, event_id):
     return _read(ledger_path(recordings_dir))["events"].get(str(event_id))
+
+
+def reconcile_stale(recordings_dir, now=None, stale_after_s=STALE_ACTIVE_AFTER_S):
+    """Turn abandoned recording/finalizing rows into honest failures.
+
+    A worker restart can happen after the visit was removed from the open-visit
+    journal but before ffmpeg publishes the MP4.  Those rows otherwise remain
+    "loading" forever.  A real MP4 always wins and is marked available.
+
+    Returns the number of rows changed.  Python 3.6 compatible.
+    """
+    path = ledger_path(recordings_dir)
+    data = _read(path)
+    events = data["events"]
+    current = time.time() if now is None else float(now)
+    changed = 0
+    for event_id, original in list(events.items()):
+        if not isinstance(original, dict):
+            continue
+        state = original.get("state")
+        if state not in ("recording", "finalizing"):
+            continue
+        final_path = os.path.join(str(recordings_dir), "{}.mp4".format(event_id))
+        if os.path.isfile(final_path):
+            rec = dict(original)
+            rec.update({
+                "state": "available",
+                "updated_ts": current,
+            })
+            try:
+                rec["bytes"] = os.path.getsize(final_path)
+            except OSError:
+                pass
+        else:
+            try:
+                age = current - float(original.get("updated_ts") or 0)
+            except (TypeError, ValueError):
+                age = stale_after_s + 1
+            if age < float(stale_after_s):
+                continue
+            rec = dict(original)
+            rec.update({
+                "state": "failed",
+                "updated_ts": current,
+                "failure_code": "worker_restarted",
+                "failure_stage": state,
+                "failure_summary": "Video processing was interrupted.",
+                "failure_detail": (
+                    "The camera worker restarted before it could finish and "
+                    "publish this event's video. No playable video file was left."
+                ),
+                "retryable": False,
+            })
+        events[str(event_id)] = rec
+        changed += 1
+    if changed:
+        _atomic_write(path, data)
+    return changed

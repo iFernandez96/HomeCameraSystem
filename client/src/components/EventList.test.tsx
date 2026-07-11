@@ -679,6 +679,23 @@ describe('EventList', () => {
     expect(screen.getByRole('img', { name: label })).toHaveAttribute('data-video-status', video_status)
   })
 
+  it('Given the server supplies clip ETA bounds, Then the timeline shows their conservative range', () => {
+    const nowTs = Date.now() / 1000
+    render(
+      <EventList
+        events={[
+          evt({
+            id: 'axis-eta',
+            video_status: 'recording',
+            video_eta_min_ts: nowTs + 70,
+            video_eta_max_ts: nowTs + 110,
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('~1–2 min')).toBeInTheDocument()
+  })
+
   it('Given the timeline container renders, When its classes are inspected, Then it caps at lg:max-w-3xl WITHOUT re-centering via lg:mx-auto (UI/UX overhaul 2026-07-07, landscape-desktop D3: the Events page already centers the content row; a second mx-auto double-centered the timeline and left an uneven gap next to the calendar rail)', () => {
     // arrange / act
     const { container } = render(<EventList events={[evt()]} />)

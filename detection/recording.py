@@ -41,6 +41,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 
 import applog
 import clip_state
@@ -60,9 +61,12 @@ import clip_state
 # so a pathological max-visit fill can't hang forever. A per-clip term covers
 # concat-list overhead. (A capped visit is ~37-56 MB -> floor; a stuck-
 # detection max-visit fill is the case the ceiling bounds.)
-_FINALIZE_TIMEOUT_FLOOR_S = 60.0
+_FINALIZE_TIMEOUT_FLOOR_S = 180.0
 _FINALIZE_TIMEOUT_CEIL_S = 1800.0
-_FINALIZE_TIMEOUT_S_PER_GB = 300.0
+_FINALIZE_TIMEOUT_S_PER_GB = 1200.0
+_DECODE_TIMEOUT_FLOOR_S = 180.0
+_DECODE_TIMEOUT_CEIL_S = 1200.0
+_DECODE_TIMEOUT_DURATION_MULTIPLIER = 2.0
 
 # +faststart relocates the moov atom to the front for HTTP <video> first-frame,
 # at the cost of a SECOND full-file pass. For a normal capped visit (~tens of
@@ -999,6 +1003,15 @@ class ClipRecorder(object):
         # bounded synchronous subprocess.run (run() drains the pipe), unlike
         # the async long-lived recorder subprocesses.
         try:
+            nominal = float(expected_duration_s or 0)
+        except (TypeError, ValueError):
+            nominal = 0.0
+        decode_timeout_s = min(
+            _DECODE_TIMEOUT_CEIL_S,
+            max(_DECODE_TIMEOUT_FLOOR_S,
+                nominal * _DECODE_TIMEOUT_DURATION_MULTIPLIER),
+        )
+        try:
             result = subprocess.run(
                 [
                     self.ffmpeg_bin,
@@ -1010,7 +1023,7 @@ class ClipRecorder(object):
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                timeout=120.0,
+                timeout=decode_timeout_s,
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             applog.emit(
@@ -1150,6 +1163,7 @@ class ClipRecorder(object):
         )
         _FINALIZE_SEMAPHORE.acquire()
         try:
+            self._last_finalize_failure = None
             ok = self._finalize_visit_locked(
                 event_id, scratch_dir, rec_dir, final_path, tmp_path,
                 list_path, expected_duration, preroll_module,
@@ -1170,13 +1184,24 @@ class ClipRecorder(object):
                     bytes=size,
                 )
             else:
+                failure = self._last_finalize_failure or {
+                    "failure_code": "finalize_failed",
+                    "failure_stage": "processing",
+                    "failure_summary": "Video processing did not complete.",
+                    "failure_detail": (
+                        "The recorder could not produce a verified, playable "
+                        "video for this event."
+                    ),
+                    "retryable": False,
+                }
                 clip_state.set_state(
                     rec_dir,
                     event_id,
                     "failed",
                     start_ts=start_ts,
                     end_ts=end_ts,
-                    reason="finalize_failed",
+                    reason=failure.get("failure_code"),
+                    **failure
                 )
             return ok
         except Exception as e:
@@ -1189,6 +1214,14 @@ class ClipRecorder(object):
                 reason="finalize_exception",
                 error_type=type(e).__name__,
                 error=str(e),
+                failure_code="finalize_exception",
+                failure_stage="processing",
+                failure_summary="Video processing stopped unexpectedly.",
+                failure_detail=(
+                    "An unexpected recorder error prevented this event's "
+                    "video from being published."
+                ),
+                retryable=False,
             )
             raise
         finally:
@@ -1209,6 +1242,17 @@ class ClipRecorder(object):
             except OSError:
                 pass
             _FINALIZE_SEMAPHORE.release()
+
+    def _set_finalize_failure(self, code, stage, summary, detail,
+                              retryable=False):
+        self._last_finalize_failure = {
+            "failure_code": code,
+            "failure_stage": stage,
+            "failure_summary": summary,
+            "failure_detail": detail,
+            "retryable": bool(retryable),
+        }
+        return False
 
     def _finalize_visit_locked(self, event_id, scratch_dir, rec_dir,
                                final_path, tmp_path, list_path,
@@ -1231,7 +1275,11 @@ class ClipRecorder(object):
                     event_id, scratch_dir, type(e).__name__, e,
                 ),
             )
-            return False
+            return self._set_finalize_failure(
+                "scratch_unreadable", "capture",
+                "Captured video pieces could not be read.",
+                "The recorder could not read the temporary video data for this event.",
+            )
         if not names:
             applog.emit(
                 "recording",
@@ -1240,7 +1288,11 @@ class ClipRecorder(object):
                     event_id, scratch_dir,
                 ),
             )
-            return False
+            return self._set_finalize_failure(
+                "no_segments", "capture",
+                "No video pieces were captured.",
+                "The event was detected, but the recorder had no usable video pieces to assemble.",
+            )
         segments = [os.path.join(scratch_dir, n) for n in names]
 
         # Step 2: ffprobe-drop moov-less / 0-byte segments (reuse the
@@ -1254,7 +1306,11 @@ class ClipRecorder(object):
                     len(segments), event_id,
                 ),
             )
-            return False
+            return self._set_finalize_failure(
+                "invalid_segments", "validation",
+                "The captured video pieces were damaged.",
+                "Every captured video piece failed the playback safety check.",
+            )
 
         # ensure recordings_dir exists (degrade, never crash).
         try:
@@ -1267,7 +1323,11 @@ class ClipRecorder(object):
                     rec_dir, event_id, type(e).__name__, e,
                 ),
             )
-            return False
+            return self._set_finalize_failure(
+                "storage_unavailable", "storage",
+                "Video storage was unavailable.",
+                "The recorder could not prepare the video storage folder.",
+            )
 
         # Clean any stale .tmp from a prior crashed finalize so we never
         # publish a partial.
@@ -1286,6 +1346,28 @@ class ClipRecorder(object):
                 pass
         timeout_s = self._finalize_timeout_for(total_bytes)
         use_faststart = total_bytes <= _FINALIZE_FASTSTART_MAX_BYTES
+        duration_for_eta = max(0.0, float(expected_duration or 0.0))
+        estimate_s = max(
+            20.0,
+            duration_for_eta / 3.0 + float(total_bytes) / (2.0 * 1024 * 1024),
+        )
+        estimate_now = time.time()
+        clip_state.set_state(
+            rec_dir,
+            event_id,
+            "finalizing",
+            expected_duration_s=duration_for_eta,
+            input_bytes=total_bytes,
+            eta_min_ts=estimate_now + estimate_s * 0.65,
+            eta_max_ts=estimate_now + min(
+                timeout_s + min(
+                    _DECODE_TIMEOUT_CEIL_S,
+                    max(_DECODE_TIMEOUT_FLOOR_S,
+                        duration_for_eta * _DECODE_TIMEOUT_DURATION_MULTIPLIER),
+                ),
+                estimate_s * 1.75,
+            ),
+        )
 
         if preroll_module is None:
             import preroll as preroll_module  # noqa: detection/ on sys.path
@@ -1303,7 +1385,11 @@ class ClipRecorder(object):
                     ),
                 )
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "concat_list_failed", "processing",
+                    "Video assembly could not start.",
+                    "The recorder could not prepare the captured pieces for assembly.",
+                )
 
             cmd = self._build_finalize_args(list_path, tmp_path, use_faststart)
             applog.emit(
@@ -1328,7 +1414,11 @@ class ClipRecorder(object):
                     "event_id={} — no clip".format(timeout_s, event_id),
                 )
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "concat_timeout", "processing",
+                    "Video assembly took too long.",
+                    "The recorder stopped assembly after its safety time limit. Future clips use a larger, size-aware limit.",
+                )
             except OSError as e:
                 applog.emit(
                     "recording",
@@ -1338,7 +1428,11 @@ class ClipRecorder(object):
                     ),
                 )
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "ffmpeg_unavailable", "processing",
+                    "The video processor could not start.",
+                    "The recorder could not launch its local video-processing program.",
+                )
             if result.returncode != 0:
                 tail = ""
                 if getattr(result, "stderr", None):
@@ -1354,7 +1448,11 @@ class ClipRecorder(object):
                     ),
                 )
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "concat_failed", "processing",
+                    "Video assembly failed.",
+                    "The captured pieces could not be assembled into a playable video.",
+                )
 
             # Step 5: real-decode post-validate (B1). ffprobe-rc=0 is NOT
             # enough — a broken -c copy concat passes it; only a full decode
@@ -1366,10 +1464,18 @@ class ClipRecorder(object):
                     "missing/empty for event_id={} — no clip".format(event_id),
                 )
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "empty_output", "processing",
+                    "Video assembly produced no file.",
+                    "Processing ended without a usable video file to publish.",
+                )
             if not self._decode_validate(tmp_path, expected_duration, event_id):
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "validation_failed", "validation",
+                    "The finished video did not pass playback checks.",
+                    "The recorder refused to publish a video that could be incomplete or unplayable.",
+                )
 
             # Step 6: atomic publish. Same-filesystem rename is atomic, so
             # the /clips route serves either nothing or the complete clip,
@@ -1385,7 +1491,11 @@ class ClipRecorder(object):
                     ),
                 )
                 self._finalize_unlink(tmp_path)
-                return False
+                return self._set_finalize_failure(
+                    "publish_failed", "storage",
+                    "The finished video could not be saved.",
+                    "Processing completed, but the recorder could not publish the verified video to storage.",
+                )
             applog.emit(
                 "recording",
                 "finalize event_id={} published ({} bytes)".format(

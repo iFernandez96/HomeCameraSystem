@@ -76,6 +76,7 @@ SERVER_MIN_FREE_BYTES = 300 * 1024 * 1024  # ~300 MB
 _VALID_EVENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 _CLIP_STATE_LEDGER = ".clip_state.json"
 _CLIP_LIFECYCLE_STATES = {"recording", "finalizing", "failed"}
+_STALE_ACTIVE_AFTER_S = 15 * 60
 _clip_status_scan_gate = RateLimitedLog(60.0)
 
 
@@ -155,17 +156,68 @@ def clip_state(event_id: str) -> dict:
             "event_id": event_id,
             "state": "available",
             "source": "disk",
-            "path": str(path),
             "bytes": size,
             "updated_ts": updated_ts,
         }
     rec = read_clip_state_ledger()["events"].get(event_id)
     if isinstance(rec, dict):
-        out = dict(rec)
+        out = _public_clip_state(event_id, rec)
         out.setdefault("event_id", event_id)
         out.setdefault("source", "ledger")
         return out
     return {"event_id": event_id, "state": "unknown", "source": "missing"}
+
+
+def _is_stale_active(rec: dict, now: float | None = None) -> bool:
+    if rec.get("state") not in {"recording", "finalizing"}:
+        return False
+    try:
+        raw_updated = rec.get("updated_ts")
+        if raw_updated is None:
+            # Older worker ledgers did not include a heartbeat timestamp. We
+            # cannot truthfully infer their age; startup reconciliation handles
+            # current-version records with timestamps.
+            return False
+        updated = float(raw_updated)
+    except (TypeError, ValueError):
+        return False
+    current = time.time() if now is None else now
+    return current - updated > _STALE_ACTIVE_AFTER_S
+
+
+def _public_clip_state(event_id: str, rec: dict) -> dict:
+    """Return only client-safe lifecycle and plain-language diagnostics."""
+    allowed = {
+        "state", "updated_ts", "start_ts", "end_ts", "bytes", "last_seen",
+        "failure_code", "failure_stage", "failure_summary", "failure_detail",
+        "retryable", "eta_min_ts", "eta_max_ts",
+    }
+    out = {key: rec[key] for key in allowed if key in rec}
+    out["event_id"] = event_id
+    if _is_stale_active(rec):
+        out.update({
+            "state": "failed",
+            "failure_code": "worker_restarted",
+            "failure_stage": rec.get("state"),
+            "failure_summary": "Video processing was interrupted.",
+            "failure_detail": (
+                "The camera worker stopped before it could publish this "
+                "event's video. Waiting longer will not make it appear."
+            ),
+            "retryable": False,
+        })
+    elif out.get("state") == "failed" and not out.get("failure_summary"):
+        out.update({
+            "failure_code": rec.get("reason") or "legacy_capture_failure",
+            "failure_stage": "processing",
+            "failure_summary": "No playable video was saved.",
+            "failure_detail": (
+                "The older recorder reported a processing failure but did "
+                "not save a more specific explanation."
+            ),
+            "retryable": False,
+        })
+    return out
 
 
 def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
@@ -200,7 +252,9 @@ def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
             continue
         state = rec.get("state")
         if state in _CLIP_LIFECYCLE_STATES:
-            statuses[event_id] = state
+            statuses[event_id] = (
+                "failed" if _is_stale_active(rec) else state
+            )
 
     try:
         with os.scandir(settings.recordings_dir) as entries:
@@ -230,6 +284,30 @@ def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
             )
 
     return statuses
+
+
+def clip_eta_ranges(event_ids: Iterable[str]) -> dict[str, dict[str, float]]:
+    """Return worker-authored ETA bounds for active, non-stale clips."""
+    safe_ids = {
+        event_id for event_id in event_ids
+        if isinstance(event_id, str) and _is_safe_event_id(event_id)
+    }
+    ledger_events = read_clip_state_ledger()["events"]
+    ranges: dict[str, dict[str, float]] = {}
+    for event_id in safe_ids:
+        rec = ledger_events.get(event_id)
+        if not isinstance(rec, dict) or _is_stale_active(rec):
+            continue
+        if rec.get("state") not in {"recording", "finalizing"}:
+            continue
+        try:
+            low = float(rec["eta_min_ts"])
+            high = float(rec["eta_max_ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if low > 0 and high >= low:
+            ranges[event_id] = {"min_ts": low, "max_ts": high}
+    return ranges
 
 
 def tracks_path(event_id: str) -> Path:
