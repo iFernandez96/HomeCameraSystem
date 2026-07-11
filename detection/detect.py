@@ -1736,15 +1736,12 @@ def _write_exposure_config(values):
     enabled, x, y, width, height, compensation, locked = values
     region = ""
     if enabled:
-        left = int(round(x * 3840))
-        top = int(round(y * 2160))
-        right = int(round((x + width) * 3840))
-        bottom = int(round((y + height) * 2160))
+        left = int(round(x * 1920))
+        top = int(round(y * 1080))
+        right = int(round((x + width) * 1920))
+        bottom = int(round((y + height) * 1080))
         region = "{} {} {} {} 1".format(left, top, right, bottom)
-    content = (
-        "AE_SENSOR_WIDTH='3840'\nAE_SENSOR_HEIGHT='2160'\n"
-        "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n"
-    ).format(
+    content = "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n".format(
         region, compensation, "true" if locked else "false"
     )
     tmp = _EXPOSURE_CONFIG + ".tmp"
@@ -1759,7 +1756,7 @@ def _both_camera_streams_ready(timeout_s=25.0):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if (_camera_resolution("cam") == (1280, 720) and
-                _camera_resolution("cam_uhq") == (2560, 1440)):
+                _camera_resolution("cam_uhq") == (1920, 1080)):
             return True
         time.sleep(1.0)
     return False
@@ -1784,7 +1781,7 @@ def apply_exposure(args):
         # schedules this worker to reconnect its decoder.
         if (not _restart_camera_pipeline_for_focus((1280, 720)) or
                 not _both_camera_streams_ready()):
-            raise RuntimeError("720p and 1440p streams did not recover")
+            raise RuntimeError("720p and 1080p streams did not recover")
         return {"region": region, "compensation": values[5], "locked": values[6]}
     except Exception as e:
         log.error("exposure apply failed; restoring prior config: %s: %s", type(e).__name__, e)
@@ -1860,7 +1857,7 @@ def _restart_camera_pipeline_for_focus(expected_resolution):
 
 
 def start_focus_mode():
-    """Confirm the shared 1440p precision stream and arm its UI timeout."""
+    """Atomically select 1080p and arm an independent systemd timeout."""
     expires = int(time.time()) + _FOCUS_MODE_SECONDS
     tmp = _FOCUS_MARKER + ".tmp"
     try:
@@ -1882,9 +1879,9 @@ def start_focus_mode():
             raise RuntimeError(
                 scheduled.stderr.decode("utf-8", "replace")[-300:]
             )
-        if not _both_camera_streams_ready():
-            raise RuntimeError("720p and 1440p streams are not ready")
-        return {"expires_at": expires, "width": 2560, "height": 1440}
+        if not _restart_camera_pipeline_for_focus((1920, 1080)):
+            raise RuntimeError("camera reset failed")
+        return {"expires_at": expires, "width": 1920, "height": 1080}
     except Exception as e:
         try:
             os.remove(_FOCUS_MARKER)
@@ -1896,7 +1893,7 @@ def start_focus_mode():
 
 
 def stop_focus_mode():
-    """End the precision session; the shared camera graph stays unchanged."""
+    """Restore the normal pipeline; old tokenized timers become harmless."""
     try:
         os.remove(_FOCUS_MARKER)
     except FileNotFoundError:
@@ -1904,7 +1901,7 @@ def stop_focus_mode():
     except OSError as e:
         log.error("focus mode marker removal failed: %s", e)
         return False
-    return _both_camera_streams_ready()
+    return _restart_camera_pipeline_for_focus((1280, 720))
 
 
 def escalate_argus_recovery():

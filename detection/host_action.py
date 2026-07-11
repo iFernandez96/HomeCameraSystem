@@ -103,12 +103,12 @@ def execute_action(record, deps):
     if kind == "focus_start":
         result = deps.start_focus_mode()
         if result:
-            return ("done", "1440p precision mode ready", result)
-        return ("failed", "1440p precision mode unavailable", None)
+            return ("done", "1080p focus mode started", result)
+        return ("failed", "1080p focus mode failed to start", None)
 
     if kind == "focus_stop":
         ok = deps.stop_focus_mode()
-        return _status_from_bool(ok, "shared camera mode confirmation")
+        return _status_from_bool(ok, "720p camera restore")
 
     if kind == "exposure_apply":
         result = deps.apply_exposure(record.get("args") or {})

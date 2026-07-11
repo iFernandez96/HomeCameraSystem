@@ -187,10 +187,6 @@ export function ExposureAssistant() {
         <button type="button" aria-label="Back to Settings" onClick={() => navigate('/settings')} className="grid min-h-11 min-w-11 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-2xl">‹</button>
         <div><h1 id="exposure-heading" className="text-2xl font-semibold text-[var(--color-text-primary)]">Adjust exposure</h1><p className="text-sm text-[var(--color-text-secondary)]">Place the box over what should be clearly visible.</p></div>
       </header>
-      <div className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <p className="font-semibold text-[var(--color-text-primary)]">1440p30 exposure preview</p>
-        <p className="mt-1 text-sm text-[var(--color-text-secondary)]">The high-detail stream is shared with Live and Focus Assistant; detection stays on its separate 720p stream.</p>
-      </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_320px]">
         <div ref={frameRef} onPointerMove={moveDrag} onPointerUp={() => { dragRef.current = null }} className="relative aspect-video touch-none overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-black">
           <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-contain" />

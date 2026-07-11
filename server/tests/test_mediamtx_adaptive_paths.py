@@ -76,11 +76,7 @@ def _camera_publish_script(paths: dict) -> str:
     return _normalize(script.read_text(encoding="utf-8"))
 
 
-def _run_camera_script_with_privacy(
-    tmp_path: Path,
-    content: str | None,
-    exposure_content: str | None = None,
-) -> str:
+def _run_camera_script_with_privacy(tmp_path: Path, content: str | None) -> str:
     """Run the shell wrapper against a fake gst-launch and return its argv."""
     # arrange
     fake_bin = tmp_path / "bin"
@@ -94,14 +90,11 @@ def _run_camera_script_with_privacy(
     privacy = tmp_path / "privacy.env"
     if content is not None:
         privacy.write_text(content, encoding="utf-8")
-    exposure = tmp_path / "exposure.env"
-    if exposure_content is not None:
-        exposure.write_text(exposure_content, encoding="utf-8")
     env = os.environ.copy()
     env.update({
         "PATH": "{}:{}".format(fake_bin, env.get("PATH", "")),
         "HOMECAM_PRIVACY_CONFIG": str(privacy),
-        "HOMECAM_EXPOSURE_CONFIG": str(exposure),
+        "HOMECAM_EXPOSURE_CONFIG": str(tmp_path / "missing-exposure.env"),
     })
 
     # act
@@ -264,41 +257,7 @@ def test_Given_explicit_empty_privacy_config_When_camera_starts_Then_unmasked_pa
 
     # assert
     assert "nvcompositor name=privacy" not in output
-    assert "nvarguscamerasrc sensor-mode=0" in output
-
-
-def test_Given_legacy_exposure_file_When_4k_sensor_starts_Then_region_is_scaled(tmp_path):
-    output = _run_camera_script_with_privacy(
-        tmp_path,
-        "PRIVACY_RECTS=''\n",
-        (
-            "AE_REGION='480 270 1440 810 1'\n"
-            "AE_COMPENSATION='0.25'\n"
-            "AE_LOCK='false'\n"
-        ),
-    )
-
-    assert (
-        "nvarguscamerasrc sensor-mode=0 exposurecompensation=0.25 "
-        "aelock=false aeregion=960 540 2880 1620 1"
-    ) in output
-
-
-def test_Given_4k_exposure_file_When_sensor_starts_Then_region_is_not_rescaled(tmp_path):
-    output = _run_camera_script_with_privacy(
-        tmp_path,
-        "PRIVACY_RECTS=''\n",
-        (
-            "AE_SENSOR_WIDTH='3840'\n"
-            "AE_SENSOR_HEIGHT='2160'\n"
-            "AE_REGION='960 540 2880 1620 1'\n"
-            "AE_COMPENSATION='0.25'\n"
-            "AE_LOCK='false'\n"
-        ),
-    )
-
-    assert "aeregion=960 540 2880 1620 1" in output
-    assert "aeregion=1920 1080 5760 3240 1" not in output
+    assert "nvarguscamerasrc sensor-mode=1" in output
 
 
 def test_Given_privacy_compositor_When_publishing_Then_encoder_input_is_nv12(tmp_path):
@@ -316,25 +275,24 @@ def test_Given_privacy_compositor_When_publishing_Then_encoder_input_is_nv12(tmp
     # assert
     compositor_output = (
         "nvcompositor name=privacy background=1 sink_0::zorder=0 "
-        "sink_1::xpos=0 sink_1::ypos=0 sink_1::width=2559 "
-        "sink_1::height=1440 sink_1::zorder=1 ! nvvidconv ! "
-        "video/x-raw(memory:NVMM),format=NV12,width=2560,height=1440,"
-        "framerate=30/1 ! tee name=camera"
+        "sink_1::xpos=0 sink_1::ypos=0 sink_1::width=1919 "
+        "sink_1::height=1080 sink_1::zorder=1 ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=NV12,width=1920,height=1080,"
+        "framerate=60/1 ! tee name=camera"
     )
     assert compositor_output in output
     assert (
-        "nvarguscamerasrc sensor-mode=0 exposurecompensation=0.0 aelock=false ! "
-        "video/x-raw(memory:NVMM),width=3840,height=2160,framerate=30/1 ! "
-        "queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 "
-        "leaky=downstream ! nvvidconv ! "
-        "video/x-raw(memory:NVMM),format=RGBA,width=2560,height=1440,"
-        "framerate=30/1 ! privacy.sink_0"
+        "nvarguscamerasrc sensor-mode=1 exposurecompensation=0.0 aelock=false ! "
+        "video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1 ! "
+        "queue ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=RGBA,width=1920,height=1080,"
+        "framerate=60/1 ! privacy.sink_0"
     ) in output
     assert (
         "videotestsrc pattern=black is-live=true ! "
-        "video/x-raw,width=2559,height=1440,framerate=30/1 ! nvvidconv ! "
-        "video/x-raw(memory:NVMM),format=RGBA,width=2559,height=1440,"
-        "framerate=30/1 ! privacy.sink_1"
+        "video/x-raw,width=1919,height=1080,framerate=60/1 ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=RGBA,width=1919,height=1080,"
+        "framerate=60/1 ! privacy.sink_1"
     ) in output
 
 
@@ -354,7 +312,7 @@ def test_Given_event_recording_When_detector_runs_Then_camera_files_are_private(
     assert "UMask=0077" in unit
 
 
-def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1440p(paths):
+def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1080p(paths):
     # arrange / act
     command = _camera_publish_script(paths)
 
@@ -367,11 +325,7 @@ def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1440p
     assert 'if [[ -n "$PRIVACY_RECTS" ]]' in command
     assert command.count("tee name=camera") == 3
     assert command.count("nvv4l2h264enc") == 6
-    assert "sensor-mode=0" in command
-    assert "width=3840,height=2160,framerate=30/1" in command
     assert "width=1280,height=720" in command
-    assert "width=2560,height=1440" in command
-    assert "max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream" in command
-    assert "bitrate=8000000 vbv-size=8000000 peak-bitrate=9600000" in command
+    assert "width=1920,height=1080" in command
     assert "rtsp://localhost:${RTSP_PORT}/cam\"" in command
     assert "rtsp://localhost:${RTSP_PORT}/cam_uhq\"" in command

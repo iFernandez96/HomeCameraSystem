@@ -26,7 +26,7 @@ export const QUALITY_OPTIONS: ReadonlyArray<{
   subtitle: string
 }> = [
   { value: 'auto', label: 'Auto', subtitle: 'Adjusts to your connection' },
-  { value: 'uhq', label: 'UHQ', subtitle: '1440p30, maximum detail and data' },
+  { value: 'uhq', label: 'UHQ', subtitle: '1080p, maximum detail and data' },
   { value: 'hq', label: 'HQ', subtitle: '720p, sharp with lower Jetson load' },
   {
     value: 'sd',

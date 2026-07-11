@@ -190,7 +190,7 @@ export function FocusAssistant() {
       </header>
 
       <div className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <p className="font-semibold text-[var(--color-text-primary)]">1440p30 precision preview</p>
+        <p className="font-semibold text-[var(--color-text-primary)]">1080p precision preview</p>
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
           Focus analysis uses a larger 320×320 sample on this phone. Detection remains on its separate 720p stream.
         </p>
