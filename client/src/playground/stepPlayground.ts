@@ -65,6 +65,7 @@ const GAIT_EASE_MIN = 0.2
 /** Depth cross-fade time for a lane switch (render scale, never a pop). */
 const LANE_FADE_MS = 450
 const INTERACTION_DISTANCE_PX = 50
+export const INTERACTION_MIN_GAP_PX = 24
 const INTERACTION_COOLDOWN_MS = 5000
 const AMBIENT_MIN_GAP_MS = 20000
 const AMBIENT_MAX_GAP_MS = 45000
@@ -118,7 +119,14 @@ export function stepPlayground(
         ) {
           continue
         }
-        if (Math.abs(a.x - b.x) < INTERACTION_DISTANCE_PX) {
+        // Trigger window [24px, 50px): close enough to interact, far
+        // enough apart that grounding the pair in place reads as two
+        // cats side by side. Cats have no collision and can pass
+        // through each other — without the lower bound a pair could
+        // freeze a 4s snuggle fully SUPERPOSED (10Hz live audit
+        // 2026-07-11 caught Mushu and Coco 2px apart).
+        const pairGap = Math.abs(a.x - b.x)
+        if (pairGap >= INTERACTION_MIN_GAP_PX && pairGap < INTERACTION_DISTANCE_PX) {
           const result = rollPairInteraction(a, b, now, sceneW, random)
           if (result) {
             if (cats === state.cats) cats = [...cats]

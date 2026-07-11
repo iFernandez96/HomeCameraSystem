@@ -39,6 +39,34 @@ beforeEach(() => {
   resetToyLayer()
 })
 
+describe('stepPlayground interaction proximity gate', () => {
+  it('Given two cats superposed mid-pass, When the interaction window is evaluated, Then no interaction grounds them inside each other (10Hz audit, 2026-07-11)', () => {
+    // arrange — two floor cats at 2px apart (they can walk through each
+    // other), both idle and interaction-eligible. Grounding a snuggle
+    // here would freeze them visually merged for seconds.
+    const state = freshState()
+    const cats = state.cats.map((c) =>
+      c.id === 'coco'
+        ? { ...c, x: 300, y: laneFloorY('front', H), lane: 'front' as const, activity: 'sit' as const, anchorId: null, targetAnchor: null, lastInteractedWith: null, lastInteractedAt: 0 }
+        : c.id === 'mushu'
+          ? { ...c, x: 302, y: laneFloorY('front', H), lane: 'front' as const, activity: 'sit' as const, anchorId: null, targetAnchor: null, lastInteractedWith: null, lastInteractedAt: 0 }
+          : c,
+    )
+    const withPair: PlaygroundState = { ...state, cats, lastInteractionAt: 0 }
+
+    // act — step past the interaction cooldown with random forced to
+    // always roll an interaction if the gate lets it through.
+    const stepped = stepPlayground(withPair, makeInput(), 16, START + 60_000, W, H, {
+      compact: false,
+      random: () => 0.01,
+    })
+
+    // assert — the pair stays un-grounded: no interaction fired, so
+    // lastInteractionAt is unchanged (superposed cats keep walking).
+    expect(stepped.lastInteractionAt).toBe(0)
+  })
+})
+
 describe('stepPlayground bail-out discipline', () => {
   it('Given nothing moves in a quiet frame, When the world steps, Then the ORIGINAL state reference comes back (React setState bails out)', () => {
     // arrange — home poses hold, no toys, no ambient due, idle gap open.
