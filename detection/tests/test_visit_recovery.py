@@ -279,20 +279,29 @@ def test_given_orphan_scratch_and_tmp_when_swept_then_reclaimed_preroll_kept(
     stray_tmp = os.path.join(rec_dir, "abc.mp4.tmp")
     with open(stray_tmp, "wb") as f:
         f.write(b"partial")
+    progress = os.path.join(rec_dir, "abc.mp4.tmp.decode.progress")
+    with open(progress, "wb") as f:
+        f.write(b"progress=end")
     # The pre-roll ring — MUST NOT be touched.
     preroll = os.path.join(rec_dir, "_preroll")
     os.makedirs(preroll, exist_ok=True)
     seg = os.path.join(preroll, "seg_001.mp4")
     with open(seg, "wb") as f:
         f.write(b"ring")
+    event_scratch = os.path.join(preroll, "event_dead")
+    os.makedirs(event_scratch, exist_ok=True)
+    with open(os.path.join(event_scratch, "seg_000.mp4"), "wb") as f:
+        f.write(b"partial")
 
     # act
     reclaimed = visit_runtime.sweep_orphans(rec_dir)
 
     # assert — orphan scratch + stray .tmp gone; live scratch + _preroll kept.
-    assert reclaimed == 2
+    assert reclaimed == 4
     assert not os.path.exists(orphan)
     assert not os.path.exists(stray_tmp)
+    assert not os.path.exists(progress)
+    assert not os.path.exists(event_scratch)
     assert os.path.exists(visit_runtime.scratch_dir_for(rec_dir, "alive"))
     assert os.path.exists(seg), "_preroll/seg_* must NEVER be swept"
 

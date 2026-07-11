@@ -1011,6 +1011,18 @@ class ClipRecorder(object):
             max(_DECODE_TIMEOUT_FLOOR_S,
                 nominal * _DECODE_TIMEOUT_DURATION_MULTIPLIER),
         )
+        progress_path = path + ".decode.progress"
+        self._finalize_unlink(progress_path)
+        progress_stop = threading.Event()
+        progress_thread = None
+        if expected_duration_s is not None and expected_duration_s > 0:
+            progress_thread = threading.Thread(
+                target=self._monitor_decode_progress,
+                args=(progress_path, expected_duration_s, event_id,
+                      os.path.dirname(path), progress_stop),
+            )
+            progress_thread.daemon = True
+            progress_thread.start()
         try:
             result = subprocess.run(
                 [
@@ -1018,6 +1030,7 @@ class ClipRecorder(object):
                     "-nostdin",
                     "-hide_banner",
                     "-v", "error",
+                    "-progress", progress_path,
                     "-i", path,
                     "-f", "null", "-",
                 ],
@@ -1034,6 +1047,11 @@ class ClipRecorder(object):
                 ),
             )
             return False
+        finally:
+            progress_stop.set()
+            if progress_thread is not None:
+                progress_thread.join(2.0)
+            self._finalize_unlink(progress_path)
         stderr = b""
         if getattr(result, "stderr", None):
             stderr = result.stderr
@@ -1082,6 +1100,65 @@ class ClipRecorder(object):
                 )
                 return False
         return True
+
+    @staticmethod
+    def _parse_progress_text(text):
+        values = {}
+        for line in (text or "").splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+        try:
+            out_time_s = float(values.get("out_time_ms")) / 1000000.0
+        except (TypeError, ValueError):
+            out_time_s = None
+        raw_speed = values.get("speed", "").rstrip("x")
+        try:
+            speed = float(raw_speed)
+        except (TypeError, ValueError):
+            speed = None
+        return out_time_s, speed
+
+    def _monitor_decode_progress(self, progress_path, expected_duration_s,
+                                 event_id, recordings_dir, stop_event):
+        """Refine ETA from FFmpeg's device-measured decode progress.
+
+        FFmpeg 3.4 on the Nano supports ``-progress <file>``. Polling a private
+        sidecar avoids pipe deadlocks and lets subprocess.run retain its tested
+        timeout/error behavior. Ledger writes are throttled to five seconds.
+        """
+        last_write = 0.0
+        while not stop_event.wait(1.0):
+            try:
+                with open(progress_path, "r") as progress_file:
+                    text = progress_file.read()
+            except (IOError, OSError):
+                continue
+            out_time_s, speed = self._parse_progress_text(text)
+            if out_time_s is None or speed is None or speed <= 0:
+                continue
+            now = time.time()
+            if now - last_write < 5.0:
+                continue
+            remaining_media_s = max(0.0, float(expected_duration_s) - out_time_s)
+            remaining_wall_s = remaining_media_s / speed + 2.0
+            clip_state.set_state(
+                recordings_dir,
+                event_id,
+                "finalizing",
+                processing_stage="validating",
+                validation_progress=max(
+                    0.0, min(1.0, out_time_s / float(expected_duration_s)),
+                ),
+                validation_speed=speed,
+                eta_point_ts=now + remaining_wall_s,
+                eta_min_ts=now + max(0.0, remaining_wall_s * 0.85),
+                eta_max_ts=now + remaining_wall_s * 1.25 + 2.0,
+                eta_model="live_ffmpeg_progress_v1",
+                eta_live_progress=True,
+            )
+            last_write = now
 
     def _probe_duration(self, path):
         """Probe ``path`` for its format duration in seconds. Returns a
@@ -1144,12 +1221,42 @@ class ClipRecorder(object):
         final_path = os.path.join(rec_dir, "{}.mp4".format(event_id))
         tmp_path = final_path + ".tmp"
         list_path = final_path + ".visit.concat.txt"
+        published = False
         try:
             expected_duration = float(end_ts) - float(start_ts)
         except (TypeError, ValueError):
             expected_duration = None
         if expected_duration is not None and expected_duration <= 0:
             expected_duration = None
+
+        queued_bytes = 0
+        try:
+            for queued_name in os.listdir(scratch_dir):
+                if queued_name.endswith(".mp4"):
+                    queued_bytes += os.path.getsize(
+                        os.path.join(scratch_dir, queued_name)
+                    )
+        except OSError:
+            pass
+        queued_now = time.time()
+        queued_eta = None
+        if expected_duration is not None and queued_bytes > 0:
+            queued_eta = clip_state.estimate_finalizing_eta(
+                rec_dir, end_ts, expected_duration, queued_bytes,
+                now=queued_now,
+            )
+        prior_state = clip_state.get_state(rec_dir, event_id) or {}
+        try:
+            queue_ahead = max(0, int(prior_state.get("queue_ahead") or 0))
+        except (TypeError, ValueError):
+            queue_ahead = 0
+        if queued_eta is not None and queue_ahead:
+            one_job_s = max(
+                1.0, queued_eta["eta_point_ts"] - queued_now,
+            )
+            shift_s = one_job_s * queue_ahead
+            for eta_key in ("eta_point_ts", "eta_min_ts", "eta_max_ts"):
+                queued_eta[eta_key] += shift_s
 
         # plan R8: serialize finalizes (Nano OOM history) AND guarantee the
         # per-visit scratch dir is reaped on EVERY exit path.
@@ -1160,13 +1267,25 @@ class ClipRecorder(object):
             start_ts=start_ts,
             end_ts=end_ts,
             scratch_dir=scratch_dir,
+            queued_ts=queued_now,
+            processing_stage="queued" if queue_ahead else "starting",
+            queue_ahead=queue_ahead,
+            **(queued_eta or {})
         )
         _FINALIZE_SEMAPHORE.acquire()
         try:
+            clip_state.set_state(
+                rec_dir,
+                event_id,
+                "finalizing",
+                processing_started_ts=time.time(),
+                processing_stage="preparing",
+                queue_ahead=0,
+            )
             self._last_finalize_failure = None
             ok = self._finalize_visit_locked(
                 event_id, scratch_dir, rec_dir, final_path, tmp_path,
-                list_path, expected_duration, preroll_module,
+                list_path, expected_duration, end_ts, preroll_module,
             )
             if ok:
                 size = None
@@ -1182,7 +1301,10 @@ class ClipRecorder(object):
                     end_ts=end_ts,
                     path=final_path,
                     bytes=size,
+                    published_ts=time.time(),
+                    processing_stage="available",
                 )
+                published = True
             else:
                 failure = self._last_finalize_failure or {
                     "failure_code": "finalize_failed",
@@ -1225,6 +1347,10 @@ class ClipRecorder(object):
             )
             raise
         finally:
+            if not published:
+                self._cleanup_failed_video_artifacts(
+                    event_id, rec_dir, scratch_dir=scratch_dir,
+                )
             # Reap the per-visit scratch dir no matter how we exited (plan R8
             # "try/finally rmtree on every exit path"). ignore_errors so a
             # partial cleanup never raises into the caller.
@@ -1243,6 +1369,45 @@ class ClipRecorder(object):
                 pass
             _FINALIZE_SEMAPHORE.release()
 
+    def _cleanup_failed_video_artifacts(self, event_id, recordings_dir,
+                                        scratch_dir=None):
+        """Remove every exact, recorder-owned artifact for a failed video.
+
+        The lifecycle ledger is intentionally retained because it powers the
+        event's plain-language failure submenu. Video bytes and processing
+        sidecars are not: a failed event must not leak a zero-byte final,
+        partial mux, progress file, concat list, stderr capture, or scratch
+        directory. Paths are derived from a bare internal event id only.
+        """
+        event_id = str(event_id)
+        if not event_id or os.path.basename(event_id) != event_id:
+            return
+        final_path = os.path.join(str(recordings_dir), event_id + ".mp4")
+        suffixes = (
+            "",
+            ".tmp",
+            ".tmp.decode.progress",
+            ".visit.concat.txt",
+            ".concat.txt",
+            ".postroll.tmp",
+            ".postroll.tmp.stderr",
+            ".stderr",
+        )
+        for suffix in suffixes:
+            self._finalize_unlink(final_path + suffix)
+        roots = [scratch_dir]
+        roots.append(os.path.join(str(recordings_dir), "_visits", event_id))
+        roots.append(os.path.join(
+            str(recordings_dir), "_preroll", "event_" + event_id,
+        ))
+        for root in roots:
+            if not root:
+                continue
+            try:
+                shutil.rmtree(root, ignore_errors=True)
+            except OSError:
+                pass
+
     def _set_finalize_failure(self, code, stage, summary, detail,
                               retryable=False):
         self._last_finalize_failure = {
@@ -1256,7 +1421,8 @@ class ClipRecorder(object):
 
     def _finalize_visit_locked(self, event_id, scratch_dir, rec_dir,
                                final_path, tmp_path, list_path,
-                               expected_duration, preroll_module):
+                               expected_duration, visit_end_ts,
+                               preroll_module):
         """Body of ``finalize_visit`` (runs under the semaphore). Separated
         so the ``try/finally`` rmtree + semaphore release in the caller stay
         tiny and impossible to skip. Returns True on a published clip."""
@@ -1347,26 +1513,38 @@ class ClipRecorder(object):
         timeout_s = self._finalize_timeout_for(total_bytes)
         use_faststart = total_bytes <= _FINALIZE_FASTSTART_MAX_BYTES
         duration_for_eta = max(0.0, float(expected_duration or 0.0))
-        estimate_s = max(
-            20.0,
-            duration_for_eta / 3.0 + float(total_bytes) / (2.0 * 1024 * 1024),
-        )
         estimate_now = time.time()
+        try:
+            learned_eta = clip_state.estimate_finalizing_eta(
+                rec_dir, float(visit_end_ts), duration_for_eta, total_bytes,
+                now=estimate_now,
+            )
+        except (TypeError, ValueError):
+            learned_eta = None
+        if learned_eta is None:
+            estimate_s = max(
+                20.0,
+                duration_for_eta / 3.0
+                + float(total_bytes) / (2.0 * 1024 * 1024),
+            )
+            learned_eta = {
+                "eta_point_ts": estimate_now + estimate_s,
+                "eta_min_ts": estimate_now + estimate_s * 0.65,
+                "eta_max_ts": estimate_now + estimate_s * 1.75,
+                "eta_model_samples": 0,
+                "eta_historical_spread_s": None,
+                "eta_model": "fallback_formula_v1",
+            }
         clip_state.set_state(
             rec_dir,
             event_id,
             "finalizing",
             expected_duration_s=duration_for_eta,
             input_bytes=total_bytes,
-            eta_min_ts=estimate_now + estimate_s * 0.65,
-            eta_max_ts=estimate_now + min(
-                timeout_s + min(
-                    _DECODE_TIMEOUT_CEIL_S,
-                    max(_DECODE_TIMEOUT_FLOOR_S,
-                        duration_for_eta * _DECODE_TIMEOUT_DURATION_MULTIPLIER),
-                ),
-                estimate_s * 1.75,
-            ),
+            segment_count=len(valid),
+            concat_started_ts=estimate_now,
+            processing_stage="assembling",
+            **learned_eta
         )
 
         if preroll_module is None:
@@ -1454,6 +1632,16 @@ class ClipRecorder(object):
                     "The captured pieces could not be assembled into a playable video.",
                 )
 
+            validation_started_ts = time.time()
+            clip_state.set_state(
+                rec_dir,
+                event_id,
+                "finalizing",
+                concat_finished_ts=validation_started_ts,
+                validation_started_ts=validation_started_ts,
+                processing_stage="validating",
+            )
+
             # Step 5: real-decode post-validate (B1). ffprobe-rc=0 is NOT
             # enough — a broken -c copy concat passes it; only a full decode
             # pass + duration check is honest.
@@ -1476,6 +1664,13 @@ class ClipRecorder(object):
                     "The finished video did not pass playback checks.",
                     "The recorder refused to publish a video that could be incomplete or unplayable.",
                 )
+            clip_state.set_state(
+                rec_dir,
+                event_id,
+                "finalizing",
+                validation_finished_ts=time.time(),
+                processing_stage="publishing",
+            )
 
             # Step 6: atomic publish. Same-filesystem rename is atomic, so
             # the /clips route serves either nothing or the complete clip,

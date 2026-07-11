@@ -146,7 +146,7 @@ export function EventList({
    * both active and their combination yields zero events. */
   filterHint?: string
 }) {
-  const now = useTicker()
+  const now = useTicker(1000)
 
   if (events.length === 0) {
     return (
@@ -294,8 +294,14 @@ export function EventList({
                 <EventVideoStatusIcon
                   status={e.video_status ?? 'unknown'}
                   placement="axis"
+                  etaPointTs={e.video_eta_point_ts}
                   etaMinTs={e.video_eta_min_ts}
                   etaMaxTs={e.video_eta_max_ts}
+                  etaModelSamples={e.video_eta_model_samples}
+                  etaBacktestMedianErrorS={e.video_eta_backtest_median_error_s}
+                  etaLiveProgress={e.video_eta_live_progress}
+                  activityPresent={e.video_activity_present}
+                  finalizeIfClearTs={e.video_finalize_if_clear_ts}
                   nowMs={now}
                 />
                 <EventCard

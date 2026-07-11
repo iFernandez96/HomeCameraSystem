@@ -102,8 +102,9 @@ def clip_path(event_id: str) -> Path:
 def clip_exists(event_id: str) -> bool:
     """True if the per-event clip file is present on disk."""
     try:
-        return clip_path(event_id).is_file()
-    except ValueError:
+        path = clip_path(event_id)
+        return path.is_file() and path.stat().st_size > 0
+    except (ValueError, OSError):
         return False
 
 
@@ -162,6 +163,40 @@ def clip_state(event_id: str) -> dict:
     rec = read_clip_state_ledger()["events"].get(event_id)
     if isinstance(rec, dict):
         out = _public_clip_state(event_id, rec)
+        if out.get("state") == "available":
+            # A historical ledger claim is not proof of playback after
+            # retention, manual deletion, or a zero-byte placeholder. Only the
+            # non-empty disk check above may return available.
+            try:
+                zero_byte = clip_path(event_id).is_file() and (
+                    clip_path(event_id).stat().st_size == 0
+                )
+            except OSError:
+                zero_byte = False
+            if zero_byte:
+                try:
+                    clip_path(event_id).unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    log.warning(
+                        "could not remove empty failed clip for %s: %s",
+                        event_id,
+                        exc,
+                    )
+                out.update({
+                    "state": "failed",
+                    "failure_code": "empty_output",
+                    "failure_stage": "publishing",
+                    "failure_summary": "The saved video file is empty.",
+                    "failure_detail": (
+                        "A filename was created, but it contains no playable "
+                        "video data."
+                    ),
+                    "retryable": False,
+                })
+            else:
+                out["state"] = "unknown"
         out.setdefault("event_id", event_id)
         out.setdefault("source", "ledger")
         return out
@@ -190,7 +225,11 @@ def _public_clip_state(event_id: str, rec: dict) -> dict:
     allowed = {
         "state", "updated_ts", "start_ts", "end_ts", "bytes", "last_seen",
         "failure_code", "failure_stage", "failure_summary", "failure_detail",
-        "retryable", "eta_min_ts", "eta_max_ts",
+        "retryable", "eta_point_ts", "eta_min_ts", "eta_max_ts",
+        "eta_model_samples", "eta_historical_spread_s", "eta_model",
+        "eta_backtest_median_error_s", "eta_backtest_p90_error_s",
+        "processing_stage", "queue_ahead",
+        "eta_live_progress", "validation_progress", "validation_speed",
     }
     out = {key: rec[key] for key in allowed if key in rec}
     out["event_id"] = event_id
@@ -266,7 +305,7 @@ def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
                 if event_id not in safe_ids:
                     continue
                 try:
-                    if entry.is_file():
+                    if entry.is_file() and entry.stat().st_size > 0:
                         statuses[event_id] = "available"
                 except OSError as exc:
                     if _clip_status_scan_gate.should_log():
@@ -286,14 +325,14 @@ def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
     return statuses
 
 
-def clip_eta_ranges(event_ids: Iterable[str]) -> dict[str, dict[str, float]]:
+def clip_eta_ranges(event_ids: Iterable[str]) -> dict[str, dict]:
     """Return worker-authored ETA bounds for active, non-stale clips."""
     safe_ids = {
         event_id for event_id in event_ids
         if isinstance(event_id, str) and _is_safe_event_id(event_id)
     }
     ledger_events = read_clip_state_ledger()["events"]
-    ranges: dict[str, dict[str, float]] = {}
+    ranges: dict[str, dict] = {}
     for event_id in safe_ids:
         rec = ledger_events.get(event_id)
         if not isinstance(rec, dict) or _is_stale_active(rec):
@@ -301,12 +340,35 @@ def clip_eta_ranges(event_ids: Iterable[str]) -> dict[str, dict[str, float]]:
         if rec.get("state") not in {"recording", "finalizing"}:
             continue
         try:
+            point = float(rec["eta_point_ts"])
             low = float(rec["eta_min_ts"])
             high = float(rec["eta_max_ts"])
         except (KeyError, TypeError, ValueError):
             continue
-        if low > 0 and high >= low:
-            ranges[event_id] = {"min_ts": low, "max_ts": high}
+        activity_present = None
+        finalize_if_clear_ts = None
+        if rec.get("state") == "recording":
+            try:
+                last_seen = float(rec["last_seen"])
+                activity_present = time.time() - last_seen <= 2.0
+                finalize_if_clear_ts = last_seen + float(
+                    rec["absence_finalize_s"]
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+        if low > 0 and low <= point <= high:
+            ranges[event_id] = {
+                "point_ts": point,
+                "min_ts": low,
+                "max_ts": high,
+                "model_samples": int(rec.get("eta_model_samples") or 0),
+                "backtest_median_error_s": rec.get(
+                    "eta_backtest_median_error_s"
+                ),
+                "live_progress": bool(rec.get("eta_live_progress")),
+                "activity_present": activity_present,
+                "finalize_if_clear_ts": finalize_if_clear_ts,
+            }
     return ranges
 
 

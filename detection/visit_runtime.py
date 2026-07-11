@@ -370,8 +370,9 @@ def recover_open_visits(recordings_dir, validate_clip, finalize_visit,
 def sweep_orphans(recordings_dir):
     """Boot-time orphan reap (plan R8), scoped to continuous-capture artifacts
     ONLY: every dir under ``<recordings_dir>/_visits/`` whose visit_id is NOT
-    in the live ``.open_visits.json``, plus stray ``*.mp4.tmp`` in
-    recordings_dir. NEVER touches ``_preroll/seg_*`` (the live pre-roll ring).
+    in the live ``.open_visits.json``, failed-event dirs under `_preroll/`,
+    and exact recorder work-file suffixes in recordings_dir. NEVER touches
+    ``_preroll/seg_*`` (the live pre-roll ring).
 
     Returns the count of paths reclaimed. Best-effort; never raises."""
     rec_dir = str(recordings_dir)
@@ -397,14 +398,23 @@ def sweep_orphans(recordings_dir):
         except OSError:
             pass
 
-    # 2. Stray *.mp4.tmp directly in recordings_dir (a finalize that crashed
-    #    mid-publish). Scoped to the .mp4.tmp suffix so we can't nuke clips.
+    # 2. Stray recorder work files directly in recordings_dir. Exact suffixes
+    #    avoid touching complete MP4s or operator files.
     try:
         rec_names = os.listdir(rec_dir)
     except OSError:
         rec_names = []
+    work_suffixes = (
+        ".mp4.tmp",
+        ".mp4.tmp.decode.progress",
+        ".mp4.visit.concat.txt",
+        ".mp4.concat.txt",
+        ".mp4.postroll.tmp",
+        ".mp4.postroll.tmp.stderr",
+        ".mp4.stderr",
+    )
     for name in rec_names:
-        if not name.endswith(".mp4.tmp"):
+        if not name.endswith(work_suffixes):
             continue
         path = os.path.join(rec_dir, name)
         if not os.path.isfile(path):
@@ -415,11 +425,32 @@ def sweep_orphans(recordings_dir):
         except OSError:
             pass
 
+    # 3. Legacy per-event pre-roll scratch dirs. The live ring contains files
+    #    directly under `_preroll/`; only `event_*` child directories belong
+    #    to individual merges and are safe to reap at boot.
+    preroll_root = os.path.join(rec_dir, "_preroll")
+    try:
+        preroll_names = os.listdir(preroll_root)
+    except OSError:
+        preroll_names = []
+    for name in preroll_names:
+        if not name.startswith("event_"):
+            continue
+        path = os.path.join(preroll_root, name)
+        if not os.path.isdir(path):
+            continue
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+            if not os.path.exists(path):
+                reclaimed += 1
+        except OSError:
+            pass
+
     if reclaimed:
         applog.emit(
             "visit",
             "boot sweep reclaimed {} orphan continuous-capture artifact(s) "
-            "(_visits scratch + *.mp4.tmp)".format(reclaimed),
+            "(_visits/_preroll scratch + recorder work files)".format(reclaimed),
         )
     return reclaimed
 
@@ -621,6 +652,7 @@ class VisitRunner(object):
             last_extend=start_ts,
             segment_index=rec["segment_index"],
             root_visit_id=root_visit_id,
+            absence_finalize_s=self._last_absence_s,
             **self._recording_eta_fields(rec, now)
         )
         # POST the open event today (clip_url points at /api/events/<id>/clip;
@@ -711,6 +743,7 @@ class VisitRunner(object):
                 last_seen=now,
                 last_extend=rec.get("last_extend"),
                 disk_floor=True,
+                absence_finalize_s=self._last_absence_s,
                 **self._recording_eta_fields(rec, now)
             )
             return
@@ -739,6 +772,7 @@ class VisitRunner(object):
             start_ts=rec.get("start_ts"),
             last_seen=now,
             last_extend=end_ts,
+            absence_finalize_s=self._last_absence_s,
             **self._recording_eta_fields(rec, now)
         )
 
@@ -804,6 +838,7 @@ class VisitRunner(object):
         a visit is finalized at most once (de-dupe)."""
         if visit_id in self._finalizing_ids:
             return
+        queue_ahead = len(self._finalizing_ids)
         self._finalizing_ids.add(visit_id)
         # One increment per (de-duped) visit reaching finalize — the
         # single main-thread choke point for both the absence/cap path and
@@ -817,6 +852,8 @@ class VisitRunner(object):
             start_ts=start_ts,
             end_ts=end_ts,
             scratch_dir=scratch,
+            queue_ahead=queue_ahead,
+            processing_stage="queued" if queue_ahead else "starting",
         )
 
         def _run():
@@ -965,26 +1002,15 @@ class VisitRunner(object):
     _last_absence_s = DEFAULT_ABSENCE_FINALIZE_S
     _last_max_visit_s = DEFAULT_MAX_VISIT_S
 
-    @staticmethod
-    def _processing_eta_s(duration_s):
-        """Conservative Nano estimate for concat + full-decode validation."""
-        try:
-            duration = max(0.0, float(duration_s))
-        except (TypeError, ValueError):
-            duration = 0.0
-        return max(30.0, duration / 3.0 + 20.0)
-
     def _recording_eta_fields(self, rec, last_seen):
-        start_ts = float(rec.get("start_ts") or last_seen)
-        elapsed = max(0.0, float(last_seen) - start_ts)
-        earliest_end = float(last_seen) + self._last_absence_s
-        latest_end = start_ts + self._last_max_visit_s
-        return {
-            "eta_min_ts": earliest_end + self._processing_eta_s(elapsed) * 0.65,
-            "eta_max_ts": latest_end + self._processing_eta_s(
-                self._last_max_visit_s,
-            ) * 1.75,
-        }
+        estimate = clip_state.estimate_recording_eta(
+            self.recordings_dir,
+            rec.get("start_ts"),
+            last_seen,
+            self._last_absence_s,
+            self._last_max_visit_s,
+        )
+        return estimate or {}
 
     def set_runtime_bounds(self, absence_finalize_s, max_visit_s):
         """Mirror live capture bounds into truthful per-event ETA ranges."""

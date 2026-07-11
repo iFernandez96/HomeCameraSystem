@@ -670,7 +670,7 @@ describe('EventList', () => {
 
   it.each([
     ['available', 'Video available'],
-    ['recording', 'Recording video'],
+    ['recording', 'Recording video — person in scene, ETA paused'],
     ['finalizing', 'Finalizing video'],
     ['failed', 'Video unavailable'],
     ['unknown', 'Video status unknown'],
@@ -686,7 +686,7 @@ describe('EventList', () => {
         events={[
           evt({
             id: 'axis-eta',
-            video_status: 'recording',
+            video_status: 'finalizing',
             video_eta_min_ts: nowTs + 70,
             video_eta_max_ts: nowTs + 110,
           }),

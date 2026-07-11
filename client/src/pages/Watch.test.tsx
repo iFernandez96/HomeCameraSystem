@@ -266,7 +266,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
   it.each([
     ['available', 'Video available'],
-    ['recording', 'Recording video'],
+    ['recording', 'Recording video — person in scene, ETA paused'],
     ['finalizing', 'Finalizing video'],
     ['failed', 'Video unavailable'],
     ['unknown', 'Video status unknown'],

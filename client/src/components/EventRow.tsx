@@ -45,8 +45,14 @@ export function EventRow({
       {leading === 'video-status' ? (
         <EventVideoStatusIcon
           status={event.video_status ?? 'unknown'}
+          etaPointTs={event.video_eta_point_ts}
           etaMinTs={event.video_eta_min_ts}
           etaMaxTs={event.video_eta_max_ts}
+          etaModelSamples={event.video_eta_model_samples}
+          etaBacktestMedianErrorS={event.video_eta_backtest_median_error_s}
+          etaLiveProgress={event.video_eta_live_progress}
+          activityPresent={event.video_activity_present}
+          finalizeIfClearTs={event.video_finalize_if_clear_ts}
           nowMs={nowMs}
         />
       ) : (

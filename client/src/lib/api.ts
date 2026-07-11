@@ -240,6 +240,12 @@ export type EventClipStatus = {
   retryable?: boolean
   eta_min_ts?: number
   eta_max_ts?: number
+  eta_point_ts?: number
+  eta_model_samples?: number
+  eta_backtest_median_error_s?: number | null
+  eta_live_progress?: boolean
+  activity_present?: boolean | null
+  finalize_if_clear_ts?: number | null
 }
 
 export const fetchEventClipStatus = (eventId: string) =>

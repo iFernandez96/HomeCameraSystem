@@ -67,6 +67,21 @@ def test_clip_exists_false_for_invalid_id(rec_dir):
     assert recording_service.clip_exists("../etc/passwd") is False
 
 
+def test_clip_exists_rejects_zero_byte_placeholder(rec_dir):
+    rec_dir.mkdir()
+    (rec_dir / "evt-empty.mp4").write_bytes(b"")
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1, "events": {"evt-empty": {"state": "available"}},
+    }))
+
+    assert recording_service.clip_exists("evt-empty") is False
+    assert recording_service.clip_statuses(["evt-empty"])["evt-empty"] == "unknown"
+    state = recording_service.clip_state("evt-empty")
+    assert state["state"] == "failed"
+    assert state["failure_code"] == "empty_output"
+    assert not (rec_dir / "evt-empty.mp4").exists()
+
+
 def test_clip_state_reads_worker_ledger_when_clip_missing(rec_dir):
     rec_dir.mkdir()
     (rec_dir / ".clip_state.json").write_text(json.dumps({
@@ -130,18 +145,23 @@ def test_clip_eta_ranges_only_returns_valid_active_bounds(rec_dir, monkeypatch):
         "events": {
             "active": {
                 "state": "finalizing", "updated_ts": 950.0,
+                "eta_point_ts": 1090.0,
                 "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+                "eta_model_samples": 156, "eta_backtest_median_error_s": 7.4,
             },
             "failed": {
                 "state": "failed", "updated_ts": 950.0,
+                "eta_point_ts": 1090.0,
                 "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
             },
             "stale": {
                 "state": "recording", "updated_ts": 1.0,
+                "eta_point_ts": 1090.0,
                 "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
             },
             "bad-range": {
                 "state": "recording", "updated_ts": 950.0,
+                "eta_point_ts": 1150.0,
                 "eta_min_ts": 1200.0, "eta_max_ts": 1100.0,
             },
         },
@@ -150,7 +170,35 @@ def test_clip_eta_ranges_only_returns_valid_active_bounds(rec_dir, monkeypatch):
 
     assert recording_service.clip_eta_ranges(
         ["active", "failed", "stale", "bad-range"],
-    ) == {"active": {"min_ts": 1060.0, "max_ts": 1120.0}}
+    ) == {"active": {
+        "point_ts": 1090.0,
+        "min_ts": 1060.0,
+        "max_ts": 1120.0,
+        "model_samples": 156,
+        "backtest_median_error_s": 7.4,
+        "live_progress": False,
+        "activity_present": None,
+        "finalize_if_clear_ts": None,
+    }}
+
+
+def test_recording_eta_exposes_reentry_aware_presence_deadlines(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"active": {
+            "state": "recording", "updated_ts": 990.0,
+            "last_seen": 998.0, "absence_finalize_s": 30.0,
+            "eta_point_ts": 1100.0, "eta_min_ts": 1050.0,
+            "eta_max_ts": 1150.0,
+        }},
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 1000.0)
+
+    eta = recording_service.clip_eta_ranges(["active"])["active"]
+
+    assert eta["activity_present"] is True
+    assert eta["finalize_if_clear_ts"] == 1028.0
 
 
 def test_clip_state_disk_available_wins_over_stale_ledger(rec_dir):

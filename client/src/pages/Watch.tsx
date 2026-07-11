@@ -209,6 +209,15 @@ function useTodayEvents() {
     }
   }, [refetchKey])
 
+  const hasActiveVideo = events?.some(
+    (event) => event.video_status === 'recording' || event.video_status === 'finalizing',
+  ) === true
+  useEffect(() => {
+    if (!hasActiveVideo || document.visibilityState !== 'visible') return
+    const id = window.setInterval(() => setRefetchKey((key) => key + 1), 2000)
+    return () => window.clearInterval(id)
+  }, [hasActiveVideo])
+
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
@@ -237,7 +246,7 @@ export function Watch() {
   const [actionParams, setActionParams] = useSearchParams()
   const ripple = useRipple()
   const isLandscape = useIsLandscape()
-  const nowMs = useTicker()
+  const nowMs = useTicker(1000)
   const { events, quietSince, error, refetch: refetchTodayEvents } = useTodayEvents()
   const { cameras, selectedCamera, selectCamera } = useCameras()
   // Multicam contract: the switcher + per-event camera labels only

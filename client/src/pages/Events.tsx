@@ -148,6 +148,12 @@ export function Events() {
   // no flash of unfiltered list.
   const [searchParams] = useSearchParams()
   const [events, setEvents] = useState<DetectionEvent[]>([])
+  const activeVideoRef = useRef(false)
+  useEffect(() => {
+    activeVideoRef.current = events.some(
+      (event) => event.video_status === 'recording' || event.video_status === 'finalizing',
+    )
+  }, [events])
   const [loading, setLoading] = useState(true)
   // Store the raw thrown value so a future render can branch on
   // `error instanceof HttpError && error.status === N` (the iter-122
@@ -414,7 +420,10 @@ export function Events() {
   const _seededFilterRef = useRef<PersonFilter>(filter)
   useEffect(() => {
     let cancelled = false
+    let refreshInFlight = false
     const refresh = () => {
+      if (refreshInFlight) return
+      refreshInFlight = true
       // iter-326b: when a deep-linked person filter is set on mount
       // (?person=NAME from the People page), use the iter-219 search
       // route instead of plain fetchEvents — that way Alice's
@@ -446,6 +455,7 @@ export function Events() {
           if (!cancelled) setError(e)
         })
         .finally(() => {
+          refreshInFlight = false
           if (!cancelled) setLoading(false)
         })
     }
@@ -485,9 +495,15 @@ export function Events() {
       if (document.visibilityState === 'visible') refresh()
     }
     document.addEventListener('visibilitychange', onVisibility)
+    const statusPoll = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && activeVideoRef.current) {
+        refresh()
+      }
+    }, 2000)
     return () => {
       cancelled = true
       unsub()
+      window.clearInterval(statusPoll)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])

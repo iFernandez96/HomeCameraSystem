@@ -8,6 +8,7 @@ when a clip endpoint currently has no MP4 to serve.
 Python 3.6 compatible.
 """
 import json
+import math
 import os
 import tempfile
 import time
@@ -16,6 +17,8 @@ import time
 LEDGER_NAME = ".clip_state.json"
 _MAX_EVENTS = 5000
 STALE_ACTIVE_AFTER_S = 15 * 60
+_ETA_MIN_SAMPLES = 8
+_ETA_NEIGHBORS = 20
 
 
 def ledger_path(recordings_dir):
@@ -114,6 +117,170 @@ def get_state(recordings_dir, event_id):
     return _read(ledger_path(recordings_dir))["events"].get(str(event_id))
 
 
+def _percentile(values, fraction):
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        return None
+    position = (len(ordered) - 1) * float(fraction)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (
+        position - lower
+    )
+
+
+def _eta_history(recordings_dir):
+    """Successful device-local timing samples; no media or identity data."""
+    samples = []
+    events = _read(ledger_path(recordings_dir))["events"]
+    for rec in events.values():
+        if not isinstance(rec, dict) or rec.get("state") != "available":
+            continue
+        try:
+            start_ts = float(rec["start_ts"])
+            end_ts = float(rec["end_ts"])
+            ready_ts = float(rec["updated_ts"])
+            size_bytes = float(rec.get("bytes") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        capture_s = end_ts - start_ts
+        processing_s = ready_ts - end_ts
+        if capture_s <= 0 or processing_s < 0:
+            continue
+        samples.append({
+            "capture_s": capture_s,
+            "processing_s": processing_s,
+            "access_s": ready_ts - start_ts,
+            "bytes": max(0.0, size_bytes),
+            "ready_ts": ready_ts,
+        })
+    return samples
+
+
+def _eta_result(origin_ts, totals, now_ts):
+    if len(totals) < _ETA_MIN_SAMPLES:
+        return None
+    point_s = _percentile(totals, 0.5)
+    low_s = _percentile(totals, 0.1)
+    high_s = _percentile(totals, 0.9)
+    deviations = [abs(value - point_s) for value in totals]
+    historical_spread_s = _percentile(deviations, 0.5)
+    point_ts = max(float(now_ts) + 1.0, float(origin_ts) + point_s)
+    min_ts = max(float(now_ts), float(origin_ts) + low_s)
+    max_ts = max(point_ts, float(origin_ts) + high_s)
+    return {
+        "eta_point_ts": point_ts,
+        "eta_min_ts": min(min_ts, point_ts),
+        "eta_max_ts": max_ts,
+        "eta_model_samples": len(totals),
+        "eta_historical_spread_s": historical_spread_s,
+        "eta_model": "device_history_v1",
+    }
+
+
+def estimate_recording_eta(recordings_dir, start_ts, last_seen,
+                           absence_finalize_s, max_visit_s, now=None):
+    """Estimate event-to-playable time while capture is still open.
+
+    This is a conditional time-to-event estimate: completed visits shorter
+    than the already-observed visit plus its absence grace cannot describe the
+    active visit, so they are excluded. The live max-visit bound excludes old
+    samples produced under a longer historical configuration.
+    """
+    current = time.time() if now is None else float(now)
+    try:
+        start = float(start_ts)
+        seen = float(last_seen)
+        absence = max(0.0, float(absence_finalize_s))
+        maximum = max(1.0, float(max_visit_s))
+    except (TypeError, ValueError):
+        return None
+    minimum_capture = min(maximum, max(0.0, seen - start) + absence)
+    history = sorted(
+        (
+            sample for sample in _eta_history(recordings_dir)
+            if sample["capture_s"] <= maximum * 1.10
+        ),
+        key=lambda sample: sample["ready_ts"],
+    )[-80:]
+    eligible = [
+        sample for sample in history
+        if sample["capture_s"] >= minimum_capture * 0.90
+    ]
+    if len(eligible) < _ETA_MIN_SAMPLES:
+        eligible = sorted(
+            history,
+            key=lambda sample: abs(sample["capture_s"] - minimum_capture),
+        )[:_ETA_NEIGHBORS]
+    totals = [sample["access_s"] for sample in eligible]
+    return _eta_result(start, totals, current)
+
+
+def estimate_finalizing_eta(recordings_dir, end_ts, capture_duration_s,
+                            input_bytes, now=None):
+    """Estimate ready time from similar completed finalization workloads."""
+    current = time.time() if now is None else float(now)
+    try:
+        end = float(end_ts)
+        duration = max(0.1, float(capture_duration_s))
+        size = max(1.0, float(input_bytes))
+    except (TypeError, ValueError):
+        return None
+    elapsed = max(0.0, current - end)
+    history = sorted(
+        _eta_history(recordings_dir), key=lambda sample: sample["ready_ts"],
+    )[-80:]
+    if len(history) < _ETA_MIN_SAMPLES:
+        return None
+
+    def distance(sample):
+        # Ratio distance is scale-free across short and long clips. Duration
+        # and bytes both matter because decode work and I/O vary independently.
+        sample_size = max(1.0, sample["bytes"])
+        return (
+            abs(math.log(sample["capture_s"] / duration))
+            + abs(math.log(sample_size / size))
+        )
+
+    nearest = sorted(history, key=distance)
+    # Conditional remaining-time estimate: once processing has already lasted
+    # N seconds, samples that completed before N are no longer possible.
+    survivors = [
+        sample for sample in nearest
+        if sample["processing_s"] >= elapsed
+    ]
+    peers = (survivors if len(survivors) >= _ETA_MIN_SAMPLES else nearest)[
+        :_ETA_NEIGHBORS
+    ]
+    totals = [sample["processing_s"] for sample in peers]
+    result = _eta_result(end, totals, current)
+    if result is not None:
+        errors = []
+        # Walk-forward validation uses only observations that existed before
+        # each target, which measures live forecasting rather than easier
+        # random holdout performance under configuration drift.
+        for index in range(20, len(history)):
+            target = history[index]
+            prior = history[:index]
+            target_duration = target["capture_s"]
+            target_size = max(1.0, target["bytes"])
+            comparable = sorted(
+                prior,
+                key=lambda sample: (
+                    abs(math.log(sample["capture_s"] / target_duration))
+                    + abs(math.log(max(1.0, sample["bytes"]) / target_size))
+                ),
+            )[:16]
+            predicted = _percentile(
+                [sample["processing_s"] for sample in comparable], 0.5,
+            )
+            errors.append(abs(predicted - target["processing_s"]))
+        if errors:
+            result["eta_backtest_median_error_s"] = _percentile(errors, 0.5)
+            result["eta_backtest_p90_error_s"] = _percentile(errors, 0.9)
+    return result
+
+
 def reconcile_stale(recordings_dir, now=None, stale_after_s=STALE_ACTIVE_AFTER_S):
     """Turn abandoned recording/finalizing rows into honest failures.
 
@@ -135,7 +302,11 @@ def reconcile_stale(recordings_dir, now=None, stale_after_s=STALE_ACTIVE_AFTER_S
         if state not in ("recording", "finalizing"):
             continue
         final_path = os.path.join(str(recordings_dir), "{}.mp4".format(event_id))
-        if os.path.isfile(final_path):
+        try:
+            playable_file = os.path.isfile(final_path) and os.path.getsize(final_path) > 0
+        except OSError:
+            playable_file = False
+        if playable_file:
             rec = dict(original)
             rec.update({
                 "state": "available",

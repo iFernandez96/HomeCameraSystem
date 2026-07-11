@@ -1,6 +1,7 @@
 package com.example.homecamerasystem;
 
 import android.annotation.SuppressLint;
+import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -64,6 +65,15 @@ public final class MainActivity extends Activity {
             FrameLayout.LayoutParams.MATCH_PARENT
         ));
         setContentView(rootView);
+
+        JetsonHealthMonitor.start(getApplicationContext());
+        if (
+            android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 9023);
+        }
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);

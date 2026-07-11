@@ -37,8 +37,16 @@ def _enrich_video_status(items: list[dict]) -> list[dict]:
         item["video_status"] = statuses.get(event_id, "unknown")
         eta = eta_ranges.get(event_id)
         if eta is not None:
+            item["video_eta_point_ts"] = eta["point_ts"]
             item["video_eta_min_ts"] = eta["min_ts"]
             item["video_eta_max_ts"] = eta["max_ts"]
+            item["video_eta_model_samples"] = eta["model_samples"]
+            item["video_eta_backtest_median_error_s"] = eta[
+                "backtest_median_error_s"
+            ]
+            item["video_eta_live_progress"] = eta["live_progress"]
+            item["video_activity_present"] = eta["activity_present"]
+            item["video_finalize_if_clear_ts"] = eta["finalize_if_clear_ts"]
     return items
 
 

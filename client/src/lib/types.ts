@@ -65,8 +65,14 @@ export type DetectionEvent = {
    * server for recording/finalizing clips. Both are required before
    * the client presents a range; either may be absent when the worker
    * cannot yet estimate completion. */
+  video_eta_point_ts?: number
   video_eta_min_ts?: number
   video_eta_max_ts?: number
+  video_eta_model_samples?: number
+  video_eta_backtest_median_error_s?: number | null
+  video_eta_live_progress?: boolean
+  video_activity_present?: boolean | null
+  video_finalize_if_clear_ts?: number | null
   /**
    * URL of the saved thumbnail captured at detection time. Server emits
    * the key always; value is null when no thumbnail was written (idle
