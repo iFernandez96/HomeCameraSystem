@@ -52,6 +52,7 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -1997,6 +1998,8 @@ _HostActionDeps = namedtuple(
 # BEFORE the watchdog restarts mediamtx/nvargus or reboots, so a mid-visit
 # wedge yields a short VALID clip rather than one spanning the gap.
 _VISIT_RUNNER = None          # type: ignore[var-annotated]
+_PREROLL_BUFFER = None        # owned ffmpeg ring; stopped explicitly on SIGTERM
+_SHUTDOWN_STARTED = threading.Event()
 # Don't auto-reboot more than once per this window — a reboot that doesn't fix
 # the wedge would otherwise boot-loop the Jetson.
 _REBOOT_MIN_INTERVAL_S = 1800.0
@@ -2349,7 +2352,7 @@ def _disarm_visit_runner(now):
     if runner is None:
         return
     try:
-        runner.finalize_open_visits_for_escalation(now)
+        runner.finalize_open_visits(now, reason="continuous capture disabled")
     except Exception as e:
         log.error(
             "continuous-capture disarm finalize failed: %s: %s",
@@ -2359,6 +2362,61 @@ def _disarm_visit_runner(now):
     log.info(
         "continuous-capture DISARMED — legacy start_clip path restored",
     )
+
+
+def _reconcile_detection_capture_gate(previous_active, active, now):
+    """Close an open visit on the exact on->off detection transition.
+
+    The old path merely stopped inference and waited for the normal absence
+    grace. That left the event UI in ``recording`` for the config-poll delay,
+    the full grace window, and video finalization. A disabled detector cannot
+    establish continued presence, so finalize at the last observed frame.
+    """
+    if previous_active is True and not active and _VISIT_RUNNER is not None:
+        try:
+            _VISIT_RUNNER.finalize_open_visits(
+                now, reason="detection capture gate paused",
+            )
+        except Exception as e:
+            log.error(
+                "detection pause finalize failed: %s: %s",
+                type(e).__name__, e,
+            )
+    return bool(active)
+
+
+def _handle_worker_shutdown(signum, _frame):
+    """Finalize open footage before a normal systemd stop/restart exits."""
+    if _SHUTDOWN_STARTED.is_set():
+        raise SystemExit(128 + int(signum))
+    _SHUTDOWN_STARTED.set()
+    preroll = _PREROLL_BUFFER
+    if preroll is not None:
+        try:
+            preroll.stop()
+        except Exception as e:
+            log.error(
+                "worker shutdown preroll stop failed: %s: %s",
+                type(e).__name__, e,
+            )
+    runner = _VISIT_RUNNER
+    if runner is not None:
+        now = time.time()
+        try:
+            finalized = runner.finalize_open_visits(
+                now, reason="worker shutdown",
+            )
+            drained = runner.wait_for_finalizers(40.0)
+            log.info(
+                "worker shutdown finalized %s open visit(s); drained=%s",
+                len(finalized), drained,
+            )
+        except Exception as e:
+            log.error(
+                "worker shutdown finalize failed: %s: %s",
+                type(e).__name__, e,
+            )
+    raise SystemExit(0)
 
 
 def _recover_open_visits(recordings_dir, clip_recorder, runner,
@@ -2637,6 +2695,8 @@ def main():
     # run BEFORE any worker thread (heartbeat / config-poll / preroll
     # watchdog) spawns so their first log line is already handled.
     applog.configure()
+    signal.signal(signal.SIGTERM, _handle_worker_shutdown)
+    signal.signal(signal.SIGINT, _handle_worker_shutdown)
     source_uri = _env("DETECT_SOURCE", "rtsp://localhost:8554/cam")
     threshold = _env("DETECT_THRESHOLD", 0.55, float)
     cooldown = _env("DETECT_COOLDOWN_S", 5.0, float)
@@ -2773,6 +2833,7 @@ def main():
     # buffer is off, ClipRecorder falls back to post-roll-only
     # behavior automatically (pre_roll_s defaults to 0 in the
     # caller below).
+    global _PREROLL_BUFFER
     preroll_buffer = None
     if recordings_dir:
         preroll_dir = _env(
@@ -2820,6 +2881,8 @@ def main():
                     preroll_dir, type(e).__name__, e,
                 )
                 preroll_buffer = None
+
+    _PREROLL_BUFFER = preroll_buffer
 
     # iter-356.62 (camera-algorithm-auditor pre-YOLO win 3): mem-floor
     # gate runs ONCE here, before TRT engine workspace allocation can
@@ -3143,6 +3206,7 @@ def main():
     # directly so a change is logged ONCE at the transition, never
     # per-frame. Seeded to None so the FIRST gear is always logged.
     gear_state = {"prev": None}
+    capture_gate_state = {"active": None}
 
     def _set_gear(new_gear):
         metrics.gear = new_gear
@@ -3435,6 +3499,13 @@ def main():
             )
         elif not runtime.continuous_capture and _VISIT_RUNNER is not None:
             _disarm_visit_runner(now)
+        capture_gate_active = (
+            metadata_signal_allowed(runtime)
+            and not runtime.schedule_says_off()
+        )
+        capture_gate_state["active"] = _reconcile_detection_capture_gate(
+            capture_gate_state["active"], capture_gate_active, now,
+        )
         # plan B5: continuous-capture tick at the TOP of the loop body, BEFORE
         # any detection logic or early-continue (off / scheduled-off / zone-
         # reject / no-detection all early-continue below — exactly the absent

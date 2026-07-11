@@ -73,6 +73,8 @@ export function EventVideoStatusIcon({
   etaLiveProgress,
   activityPresent,
   finalizeIfClearTs,
+  detectionPaused = false,
+  workerOffline = false,
   nowMs,
 }: {
   status: EventVideoStatus
@@ -85,11 +87,18 @@ export function EventVideoStatusIcon({
   etaLiveProgress?: boolean
   activityPresent?: boolean | null
   finalizeIfClearTs?: number | null
+  detectionPaused?: boolean
+  workerOffline?: boolean
   nowMs?: number
 }) {
   const loading = status === 'recording' || status === 'finalizing'
   const nowTs = nowMs == null ? null : nowMs / 1000
-  const personPresent = status === 'recording' && activityPresent !== false
+  const recordingOffline = status === 'recording' && workerOffline
+  const recordingClosing = status === 'recording' && detectionPaused && !workerOffline
+  const personPresent = status === 'recording'
+    && !recordingOffline
+    && !recordingClosing
+    && activityPresent !== false
   const clearRemainingS = status === 'recording'
     && !personPresent
     && nowTs != null
@@ -98,11 +107,15 @@ export function EventVideoStatusIcon({
     ? Math.max(0, finalizeIfClearTs - nowTs)
     : null
   const eta = status === 'recording'
-    ? personPresent
+    ? recordingOffline
+      ? 'Offline'
+      : recordingClosing
+        ? 'Closing…'
+        : personPresent
       ? 'Person in scene'
       : clearRemainingS != null && clearRemainingS > 0
         ? `Clear · ${Math.ceil(clearRemainingS)}s`
-        : 'Confirming clear…'
+        : 'Clearing…'
     : loading
     ? nowMs == null
       ? 'Estimating…'
@@ -113,7 +126,11 @@ export function EventVideoStatusIcon({
           : formatEventVideoEta(etaMinTs, etaMaxTs, nowMs)
     : null
   const etaTitle = status === 'recording'
-    ? personPresent
+    ? recordingOffline
+      ? 'The worker is offline, so this video is not progressing'
+      : recordingClosing
+        ? 'Detection is paused; the worker is closing this video at the last observed frame'
+        : personPresent
       ? 'ETA is paused; leaving and returning continues the same capture'
       : 'Scene is temporarily clear; this countdown resets if the person returns'
     : etaLiveProgress
@@ -126,7 +143,11 @@ export function EventVideoStatusIcon({
       }`
       : undefined
   const statusLabel = status === 'recording'
-    ? personPresent
+    ? recordingOffline
+      ? 'Video recording interrupted — camera worker offline'
+      : recordingClosing
+        ? 'Detection paused — closing video at the last observed frame'
+        : personPresent
       ? 'Recording video — person in scene, ETA paused'
       : clearRemainingS != null && clearRemainingS > 0
         ? `Recording video — scene temporarily clear, finalizing in ${Math.ceil(clearRemainingS)} seconds unless the person returns`
@@ -174,7 +195,12 @@ export function EventVideoStatusIcon({
             <path d="M10 10.1a2.2 2.2 0 1 1 3.5 1.8c-.9.6-1.5 1-1.5 2M12 17h.01" />
           ) : null}
         </svg>
-        {status === 'finalizing' || (status === 'recording' && !personPresent) ? (
+        {status === 'finalizing' || (
+          status === 'recording'
+          && !personPresent
+          && !recordingOffline
+          && !recordingClosing
+        ) ? (
           <span
             aria-hidden="true"
             className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-spin rounded-full border-2 border-[var(--color-bg)] border-t-[var(--color-accent-default)]"

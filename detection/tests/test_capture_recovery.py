@@ -60,6 +60,68 @@ def test_detect_imports_clip_state_for_boot_reconciliation():
     assert detect.clip_state is not None
 
 
+def test_detection_pause_finalizes_open_visit_immediately(monkeypatch):
+    class Runner:
+        def __init__(self):
+            self.calls = []
+
+        def finalize_open_visits(self, now, reason):
+            self.calls.append((now, reason))
+            return ["visit-1"]
+
+    runner = Runner()
+    monkeypatch.setattr(detect, "_VISIT_RUNNER", runner)
+
+    active = detect._reconcile_detection_capture_gate(True, False, 123.0)
+
+    assert active is False
+    assert runner.calls == [(123.0, "detection capture gate paused")]
+
+
+def test_capture_gate_uses_the_existing_metadata_signal_policy():
+    runtime = detect.RuntimeConfig(threshold=0.55, cooldown_s=5.0)
+    runtime.enabled = True
+    runtime.operating_mode = "home"
+
+    assert detect.metadata_signal_allowed(runtime) is True
+    runtime.enabled = False
+    assert detect.metadata_signal_allowed(runtime) is False
+    runtime.enabled = True
+    runtime.operating_mode = "privacy"
+    assert detect.metadata_signal_allowed(runtime) is False
+
+
+def test_detection_gate_does_not_refinalize_while_already_paused(monkeypatch):
+    runner = MagicMock()
+    monkeypatch.setattr(detect, "_VISIT_RUNNER", runner)
+
+    active = detect._reconcile_detection_capture_gate(False, False, 124.0)
+
+    assert active is False
+    runner.finalize_open_visits.assert_not_called()
+
+
+def test_sigterm_finalizes_and_drains_before_worker_exits(monkeypatch):
+    runner = MagicMock()
+    preroll = MagicMock()
+    runner.finalize_open_visits.return_value = ["visit-1"]
+    monkeypatch.setattr(detect, "_VISIT_RUNNER", runner)
+    monkeypatch.setattr(detect, "_PREROLL_BUFFER", preroll)
+    monkeypatch.setattr(detect.time, "time", lambda: 456.0)
+    detect._SHUTDOWN_STARTED.clear()
+
+    with pytest.raises(SystemExit) as stopped:
+        detect._handle_worker_shutdown(15, None)
+
+    assert stopped.value.code == 0
+    preroll.stop.assert_called_once_with()
+    runner.finalize_open_visits.assert_called_once_with(
+        456.0, reason="worker shutdown",
+    )
+    runner.wait_for_finalizers.assert_called_once_with(40.0)
+    detect._SHUTDOWN_STARTED.clear()
+
+
 class _FakeLiveness:
     """Stand-in for the iter-8 Liveness object — bump() is a no-op."""
 

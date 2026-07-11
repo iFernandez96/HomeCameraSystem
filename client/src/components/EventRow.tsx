@@ -19,6 +19,8 @@ export function EventRow({
   subline,
   onOpen,
   leading = 'identity',
+  detectionPaused = false,
+  workerOffline = false,
   nowMs,
 }: {
   event: DetectionEvent
@@ -27,6 +29,8 @@ export function EventRow({
   /** Home's Today list uses the explicit server video lifecycle;
    * other EventRow surfaces retain the decorative identity mark. */
   leading?: 'identity' | 'video-status'
+  detectionPaused?: boolean
+  workerOffline?: boolean
   /** Shared page ticker for aging ETA ranges without one interval
    * per event row. Defaults to render time outside Home. */
   nowMs?: number
@@ -53,6 +57,8 @@ export function EventRow({
           etaLiveProgress={event.video_eta_live_progress}
           activityPresent={event.video_activity_present}
           finalizeIfClearTs={event.video_finalize_if_clear_ts}
+          detectionPaused={detectionPaused}
+          workerOffline={workerOffline}
           nowMs={nowMs}
         />
       ) : (

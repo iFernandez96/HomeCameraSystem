@@ -950,14 +950,15 @@ class VisitRunner(object):
 
     # -- watchdog coupling (R5) ----------------------------------------------
 
-    def finalize_open_visits_for_escalation(self, now):
-        """plan R5: the camera watchdog is about to restart mediamtx/nvargus or
-        reboot. Finalize EVERY open visit immediately at its ``last_seen`` (a
-        short VALID clip, not one spanning the wedge gap) and persist
-        ``.open_visits.json`` BEFORE the reboot fires.
+    def finalize_open_visits(self, now, reason="capture stopped"):
+        """Finalize every open visit immediately at its last-seen frame.
 
-        Drains the tracker's live state too so a continuation opens fresh after
-        recovery. Returns the list of finalized visit_ids."""
+        Used whenever capture semantics stop advancing: a user pauses
+        detection, continuous capture is disabled, or the worker is shutting
+        down/recovering. Draining the tracker prevents a stale visit from
+        remaining ``recording`` indefinitely while no inference can extend or
+        close it. Returns the finalized visit ids.
+        """
         finalized = []
         # Snapshot the tracker's live records to find last_seen per key.
         snap = self.tracker.snapshot()
@@ -987,12 +988,25 @@ class VisitRunner(object):
         if finalized:
             applog.emit(
                 "visit",
-                "watchdog escalation: finalized {} open visit(s) at last_seen "
-                "before recovery action: {}".format(
-                    len(finalized), ",".join(str(v) for v in finalized),
+                "{}: finalized {} open visit(s) at last_seen: {}".format(
+                    reason, len(finalized), ",".join(str(v) for v in finalized),
                 ),
             )
         return finalized
+
+    def finalize_open_visits_for_escalation(self, now):
+        """Compatibility wrapper for the camera watchdog recovery ladder."""
+        return self.finalize_open_visits(now, reason="watchdog escalation")
+
+    def wait_for_finalizers(self, timeout_s):
+        """Wait boundedly for spawned clip finalizers before process exit."""
+        deadline = time.time() + max(0.0, float(timeout_s))
+        for thread in list(self._finalize_threads):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            thread.join(remaining)
+        return not any(thread.is_alive() for thread in self._finalize_threads)
 
     # -- persistence ----------------------------------------------------------
 

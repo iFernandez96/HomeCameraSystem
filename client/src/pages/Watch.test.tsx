@@ -291,6 +291,23 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     },
   )
 
+  it('Given detection is paused with an open recording, Then Today at home says Closing without a perpetual spinner', async () => {
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      detection_active: false,
+      worker_alive: true,
+    })
+    searchEvents.mockResolvedValue({
+      items: [ev({ id: 'today-paused', video_status: 'recording' })],
+      next_cursor: null,
+    })
+
+    const { container } = renderWatch()
+
+    expect(await screen.findByText('Closing…')).toBeInTheDocument()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
   it('Given Today at home receives authoritative ETA bounds, Then the row shows their conservative range', async () => {
     const nowTs = Date.now() / 1000
     searchEvents.mockResolvedValue({

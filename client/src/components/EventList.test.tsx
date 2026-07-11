@@ -679,6 +679,30 @@ describe('EventList', () => {
     expect(screen.getByRole('img', { name: label })).toHaveAttribute('data-video-status', video_status)
   })
 
+  it('Given detection is intentionally off, Then a recording row says it is closing and has no spinner', () => {
+    const { container } = render(
+      <EventList
+        events={[evt({ id: 'axis-paused', video_status: 'recording' })]}
+        detectionOff
+      />,
+    )
+
+    expect(screen.getByText('Closing…')).toBeInTheDocument()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  it('Given the worker is offline, Then a recording row says offline and has no spinner', () => {
+    const { container } = render(
+      <EventList
+        events={[evt({ id: 'axis-offline', video_status: 'recording' })]}
+        cameraOffline
+      />,
+    )
+
+    expect(screen.getByText('Offline')).toBeInTheDocument()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
   it('Given the server supplies clip ETA bounds, Then the timeline shows their conservative range', () => {
     const nowTs = Date.now() / 1000
     render(

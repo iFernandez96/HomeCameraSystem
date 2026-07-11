@@ -302,6 +302,8 @@ export function EventList({
                   etaLiveProgress={e.video_eta_live_progress}
                   activityPresent={e.video_activity_present}
                   finalizeIfClearTs={e.video_finalize_if_clear_ts}
+                  detectionPaused={detectionOff}
+                  workerOffline={cameraOffline}
                   nowMs={now}
                 />
                 <EventCard

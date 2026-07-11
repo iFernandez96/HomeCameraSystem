@@ -1329,6 +1329,8 @@ export function Watch() {
           error={error}
           onOpen={setOpenEvent}
           onRetry={refetchTodayEvents}
+          detectionPaused={detectionActive === false && workerAlive !== false}
+          workerOffline={workerAlive === false}
           nowMs={nowMs}
         />
       </div>
@@ -1487,6 +1489,8 @@ const TodayTimeline = memo(function TodayTimeline({
   error,
   onOpen,
   onRetry,
+  detectionPaused,
+  workerOffline,
   nowMs,
 }: {
   events: DetectionEvent[] | null
@@ -1494,6 +1498,8 @@ const TodayTimeline = memo(function TodayTimeline({
   error: boolean
   onOpen: (e: DetectionEvent) => void
   onRetry: () => void
+  detectionPaused: boolean
+  workerOffline: boolean
   nowMs: number
 }) {
   const navigate = useNavigate()
@@ -1568,6 +1574,8 @@ const TodayTimeline = memo(function TodayTimeline({
               subline={eventSubline(e, nowMs)}
               onOpen={() => onOpen(e)}
               leading="video-status"
+              detectionPaused={detectionPaused}
+              workerOffline={workerOffline}
               nowMs={nowMs}
             />
           </li>

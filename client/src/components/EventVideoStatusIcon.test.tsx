@@ -45,6 +45,48 @@ describe('EventVideoStatusIcon', () => {
     expect(screen.queryByText(/Clear ·/)).not.toBeInTheDocument()
   })
 
+  it('Given detection is paused during a recording, Then it shows a compact closing state without a perpetual spinner', () => {
+    const { container } = render(
+      <EventVideoStatusIcon
+        status="recording"
+        activityPresent={false}
+        detectionPaused
+      />,
+    )
+
+    expect(screen.getByText('Closing…')).toHaveAttribute(
+      'title',
+      'Detection is paused; the worker is closing this video at the last observed frame',
+    )
+    expect(screen.getByRole('img')).toHaveAccessibleName(
+      /detection paused.*closing video/i,
+    )
+    expect(container.querySelector('.animate-spin')).toBeNull()
+    expect(screen.queryByText(/confirming clear/i)).not.toBeInTheDocument()
+  })
+
+  it('Given the worker is offline during a recording, Then it says offline and never pretends processing is moving', () => {
+    const { container } = render(
+      <EventVideoStatusIcon status="recording" workerOffline />,
+    )
+
+    expect(screen.getByText('Offline')).toHaveAttribute(
+      'title',
+      'The worker is offline, so this video is not progressing',
+    )
+    expect(screen.getByRole('img')).toHaveAccessibleName(/worker offline/i)
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  it('Given a recording has no authoritative clear deadline, Then the fallback copy stays compact', () => {
+    render(
+      <EventVideoStatusIcon status="recording" activityPresent={false} />,
+    )
+
+    expect(screen.getByText('Clearing…')).toBeInTheDocument()
+    expect(screen.queryByText(/confirming clear/i)).not.toBeInTheDocument()
+  })
+
   it('Given finalizing has no authoritative deadline, Then it shows an honest estimating label', () => {
     render(<EventVideoStatusIcon status="finalizing" />)
     expect(screen.getByText('Estimating…')).toBeInTheDocument()
