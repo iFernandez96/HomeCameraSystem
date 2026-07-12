@@ -143,6 +143,12 @@ def test_given_recent_real_event_when_canary_runs_then_event_clip_is_fully_verif
     assert clip.exists()
 
 
+def test_given_long_event_when_decode_budget_is_computed_then_it_scales_with_bytes():
+    assert recording_canary._event_decode_timeout(1_000_000) == 120.0
+    assert recording_canary._event_decode_timeout(75_292_358) == 500.6
+    assert recording_canary._event_decode_timeout(1_000_000_000) == 600.0
+
+
 def test_given_recent_event_is_corrupt_when_canary_runs_then_overall_result_fails_truthfully(tmp_path):
     # arrange
     clip = tmp_path / "visit-broken.mp4"

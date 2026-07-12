@@ -25,6 +25,19 @@ _WRITE_PREFIX = ".recording-canary-write-"
 _EVENT_CLIP_RE = re.compile(r"^([A-Za-z0-9_-]+)\.mp4$")
 
 
+def _event_decode_timeout(sample_bytes):
+    """Bound a full decode by actual work, not an arbitrary clip count.
+
+    Event clips use the 2.5 Mbps ``cam`` stream, while a single-threaded
+    software decode on the Nano can run slower than real time.  Budgeting a
+    conservative 160 KB/s plus startup overhead prevents long, valid presence
+    sessions from being mislabeled corrupt.  The cap keeps the timer bounded.
+    """
+    return round(
+        min(600.0, max(120.0, 30.0 + float(sample_bytes) / 160000.0)), 1,
+    )
+
+
 def _safe_unlink(path):
     try:
         os.unlink(path)
@@ -202,7 +215,9 @@ def _verify_recent_event_clip(recordings_dir, runner, clock):
         "-threads", "1", "-xerror", "-i", path, "-map", "0:v:0",
         "-f", "null", "-",
     ]
-    decoded, error = _run_command(decode_args, 120, runner)
+    decoded, error = _run_command(
+        decode_args, _event_decode_timeout(sample_bytes), runner,
+    )
     elapsed_ms = round(max(0.0, (time.monotonic() - started) * 1000.0), 1)
     if error == "timeout":
         state = "failed"
