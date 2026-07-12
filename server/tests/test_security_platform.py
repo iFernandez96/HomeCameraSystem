@@ -3,9 +3,11 @@ from __future__ import annotations
 import time
 import asyncio
 import hashlib
+import io
 import json
 import shutil
 import subprocess
+import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -195,6 +197,25 @@ def test_given_admin_owns_incident_when_mutating_then_full_lifecycle_succeeds(cl
     assert removed.status_code == 200
     deleted = client.delete("/api/security/incidents/{}".format(incident_id))
     assert deleted.json() == {"deleted": True}
+
+
+def test_incident_export_contains_printable_hashed_pdf(client):
+    _event(client, "report-event", person_name="Alice")
+    created = client.post(
+        "/api/security/incidents", json={"title": "Door report", "notes": "Review"}
+    )
+    incident_id = created.json()["id"]
+    client.post("/api/security/incidents/{}/events/report-event".format(incident_id))
+
+    exported = client.post("/api/security/incidents/{}/export".format(incident_id))
+
+    assert exported.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+        report = archive.read("incident-report.pdf")
+        manifest = json.loads(archive.read("manifest.json"))
+    assert report.startswith(b"%PDF-1.4") and report.endswith(b"%%EOF\n")
+    entry = next(item for item in manifest["evidence"] if item["path"] == "incident-report.pdf")
+    assert entry["sha256"] == hashlib.sha256(report).hexdigest()
 
 
 @pytest.mark.parametrize("legacy", [False, True], ids=["Israel-owned", "legacy"])

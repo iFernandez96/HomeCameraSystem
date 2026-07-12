@@ -576,6 +576,31 @@ def test_evict_preserves_protected_clip(rec_dir):
     assert result["deleted"] == 1
 
 
+def test_evict_spends_ordinary_before_older_important_clip(rec_dir):
+    from app.config import settings
+    from app.services import events_db, event_bus
+
+    rec_dir.mkdir()
+    important = _write_clip_with_mtime(rec_dir, "important.mp4", 100, age_s=300)
+    ordinary = _write_clip_with_mtime(rec_dir, "ordinary.mp4", 100, age_s=100)
+    event = event_bus.make_detection_event(
+        label="person", score=0.9, boxes=[], event_id="important"
+    )
+    events_db.insert_event(settings.events_db_path, event)
+    events_db.set_retention_class(settings.events_db_path, "important", "important")
+
+    def _du(_path):
+        from collections import namedtuple
+        Usage = namedtuple("Usage", ["total", "used", "free"])
+        return Usage(0, 0, 100 if not ordinary.exists() else 0)
+
+    result = recording_service.evict_to_free_space(min_free_bytes=100, disk_usage=_du)
+
+    assert not ordinary.exists()
+    assert important.exists()
+    assert result["deleted"] == 1
+
+
 # --- sweep_and_evict (combined pass: time-sweep THEN byte-evict) ---
 
 

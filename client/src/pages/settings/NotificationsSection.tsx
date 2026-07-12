@@ -18,6 +18,7 @@ import {
 import { useReportError, useToast } from '../../lib/toast'
 import type { PushAssuranceStatus, PushFilters } from '../../lib/types'
 import { Mono, Row, Section, TimeInput, Toggle } from './parts'
+import { NotificationInbox } from './NotificationInbox'
 
 // iter-289: extracted from Settings.tsx (~165 lines of inline JSX +
 // 7 state hooks + 3 handlers + 2 effects). Pre-iter-289 the
@@ -54,9 +55,11 @@ type FiltersInput = {
 export function NotificationsSection({
   pushSubsCount,
   pushAssurance,
+  canManageRetention = false,
 }: {
   pushSubsCount: number | null | undefined
   pushAssurance?: PushAssuranceStatus | null
+  canManageRetention?: boolean
 }) {
   const { showToast } = useToast()
   const reportError = useReportError()
@@ -309,9 +312,8 @@ export function NotificationsSection({
   })()
 
   return (
-    // Playroom Modern (Task 8 copy pass): "Notifications" -> "Alerts" —
-    // shorter, matches the plain-English "Alert this device" row label
-    // right below it instead of the more formal/technical noun.
+    <div className="space-y-6">
+    {/* Alerts is the established plain-English label for this section. */}
     <Section title="Alerts">
       {/* iter-296: plain-English intro so the rest of the panel
           reads without prior context. */}
@@ -636,6 +638,8 @@ export function NotificationsSection({
         </div>
       )}
     </Section>
+    <NotificationInbox canRetain={canManageRetention} />
+    </div>
   )
 }
 

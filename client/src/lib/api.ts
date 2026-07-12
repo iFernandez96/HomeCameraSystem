@@ -1417,6 +1417,13 @@ export type IncidentSummary = {
 
 export type IncidentDetail = IncidentSummary & {
   events: DetectionEvent[]
+  audit: Array<{
+    ts: number
+    action: string
+    username: string
+    event_id?: string
+    fields?: string[]
+  }>
 }
 
 export const listIncidents = () =>
@@ -1673,3 +1680,183 @@ export const setFacePreference = (name: string, alertsEnabled: boolean) =>
       body: JSON.stringify({ alerts_enabled: alertsEnabled }),
     },
   )
+
+export type HomeProfile = 'home' | 'away' | 'sleep' | 'vacation' | 'privacy'
+export type ModeSchedule = {
+  id: string
+  profile: HomeProfile
+  time: string
+  days: number[]
+  enabled: boolean
+}
+export type SavedSearch = {
+  id: string
+  username: string
+  name: string
+  query: string
+  semantic: boolean
+  created_ts: number
+}
+export type RetentionClass = 'ordinary' | 'important' | 'incident' | 'permanent'
+export type RetentionPreview = {
+  classes: Record<RetentionClass, number>
+  class_bytes: Record<RetentionClass, number>
+  protected_total: number
+  ordinary_days: number
+  important_days: number
+  next_deletions: Array<{
+    event_id: string
+    retention_class: RetentionClass
+    bytes: number
+    delete_after_ts: number
+    overdue: boolean
+  }>
+}
+export type ArchiveStatus = {
+  enabled: boolean
+  available: boolean
+  target: string
+  marker_required: string
+  last_sync_ts: number | null
+  last_status: string
+  last_error: string | null
+  files_verified: number
+  bytes_verified: number
+}
+export type SemanticCompanionStatus = {
+  enabled: boolean
+  base_url: string
+  token_set: boolean
+  last_check_ts: number | null
+  last_status: string
+}
+export type OperationsState = {
+  v: 1
+  active_profile: HomeProfile
+  effective_mode: 'home' | 'away' | 'night' | 'privacy'
+  mode_schedules: ModeSchedule[]
+  archive: ArchiveStatus
+  semantic_companion: SemanticCompanionStatus
+  saved_searches: SavedSearch[]
+  retention: RetentionPreview
+}
+export type NotificationInboxItem = {
+  id: string
+  created_ts: number
+  title: string
+  body: string
+  kind: string
+  event_id: string | null
+  url: string
+  importance: string
+  seen: boolean
+  delivery_state:
+    | 'queued'
+    | 'gateway_accepted'
+    | 'gateway_failed'
+    | 'gateway_unavailable'
+    | 'displayed'
+    | 'display_failed'
+    | 'snoozed'
+  displayed_ts: number | null
+}
+export type DailyBriefing = {
+  day: string
+  total: number
+  by_label: Record<string, number>
+  unknown_people: number
+  known_people: string[]
+  headline: string
+  recording_state: string
+  camera_interruptions: number
+  protected_events: number
+  generated_ts: number
+}
+export type HealthHistorySample = {
+  ts: number
+  worker_alive: boolean
+  worker_last_seen_s: number | null
+  fps: number | null
+  camera_quality_status: number | null
+  camera_luma: number | null
+  camera_sharpness: number | null
+  power_watts: number | null
+  disk_free_bytes: number | null
+  recording_state: string
+}
+
+export const getOperationsState = () =>
+  req<OperationsState>('/api/security/operations')
+
+export const setHomeProfile = (profile: HomeProfile) =>
+  req<{ active_profile: HomeProfile; effective_mode: string; changed_at: number }>(
+    '/api/security/operations/profile',
+    { method: 'PUT', body: JSON.stringify({ profile }) },
+  )
+
+export const setModeSchedules = (items: ModeSchedule[]) =>
+  req<{ v: 1; items: ModeSchedule[] }>('/api/security/operations/mode-schedules', {
+    method: 'PUT', body: JSON.stringify({ items }),
+  })
+
+export const getNotificationInbox = (limit = 100) =>
+  req<{ v: 1; items: NotificationInboxItem[]; unread: number }>(
+    `/api/security/notifications?limit=${limit}`,
+  )
+
+export const markNotificationSeen = (id: string) =>
+  req<{ seen: true }>(`/api/security/notifications/${encodeURIComponent(id)}/seen`, { method: 'POST' })
+
+export const snoozeNotification = (id: string, durationS: number) =>
+  req<{ kind: string; snoozed_until: number }>(
+    `/api/security/notifications/${encodeURIComponent(id)}/snooze`,
+    { method: 'POST', body: JSON.stringify({ duration_s: durationS }) },
+  )
+
+export const retainNotificationEvent = (id: string, retentionClass: RetentionClass) =>
+  req<{ event_id: string; retention_class: RetentionClass }>(
+    `/api/security/notifications/${encodeURIComponent(id)}/retention`,
+    { method: 'PUT', body: JSON.stringify({ retention_class: retentionClass }) },
+  )
+
+export const getSavedSearches = () =>
+  req<{ v: 1; items: SavedSearch[] }>('/api/security/saved-searches')
+
+export const createSavedSearch = (name: string, query: string, semantic = false) =>
+  req<SavedSearch>('/api/security/saved-searches', {
+    method: 'POST', body: JSON.stringify({ name, query, semantic }),
+  })
+
+export const deleteSavedSearch = (id: string) =>
+  req<{ deleted: true }>(`/api/security/saved-searches/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+export const getDailyBriefing = (day?: string) =>
+  req<DailyBriefing>(`/api/security/briefing${day ? `?day=${encodeURIComponent(day)}` : ''}`)
+
+export const getHealthHistory = (hours = 24) =>
+  req<{ v: 1; items: HealthHistorySample[] }>(`/api/security/health-history?hours=${hours}`)
+
+export const setEventRetention = (eventId: string, retentionClass: RetentionClass) =>
+  req<{ event_id: string; retention_class: RetentionClass }>(
+    `/api/security/events/${encodeURIComponent(eventId)}/retention`,
+    { method: 'PUT', body: JSON.stringify({ retention_class: retentionClass }) },
+  )
+
+export const configureExternalArchive = (enabled: boolean) =>
+  req<ArchiveStatus>('/api/security/operations/archive', {
+    method: 'PUT', body: JSON.stringify({ enabled }),
+  })
+
+export const syncExternalArchive = () =>
+  req<ArchiveStatus>('/api/security/operations/archive/sync', { method: 'POST' })
+
+export const configureSemanticCompanion = (
+  enabled: boolean, baseUrl: string, apiToken?: string,
+) => req<SemanticCompanionStatus>('/api/security/operations/semantic-companion', {
+  method: 'PUT', body: JSON.stringify({ enabled, base_url: baseUrl, ...(apiToken ? { api_token: apiToken } : {}) }),
+})
+
+export const semanticSearch = (query: string, limit = 20) =>
+  req<{ v: 1; items: DetectionEvent[]; mode: 'companion' }>('/api/security/semantic/search', {
+    method: 'POST', body: JSON.stringify({ query, limit }),
+  })

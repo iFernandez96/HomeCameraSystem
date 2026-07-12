@@ -37,6 +37,30 @@ def _default_state() -> dict[str, Any]:
         "face_preferences": {},
         "outages": {"current": {}, "history": []},
         "packages": {},
+        "operations": {
+            "active_profile": "home",
+            "mode_schedules": [],
+            "last_mode_schedule_key": None,
+            "notifications": [],
+            "snoozes": {},
+            "saved_searches": {},
+            "health_history": [],
+            "archive": {
+                "enabled": False,
+                "last_sync_ts": None,
+                "last_status": "not_configured",
+                "last_error": None,
+                "files_verified": 0,
+                "bytes_verified": 0,
+            },
+            "semantic_companion": {
+                "enabled": False,
+                "base_url": "",
+                "api_token": "",
+                "last_check_ts": None,
+                "last_status": "not_configured",
+            },
+        },
     }
 
 

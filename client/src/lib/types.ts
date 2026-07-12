@@ -120,6 +120,8 @@ export type DetectionEvent = {
   clip_url?: string | null
   /** Excluded from automatic age and disk-pressure eviction. */
   protected?: boolean
+  /** Tiered lifecycle used by retention preview and incident evidence. */
+  retention_class?: 'ordinary' | 'important' | 'incident' | 'permanent'
   /** Origin of this activity. Absent on events created before security events. */
   source?: 'vision' | 'audio' | 'doorbell' | 'tamper' | 'system'
   /** Optional automation rule that promoted or described this event. */

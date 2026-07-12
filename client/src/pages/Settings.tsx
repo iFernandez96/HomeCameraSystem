@@ -12,6 +12,7 @@ import { NotificationsSection } from './settings/NotificationsSection'
 import { TimelapsesSection } from './settings/TimelapsesSection'
 import { CameraSetupSection } from './settings/CameraSetupSection'
 import { RulesSection } from './settings/RulesSection'
+import { OperationsSection } from './settings/OperationsSection'
 import { useAuth } from '../lib/auth'
 import { useStatus } from '../lib/useStatus'
 import { isOwner } from '../lib/roles'
@@ -37,7 +38,7 @@ import { isOwner } from '../lib/roles'
 // now means the localStorage key + tab guard already accept it
 // when the actual tab body lands. The only change today: type
 // signature accepts the value; nothing renders for it yet.
-type SettingsTab = 'camera' | 'cameras' | 'rules' | 'notifications' | 'system'
+type SettingsTab = 'camera' | 'cameras' | 'operations' | 'rules' | 'notifications' | 'system'
 const _SETTINGS_TAB_KEY = 'homecam:settingsTab'
 
 function _readInitialTab(isOwner: boolean): SettingsTab {
@@ -54,13 +55,14 @@ function _readInitialTab(isOwner: boolean): SettingsTab {
   if (
     stored === 'camera' ||
     stored === 'cameras' ||
+    stored === 'operations' ||
     stored === 'rules' ||
     stored === 'notifications' ||
     stored === 'system'
   ) {
     // Family/viewer can't land on the Camera tab — its content is
     // entirely owner-gated. Fall through to Notifications.
-    if ((stored === 'camera' || stored === 'rules') && !isOwner) return 'notifications'
+    if ((stored === 'camera' || stored === 'rules' || stored === 'operations') && !isOwner) return 'notifications'
     // iter-356.x: 'cameras' slot reserved for multi-cam (today no
     // tab body) — fall through to Notifications until the tab lands.
     if (stored === 'cameras') return 'notifications'
@@ -97,7 +99,7 @@ export function Settings() {
     _readInitialTab(canManageOwnerSettings),
   )
   const activeTab: SettingsTab =
-    (storedTab === 'camera' || storedTab === 'rules') && !canManageOwnerSettings ? 'notifications' : storedTab
+    (storedTab === 'camera' || storedTab === 'rules' || storedTab === 'operations') && !canManageOwnerSettings ? 'notifications' : storedTab
   const onTabChange = (next: SettingsTab) => {
     setStoredTab(next)
     if (typeof window !== 'undefined') {
@@ -117,6 +119,7 @@ export function Settings() {
   // New security tooling is independently covered; do not mount its live
   // API requests in Settings' legacy render-all-tabs test mode.
   const showRulesPanel = activeTab === 'rules'
+  const showOperationsPanel = activeTab === 'operations'
   const showSystemPanel = _renderAllTabs || activeTab === 'system'
 
   return (
@@ -199,6 +202,7 @@ export function Settings() {
             <NotificationsSection
               pushSubsCount={status?.push_subs_count ?? null}
               pushAssurance={status?.push_assurance ?? null}
+              canManageRetention={canManageOwnerSettings}
             />
           </div>
         )}
@@ -212,6 +216,18 @@ export function Settings() {
             className="focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
           >
             <RulesSection />
+          </div>
+        )}
+
+        {showOperationsPanel && canManageOwnerSettings && (
+          <div
+            role="tabpanel"
+            id="settings-panel-operations"
+            aria-labelledby="settings-tab-operations"
+            tabIndex={0}
+            className="focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
+          >
+            <OperationsSection />
           </div>
         )}
 
@@ -273,6 +289,7 @@ function SettingsTabs({
   // different panel and is intentionally left alone.
   const tabs: { id: SettingsTab; label: string }[] = []
   if (showCamera) tabs.push({ id: 'camera', label: 'Watching' })
+  if (showCamera) tabs.push({ id: 'operations', label: 'Control center' })
   if (showCamera) tabs.push({ id: 'rules', label: 'Rules' })
   tabs.push({ id: 'notifications', label: 'Alerts' })
   // iter-355ac (Maya Nit): tab label was "Account & Maintenance" for
@@ -304,6 +321,8 @@ function SettingsTabs({
   const activeDescription =
     active === 'camera'
       ? 'What the camera looks for and records'
+      : active === 'operations'
+        ? 'Modes, briefings, retention, health and archives'
       : active === 'rules'
         ? 'Activity rules, automations and deterrence'
       : active === 'notifications'

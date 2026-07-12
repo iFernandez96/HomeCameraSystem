@@ -8,6 +8,7 @@ const getPushState = vi.fn()
 const pushSupported = vi.fn()
 const sendTestPush = vi.fn()
 const getStatus = vi.fn()
+const getNotificationInbox = vi.fn()
 const rebootJetson = vi.fn()
 const getDetectionConfig = vi.fn()
 const patchDetectionConfig = vi.fn()
@@ -52,6 +53,7 @@ vi.mock('../lib/api', async () => {
   return {
     ...actual,
     getStatus: (...a: unknown[]) => getStatus(...a),
+    getNotificationInbox: (...a: unknown[]) => getNotificationInbox(...a),
     rebootJetson: (...a: unknown[]) => rebootJetson(...a),
     getDetectionConfig: (...a: unknown[]) => getDetectionConfig(...a),
     patchDetectionConfig: (...a: unknown[]) => patchDetectionConfig(...a),
@@ -117,6 +119,7 @@ describe('Settings page', () => {
     ensurePushSubscription.mockReset()
     disablePushSubscription.mockReset().mockResolvedValue(undefined)
     getPushState.mockReset().mockResolvedValue(false)
+    getNotificationInbox.mockReset().mockResolvedValue({ v: 1, items: [], unread: 0 })
     pushSupported.mockReset().mockReturnValue(true)
     sendTestPush.mockReset().mockResolvedValue(1)
     getStatus.mockReset().mockResolvedValue({

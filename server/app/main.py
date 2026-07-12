@@ -14,7 +14,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, security, sessions, shares, telemetry, training, training_admin
+from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, operations, push, security, sessions, shares, telemetry, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -78,6 +78,7 @@ async def lifespan(_app: FastAPI):
     digest_stop = asyncio.Event()
     digest_task = None
     resilience_task = None
+    operations_task = None
     # Each boot step is wrapped with a NAMED error before re-raising so
     # the journal says WHICH step aborted the boot (pre-this-iter a
     # failing step surfaced only as a bare traceback with no operation
@@ -244,9 +245,11 @@ async def lifespan(_app: FastAPI):
         len(push_service.subs),
     )
     from .services import daily_digest
+    from .services import operations as operations_service
     from .services import security_resilience
     digest_task = asyncio.create_task(daily_digest.run(digest_stop))
     resilience_task = asyncio.create_task(security_resilience.run(digest_stop))
+    operations_task = asyncio.create_task(operations_service.run(digest_stop))
     try:
         yield
     finally:
@@ -255,6 +258,8 @@ async def lifespan(_app: FastAPI):
             await digest_task
         if resilience_task is not None:
             await resilience_task
+        if operations_task is not None:
+            await operations_task
         # THE single most important boot/shutdown diagnostic — pairs
         # with the "server up" line so a journal grep shows the full
         # lifecycle (and an UNCLEAN exit = "server up" with no matching
@@ -591,6 +596,7 @@ app.include_router(events.router, prefix="/api")
 app.include_router(shares.router, prefix="/api")
 app.include_router(security.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 app.include_router(security.identity_router, prefix="/api", dependencies=_PROTECTED_DEPS)
+app.include_router(operations.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 # docs/multicam_contract.md: camera registry for the client. The auth
 # gate also lives per-route inside cameras.py (mirrors events.py
 # style); the router-wide dep here is belt-and-braces consistency with

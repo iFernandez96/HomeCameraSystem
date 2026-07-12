@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS events (
     seen               INTEGER NOT NULL DEFAULT 0,
     person_names_json  TEXT
     ,protected         INTEGER NOT NULL DEFAULT 0,
+    retention_class    TEXT NOT NULL DEFAULT 'ordinary',
     source             TEXT,
     rule_id            TEXT,
     rule_name          TEXT,
@@ -144,6 +145,24 @@ def _ensure_protected_column(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS events_protected_ts "
         "ON events(protected, ts DESC)"
+    )
+
+
+def _ensure_retention_class_column(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "retention_class" not in cols:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN retention_class TEXT "
+            "NOT NULL DEFAULT 'ordinary'"
+        )
+    # Preserve the stronger meaning of every legacy protected event.
+    conn.execute(
+        "UPDATE events SET retention_class = 'permanent' "
+        "WHERE protected = 1 AND retention_class = 'ordinary'"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS events_retention_ts "
+        "ON events(retention_class, ts DESC)"
     )
 
 
@@ -265,6 +284,7 @@ def init_db(path: Path) -> None:
         _ensure_seen_column(conn)
         _ensure_person_names_column(conn)
         _ensure_protected_column(conn)
+        _ensure_retention_class_column(conn)
         _ensure_security_columns(conn)
         conn.commit()
     # Belt-and-braces chmod for legacy installs where the file
@@ -468,6 +488,9 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
         # Read-only production snapshots used by parity harnesses may predate
         # this additive column and cannot be migrated in place.
         protected = False
+    retention_class = _optional_row(row, "retention_class") or (
+        "permanent" if protected else "ordinary"
+    )
     return {
         "v": int(row["v"]),
         "type": row["type"],
@@ -482,6 +505,7 @@ def _row_to_event(row: sqlite3.Row) -> DetectionEventDict:
         "person_names": person_names,
         "clip_url": row["clip_url"],
         "protected": protected,
+        "retention_class": retention_class,
         "source": _optional_row(row, "source") or "vision",
         "rule_id": _optional_row(row, "rule_id"),
         "rule_name": _optional_row(row, "rule_name"),
@@ -951,8 +975,8 @@ def set_protected(path: Path, event_id: str, protected: bool) -> bool:
     """Protect/unprotect an event clip from automatic retention and eviction."""
     with _db_op("set_protected", path, event_id=event_id), _connect(path) as conn:
         cur = conn.execute(
-            "UPDATE events SET protected = ? WHERE id = ?",
-            (1 if protected else 0, event_id),
+            "UPDATE events SET protected = ?, retention_class = ? WHERE id = ?",
+            (1 if protected else 0, "permanent" if protected else "ordinary", event_id),
         )
         conn.commit()
         return cur.rowcount > 0
@@ -961,9 +985,55 @@ def set_protected(path: Path, event_id: str, protected: bool) -> bool:
 def protected_event_ids(path: Path) -> set[str]:
     with _db_op("protected_event_ids", path), _connect(path) as conn:
         rows = conn.execute(
-            "SELECT id FROM events WHERE protected = 1"
+            "SELECT id FROM events WHERE protected = 1 "
+            "OR retention_class IN ('incident', 'permanent')"
         ).fetchall()
     return {str(row["id"]) for row in rows}
+
+
+RETENTION_CLASSES = {"ordinary", "important", "incident", "permanent"}
+
+
+def set_retention_class(path: Path, event_id: str, retention_class: str) -> bool:
+    if retention_class not in RETENTION_CLASSES:
+        return False
+    protected = retention_class in {"incident", "permanent"}
+    with _db_op("set_retention_class", path, event_id=event_id), _connect(path) as conn:
+        cur = conn.execute(
+            "UPDATE events SET retention_class = ?, protected = ? WHERE id = ?",
+            (retention_class, 1 if protected else 0, event_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def retention_class_by_id(path: Path) -> dict[str, str]:
+    with _db_op("retention_class_by_id", path), _connect(path) as conn:
+        rows = conn.execute("SELECT id, retention_class, protected FROM events").fetchall()
+    return {
+        str(row["id"]): (
+            "permanent"
+            if bool(row["protected"]) and row["retention_class"] in {None, "", "ordinary"}
+            else str(row["retention_class"] or "ordinary")
+        )
+        for row in rows
+    }
+
+
+def retention_summary(path: Path) -> dict[str, Any]:
+    with _db_op("retention_summary", path), _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT retention_class, COUNT(*) AS n FROM events "
+            "GROUP BY retention_class"
+        ).fetchall()
+    counts = {name: 0 for name in RETENTION_CLASSES}
+    for row in rows:
+        name = str(row["retention_class"] or "ordinary")
+        counts[name if name in counts else "ordinary"] += int(row["n"])
+    return {
+        "classes": counts,
+        "protected_total": counts["incident"] + counts["permanent"],
+    }
 
 
 def daily_digest(path: Path, day: str) -> dict:

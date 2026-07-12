@@ -32,6 +32,7 @@ vi.mock('./lib/api', () => {
   return {
     getStatus: vi.fn().mockResolvedValue(null),
     searchEvents: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+    getSavedSearches: vi.fn().mockResolvedValue({ v: 1, items: [] }),
     captureSnapshot: vi.fn(),
     getCameras: vi.fn().mockResolvedValue({
       cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
