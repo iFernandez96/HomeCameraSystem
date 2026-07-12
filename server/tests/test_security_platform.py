@@ -8,6 +8,7 @@ import json
 import shutil
 import subprocess
 import zipfile
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -475,6 +476,32 @@ def test_search_status_object_and_normalized_score(client):
         "mode": "local_metadata", "status": "ready", "indexed_events": 1,
     }
     assert 0.0 <= body["items"][0]["score"] <= 1.0
+
+
+def test_search_applies_unknown_and_local_clock_filters_instead_of_token_or_matching(client):
+    from app.config import settings
+    from app.services import events_db
+
+    def add(event_id, hour, person_name):
+        events_db.insert_event(settings.events_db_path, {
+            "id": event_id,
+            "ts": datetime(2026, 7, 12, hour, 30).timestamp(),
+            "camera_id": "front_door",
+            "label": "person",
+            "score": 0.9,
+            "person_name": person_name,
+            "boxes": [],
+        })
+
+    add("unknown-late", 22, None)
+    add("unknown-early", 20, None)
+    add("known-late", 23, "Alice")
+    response = client.get(
+        "/api/security/search",
+        params={"q": "unknown people after 10 PM", "limit": 10},
+    )
+    assert response.status_code == 200
+    assert [item["event"]["id"] for item in response.json()["items"]] == ["unknown-late"]
 
 
 def test_face_merge_moves_sidecar_and_renames_historical_event(

@@ -194,9 +194,14 @@ async def delete_saved_search(search_id: str, username: str = Depends(get_curren
 
 @router.get("/briefing")
 async def briefing(
-    day: Annotated[str, Query(pattern=r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$")] = date.today().isoformat(),
+    day: Annotated[str | None, Query(pattern=r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$")] = None,
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(operations.build_briefing, day)
+    selected = day or date.today().isoformat()
+    try:
+        date.fromisoformat(selected)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="day must be a valid calendar date")
+    return await asyncio.to_thread(operations.build_briefing, selected)
 
 
 @router.get("/health-history", dependencies=[Depends(require_role("owner"))])
@@ -223,7 +228,10 @@ async def set_event_retention(event_id: str, body: RetentionBody) -> dict[str, A
 
 @router.put("/operations/archive", dependencies=[Depends(require_role("owner"))])
 async def configure_archive(body: ArchiveBody) -> dict[str, Any]:
-    row = await asyncio.to_thread(operations.set_archive_enabled, body.enabled)
+    try:
+        row = await asyncio.to_thread(operations.set_archive_enabled, body.enabled)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return {**row, **operations.archive_capability()}
 
 
@@ -231,7 +239,7 @@ async def configure_archive(body: ArchiveBody) -> dict[str, Any]:
 async def sync_archive() -> dict[str, Any]:
     try:
         return await asyncio.to_thread(operations.sync_archive)
-    except FileNotFoundError as exc:
+    except OSError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
 

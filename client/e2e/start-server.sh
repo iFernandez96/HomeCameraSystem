@@ -53,6 +53,11 @@ export EVENTS_DB_PATH="$DIR/events.db"
 export AUDIT_DB_PATH="$DIR/audit.db"
 export SESSIONS_DB_PATH="$DIR/sessions.db"
 export HOST_ACTION_STATE_PATH="$DIR/host_action.json"
+export SECURITY_STATE_PATH="$DIR/security-state.json"
+export PUSH_ASSURANCE_PATH="$DIR/push-assurance.json"
+export RECORDING_ASSURANCE_PATH="$DIR/recording-assurance.json"
+export CAMERA_EXPOSURE_PATH="$DIR/camera-exposure.json"
+export SECURITY_EXPORTS_DIR="$DIR/security-exports"
 export SNAPSHOTS_DIR="$DIR/snapshots"
 export RECORDINGS_DIR="$DIR/recordings"
 export TIMELAPSES_DIR="$DIR/timelapses"
@@ -71,7 +76,7 @@ export HOMECAM_ADMIN_PASSWORD_HASH="$ADMIN_HASH"
 
 mkdir -p "$SNAPSHOTS_DIR" "$RECORDINGS_DIR" "$TIMELAPSES_DIR" \
   "$BACKUP_TARGET_DIR" "$OTA_ARTIFACTS_DIR" "$OTA_STAGING_ROOT" \
-  "$OTA_CLIENT_DIST_TARGET"
+  "$OTA_CLIENT_DIST_TARGET" "$SECURITY_EXPORTS_DIR"
 
 exec /tmp/homecam-venv/bin/python -m uvicorn app.main:app \
   --host 127.0.0.1 --port 8000 --log-level warning

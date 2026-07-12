@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -35,6 +35,12 @@ PROFILE_TO_MODE = {
     "away": "away",
     "sleep": "night",
     "vacation": "away",
+    "privacy": "privacy",
+}
+MODE_TO_PROFILE = {
+    "home": "home",
+    "away": "away",
+    "night": "sleep",
     "privacy": "privacy",
 }
 _MAX_NOTIFICATIONS = 300
@@ -85,10 +91,14 @@ def public_state(username: str) -> dict[str, Any]:
     companion = ops["semantic_companion"]
     archive = dict(ops["archive"])
     archive.update(archive_capability())
+    effective_mode = detection_config.get().operating_mode
+    active_profile = ops["active_profile"]
+    if PROFILE_TO_MODE.get(active_profile) != effective_mode:
+        active_profile = MODE_TO_PROFILE.get(effective_mode, "home")
     return {
         "v": 1,
-        "active_profile": ops["active_profile"],
-        "effective_mode": detection_config.get().operating_mode,
+        "active_profile": active_profile,
+        "effective_mode": effective_mode,
         "mode_schedules": list(ops["mode_schedules"]),
         "archive": archive,
         "semantic_companion": {
@@ -106,6 +116,7 @@ def apply_profile(profile: str, actor: str, now: float | None = None) -> dict[st
     if profile not in PROFILE_TO_MODE:
         raise ValueError("unsupported profile")
     now = time.time() if now is None else now
+    previous_mode = detection_config.get().operating_mode
     detection_config.update(operating_mode=PROFILE_TO_MODE[profile])
 
     def _apply(state: dict[str, Any]) -> dict[str, Any]:
@@ -119,7 +130,27 @@ def apply_profile(profile: str, actor: str, now: float | None = None) -> dict[st
             "changed_at": now,
         }
 
-    return security_store.transact(_apply)
+    try:
+        return security_store.transact(_apply)
+    except Exception:
+        # Keep the two durable stores coherent if the private-state write
+        # fails after the detection config was updated.
+        detection_config.update(operating_mode=previous_mode)
+        raise
+
+
+def note_external_mode(mode: str, actor: str, now: float | None = None) -> None:
+    """Reconcile an explicit mode selection made outside Control Center."""
+    profile = MODE_TO_PROFILE.get(mode)
+    if profile is None:
+        return
+    now = time.time() if now is None else now
+    def _note(state: dict[str, Any]) -> None:
+        ops = _ops(state)
+        ops["active_profile"] = profile
+        ops["profile_changed_at"] = now
+        ops["profile_changed_by"] = actor
+    security_store.transact(_note)
 
 
 def replace_mode_schedules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -132,25 +163,60 @@ def replace_mode_schedules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def run_mode_schedule(now: float | None = None) -> bool:
     now = time.time() if now is None else now
     local = datetime.fromtimestamp(now)
-    hhmm = local.strftime("%H:%M")
-    weekday = local.weekday()
     state = security_store.read()
     ops = _ops(state)
-    matches = [
-        row for row in ops["mode_schedules"]
-        if isinstance(row, dict)
-        and row.get("enabled") is True
-        and row.get("time") == hhmm
-        and weekday in row.get("days", [])
-        and row.get("profile") in PROFILE_TO_MODE
-    ]
-    if not matches:
+
+    # A mode changed through the older Detection panel is authoritative. Make
+    # the profile state converge before evaluating Vacation's sticky guard.
+    effective_mode = detection_config.get().operating_mode
+    active_profile = ops.get("active_profile")
+    if PROFILE_TO_MODE.get(active_profile) != effective_mode:
+        active_profile = MODE_TO_PROFILE.get(effective_mode, "home")
+        def _reconcile(state_value: dict[str, Any]) -> None:
+            current = _ops(state_value)
+            current["active_profile"] = active_profile
+            current["profile_changed_at"] = now
+            current["profile_changed_by"] = "external_mode_change"
+        security_store.transact(_reconcile)
+        ops = _ops(security_store.read())
+
+    # Vacation is deliberately sticky: ordinary daily schedules resume only
+    # after an owner explicitly selects another profile.
+    if ops.get("active_profile") == "vacation":
         return False
-    row = matches[-1]
-    key = "{}:{}".format(local.strftime("%Y-%m-%dT%H:%M"), row.get("id"))
+
+    candidates: list[tuple[float, int, dict[str, Any]]] = []
+    for index, row in enumerate(ops["mode_schedules"]):
+        if not isinstance(row, dict) or row.get("enabled") is not True:
+            continue
+        if row.get("profile") not in PROFILE_TO_MODE:
+            continue
+        try:
+            hour, minute = (int(part) for part in str(row.get("time")).split(":"))
+        except (TypeError, ValueError):
+            continue
+        for days_ago in range(8):
+            candidate_day = (local - timedelta(days=days_ago)).date()
+            if candidate_day.weekday() not in row.get("days", []):
+                continue
+            occurrence = datetime.combine(
+                candidate_day, datetime.min.time()
+            ).replace(hour=hour, minute=minute).timestamp()
+            if occurrence <= now:
+                candidates.append((occurrence, index, row))
+                break
+    if not candidates:
+        return False
+    occurrence, _index, row = max(candidates, key=lambda item: (item[0], item[1]))
+    # A manual selection made after the scheduled occurrence wins. This also
+    # prevents boot catch-up from undoing a deliberate mode change.
+    if float(ops.get("profile_changed_at") or 0.0) >= occurrence:
+        return False
+    occurrence_local = datetime.fromtimestamp(occurrence)
+    key = "{}:{}".format(occurrence_local.strftime("%Y-%m-%dT%H:%M"), row.get("id"))
     if ops.get("last_mode_schedule_key") == key:
         return False
-    apply_profile(str(row["profile"]), "schedule", now)
+    apply_profile(str(row["profile"]), "schedule", occurrence)
 
     def _mark(state_value: dict[str, Any]) -> None:
         _ops(state_value)["last_mode_schedule_key"] = key
@@ -171,8 +237,18 @@ def _is_snoozed(ops: dict[str, Any], username: str, kind: str, now: float) -> bo
     return isinstance(until, (int, float)) and float(until) > now
 
 
+def _notification_url(value: Any) -> str:
+    url = str(value or "/events")[:256]
+    if not url.startswith("/") or url.startswith("//"):
+        return "/events"
+    return url
+
+
 def prepare_notification(
-    payload: dict[str, Any], subs: list[dict[str, Any]], gateway_available: bool
+    payload: dict[str, Any],
+    subs: list[dict[str, Any]],
+    gateway_available: bool,
+    intended_users: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Create one per-user inbox row and return non-snoozed subscriptions."""
     notification_id = uuid.uuid4().hex
@@ -181,6 +257,9 @@ def prepare_notification(
     users = sorted({
         str(sub.get("user_id")) for sub in subs
         if isinstance(sub.get("user_id"), str) and sub.get("user_id")
+    } | {
+        username for username in (intended_users or [])
+        if isinstance(username, str) and username
     })
     # Legacy/unit-test subscriptions without an owning user still receive
     # push normally; there is no safe principal under which to file an inbox
@@ -200,13 +279,20 @@ def prepare_notification(
                 "body": str(payload.get("body") or "New activity")[:500],
                 "kind": kind,
                 "event_id": payload.get("event_id") if isinstance(payload.get("event_id"), str) else None,
-                "url": str(payload.get("url") or "/events")[:256],
+                "url": _notification_url(payload.get("url")),
                 "importance": str(payload.get("importance") or "normal")[:16],
                 "seen": False,
                 "delivery_state": (
-                    "snoozed" if snoozed else "queued" if gateway_available else "gateway_unavailable"
+                    "snoozed" if snoozed else "queued"
+                    if gateway_available and any(sub.get("user_id") == username for sub in subs)
+                    else "gateway_unavailable"
                 ),
                 "displayed_ts": None,
+                "delivery_total": sum(1 for sub in subs if sub.get("user_id") == username),
+                "gateway_accepted_count": 0,
+                "gateway_failed_count": 0,
+                "displayed_count": 0,
+                "display_failed_count": 0,
             })
         ops["notifications"] = ops["notifications"][-_MAX_NOTIFICATIONS:]
         return [username for username in users if not _is_snoozed(ops, username, kind, now)]
@@ -224,6 +310,8 @@ def mark_gateway(notification_id: str, username: str | None, delivered: bool) ->
         for row in reversed(_ops(state)["notifications"]):
             if row.get("id") == notification_id and row.get("username") == username:
                 current = row.get("delivery_state")
+                count_key = "gateway_accepted_count" if delivered else "gateway_failed_count"
+                row[count_key] = int(row.get(count_key) or 0) + 1
                 if current != "displayed" and (
                     delivered or current != "gateway_accepted"
                 ):
@@ -238,6 +326,8 @@ def mark_displayed(notification_id: str | None, username: str | None, shown: boo
     def _mark(state: dict[str, Any]) -> None:
         for row in reversed(_ops(state)["notifications"]):
             if row.get("id") == notification_id and row.get("username") == username:
+                count_key = "displayed_count" if shown else "display_failed_count"
+                row[count_key] = int(row.get(count_key) or 0) + 1
                 if shown or row.get("delivery_state") != "displayed":
                     row["delivery_state"] = "displayed" if shown else "display_failed"
                     row["displayed_ts"] = now if shown else None
@@ -317,6 +407,8 @@ def build_briefing(day: str) -> dict[str, Any]:
     assurance = recording_assurance.status()
     state = security_store.read()
     outages = state.get("outages", {}).get("history", [])
+    day_start = datetime.strptime(day, "%Y-%m-%d").timestamp()
+    day_end = (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).timestamp()
     day_outages = []
     for row in outages:
         if not isinstance(row, dict):
@@ -324,9 +416,16 @@ def build_briefing(day: str) -> dict[str, Any]:
         started = row.get("start_ts")
         if not isinstance(started, (int, float)):
             continue
-        if datetime.fromtimestamp(float(started)).strftime("%Y-%m-%d") == day:
+        ended = row.get("end_ts")
+        end_value = float(ended) if isinstance(ended, (int, float)) else time.time()
+        if float(started) < day_end and end_value >= day_start:
             day_outages.append(row)
     protected = events_db.retention_summary(settings.events_db_path)
+    event_ids = events_db.event_ids_for_day(settings.events_db_path, day)
+    video_counts = {name: 0 for name in ("available", "processing", "failed", "unknown")}
+    for status in recording_service.clip_statuses(event_ids).values():
+        bucket = "processing" if status in {"recording", "finalizing"} else status
+        video_counts[bucket if bucket in video_counts else "unknown"] += 1
     headline = "No recorded activity"
     if digest["total"]:
         headline = "{} event{} · {} unknown person sighting{}".format(
@@ -337,6 +436,7 @@ def build_briefing(day: str) -> dict[str, Any]:
         **digest,
         "headline": headline,
         "recording_state": assurance["state"],
+        "video_counts": video_counts,
         "camera_interruptions": len(day_outages),
         "protected_events": protected["protected_total"],
         "generated_ts": time.time(),
@@ -381,17 +481,44 @@ def health_history(hours: int, now: float | None = None) -> list[dict[str, Any]]
     ]
 
 
-def archive_capability() -> dict[str, Any]:
+def _archive_capability() -> dict[str, Any]:
     root = settings.external_archive_dir
     marker = root / ".homecam-external-archive"
+    reason = None
+    target_device = None
+    try:
+        if root.is_symlink() or not root.is_dir():
+            reason = "target_not_mounted"
+        elif not marker.is_file() or marker.is_symlink():
+            reason = "marker_missing"
+        else:
+            target_device = _filesystem_device(root)
+            if target_device == _filesystem_device(settings.recordings_dir):
+                reason = "same_filesystem_as_recordings"
+    except OSError:
+        reason = "target_unavailable"
     return {
         "target": str(root),
-        "available": root.is_dir() and marker.is_file() and not marker.is_symlink(),
+        "available": reason is None,
+        "unavailable_reason": reason,
+        "target_device": target_device,
         "marker_required": ".homecam-external-archive",
     }
 
 
+def archive_capability() -> dict[str, Any]:
+    value = _archive_capability()
+    value.pop("target_device", None)
+    return value
+
+
+def _filesystem_device(path: Path) -> int:
+    return path.stat().st_dev
+
+
 def set_archive_enabled(enabled: bool) -> dict[str, Any]:
+    if enabled and not _archive_capability()["available"]:
+        raise FileNotFoundError("independent archive target is not safely mounted")
     def _set(state: dict[str, Any]) -> dict[str, Any]:
         row = _ops(state)["archive"]
         row["enabled"] = enabled
@@ -408,40 +535,63 @@ def _hash(path: Path) -> str:
 
 
 def sync_archive() -> dict[str, Any]:
-    capability = archive_capability()
+    capability = _archive_capability()
     if not capability["available"]:
         raise FileNotFoundError("independent archive target is not mounted and marked")
+    expected_device = capability["target_device"]
     root = settings.external_archive_dir / "protected-events"
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    manifest = []
-    total = 0
-    for event_id in sorted(events_db.protected_event_ids(settings.events_db_path)):
-        source = recording_service.clip_path(event_id)
-        if source is None or not source.is_file():
-            continue
-        digest = _hash(source)
-        target = root / (event_id + ".mp4")
-        if not target.is_file() or _hash(target) != digest:
-            temp = target.with_suffix(".mp4.tmp")
-            shutil.copy2(source, temp)
-            if _hash(temp) != digest:
-                temp.unlink(missing_ok=True)
-                raise OSError("archive copy checksum mismatch")
-            with temp.open("rb") as handle:
-                os.fsync(handle.fileno())
-            os.replace(temp, target)
-            target.chmod(0o600)
-        size = target.stat().st_size
-        total += size
-        manifest.append({"event_id": event_id, "sha256": digest, "bytes": size})
-    body = json.dumps({"v": 1, "created_ts": time.time(), "files": manifest}, indent=2, sort_keys=True).encode()
     temp_manifest = root / ".manifest.json.tmp"
-    with temp_manifest.open("wb") as handle:
-        handle.write(body)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_manifest, root / "manifest.json")
-    (root / "manifest.json").chmod(0o600)
+    try:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        manifest = []
+        total = 0
+        for event_id in sorted(events_db.protected_event_ids(settings.events_db_path)):
+            current = _archive_capability()
+            if not current["available"] or current["target_device"] != expected_device:
+                raise OSError("independent archive target changed during sync")
+            source = recording_service.clip_path(event_id)
+            if source is None or not source.is_file():
+                continue
+            digest = _hash(source)
+            target = root / (event_id + ".mp4")
+            if not target.is_file() or _hash(target) != digest:
+                temp = target.with_suffix(".mp4.tmp")
+                try:
+                    shutil.copy2(source, temp)
+                    if _hash(temp) != digest:
+                        raise OSError("archive copy checksum mismatch")
+                    with temp.open("rb") as handle:
+                        os.fsync(handle.fileno())
+                    current = _archive_capability()
+                    if not current["available"] or current["target_device"] != expected_device:
+                        raise OSError("independent archive target changed during copy")
+                    os.replace(temp, target)
+                    target.chmod(0o600)
+                finally:
+                    temp.unlink(missing_ok=True)
+            size = target.stat().st_size
+            total += size
+            manifest.append({"event_id": event_id, "sha256": digest, "bytes": size})
+        body = json.dumps({"v": 1, "created_ts": time.time(), "files": manifest}, indent=2, sort_keys=True).encode()
+        with temp_manifest.open("wb") as handle:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_manifest, root / "manifest.json")
+        (root / "manifest.json").chmod(0o600)
+        directory_fd = os.open(str(root), os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception as exc:
+        temp_manifest.unlink(missing_ok=True)
+        now = time.time()
+        def _failed(state: dict[str, Any]) -> None:
+            row = _ops(state)["archive"]
+            row.update({"last_sync_ts": now, "last_status": "failed", "last_error": str(exc)[:200]})
+        security_store.transact(_failed)
+        raise
     now = time.time()
     def _record(state: dict[str, Any]) -> dict[str, Any]:
         row = _ops(state)["archive"]

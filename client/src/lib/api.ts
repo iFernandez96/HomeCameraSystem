@@ -1366,7 +1366,7 @@ export type SemanticSearchResult = {
   event: DetectionEvent
   description: string
   match_reason: string
-  score: number
+  score: number | null
 }
 
 export type SecuritySearchResponse = {
@@ -1434,10 +1434,10 @@ export const getIncident = (incidentId: string) =>
     `/api/security/incidents/${encodeURIComponent(incidentId)}`,
   )
 
-export const createIncident = (title: string, notes = '') =>
+export const createIncident = (title: string, notes = '', eventId?: string) =>
   req<IncidentDetail>('/api/security/incidents', {
     method: 'POST',
-    body: JSON.stringify({ title, notes }),
+    body: JSON.stringify({ title, notes, ...(eventId ? { event_id: eventId } : {}) }),
   })
 
 export const updateIncident = (
@@ -1717,6 +1717,7 @@ export type ArchiveStatus = {
   available: boolean
   target: string
   marker_required: string
+  unavailable_reason?: string | null
   last_sync_ts: number | null
   last_status: string
   last_error: string | null
@@ -1768,6 +1769,12 @@ export type DailyBriefing = {
   known_people: string[]
   headline: string
   recording_state: string
+  video_counts: {
+    available: number
+    processing: number
+    failed: number
+    unknown: number
+  }
   camera_interruptions: number
   protected_events: number
   generated_ts: number

@@ -1066,6 +1066,17 @@ def daily_digest(path: Path, day: str) -> dict:
     }
 
 
+def event_ids_for_day(path: Path, day: str) -> list[str]:
+    """Return local-day event ids for recording-assurance summaries."""
+    with _db_op("event_ids_for_day", path, day=day), _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM events "
+            "WHERE date(ts, 'unixepoch', 'localtime') = ? ORDER BY ts ASC, id ASC",
+            (day,),
+        ).fetchall()
+    return [str(row["id"]) for row in rows]
+
+
 def delete(path: Path, event_id: str) -> bool:
     """iter-299 (user "be able to delete events manually with a
     confirmation"): delete one event by id. Returns True if a row

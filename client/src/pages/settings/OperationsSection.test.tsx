@@ -81,6 +81,7 @@ describe('OperationsSection', () => {
       day: '2026-07-11', total: 3, by_label: { person: 3 }, unknown_people: 1,
       known_people: ['Israel'], headline: '3 events · 1 unknown person sighting',
       recording_state: 'ok', camera_interruptions: 0, protected_events: 3,
+      video_counts: { available: 2, processing: 0, failed: 1, unknown: 0 },
       generated_ts: 2_000_000_000,
     })
     getHealthHistory.mockResolvedValue({
@@ -118,7 +119,7 @@ describe('OperationsSection', () => {
     await screen.findByRole('heading', { name: 'Household mode' })
     fireEvent.change(screen.getByLabelText('Scheduled mode'), { target: { value: 'sleep' } })
     fireEvent.change(screen.getByLabelText('Scheduled mode time'), { target: { value: '23:15' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add daily schedule' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add schedule' }))
     await waitFor(() => expect(setModeSchedules).toHaveBeenCalled())
     expect(setModeSchedules.mock.calls[0][0][0]).toMatchObject({ profile: 'sleep', time: '23:15', days: [0, 1, 2, 3, 4, 5, 6] })
   })

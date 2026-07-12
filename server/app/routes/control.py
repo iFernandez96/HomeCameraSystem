@@ -17,6 +17,7 @@ from ..auth.dependencies import get_current_user, require_role
 from ..config import settings
 from ..services.camera import camera_service
 from ..services.detection import detection_service
+from ..services import operations
 from ..services.detection_config import (
     ABSENCE_FINALIZE_MAX,
     ABSENCE_FINALIZE_MIN,
@@ -387,7 +388,10 @@ async def get_detection_config() -> dict[str, object]:
     "/detection/config",
     dependencies=[Depends(require_role("owner"))],
 )
-async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, object]:
+async def patch_detection_config(
+    payload: DetectionConfigPatch,
+    actor: str = Depends(get_current_user),
+) -> dict[str, object]:
     # iter-197 (Feature #3 slice 3): owner-only. Detection settings
     # (threshold / cooldown / classes / zones / schedule) affect the
     # whole household — family/viewer users see the feed but don't
@@ -404,8 +408,11 @@ async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, obj
     # never the values (zones carry coordinate geometry, classes/labels
     # are operator PII-adjacent). Sorted for stable grep.
     log.info("detection config patch: keys=%s", sorted(patch.keys()))
+    previous_mode = detection_config.get().operating_mode
     try:
         new = detection_config.update(**patch)
+        if "operating_mode" in patch:
+            operations.note_external_mode(new.operating_mode, actor)
     except Exception:
         # The store may warn-and-return internally on a persist failure,
         # but a hard exception here means the patch was rejected/lost.
@@ -413,6 +420,8 @@ async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, obj
         log.exception(
             "detection config update failed: keys=%s", sorted(patch.keys())
         )
+        if "operating_mode" in patch:
+            detection_config.update(operating_mode=previous_mode)
         raise
     return asdict(new)
 
