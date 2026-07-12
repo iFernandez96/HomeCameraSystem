@@ -492,10 +492,11 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
     rec_dir = settings.recordings_dir
     if not rec_dir.exists():
         return 0
-    cutoff = time.time() - (retention_days * 86400)
+    now = time.time()
+    cutoff = now - (retention_days * 86400)
     try:
-        from .events_db import protected_event_ids
-        protected_ids = protected_event_ids(settings.events_db_path)
+        from .events_db import retention_class_by_id
+        retention_classes = retention_class_by_id(settings.events_db_path)
     except Exception:
         # Fail closed: if protection state cannot be read, do not risk deleting
         # footage the owner explicitly retained.
@@ -520,13 +521,18 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
             event_id = (
                 entry.name[:-12] if is_tracks_sidecar else entry.stem
             )
-            if event_id in protected_ids:
+            retention_class = retention_classes.get(event_id, "ordinary")
+            if retention_class in {"incident", "permanent"}:
                 continue
             try:
                 mtime = entry.stat().st_mtime
             except OSError:
                 continue
-            if mtime < cutoff:
+            event_cutoff = cutoff
+            if retention_class == "important":
+                important_days = max(int(retention_days) * 3, 30)
+                event_cutoff = now - important_days * 86400
+            if mtime < event_cutoff:
                 try:
                     entry.unlink()
                     if is_clip:
@@ -611,6 +617,49 @@ def storage_forecast(now: float | None = None) -> dict:
     }
 
 
+def retention_preview(now: float | None = None, limit: int = 12) -> dict:
+    """Explain retention classes and the next age-based deletions."""
+    now = time.time() if now is None else now
+    try:
+        from .detection_config import (
+            detection_config as _dc,
+            preset_retention_days as _preset_retention_days,
+        )
+        ordinary_days = _preset_retention_days(_dc.get().clip_retention_preset)
+    except Exception:
+        ordinary_days = settings.recordings_retention_days
+    from .events_db import retention_class_by_id, retention_summary
+    classes = retention_class_by_id(settings.events_db_path)
+    candidates = []
+    class_bytes = {name: 0 for name in ("ordinary", "important", "incident", "permanent")}
+    for mtime, path in _list_clips_by_mtime(settings.recordings_dir):
+        event_id = path.stem
+        retention_class = classes.get(event_id, "ordinary")
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        class_bytes[retention_class if retention_class in class_bytes else "ordinary"] += size
+        if retention_class in {"incident", "permanent"}:
+            continue
+        days = max(ordinary_days * 3, 30) if retention_class == "important" else ordinary_days
+        candidates.append({
+            "event_id": event_id,
+            "retention_class": retention_class,
+            "bytes": size,
+            "delete_after_ts": mtime + days * 86400,
+            "overdue": now >= mtime + days * 86400,
+        })
+    candidates.sort(key=lambda row: (row["delete_after_ts"], row["event_id"]))
+    return {
+        **retention_summary(settings.events_db_path),
+        "class_bytes": class_bytes,
+        "ordinary_days": ordinary_days,
+        "important_days": max(ordinary_days * 3, 30),
+        "next_deletions": candidates[:limit],
+    }
+
+
 def evict_to_free_space(
     min_free_bytes: int | None = None,
     *,
@@ -661,15 +710,22 @@ def evict_to_free_space(
     # Snapshot oldest-first; delete until free >= floor or we run out.
     clips = list_clips(rec_dir)
     try:
-        from .events_db import protected_event_ids
-        protected_ids = protected_event_ids(settings.events_db_path)
+        from .events_db import retention_class_by_id
+        retention_classes = retention_class_by_id(settings.events_db_path)
     except Exception:
         log.exception("evict: could not load protected event ids; skipping eviction")
         return result
+    # Preserve the oldest-first guarantee inside each tier, but spend ordinary
+    # footage before footage the owner marked important.
+    clips.sort(key=lambda pair: (
+        retention_classes.get(Path(pair[1].name).stem, "ordinary") == "important",
+        pair[0],
+    ))
     for _mtime, path in clips:
         if _free() >= min_free_bytes:
             break
-        if Path(path.name).stem in protected_ids:
+        retention_class = retention_classes.get(Path(path.name).stem, "ordinary")
+        if retention_class in {"incident", "permanent"}:
             continue
         try:
             size = path.stat().st_size

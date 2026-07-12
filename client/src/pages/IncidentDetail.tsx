@@ -169,6 +169,17 @@ export function IncidentDetail() {
           </ol>
         )}
       </section>
+      <section aria-labelledby="incident-audit-h2" className="card-paper p-4">
+        <h2 id="incident-audit-h2" className="text-lg font-semibold">Case history</h2>
+        <ol className="mt-3 space-y-2">
+          {(incident.audit ?? []).map((entry, index) => (
+            <li key={`${entry.ts}:${entry.action}:${index}`} className="flex flex-wrap justify-between gap-2 text-sm">
+              <span className="capitalize">{entry.action.replaceAll('_', ' ')} · {entry.username}</span>
+              <time className="text-[var(--color-text-secondary)]" dateTime={new Date(entry.ts * 1000).toISOString()}>{new Date(entry.ts * 1000).toLocaleString()}</time>
+            </li>
+          ))}
+        </ol>
+      </section>
       {selected ? <ClipModal event={selected} onClose={() => setSelected(null)} /> : null}
     </div>
   )

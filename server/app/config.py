@@ -194,6 +194,13 @@ class Settings:
     security_exports_dir: Path = Path(
         os.getenv("SECURITY_EXPORTS_DIR", "/app/secrets/security-exports")
     )
+    # Optional independently-mounted NAS/second-host archive. The service
+    # refuses to write unless this directory already exists and contains the
+    # explicit `.homecam-external-archive` marker, so a missing mount can never
+    # silently fall back onto the Jetson's root filesystem.
+    external_archive_dir: Path = Path(
+        os.getenv("EXTERNAL_ARCHIVE_DIR", "/app/external-archive")
+    )
     security_timeline_max_range_s: int = int(
         os.getenv("SECURITY_TIMELINE_MAX_RANGE_S", "86400")
     )

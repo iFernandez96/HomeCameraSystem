@@ -521,7 +521,9 @@ async def add_incident_event(
         row = security_store.transact(_add)
     except KeyError:
         raise _not_found("incident not found")
-    await asyncio.to_thread(events_db.set_protected, settings.events_db_path, event_id, True)
+    await asyncio.to_thread(
+        events_db.set_retention_class, settings.events_db_path, event_id, "incident"
+    )
     return _incident_public(row, include_events=True)
 
 
@@ -564,6 +566,61 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _pdf_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _incident_pdf(row: dict[str, Any], events: list[dict[str, Any]]) -> bytes:
+    """Generate a dependency-free, printable evidence summary PDF."""
+    lines = [
+        "HomeCam Incident Report",
+        "Title: {}".format(row.get("title") or "Untitled"),
+        "Owner: {}".format(row.get("owner_username") or "Unknown"),
+        "Status: {}".format(row.get("status") or "open"),
+        "Created: {}".format(time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(float(row.get("created_ts", 0))))),
+        "Evidence events: {}".format(len(events)),
+        "",
+    ]
+    notes = str(row.get("notes") or "No notes.").replace("\r", " ").replace("\n", " ")
+    lines.extend(["Notes:", notes[:500], "", "Evidence timeline:"])
+    for event in sorted(events, key=lambda item: float(item.get("ts", 0))):
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(event.get("ts", 0))))
+        subject = event.get("person_name") or event.get("label") or "event"
+        lines.append("{}  {}  {}".format(stamp, subject, event.get("id")))
+    lines = [line[:105] for line in lines[:48]]
+    content = ["BT", "/F1 11 Tf", "50 760 Td"]
+    for index, line in enumerate(lines):
+        if index:
+            content.append("0 -14 Td")
+        content.append("({}) Tj".format(_pdf_escape(line)))
+    content.append("ET")
+    stream = "\n".join(content).encode("latin-1", "replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+    ]
+    body = bytearray(b"%PDF-1.4\n%HomeCam\n")
+    offsets = [0]
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(body))
+        body.extend("{} 0 obj\n".format(number).encode())
+        body.extend(obj + b"\nendobj\n")
+    xref = len(body)
+    body.extend("xref\n0 {}\n".format(len(objects) + 1).encode())
+    body.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        body.extend("{:010d} 00000 n \n".format(offset).encode())
+    body.extend(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n".format(
+            len(objects) + 1, xref
+        ).encode()
+    )
+    return bytes(body)
+
+
 def _incident_reservation(row: dict[str, Any]) -> int:
     events = events_db.get_by_ids(
         settings.events_db_path, list(row.get("event_ids", []))
@@ -602,6 +659,9 @@ def _build_evidence_zip(
             events_body = json.dumps(events, indent=2, sort_keys=True).encode("utf-8")
             archive.writestr("events.json", events_body)
             evidence.append({"path": "events.json", "sha256": hashlib.sha256(events_body).hexdigest(), "bytes": len(events_body)})
+            report_body = _incident_pdf(row, events)
+            archive.writestr("incident-report.pdf", report_body)
+            evidence.append({"path": "incident-report.pdf", "sha256": hashlib.sha256(report_body).hexdigest(), "bytes": len(report_body)})
             for event in events:
                 clip = recording_service.clip_path(str(event["id"]))
                 if clip is not None and clip.is_file():

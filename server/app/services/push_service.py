@@ -17,7 +17,7 @@ from pywebpush import WebPushException, webpush
 
 from ..config import settings
 from ..log import RateLimitedLog
-from . import push_assurance
+from . import operations, push_assurance
 
 log = logging.getLogger(__name__)
 
@@ -464,6 +464,9 @@ class PushService:
         prunes 404/410 dead subs from `self.subs`, returns the count
         successfully delivered. Transient errors (ConnectionError,
         SSL, etc.) leave subs in the registry."""
+        notification_id, subs = operations.prepare_notification(
+            payload, subs, self.private_pem is not None
+        )
         if self.private_pem is None:
             # `load_keys()` already warned once on startup if keys were
             # missing — but a DEBUG line here is invisible at the INFO
@@ -508,9 +511,12 @@ class PushService:
         def send_one(sub: dict[str, Any]) -> tuple[bool, int | None, str | None]:
             # Host-only — NEVER the full endpoint (carries device secret).
             host = _endpoint_host(sub.get("endpoint"))
-            receipt_id = push_assurance.issue(sub)
+            receipt_id = push_assurance.issue(
+                sub, notification_id=notification_id
+            )
             delivery_payload = dict(payload)
             delivery_payload["receipt_id"] = receipt_id
+            delivery_payload["notification_id"] = notification_id
             body = json.dumps(delivery_payload)
             try:
                 webpush(
@@ -585,6 +591,11 @@ class PushService:
         sent = 0
         dead: list[dict[str, Any]] = []
         for sub, (ok, code, exc_type) in zip(subs, results):
+            operations.mark_gateway(
+                notification_id,
+                sub.get("user_id") if isinstance(sub.get("user_id"), str) else None,
+                ok,
+            )
             if ok:
                 sent += 1
             elif code in (404, 410):

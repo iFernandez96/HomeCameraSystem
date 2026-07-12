@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import threading
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from ..log import RateLimitedLog
 
 
 _TOKEN_TTL_S = 3600.0
@@ -24,6 +26,8 @@ _RECENT_S = 24 * 3600.0
 _MAX_PENDING = 2048
 _lock = threading.Lock()
 _pending: dict[str, dict[str, Any]] = {}
+log = logging.getLogger(__name__)
+_inbox_failure_gate = RateLimitedLog(300.0)
 
 
 def _device_id(sub: dict[str, Any]) -> str:
@@ -76,7 +80,11 @@ def _prune_pending(now: float) -> None:
             _pending.pop(token, None)
 
 
-def issue(sub: dict[str, Any], now: float | None = None) -> str:
+def issue(
+    sub: dict[str, Any],
+    now: float | None = None,
+    notification_id: str | None = None,
+) -> str:
     now = time.time() if now is None else now
     token = secrets.token_urlsafe(24)
     with _lock:
@@ -85,6 +93,7 @@ def issue(sub: dict[str, Any], now: float | None = None) -> str:
             "device_id": _device_id(sub),
             "user_id": sub.get("user_id") if isinstance(sub.get("user_id"), str) else None,
             "sent_at": now,
+            "notification_id": notification_id,
         }
     return token
 
@@ -110,6 +119,16 @@ def accept(token: str, shown: bool, now: float | None = None, path: Path | None 
         "shown": bool(shown),
     }
     _write(value, path)
+    try:
+        from . import operations
+        operations.mark_displayed(
+            row.get("notification_id"), row.get("user_id"), bool(shown), now
+        )
+    except Exception:
+        # Receipt durability is primary; inbox enrichment must not turn a
+        # valid one-use receipt into an apparent failure/replay opportunity.
+        if _inbox_failure_gate.should_log():
+            log.exception("push receipt saved but notification inbox update failed")
     return True
 
 
