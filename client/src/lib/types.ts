@@ -549,6 +549,24 @@ export type MeResponse = {
   user: User
 }
 
+export type RecordingAssuranceStatus = {
+  state: 'unknown' | 'ok' | 'failed' | 'stale'
+  checked_at: number | null
+  age_s: number | null
+  stage: 'storage' | 'capture' | 'decode' | 'cleanup' | 'complete' | null
+  reason: string | null
+  sample_bytes: number | null
+  elapsed_ms: number | null
+  storage: {
+    writable: boolean
+    filesystem: string | null
+    read_only: boolean | null
+    smart_status: 'healthy' | 'failed' | 'unavailable'
+    free_bytes: number | null
+    write_probe_ms: number | null
+  } | null
+}
+
 export type ServerStatus = {
   ok: boolean
   /** FastAPI process uptime. */
@@ -600,6 +618,8 @@ export type ServerStatus = {
   recording_gb_per_day?: number
   /** Clip storage currently excluded from automatic eviction. */
   protected_recording_gb?: number
+  /** Scheduled RTSP -> MP4 -> full-decode -> cleanup proof from the Jetson. */
+  recording_assurance?: RecordingAssuranceStatus
   fps: number
   /**
    * Live count of registered Web Push subscriptions on the server

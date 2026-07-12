@@ -1,0 +1,13 @@
+[Unit]
+Description=Run HomeCam recording assurance every 30 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=homecam-recording-canary.service
+
+[Install]
+WantedBy=timers.target
+

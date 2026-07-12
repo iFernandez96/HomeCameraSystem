@@ -150,6 +150,14 @@ These 13 are the standing way to work in this repo — derived from the codebase
 - Audio, doorbell, and tamper metadata use the strict retry-idempotent `/api/_internal/signal` endpoint with stable IDs and unix-second timestamps. Never fabricate visual boxes for them. The optional audio watcher records no raw audio and stops acquisition/drops queued metadata when disabled or in Privacy; it is not a life-safety device.
 - RBAC `admin`-as-`owner` transitional carve-out lives in server `require_role` and THREE client copies: `Settings.tsx::isOwner`, `Events.tsx` (~line 61), `ClipModal.tsx` (delete gate). All four drop together when seeded users migrate.
 - ffmpeg muxer `-f mp4` is load-bearing in `recording.py::_build_args` and `preroll.py::run_concat`. `.tmp` output suffixes can't be muxer-inferred. Pin: `test_*_real_ffmpeg_*`.
+- Recording assurance (`recording_canary.py` + `homecam-recording-canary.timer`)
+  reads the existing MediaMTX RTSP path only; it must never open libargus or
+  add another camera owner. Success means all four stages completed in order:
+  USB fsync probe, MP4 stream-copy, full ffmpeg decode, and deletion of every
+  exact canary-owned temporary. Report only after cleanup. Never broaden its
+  cleanup patterns to event clips, `_preroll`, or `_visits`. The strict
+  `/api/_internal/recording-assurance` payload persists on the SD-backed
+  secrets volume so a missing/read-only USB can still be reported and alerted.
 - Recorder uses `-c copy` (NVENC bitstream, no re-encode). Don't add `drawbox`/filtergraphs to burn boxes into pixels — bbox overlay is client-side via `lib/drawBoxes.ts`.
 - Pre-roll segments are COPIED into a per-event scratch dir before the merge thread waits. The segment-recorder ffmpeg uses `-segment_wrap` which rewrites slots in-place; the copy decouples merge timing from ring rotation. Don't drop the `shutil.copy2` step in `recording.py::start_clip`.
 - Heatmap day-bounds use local-time `new Date(y, m, d)`, NOT `Date.parse('YYYY-MM-DD')`. Server uses `date(ts, 'unixepoch', 'localtime')`. Operator must set `TZ=...` in compose.

@@ -6,10 +6,17 @@ import {
   DEFAULT_CAMERA_PATH,
   getStreamQuality,
   pathForQuality,
+  resolveAutoQuality,
   setStreamQuality,
   whepUrlForPath,
   type StreamQuality,
 } from '../lib/streamQuality'
+import {
+  advanceAdaptiveQuality,
+  initialAdaptiveState,
+  signalFromSnapshots,
+  type InboundVideoSnapshot,
+} from '../lib/adaptiveQuality'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
@@ -284,9 +291,18 @@ export function VideoTile({
   // effect (same dep that manual Retry's `retryNonce` bump relies on),
   // tearing down the old PeerConnection and connecting to the new path.
   const [quality, setQuality] = useState<StreamQuality>(() => getStreamQuality())
+  const initialAutoQuality = resolveAutoQuality(
+    typeof navigator === 'undefined'
+      ? undefined
+      : (navigator as Navigator & { connection?: Parameters<typeof resolveAutoQuality>[0] }).connection,
+  )
+  const [autoQuality, setAutoQuality] = useState(initialAutoQuality)
+  const adaptiveStateRef = useRef(initialAdaptiveState(initialAutoQuality))
+  const activePcRef = useRef<RTCPeerConnection | null>(null)
   // `src` override (tests / future multi-cam wiring) wins; otherwise the
   // tile composes its own URL from the chosen quality.
-  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(quality, undefined, streamPath))
+  const effectiveQuality = quality === 'auto' ? autoQuality : quality
+  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(effectiveQuality, undefined, streamPath))
   // Keep the latest quality in a ref so the connect effect can LOG it
   // without taking it as a reactive dependency. The effect re-runs on
   // `effectiveSrc` (which already changes in lockstep with quality in the
@@ -302,9 +318,30 @@ export function VideoTile({
   const onSelectQuality = (q: StreamQuality) => {
     if (q === qualityRef.current) return
     activeWhepAbortRef.current?.abort()
+    if (q === 'auto') {
+      const base = resolveAutoQuality(
+        (navigator as Navigator & { connection?: Parameters<typeof resolveAutoQuality>[0] }).connection,
+      )
+      adaptiveStateRef.current = initialAdaptiveState(base)
+      setAutoQuality(base)
+    }
     setStreamQuality(q)
     setQuality(q)
   }
+  useEffect(() => {
+    if (quality !== 'auto' || typeof navigator === 'undefined') return
+    const connection = (navigator as Navigator & {
+      connection?: Parameters<typeof resolveAutoQuality>[0] & EventTarget
+    }).connection
+    if (connection == null || typeof connection.addEventListener !== 'function') return
+    const onConnectionChange = () => {
+      const base = resolveAutoQuality(connection)
+      adaptiveStateRef.current = initialAdaptiveState(base)
+      setAutoQuality(base)
+    }
+    connection.addEventListener('change', onConnectionChange)
+    return () => connection.removeEventListener('change', onConnectionChange)
+  }, [quality])
   // Status-truth fix (server-restart contradiction, 2026-07-07):
   // `cameraOffline` and `detectionPausedWorker` used to be TWO pills
   // keyed on whether the server had ever cached a frame counter — but
@@ -478,6 +515,7 @@ export function VideoTile({
           return
         }
         conn = c
+        activePcRef.current = c.pc
         // Stay 'connecting' until media starts. The 8 s media-timeout
         // covers the case where WHEP signaling succeeds but ICE never
         // produces a usable path (typical when the SDP advertises a
@@ -587,8 +625,54 @@ export function VideoTile({
         pcStateChange = null
       }
       conn?.close()
+      if (activePcRef.current === conn?.pc) activePcRef.current = null
     }
   }, [effectiveSrc, retryNonce])
+
+  useEffect(() => {
+    if (quality !== 'auto' || src != null || status !== 'live') return
+    const pc = activePcRef.current
+    if (pc == null || typeof pc.getStats !== 'function') return
+    let cancelled = false
+    let previous: InboundVideoSnapshot | null = null
+
+    const sample = async () => {
+      try {
+        const report = await pc.getStats()
+        if (cancelled) return
+        let current: InboundVideoSnapshot | null = null
+        report.forEach((item) => {
+          if (item.type !== 'inbound-rtp' || item.kind !== 'video') return
+          current = {
+            packetsLost: Number(item.packetsLost ?? 0),
+            packetsReceived: Number(item.packetsReceived ?? 0),
+            jitterSeconds: Number(item.jitter ?? 0),
+            framesDropped: Number(item.framesDropped ?? 0),
+            framesDecoded: Number(item.framesDecoded ?? 0),
+            freezeCount: Number(item.freezeCount ?? 0),
+          }
+        })
+        if (current == null) return
+        if (previous != null) {
+          const signal = signalFromSnapshots(previous, current)
+          if (signal != null) {
+            const next = advanceAdaptiveQuality(adaptiveStateRef.current, signal, Date.now())
+            adaptiveStateRef.current = next
+            setAutoQuality((active) => active === next.quality ? active : next.quality)
+          }
+        }
+        previous = current
+      } catch (error) {
+        log.debug('videoTile:adaptive-stats-unavailable', errFields(error))
+      }
+    }
+    const timer = window.setInterval(() => { void sample() }, 5_000)
+    void sample()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [quality, src, status])
 
   useEffect(() => {
     return subscribeEvents((evt) => {
