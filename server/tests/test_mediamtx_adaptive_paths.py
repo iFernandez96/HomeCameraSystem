@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,8 @@ def _run_camera_script_with_privacy(
     tmp_path: Path,
     content: str | None,
     exposure_content: str | None = None,
+    *,
+    precision: bool = True,
 ) -> str:
     """Run the shell wrapper against a fake gst-launch and return its argv."""
     # arrange
@@ -97,11 +100,15 @@ def _run_camera_script_with_privacy(
     exposure = tmp_path / "exposure.env"
     if exposure_content is not None:
         exposure.write_text(exposure_content, encoding="utf-8")
+    focus_marker = tmp_path / "focus-mode-expires"
+    if precision:
+        focus_marker.write_text(str(int(time.time()) + 3600) + "\n", encoding="utf-8")
     env = os.environ.copy()
     env.update({
         "PATH": "{}:{}".format(fake_bin, env.get("PATH", "")),
         "HOMECAM_PRIVACY_CONFIG": str(privacy),
         "HOMECAM_EXPOSURE_CONFIG": str(exposure),
+        "HOMECAM_FOCUS_MARKER": str(focus_marker),
     })
 
     # act
@@ -114,6 +121,22 @@ def _run_camera_script_with_privacy(
         check=True,
     )
     return result.stdout + result.stderr
+
+
+def test_Given_no_precision_session_When_camera_starts_Then_one_bounded_encode_feeds_both_paths(tmp_path):
+    output = _run_camera_script_with_privacy(
+        tmp_path,
+        "PRIVACY_RECTS=''\n",
+        precision=False,
+    )
+
+    assert "stable 1080p30 sensor -> one 720p30 encode" in output
+    assert "nvarguscamerasrc sensor-mode=1" in output
+    assert "width=1920,height=1080,framerate=30/1" in output
+    assert output.count("nvv4l2h264enc") == 1
+    assert "tee name=encoded" in output
+    assert "rtsp://localhost:8554/cam " in output
+    assert "rtsp://localhost:8554/cam_uhq" in output
 
 
 @pytest.mark.parametrize("rung", ["cam_lq", "cam_uq"])
@@ -354,19 +377,23 @@ def test_Given_event_recording_When_detector_runs_Then_camera_files_are_private(
     assert "UMask=0077" in unit
 
 
-def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1440p(paths):
+def test_Given_uhq_path_When_inspected_Then_stable_mode_is_default_and_precision_is_bounded(paths):
     # arrange / act
     command = _camera_publish_script(paths)
 
-    # assert — one libargus owner fans out to two hardware encoders. Detection
-    # remains on /cam while explicit UHQ viewers consume /cam_uhq.
+    # Each mutually exclusive graph has one libargus owner. Stable mode uses
+    # one 720p encoder for both paths; an explicit focus marker selects the
+    # time-bounded dual-encoder precision graph.
     assert paths["cam_uhq"]["source"] == "publisher"
-    assert command.count("nvarguscamerasrc") == 1
-    # The script contains mutually exclusive full-mask, partial-mask, and
-    # unmasked graphs. Each exec path still owns one tee and two encoders.
+    assert command.count("nvarguscamerasrc") == 2
+    assert "HOMECAM_FOCUS_MARKER" in command
+    assert "stable 1080p30 sensor -> one 720p30 encode" in command
+    assert command.count("tee name=encoded") == 3
+    # Precision mode retains mutually exclusive full-mask, partial-mask, and
+    # unmasked graphs, each with one tee and two encoders.
     assert 'if [[ -n "$PRIVACY_RECTS" ]]' in command
     assert command.count("tee name=camera") == 3
-    assert command.count("nvv4l2h264enc") == 6
+    assert command.count("nvv4l2h264enc") == 9
     assert "sensor-mode=0" in command
     assert "width=3840,height=2160,framerate=30/1" in command
     assert "width=1280,height=720" in command
