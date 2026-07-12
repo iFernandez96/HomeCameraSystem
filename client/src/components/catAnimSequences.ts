@@ -107,6 +107,26 @@ const SHARED_FRAMES = [
   'pounce_land',
   'jump_post',
   'hiss_windup',
+  // Frames-30 wave 2b/2c: groom variants (chest + hind-leg), pounce
+  // windup shimmy, missed-pounce tumble, comic poop-strain faces, the
+  // dirt-kick exit, and the post-yawn blep.
+  'gchest_a',
+  'gchest_ab',
+  'gchest_b',
+  'gleg_a',
+  'gleg_ab',
+  'gleg_b',
+  'wiggle_a',
+  'wiggle_ab',
+  'wiggle_b',
+  'tumble_a',
+  'tumble_ab',
+  'tumble_b',
+  'strain_a',
+  'strain_b',
+  'kick_0',
+  'kick_a',
+  'blep',
   // Frames-30 burst 4/5: variant sets shared by ALL three cats — bounding
   // gallop, tail-wrap settle, slump-into-loaf, sleep breathing + dream
   // twitch, wake stretch, and the look-back glance base (lookback_0/a).
@@ -365,11 +385,32 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'poop_squat_b', ms: 200 },
     { frame: 'squat_ab', ms: 200 },
   ]),
+  // Frames-30 wave 2: the strained variant — same 8-slot quickening shape
+  // and EXACT 2200ms, but the back half swaps in the comic strain faces as
+  // the effort escalates. Rolled 50/50 with the plain bout per visit.
+  poop_squat_strained: allCats([
+    { frame: 'poop_squat_a', ms: 350 },
+    { frame: 'squat_ab', ms: 350 },
+    { frame: 'poop_squat_b', ms: 250 },
+    { frame: 'squat_ab', ms: 250 },
+    { frame: 'strain_a', ms: 300 },
+    { frame: 'squat_ab', ms: 300 },
+    { frame: 'strain_b', ms: 200 },
+    { frame: 'squat_ab', ms: 200 },
+  ]),
   // Frames-30 wave 2: second-level arc midpoints (pounce_n1..n4) — each
   // original step splits in half; the 200ms landing hit-pause and the
   // 432ms total stay exact.
+  // Frames-30 wave 2: butt-wiggle anticipation (441ms shimmy) leads every
+  // leap — the classic pre-pounce tell. Windup + the 11-step arc = 872ms;
+  // the 200ms landing hit-pause survives unchanged.
   pounce: allCats([
     { frame: 'crouch', ms: 1 },
+    { frame: 'wiggle_a', ms: 110 },
+    { frame: 'wiggle_ab', ms: 55 },
+    { frame: 'wiggle_b', ms: 110 },
+    { frame: 'wiggle_ab', ms: 55 },
+    { frame: 'wiggle_a', ms: 110 },
     { frame: 'pounce_launch', ms: 25 },
     { frame: 'pounce_n1', ms: 25 },
     { frame: 'pounce_l2', ms: 25 },
@@ -379,6 +420,29 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'pounce_a2', ms: 33 },
     { frame: 'pounce_n4', ms: 32 },
     { frame: 'pounce_land', ms: 200 },
+    { frame: 'crouch', ms: 1 },
+  ]),
+  // The ~20% comedic MISS: same windup + arc, but the landing becomes a
+  // roll-onto-back tumble (200/180/500) before the cat recovers to the
+  // crouch pretending nothing happened. 1552ms total.
+  pounce_tumble: allCats([
+    { frame: 'crouch', ms: 1 },
+    { frame: 'wiggle_a', ms: 110 },
+    { frame: 'wiggle_ab', ms: 55 },
+    { frame: 'wiggle_b', ms: 110 },
+    { frame: 'wiggle_ab', ms: 55 },
+    { frame: 'wiggle_a', ms: 110 },
+    { frame: 'pounce_launch', ms: 25 },
+    { frame: 'pounce_n1', ms: 25 },
+    { frame: 'pounce_l2', ms: 25 },
+    { frame: 'pounce_n2', ms: 25 },
+    { frame: 'pounce_air', ms: 33 },
+    { frame: 'pounce_n3', ms: 32 },
+    { frame: 'pounce_a2', ms: 33 },
+    { frame: 'pounce_n4', ms: 32 },
+    { frame: 'tumble_a', ms: 200 },
+    { frame: 'tumble_ab', ms: 180 },
+    { frame: 'tumble_b', ms: 500 },
     { frame: 'crouch', ms: 1 },
   ]),
   jump_post: allCats([
@@ -405,6 +469,28 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'groom_b', ms: 480 },
     { frame: 'seated', ms: 1 },
   ]),
+  // Frames-30 wave 2: groom target variants — same 8-step lick shape and
+  // EXACT 1801ms as groom_bout so the bout scheduler can swap them freely.
+  groom_chest_bout: allCats([
+    { frame: 'gchest_a', ms: 210 },
+    { frame: 'gchest_ab', ms: 210 },
+    { frame: 'gchest_b', ms: 240 },
+    { frame: 'gchest_ab', ms: 240 },
+    { frame: 'gchest_a', ms: 210 },
+    { frame: 'gchest_ab', ms: 210 },
+    { frame: 'gchest_b', ms: 480 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  groom_leg_bout: allCats([
+    { frame: 'gleg_a', ms: 210 },
+    { frame: 'gleg_ab', ms: 210 },
+    { frame: 'gleg_b', ms: 240 },
+    { frame: 'gleg_ab', ms: 240 },
+    { frame: 'gleg_a', ms: 210 },
+    { frame: 'gleg_ab', ms: 210 },
+    { frame: 'gleg_b', ms: 480 },
+    { frame: 'seated', ms: 1 },
+  ]),
   // yawn_0 is the seated→gape lead-in; wave 2 splits it with yawn_1 so
   // the mouth opens through a midpoint — the 901ms total stands.
   yawn: allCats([
@@ -412,6 +498,24 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'yawn_1', ms: 75 },
     { frame: 'yawn', ms: 750 },
     { frame: 'seated', ms: 1 },
+  ]),
+  // Frames-30 wave 2: ~25% of yawns end in a blep — the tongue just...
+  // stays out for a beat. 1801ms; the plain yawn keeps its 901ms.
+  yawn_blep: allCats([
+    { frame: 'yawn_0', ms: 75 },
+    { frame: 'yawn_1', ms: 75 },
+    { frame: 'yawn', ms: 750 },
+    { frame: 'blep', ms: 900 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  // Frames-30 wave 2: the dirt-kick poop exit — two deliberate back-leg
+  // kicks over the spot before strolling off. 721ms.
+  kick_dirt: allCats([
+    { frame: 'kick_0', ms: 140 },
+    { frame: 'kick_a', ms: 220 },
+    { frame: 'kick_0', ms: 140 },
+    { frame: 'kick_a', ms: 220 },
+    { frame: 'side_stand', ms: 1 },
   ]),
   // Turn-around pivot (2026-07-11, "cats turn around soo slowly"):
   // replaces the 220ms CSS scaleX mirror-morph for walking direction

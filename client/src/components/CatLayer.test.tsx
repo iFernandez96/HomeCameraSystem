@@ -9,6 +9,7 @@ import {
   _rollWithoutImmediateRepeatForTests,
   _setActivityForTests,
   type _CatStateForTests,
+  _stepCatsForTests,
 } from './CatLayer'
 import { WALK_STEP_ORDER } from './catAnimSequences'
 
@@ -39,7 +40,7 @@ function makeCatForTests(over: Partial<_CatStateForTests>): _CatStateForTests {
     lastIdleLifeWasSpecial: false,
     poop: null,
     turn: null,
-    gaitVariant: null,
+    boutVariant: null,
     ...over,
   }
 }
@@ -914,7 +915,7 @@ describe('CatLayer', () => {
     it('Given a bout entry, When setActivity runs, Then chase/flee roll a gait variant and calm activities clear it', () => {
       // arrange
       vi.spyOn(Math, 'random').mockReturnValue(0)
-      const cat = makeCatForTests({ activity: 'sit', gaitVariant: null })
+      const cat = makeCatForTests({ activity: 'sit', boutVariant: null })
 
       // act — first sprint has no predecessor, so the scripted roll takes
       // the pool head ('run'); the follow-up sit clears the variant.
@@ -922,8 +923,69 @@ describe('CatLayer', () => {
       const settled = _setActivityForTests(sprinting, 'sit', 3000, 5000)
 
       // assert
-      expect(sprinting.gaitVariant).toBe('run')
-      expect(settled.gaitVariant).toBeNull()
+      expect(sprinting.boutVariant).toBe('run')
+      expect(settled.boutVariant).toBeNull()
+    })
+
+    it('Given wave-2 variant pools, When bout entries are scripted, Then groom rotates without repeats and the 2-pools roll true probabilities', () => {
+      // arrange — groom: 3-pool with anti-repeat; pooped: 50/50; pounce: 20% miss
+      const roll = vi.spyOn(Math, 'random')
+      const cat = makeCatForTests({ activity: 'sit', boutVariant: null })
+
+      // act / assert — groom pool head with no predecessor
+      roll.mockReturnValue(0)
+      const g1 = _setActivityForTests(cat, 'groom', 3000, 1000)
+      expect(g1.boutVariant).toBe('groom_bout')
+      // anti-repeat: same scripted roll from groom_bout skips to the chest bout
+      const g2 = _setActivityForTests(g1, 'groom', 3000, 5000)
+      expect(g2.boutVariant).toBe('groom_chest_bout')
+
+      // pooped: < 0.5 strains, >= 0.5 stays plain (independent roll, no alternation)
+      roll.mockReturnValue(0.4)
+      expect(_setActivityForTests(cat, 'pooped', 4500, 1000).boutVariant).toBe('poop_squat_strained')
+      roll.mockReturnValue(0.6)
+      expect(_setActivityForTests(cat, 'pooped', 4500, 1000).boutVariant).toBe('poop_squat')
+
+      // pounce: < 0.2 tumbles
+      roll.mockReturnValue(0.1)
+      expect(_setActivityForTests(cat, 'pounce', 3000, 1000).boutVariant).toBe('pounce_tumble')
+      roll.mockReturnValue(0.5)
+      expect(_setActivityForTests(cat, 'pounce', 3000, 1000).boutVariant).toBe('pounce')
+    })
+
+    it('Given a pouncing cat that rolled the miss, When the plan is built past the arc, Then tumble frames render instead of the landing', () => {
+      // arrange — elapsed 700ms lands inside tumble_a/ab (windup 441 + arc 230 = 671)
+      const cat = makeCatForTests({
+        activity: 'pounce',
+        previousActivity: 'pounce',
+        boutVariant: 'pounce_tumble',
+      })
+
+      // act
+      const missing = _animationPlanForForTests(cat, 700)
+
+      // assert
+      expect(['tumble_a', 'tumble_ab']).toContain(missing.frame)
+    })
+
+    it('Given a finished squat, When the pooped bout expires, Then the poop spawns AND the cat exits through the dirt-kick beat', () => {
+      // arrange — a pooped cat past its activityUntil
+      vi.spyOn(Math, 'random').mockReturnValue(0.6)
+      const cat = makeCatForTests({
+        activity: 'pooped',
+        previousActivity: 'sit',
+        activityStartedAt: 1000,
+        activityUntil: 5000,
+        poop: null,
+      })
+
+      // act
+      const stepped = _stepCatsForTests([cat], 6000, 16, { current: 0 }, 'login')[0]
+
+      // assert — ground poop spawned at expiry (same tick as before) and
+      // the next beat is the kick, not a rolled solo
+      expect(stepped.activity).toBe('kick_dirt')
+      expect(stepped.poop).not.toBeNull()
     })
 
     it('Given a chasing cat with a rolled bound gallop, When the plan is built across a cycle, Then bound frames render instead of the base run ring', () => {
@@ -932,7 +994,7 @@ describe('CatLayer', () => {
       const cat = makeCatForTests({
         activity: 'chase',
         previousActivity: 'chase',
-        gaitVariant: 'run_bound',
+        boutVariant: 'run_bound',
       })
 
       // act

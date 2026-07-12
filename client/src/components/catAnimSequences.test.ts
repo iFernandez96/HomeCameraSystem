@@ -68,7 +68,9 @@ describe('cat animation sequences', () => {
       front_to_walk: 840,
       stand_to_seated: 282,
       seated_to_stand: 282,
-      pounce: 432,
+      // wave-2b: +441ms wiggle windup was a DELIBERATE total change —
+      // the arc + 200ms hit-pause inside are unchanged.
+      pounce: 872,
       poop_squat: 2200,
       groom_bout: 1801,
       yawn: 901,
@@ -123,6 +125,34 @@ describe('cat animation sequences', () => {
     ])
     expect(run.reduce((sum, s) => sum + s.ms, 0)).toBe(150)
     expect(CYCLE_DURATION_MS.run).toBe(150)
+  })
+
+  it('Given the wave-2 bout variants, When each new sequence total is measured, Then bouts swap freely with their base (groom 1801, squat 2200) and the new beats pin their own budgets', () => {
+    // arrange / act / assert
+    for (const catId of CAT_IDS) {
+      const total = (name: CatAnimSequenceName) =>
+        CAT_ANIM_SEQUENCES[name][catId].reduce((t, s2) => t + s2.ms, 0)
+      // groom variants must be drop-in swaps for groom_bout
+      expect(total('groom_chest_bout')).toBe(1801)
+      expect(total('groom_leg_bout')).toBe(1801)
+      // strained squat keeps the 2200ms quickening budget, strain faces in the back half
+      expect(total('poop_squat_strained')).toBe(2200)
+      const strained = CAT_ANIM_SEQUENCES.poop_squat_strained[catId]
+      expect(strained.slice(4).map((s2) => s2.frame)).toContain('strain_a')
+      expect(strained.slice(4).map((s2) => s2.frame)).toContain('strain_b')
+      expect(strained.slice(0, 4).map((s2) => s2.frame)).not.toContain('strain_a')
+      // pounce hit vs miss share the windup+arc; only the ending differs
+      expect(total('pounce')).toBe(872)
+      expect(total('pounce_tumble')).toBe(1552)
+      const hit = CAT_ANIM_SEQUENCES.pounce[catId].map((s2) => s2.frame)
+      const miss = CAT_ANIM_SEQUENCES.pounce_tumble[catId].map((s2) => s2.frame)
+      expect(miss.slice(0, hit.indexOf('pounce_land'))).toEqual(hit.slice(0, hit.indexOf('pounce_land')))
+      expect(miss).toContain('tumble_b')
+      // yawn keeps 901; the blep variant owns 1801; dirt-kick exit 721
+      expect(total('yawn')).toBe(901)
+      expect(total('yawn_blep')).toBe(1801)
+      expect(total('kick_dirt')).toBe(721)
+    }
   })
 
   it('Given the pounce choreography, When the landing frame is inspected, Then it has a deliberate hit-pause', () => {

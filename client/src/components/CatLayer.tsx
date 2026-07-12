@@ -108,6 +108,7 @@ type Activity =
   | 'judge' // sit + stare aggressively (Panther)
   | 'on_post' // iter-356.41: sitting on the cat-tree habitat object
   | 'pooped' // silly rare bathroom break — squat + strain + kawaii poop prop
+  | 'kick_dirt' // frames-30 wave 2: post-poop dirt-kick exit beat
   // Interactions
   | 'groom' // Mushu grooming Coco
   | 'snuggle' // Mushu + Coco sit close
@@ -158,12 +159,13 @@ type CatState = {
   // render layer plays the turn_around sequence, mirror-flipping at
   // the frontal midpoint instead of the old 220ms scaleX morph.
   turn: TurnPivot | null
-  // Frames-30 variant gait: which gallop sequence THIS chase/flee bout
-  // plays (run / run_bound / run_lope-if-available). Rolled once per
-  // bout entry with no immediate repeat, null outside gaited sprints.
-  // All variants share run's 150ms cycle so velocity never depends on
-  // the roll.
-  gaitVariant: CatAnimSequenceName | null
+  // Frames-30 bout variant: which sequence THIS bout plays when the
+  // activity owns a variant pool — gallops for chase/flee (no immediate
+  // repeat, velocity identical), groom targets (face/chest/hind-leg),
+  // plain-vs-strained poop squat (50/50), hit-vs-tumble pounce (~20%
+  // miss). Null for activities without a pool. Rolled once at
+  // setActivity; cleared on every activity change.
+  boutVariant: CatAnimSequenceName | null
 }
 
 const WALK_FRAME_COUNT = 12
@@ -341,6 +343,22 @@ function rollGaitVariant(catId: CatId, previous: CatAnimSequenceName | null): Ca
   return choices[Math.floor(Math.random() * choices.length)] ?? 'run'
 }
 
+// Frames-30 wave 2: the bout-variant roll, one Math.random() per entry.
+// Gallops and groom targets rotate with no immediate repeat (3-pools);
+// the 2-pools (squat strain, pounce tumble) roll independently so the
+// odds stay a true 50% / 20% instead of forced alternation.
+function rollBoutVariant(c: CatState, activity: Activity): CatAnimSequenceName | null {
+  if (activity === 'chase' || activity === 'flee') return rollGaitVariant(c.id, c.boutVariant)
+  if (activity === 'groom') {
+    const pool: CatAnimSequenceName[] = ['groom_bout', 'groom_chest_bout', 'groom_leg_bout']
+    const choices = c.boutVariant ? pool.filter((n) => n !== c.boutVariant) : pool
+    return choices[Math.floor(Math.random() * choices.length)] ?? 'groom_bout'
+  }
+  if (activity === 'pooped') return Math.random() < 0.5 ? 'poop_squat_strained' : 'poop_squat'
+  if (activity === 'pounce' || activity === 'play') return Math.random() < 0.2 ? 'pounce_tumble' : 'pounce'
+  return null
+}
+
 function setActivity(c: CatState, activity: Activity, durationMs: number, now: number): CatState {
   return {
     ...c,
@@ -361,10 +379,7 @@ function setActivity(c: CatState, activity: Activity, durationMs: number, now: n
     // A new activity owns its own entry choreography — an in-flight
     // turn pivot from the previous beat must not overlay it.
     turn: null,
-    gaitVariant:
-      activity === 'chase' || activity === 'flee'
-        ? rollGaitVariant(c.id, c.gaitVariant)
-        : null,
+    boutVariant: rollBoutVariant(c, activity),
   }
 }
 
@@ -737,7 +752,9 @@ export const _rollWithoutImmediateRepeatForTests = rollWithoutImmediateRepeat
 // breathe/dream loops are engine behavior, not render behavior, so the
 // tests pin them here instead of driving a full interaction scene).
 export const _rollGaitVariantForTests = rollGaitVariant
+export const _rollBoutVariantForTests = rollBoutVariant
 export const _setActivityForTests = setActivity
+export const _stepCatsForTests = stepCats
 export const _animationPlanForForTests = (cat: CatState, now: number) =>
   animationPlanFor(cat, now)
 export type _CatStateForTests = CatState
@@ -1199,6 +1216,9 @@ const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
   pooped: 'crouched',
   hiss: 'standing',
   scared: 'standing',
+  // standing so the rise chains (crouch_up + seated_to_stand) play on the
+  // way out of the squat before the kicks.
+  kick_dirt: 'standing',
 }
 
 const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenceName[]>> = {
@@ -1208,6 +1228,9 @@ const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenc
   // hold. Exit plays the seated-group chains from their usual start; the
   // slump_b→sit_m5 step reads as the cat pushing up out of the loaf.
   loaf: ['slump_to_loaf'],
+  // Frames-30 wave 2: the post-poop dirt-kick beat — the kicks are the
+  // entry choreography, then the cat holds side_stand until expiry.
+  kick_dirt: ['kick_dirt'],
 }
 
 export function _catSequenceNamesForTransitionForTests(
@@ -1233,7 +1256,7 @@ export function _catSequenceNamesForTransitionForTests(
 
 const ONGOING_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName>> = {
   walk: 'walk',
-  // chase/flee resolve through CatState.gaitVariant (rolled per bout);
+  // chase/flee resolve through CatState.boutVariant (rolled per bout);
   // 'run' here is the fallback and the timelineActive signal.
   chase: 'run',
   flee: 'run',
@@ -1267,6 +1290,7 @@ const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
   in_box: 'seated',
   sleep: 'sleep',
   stretch: 'crouch',
+  kick_dirt: 'side_stand',
 }
 
 // Playground Slice A: the plan builder is now the shared, activity-
@@ -1281,16 +1305,16 @@ const CAT_LAYER_ANIM_MAPS: AnimActivityMaps<Activity> = {
 }
 
 function animationPlanFor(cat: CatState, now: number): AnimationPlan {
-  // Frames-30 variant gaits: a sprinting cat's rolled gallop replaces the
-  // base 'run' ongoing sequence for this bout. The override object is
-  // tiny and only allocated while a cat is actively chasing/fleeing —
-  // those cats re-render every frame anyway.
-  if (cat.gaitVariant && (cat.activity === 'chase' || cat.activity === 'flee')) {
+  // Frames-30: a rolled bout variant replaces the activity's base ongoing
+  // sequence for this bout (gallop pick, groom target, strained squat,
+  // tumbling pounce). The override object is tiny and only allocated for
+  // cats whose activity carries a variant.
+  if (cat.boutVariant && cat.boutVariant !== ONGOING_SEQUENCE_BY_ACTIVITY[cat.activity]) {
     return buildAnimationPlan(cat, now, {
       ...CAT_LAYER_ANIM_MAPS,
       ongoingSequenceByActivity: {
         ...ONGOING_SEQUENCE_BY_ACTIVITY,
-        [cat.activity]: cat.gaitVariant,
+        [cat.activity]: cat.boutVariant,
       },
     })
   }
@@ -1620,6 +1644,7 @@ function activityToSprite(
     case 'chase':
     case 'flee':
     case 'walk':
+    case 'kick_dirt': // standing-side fallback until frames preload
       return phase % 2 === 0 ? 'walk' : 'walk2'
     case 'sit':
     case 'judge':
@@ -1724,7 +1749,7 @@ function initialCats(placement: 'app' | 'login'): CatState[] {
     lastIdleLifeWasSpecial: false,
     poop: null,
     turn: null,
-    gaitVariant: null,
+    boutVariant: null,
   }))
 }
 
@@ -1900,6 +1925,9 @@ function stepCats(
           lastIdleLifeWasSpecial = false
         } else {
           idleSequence = pickSeatedIdleSequence(cat.id)
+          // Frames-30 wave 2: ~25% of yawns end in a blep. Separate roll
+          // (picker keeps its one-Math.random contract).
+          if (idleSequence === 'yawn' && Math.random() < 0.25) idleSequence = 'yawn_blep'
           lastIdleLifeWasSpecial = isSpecialIdleSequence(idleSequence)
         }
         idleSequenceStartedAt = now
@@ -1955,6 +1983,16 @@ function stepCats(
           ? { ...spawnGroundPoop(x, direction, SPRITE_WIDTH, now), y }
           : poop
       const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop: poopAfter, turn }
+      // Frames-30 wave 2: a finished squat exits through the dirt-kick
+      // beat — the poop has ALREADY spawned above (same tick as before,
+      // GroundPoop timing untouched); the cat rises and kicks over the
+      // spot, and the NEXT expiry rolls a normal solo. 2600ms nominal
+      // covers rise chains (983ms) + kicks (721ms) even at the -22%
+      // duration-jitter floor.
+      if (activity === 'pooped') {
+        anyChanged = true
+        return setActivity(base, 'kick_dirt', 2600, now)
+      }
       const next = _rollWithoutImmediateRepeatForTests(
         placement === 'login' ? rollLoginSolo : rollSolo,
         base,
