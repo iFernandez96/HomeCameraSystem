@@ -10,6 +10,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, Union
 
@@ -242,6 +243,28 @@ async def timeline_export_file(job_id: str) -> FileResponse:
 
 # -- Deterministic local metadata search --------------------------------------
 
+_CLOCK_FILTER_RE = re.compile(
+    r"\b(after|before)\s+([0-9]{1,2})(?::([0-9]{2}))?\s*(am|pm)?\b",
+    re.IGNORECASE,
+)
+_SEARCH_STOP_WORDS = {"a", "an", "at", "in", "of", "on", "the"}
+
+
+def _clock_minute(hour_text: str, minute_text: str | None, suffix: str | None) -> int | None:
+    hour = int(hour_text)
+    minute = int(minute_text or "0")
+    if minute > 59:
+        return None
+    if suffix:
+        if hour < 1 or hour > 12:
+            return None
+        hour %= 12
+        if suffix.casefold() == "pm":
+            hour += 12
+    elif hour > 23:
+        return None
+    return hour * 60 + minute
+
 
 @router.get("/search")
 async def security_search(
@@ -249,10 +272,37 @@ async def security_search(
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
 ) -> dict[str, Any]:
     query = " ".join(q.lower().split())
-    tokens = [token for token in re.split(r"[^a-z0-9]+", query) if token]
+    after_minute = None
+    before_minute = None
+    for match in _CLOCK_FILTER_RE.finditer(query):
+        minute = _clock_minute(match.group(2), match.group(3), match.group(4))
+        if minute is None:
+            continue
+        if match.group(1).casefold() == "after":
+            after_minute = minute
+        else:
+            before_minute = minute
+    text_query = _CLOCK_FILTER_RE.sub(" ", query)
+    unknown_only = bool(re.search(r"\b(?:unknown|unrecognized)\b", text_query))
+    text_query = re.sub(r"\b(?:unknown|unrecognized)\b", " ", text_query)
+    tokens = [
+        "person" if token == "people" else token
+        for token in re.split(r"[^a-z0-9]+", text_query)
+        if token and token not in _SEARCH_STOP_WORDS
+    ]
     rows = await asyncio.to_thread(events_db.recent, settings.events_db_path, 2000)
     ranked: list[tuple[float, float, str, dict[str, Any]]] = []
     for event in rows:
+        if unknown_only and not (
+            event.get("label") == "person" and not event.get("person_name")
+        ):
+            continue
+        event_time = datetime.fromtimestamp(float(event.get("ts") or 0.0))
+        event_minute = event_time.hour * 60 + event_time.minute
+        if after_minute is not None and event_minute < after_minute:
+            continue
+        if before_minute is not None and event_minute >= before_minute:
+            continue
         fields = [
             (str(event.get("person_name") or "").lower(), 6.0, "recognized person"),
             (str(event.get("rule_name") or "").lower(), 5.0, "smart rule"),
@@ -261,15 +311,23 @@ async def security_search(
             (str(event.get("source") or "vision").lower(), 2.0, "signal source"),
             (str(event.get("camera_id") or "").replace("_", " ").lower(), 2.0, "camera"),
         ]
+        searchable = " ".join(value for value, _weight, _reason in fields)
+        if tokens and not all(token in searchable for token in tokens):
+            continue
         matches: list[tuple[float, str]] = []
         for value, weight, reason in fields:
             hits = sum(1 for token in tokens if token in value)
             if hits:
                 matches.append((weight * hits, reason))
-        if not matches:
+        if not matches and not (unknown_only or after_minute is not None or before_minute is not None):
             continue
-        score = sum(match[0] for match in matches)
-        reason = max(matches, key=lambda match: (match[0], match[1]))[1]
+        score = sum(match[0] for match in matches) or 1.0
+        if unknown_only:
+            reason = "unrecognized person"
+        elif after_minute is not None or before_minute is not None:
+            reason = "time and metadata filters"
+        else:
+            reason = max(matches, key=lambda match: (match[0], match[1]))[1]
         who = event.get("person_name") or str(event.get("label", "event")).replace("_", " ")
         normalized_score = min(1.0, score / (max(1, len(tokens)) * 6.0))
         item = {
@@ -372,6 +430,7 @@ class IncidentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=120)
     notes: str = Field(default="", max_length=5000)
+    event_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
 
     @field_validator("title")
     @classmethod
@@ -428,6 +487,19 @@ async def create_incident(
     body: IncidentCreate,
     username: str = Depends(require_role("owner")),
 ) -> dict[str, Any]:
+    previous_retention = None
+    if body.event_id is not None:
+        await asyncio.to_thread(_event, body.event_id)
+        previous_retention = events_db.retention_class_by_id(
+            settings.events_db_path
+        ).get(body.event_id, "ordinary")
+        if not await asyncio.to_thread(
+            events_db.set_retention_class,
+            settings.events_db_path,
+            body.event_id,
+            "incident",
+        ):
+            raise _not_found("event not found")
     now = time.time()
     row = {
         "id": uuid.uuid4().hex,
@@ -435,17 +507,30 @@ async def create_incident(
         "title": body.title,
         "notes": body.notes,
         "status": "open",
-        "event_ids": [],
+        "event_ids": [body.event_id] if body.event_id is not None else [],
         "created_ts": now,
         "updated_ts": now,
         "audit": [],
     }
     _incident_audit(row, "created", username)
+    if body.event_id is not None:
+        _incident_audit(row, "event_added", username, event_id=body.event_id)
 
     def _add(state: dict[str, Any]) -> dict[str, Any]:
         state["incidents"][row["id"]] = row
         return row
-    return _incident_public(security_store.transact(_add), include_events=True)
+    try:
+        created = security_store.transact(_add)
+    except Exception:
+        if body.event_id is not None and previous_retention is not None:
+            await asyncio.to_thread(
+                events_db.set_retention_class,
+                settings.events_db_path,
+                body.event_id,
+                previous_retention,
+            )
+        raise
+    return _incident_public(created, include_events=True)
 
 
 @router.get("/incidents/{incident_id}")

@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { Button } from '../../components/primitives/Button'
 import {
-  addIncidentEvents,
   createIncident,
   getNotificationInbox,
   markNotificationSeen,
@@ -14,29 +13,43 @@ import { Section } from './parts'
 
 const deliveryCopy: Record<NotificationInboxItem['delivery_state'], string> = {
   queued: 'Sending',
-  gateway_accepted: 'Sent to device',
+  gateway_accepted: 'Push accepted · display unconfirmed',
   gateway_failed: 'Delivery failed',
   gateway_unavailable: 'Push unavailable',
-  displayed: 'Displayed',
+  displayed: 'Displayed on at least one device',
   display_failed: 'Could not display',
   snoozed: 'Snoozed',
 }
 
 export function NotificationInbox({ canRetain = false }: { canRetain?: boolean }) {
   const [items, setItems] = useState<NotificationInboxItem[] | null>(null)
+  const [loadError, setLoadError] = useState(false)
   const { showToast } = useToast()
 
   useEffect(() => {
     let cancelled = false
-    getNotificationInbox(50)
-      .then((value) => {
-        if (!cancelled) setItems(value.items)
-      })
-      .catch(() => {
-        if (!cancelled) setItems([])
-      })
+    const load = () => {
+      getNotificationInbox(50)
+        .then((value) => {
+          if (!cancelled) {
+            setItems(value.items)
+            setLoadError(false)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setLoadError(true)
+        })
+    }
+    load()
+    const interval = window.setInterval(load, 30_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 
@@ -71,19 +84,28 @@ export function NotificationInbox({ canRetain = false }: { canRetain?: boolean }
   const startIncident = async (item: NotificationInboxItem) => {
     if (!item.event_id) return
     try {
-      const incident = await createIncident(`Alert: ${item.title}`, item.body)
-      await addIncidentEvents(incident.id, [item.event_id])
+      await createIncident(`Alert: ${item.title}`, item.body, item.event_id)
       showToast('Incident created with this event', 'success')
     } catch {
       showToast('Could not create an incident', 'error')
     }
   }
 
+  const viewAlert = async (event: MouseEvent<HTMLAnchorElement>, item: NotificationInboxItem) => {
+    event.preventDefault()
+    await markSeen(item)
+    const destination = item.url.startsWith('/') && !item.url.startsWith('//')
+      ? item.url
+      : '/events'
+    window.location.assign(destination)
+  }
+
   return (
     <Section title="Notification inbox" subtitle="Every alert keeps an honest delivery state and useful actions.">
       <div className="space-y-2 p-3">
         {items === null ? <p role="status" className="text-sm text-[var(--color-text-secondary)]">Loading alerts…</p> : null}
-        {items?.length === 0 ? <p className="text-sm text-[var(--color-text-secondary)]">New alerts will appear here, even when a phone cannot display them.</p> : null}
+        {loadError ? <p role="alert" className="text-sm text-[var(--color-danger)]">Alerts could not be refreshed. The last confirmed list remains below.</p> : null}
+        {items?.length === 0 && !loadError ? <p className="text-sm text-[var(--color-text-secondary)]">New alerts will appear here, even when a phone cannot display them.</p> : null}
         {items?.map((item) => (
           <article
             key={`${item.id}:${item.created_ts}`}
@@ -102,7 +124,7 @@ export function NotificationInbox({ canRetain = false }: { canRetain?: boolean }
             <div className="mt-3 flex flex-wrap gap-2">
               <a
                 href={item.url || '/events'}
-                onClick={() => void markSeen(item)}
+                onClick={(event) => void viewAlert(event, item)}
                 className="inline-flex min-h-11 items-center rounded-full px-3 text-sm font-semibold text-[var(--color-accent-deep)]"
               >
                 View

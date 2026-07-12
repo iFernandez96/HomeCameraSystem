@@ -15,7 +15,7 @@ def test_given_gateway_send_and_valid_receipt_when_phone_shows_then_status_is_de
     # arrange
     path = tmp_path / "push-assurance.json"
     sub = _sub()
-    token = push_assurance.issue(sub, now=100.0)
+    token = push_assurance.issue(sub, now=100.0, path=path)
 
     # act
     accepted = push_assurance.accept(token, True, now=102.0, path=path)
@@ -37,11 +37,20 @@ def test_given_gateway_send_and_valid_receipt_when_phone_shows_then_status_is_de
 def test_given_receipt_is_replayed_when_accepted_then_it_cannot_change_state_twice(tmp_path):
     # arrange
     path = tmp_path / "push-assurance.json"
-    token = push_assurance.issue(_sub(), now=100.0)
+    token = push_assurance.issue(_sub(), now=100.0, path=path)
 
     # act / assert
     assert push_assurance.accept(token, True, now=101.0, path=path) is True
     assert push_assurance.accept(token, False, now=102.0, path=path) is False
+
+
+def test_given_server_memory_is_lost_when_receipt_arrives_then_hashed_disk_correlation_survives(tmp_path):
+    path = tmp_path / "push-assurance.json"
+    token = push_assurance.issue(_sub(), now=100.0, path=path)
+    push_assurance._pending.clear()
+
+    assert push_assurance.accept(token, True, now=101.0, path=path) is True
+    assert token not in path.read_text()
 
 
 def test_given_unknown_capability_when_received_then_no_state_is_persisted(tmp_path):

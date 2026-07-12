@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
 const getNotificationInbox = vi.fn()
 const markNotificationSeen = vi.fn()
 const retainNotificationEvent = vi.fn()
 const snoozeNotification = vi.fn()
 const createIncident = vi.fn()
-const addIncidentEvents = vi.fn()
 const showToast = vi.fn()
 
 vi.mock('../../lib/api', () => ({
@@ -15,7 +15,6 @@ vi.mock('../../lib/api', () => ({
   retainNotificationEvent: (...args: unknown[]) => retainNotificationEvent(...args),
   snoozeNotification: (...args: unknown[]) => snoozeNotification(...args),
   createIncident: (...args: unknown[]) => createIncident(...args),
-  addIncidentEvents: (...args: unknown[]) => addIncidentEvents(...args),
 }))
 vi.mock('../../lib/toast', () => ({ useToast: () => ({ showToast }) }))
 
@@ -37,15 +36,18 @@ describe('NotificationInbox', () => {
     markNotificationSeen.mockResolvedValue({ seen: true })
     retainNotificationEvent.mockResolvedValue({ event_id: 'event-1', retention_class: 'permanent' })
     createIncident.mockResolvedValue({ id: 'incident-1' })
-    addIncidentEvents.mockResolvedValue({ id: 'incident-1' })
   })
 
   it('shows truthful delivery and actionable evidence controls', async () => {
-    render(<NotificationInbox canRetain />)
+    render(<MemoryRouter><NotificationInbox canRetain /></MemoryRouter>)
     expect(await screen.findByText(/delivery failed/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Identify person' })).toHaveAttribute('href', '/training')
     fireEvent.click(screen.getByRole('button', { name: 'Create incident' }))
-    await waitFor(() => expect(addIncidentEvents).toHaveBeenCalledWith('incident-1', ['event-1']))
+    await waitFor(() => expect(createIncident).toHaveBeenCalledWith(
+      'Alert: Unknown person',
+      'Unknown person at the door',
+      'event-1',
+    ))
     fireEvent.click(screen.getByRole('button', { name: 'Save permanently' }))
     await waitFor(() => expect(retainNotificationEvent).toHaveBeenCalledWith('notice-1', 'permanent'))
   })

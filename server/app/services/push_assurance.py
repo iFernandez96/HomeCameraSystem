@@ -28,6 +28,7 @@ _lock = threading.Lock()
 _pending: dict[str, dict[str, Any]] = {}
 log = logging.getLogger(__name__)
 _inbox_failure_gate = RateLimitedLog(300.0)
+_pending_persist_failure_gate = RateLimitedLog(300.0)
 
 
 def _device_id(sub: dict[str, Any]) -> str:
@@ -42,13 +43,16 @@ def _read(path: Path | None = None) -> dict[str, Any]:
     try:
         value = json.loads(source.read_text())
     except (OSError, ValueError, TypeError):
-        return {"v": 1, "devices": {}}
+        return {"v": 1, "devices": {}, "pending": {}}
     if not isinstance(value, dict):
-        return {"v": 1, "devices": {}}
+        return {"v": 1, "devices": {}, "pending": {}}
     devices = value.get("devices")
+    pending = value.get("pending", {})
     if value.get("v") != 1 or not isinstance(devices, dict):
-        return {"v": 1, "devices": {}}
-    return {"v": 1, "devices": devices}
+        return {"v": 1, "devices": {}, "pending": {}}
+    if not isinstance(pending, dict):
+        pending = {}
+    return {"v": 1, "devices": devices, "pending": pending}
 
 
 def _write(value: dict[str, Any], path: Path | None = None) -> None:
@@ -80,45 +84,91 @@ def _prune_pending(now: float) -> None:
             _pending.pop(token, None)
 
 
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8", "replace")).hexdigest()
+
+
+def _prune_persisted(value: dict[str, Any], now: float) -> None:
+    pending = value["pending"]
+    expired = [
+        token_hash for token_hash, row in pending.items()
+        if not isinstance(row, dict)
+        or not isinstance(row.get("sent_at"), (int, float))
+        or now - float(row["sent_at"]) > _TOKEN_TTL_S
+    ]
+    for token_hash in expired:
+        pending.pop(token_hash, None)
+    if len(pending) > _MAX_PENDING:
+        oldest = sorted(
+            pending,
+            key=lambda token_hash: float(pending[token_hash].get("sent_at", 0.0)),
+        )
+        for token_hash in oldest[: len(pending) - _MAX_PENDING]:
+            pending.pop(token_hash, None)
+
+
 def issue(
     sub: dict[str, Any],
     now: float | None = None,
     notification_id: str | None = None,
+    path: Path | None = None,
 ) -> str:
     now = time.time() if now is None else now
     token = secrets.token_urlsafe(24)
+    row = {
+        "device_id": _device_id(sub),
+        "user_id": sub.get("user_id") if isinstance(sub.get("user_id"), str) else None,
+        "sent_at": now,
+        "notification_id": notification_id,
+    }
     with _lock:
         _prune_pending(now)
-        _pending[token] = {
-            "device_id": _device_id(sub),
-            "user_id": sub.get("user_id") if isinstance(sub.get("user_id"), str) else None,
-            "sent_at": now,
-            "notification_id": notification_id,
-        }
+        _pending[token] = row
+        value = _read(path)
+        _prune_persisted(value, now)
+        value["pending"][_token_hash(token)] = row
+        try:
+            _write(value, path)
+        except OSError:
+            # Delivery can still proceed with the in-memory one-use token.
+            # The only lost capability is receipt correlation after a server
+            # restart, which is safer than dropping the alert itself.
+            if _pending_persist_failure_gate.should_log():
+                log.exception("push receipt correlation could not be persisted; using memory-only fallback")
     return token
 
 
-def cancel(token: str) -> None:
+def cancel(token: str, path: Path | None = None) -> None:
     with _lock:
         _pending.pop(token, None)
+        value = _read(path)
+        if value["pending"].pop(_token_hash(token), None) is not None:
+            try:
+                _write(value, path)
+            except OSError:
+                if _pending_persist_failure_gate.should_log():
+                    log.exception("cancelled push receipt could not be removed from durable state")
 
 
 def accept(token: str, shown: bool, now: float | None = None, path: Path | None = None) -> bool:
     now = time.time() if now is None else now
     with _lock:
         _prune_pending(now)
-        row = _pending.pop(token, None)
-    if row is None:
-        return False
-    value = _read(path)
-    devices = value["devices"]
-    devices[row["device_id"]] = {
-        "user_id": row["user_id"],
-        "sent_at": row["sent_at"],
-        "received_at": now,
-        "shown": bool(shown),
-    }
-    _write(value, path)
+        memory_row = _pending.pop(token, None)
+        value = _read(path)
+        _prune_persisted(value, now)
+        persisted_row = value["pending"].pop(_token_hash(token), None)
+        row = memory_row if isinstance(memory_row, dict) else persisted_row
+        if not isinstance(row, dict):
+            return False
+        devices = value["devices"]
+        devices[row["device_id"]] = {
+            "user_id": row["user_id"],
+            "sent_at": row["sent_at"],
+            "received_at": now,
+            "shown": bool(shown),
+        }
+        _write(value, path)
     try:
         from . import operations
         operations.mark_displayed(

@@ -26,8 +26,11 @@ const profiles: Array<{ id: HomeProfile; label: string; description: string }> =
   { id: 'away', label: 'Away', description: 'Unknown people become urgent' },
   { id: 'sleep', label: 'Sleep', description: 'Nighttime alert policy' },
   { id: 'vacation', label: 'Vacation', description: 'Away protection until you change it' },
-  { id: 'privacy', label: 'Privacy', description: 'Stop recording and inference' },
+  { id: 'privacy', label: 'Privacy', description: 'Mask every recording surface and stop inference' },
 ]
+
+const HEALTH_WINDOW_MS = 24 * 60 * 60 * 1000
+const HEALTH_GAP_MS = 23 * 60 * 1000
 
 function formatDateTime(value: number | null | undefined): string {
   return value ? new Date(value * 1000).toLocaleString() : 'Never'
@@ -41,25 +44,42 @@ function fetchControlCenter() {
   ])
 }
 
-function HealthTimeline({ samples }: { samples: HealthHistorySample[] }) {
-  if (samples.length < 2) {
-    return <p className="px-4 pb-3 text-xs text-[var(--color-text-secondary)]">The timeline appears after two fifteen-minute samples.</p>
-  }
-  const values = samples.map((sample) => sample.fps ?? 0)
+function HealthTimeline({ samples, nowMs }: { samples: HealthHistorySample[]; nowMs: number }) {
+  const end = nowMs
+  const start = end - HEALTH_WINDOW_MS
+  const ordered = [...samples].sort((a, b) => a.ts - b.ts)
+  const values = ordered.map((sample) => sample.fps ?? 0)
   const ceiling = Math.max(1, ...values)
-  const points = values.map((value, index) => {
-    const x = (index / (values.length - 1)) * 100
-    const y = 28 - (value / ceiling) * 24
-    return `${x.toFixed(2)},${y.toFixed(2)}`
-  }).join(' ')
+  const xFor = (ts: number) => Math.max(0, Math.min(100, ((ts * 1000 - start) / HEALTH_WINDOW_MS) * 100))
+  const segments: HealthHistorySample[][] = []
+  const gaps: Array<[number, number]> = []
+  let segment: HealthHistorySample[] = []
+  let previousMs = start
+  for (const sample of ordered) {
+    const sampleMs = sample.ts * 1000
+    if (sampleMs - previousMs > HEALTH_GAP_MS) {
+      gaps.push([previousMs, sampleMs])
+      if (segment.length) segments.push(segment)
+      segment = []
+    }
+    segment.push(sample)
+    previousMs = sampleMs
+  }
+  if (segment.length) segments.push(segment)
+  if (end - previousMs > HEALTH_GAP_MS) gaps.push([previousMs, end])
   return (
     <figure className="px-4 pb-4" aria-label="Camera frame rate and availability over the last 24 hours">
       <svg viewBox="0 0 100 32" role="img" className="h-24 w-full overflow-visible" preserveAspectRatio="none">
-        <title>Camera health timeline; gaps and red marks indicate offline samples</title>
+        <title>Camera health timeline; shaded gaps mean HomeCam could not take a sample, and red marks mean the worker was confirmed offline</title>
         <line x1="0" y1="28" x2="100" y2="28" stroke="var(--color-border)" strokeWidth="0.6" />
-        <polyline points={points} fill="none" stroke="var(--color-accent-default)" strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
-        {samples.map((sample, index) => sample.worker_alive ? null : (
-          <line key={sample.ts} x1={(index / (samples.length - 1)) * 100} y1="2" x2={(index / (samples.length - 1)) * 100} y2="29" stroke="var(--color-danger)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
+        {gaps.map(([gapStart, gapEnd]) => (
+          <rect key={`${gapStart}:${gapEnd}`} x={xFor(gapStart / 1000)} y="2" width={Math.max(0.5, xFor(gapEnd / 1000) - xFor(gapStart / 1000))} height="27" fill="var(--color-border-subtle)" opacity="0.7" />
+        ))}
+        {segments.map((rows) => (
+          <polyline key={rows[0].ts} points={rows.map((sample) => `${xFor(sample.ts).toFixed(2)},${(28 - ((sample.fps ?? 0) / ceiling) * 24).toFixed(2)}`).join(' ')} fill="none" stroke="var(--color-accent-default)" strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
+        ))}
+        {ordered.map((sample) => sample.worker_alive ? null : (
+          <line key={sample.ts} x1={xFor(sample.ts)} y1="2" x2={xFor(sample.ts)} y2="29" stroke="var(--color-danger)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
         ))}
       </svg>
       <figcaption className="flex justify-between text-xs text-[var(--color-text-tertiary)]"><span>24 hours ago</span><span>Now</span></figcaption>
@@ -71,6 +91,7 @@ export function OperationsSection() {
   const [state, setState] = useState<OperationsState | null>(null)
   const [briefing, setBriefing] = useState<DailyBriefing | null>(null)
   const [health, setHealth] = useState<HealthHistorySample[]>([])
+  const [healthNowMs, setHealthNowMs] = useState(() => Date.now())
   const [profileDraft, setProfileDraft] = useState<HomeProfile>('sleep')
   const [timeDraft, setTimeDraft] = useState('22:00')
   const [daysDraft, setDaysDraft] = useState<'daily' | 'weekdays'>('daily')
@@ -87,6 +108,7 @@ export function OperationsSection() {
       setCompanionUrl(operations.semantic_companion.base_url)
       setBriefing(daily)
       setHealth(history.items)
+      setHealthNowMs(Date.now())
       setError(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Control center unavailable')
@@ -102,6 +124,7 @@ export function OperationsSection() {
         setCompanionUrl(operations.semantic_companion.base_url)
         setBriefing(daily)
         setHealth(history.items)
+        setHealthNowMs(Date.now())
         setError(null)
       })
       .catch((reason) => {
@@ -116,8 +139,18 @@ export function OperationsSection() {
     const offline = health.filter((row) => !row.worker_alive).length
     const quality = health.filter((row) => (row.camera_quality_status ?? 1) > 1).length
     const last = health.at(-1)
-    return { offline, quality, last }
-  }, [health])
+    const ordered = [...health].sort((a, b) => a.ts - b.ts)
+    const end = healthNowMs
+    const start = end - HEALTH_WINDOW_MS
+    let previous = start
+    let gaps = 0
+    for (const row of ordered) {
+      if (row.ts * 1000 - previous > HEALTH_GAP_MS) gaps += 1
+      previous = row.ts * 1000
+    }
+    if (end - previous > HEALTH_GAP_MS) gaps += 1
+    return { offline, quality, last, gaps }
+  }, [health, healthNowMs])
 
   const applyProfile = async (profile: HomeProfile) => {
     if (!state) return
@@ -137,15 +170,18 @@ export function OperationsSection() {
   }
 
   const persistSchedules = async (items: ModeSchedule[]) => {
-    if (!state) return
+    if (!state || busy !== null) return
     const previous = state.mode_schedules
     setState({ ...state, mode_schedules: items })
+    setBusy('schedule')
     try {
       const saved = await setModeSchedules(items)
       setState((current) => current ? { ...current, mode_schedules: saved.items } : current)
     } catch {
       setState((current) => current ? { ...current, mode_schedules: previous } : current)
       showToast('Could not save mode schedule', 'error')
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -242,8 +278,8 @@ export function OperationsSection() {
             <div key={schedule.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] p-3">
               <span className="text-sm capitalize">{schedule.profile} at {schedule.time} · {schedule.days.length === 7 ? 'Every day' : `${schedule.days.length} days`}</span>
               <div className="flex items-center gap-3">
-                <Toggle checked={schedule.enabled} onChange={(enabled) => void persistSchedules(state.mode_schedules.map((row) => row.id === schedule.id ? { ...row, enabled } : row))} ariaLabel={`${schedule.enabled ? 'Disable' : 'Enable'} ${schedule.profile} schedule`} />
-                <Button size="sm" variant="ghost" onClick={() => void persistSchedules(state.mode_schedules.filter((row) => row.id !== schedule.id))}>Remove</Button>
+                <Toggle checked={schedule.enabled} disabled={busy !== null} onChange={(enabled) => void persistSchedules(state.mode_schedules.map((row) => row.id === schedule.id ? { ...row, enabled } : row))} ariaLabel={`${schedule.enabled ? 'Disable' : 'Enable'} ${schedule.profile} schedule`} />
+                <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void persistSchedules(state.mode_schedules.filter((row) => row.id !== schedule.id))}>Remove</Button>
               </div>
             </div>
           ))}
@@ -256,7 +292,7 @@ export function OperationsSection() {
               <option value="daily">Every day</option>
               <option value="weekdays">Weekdays</option>
             </select>
-            <Button variant="secondary" onClick={addSchedule}>Add daily schedule</Button>
+            <Button variant="secondary" disabled={busy !== null} onClick={addSchedule}>Add schedule</Button>
           </div>
         </div>
       </Section>
@@ -265,8 +301,9 @@ export function OperationsSection() {
         <div className="space-y-2 p-4">
           <p className="text-lg font-semibold">{briefing.headline}</p>
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Recording {briefing.recording_state} · {briefing.camera_interruptions} camera interruption{briefing.camera_interruptions === 1 ? '' : 's'} · {briefing.protected_events} protected
+            Recording now: {briefing.recording_state} · {briefing.camera_interruptions} camera interruption{briefing.camera_interruptions === 1 ? '' : 's'} · {briefing.protected_events} protected total
           </p>
+          <p className="text-sm text-[var(--color-text-secondary)]">Today’s event videos: {briefing.video_counts.available} available · {briefing.video_counts.processing} processing · {briefing.video_counts.failed} failed · {briefing.video_counts.unknown} not yet confirmed</p>
           {briefing.known_people.length ? <p className="text-sm">Recognized: {briefing.known_people.join(', ')}</p> : null}
         </div>
       </Section>
@@ -290,9 +327,10 @@ export function OperationsSection() {
       <Section title="Camera health history" subtitle="Seven days of low-cadence measurements without touching the camera pipeline.">
         <Row label="Samples in the last 24 hours" right={<span>{health.length}</span>} />
         <Row label="Offline samples" right={<span>{healthSummary.offline}</span>} />
+        <Row label="Unobserved intervals" right={<span>{healthSummary.gaps}</span>} />
         <Row label="Blur or freeze samples" right={<span>{healthSummary.quality}</span>} />
         <Row label="Latest frame rate" right={<span>{healthSummary.last?.fps == null ? 'Waiting' : `${healthSummary.last.fps.toFixed(1)} FPS`}</span>} />
-        <HealthTimeline samples={health} />
+        <HealthTimeline samples={health} nowMs={healthNowMs} />
       </Section>
 
       <Section title="Incidents and automations" subtitle="Existing evidence and rule engines, now part of one response workflow.">
@@ -307,9 +345,11 @@ export function OperationsSection() {
         <Row label="Archive automatically" right={<Toggle checked={state.archive.enabled} disabled={busy !== null || !state.archive.available} onChange={(enabled) => void toggleArchive(enabled)} ariaLabel="Archive protected events automatically" />} />
         <Row label="Target" right={<span className="max-w-52 break-all text-right text-xs">{state.archive.available ? state.archive.target : 'Not mounted'}</span>} />
         <Row label="Last verified" right={<span>{formatDateTime(state.archive.last_sync_ts)}</span>} />
+        <Row label="Current status" right={<span>{state.archive.available ? state.archive.last_status : 'Unavailable'}</span>} />
         <Row label="Verified copy" right={<span>{state.archive.files_verified ?? 0} files · {formatBytes(state.archive.bytes_verified ?? 0)}</span>} />
         <div className="space-y-2 p-3">
-          {!state.archive.available ? <p className="text-sm text-[var(--color-text-secondary)]">Mount an independent NAS or second host at {state.archive.target}, then create {state.archive.marker_required}. HomeCam will never fall back to the SD card.</p> : null}
+          {!state.archive.available ? <p className="text-sm text-[var(--color-text-secondary)]">Mount an independent filesystem at {state.archive.target}, then create {state.archive.marker_required}. A directory on the recordings filesystem is deliberately rejected.</p> : null}
+          {state.archive.last_error ? <p role="alert" className="text-sm text-[var(--color-danger)]">Last archive attempt failed: {state.archive.last_error}</p> : null}
           <Button variant="secondary" disabled={!state.archive.available || busy !== null} loading={busy === 'archive-sync'} loadingText="Verifying archive…" onClick={() => void syncArchive()}>Sync and verify now</Button>
         </div>
       </Section>
@@ -338,8 +378,12 @@ export function OperationsSection() {
             <div key={search.id} className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] p-3">
               <Link to={`/events/search?q=${encodeURIComponent(search.query)}${search.semantic ? '&semantic=1' : ''}`} className="min-w-0 font-semibold text-[var(--color-accent-deep)]">{search.name}</Link>
               <Button variant="ghost" size="sm" onClick={async () => {
-                await deleteSavedSearch(search.id)
-                setState({ ...state, saved_searches: state.saved_searches.filter((item) => item.id !== search.id) })
+                try {
+                  await deleteSavedSearch(search.id)
+                  setState((current) => current ? { ...current, saved_searches: current.saved_searches.filter((item) => item.id !== search.id) } : current)
+                } catch {
+                  showToast('Could not delete this saved search', 'error')
+                }
               }}>Delete</Button>
             </div>
           ))}

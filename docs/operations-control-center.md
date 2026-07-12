@@ -30,7 +30,8 @@ age deletions and measured bytes per class.
 
 Set `EXTERNAL_ARCHIVE_DIR` to a separately mounted NAS or host filesystem and
 create an empty `.homecam-external-archive` marker at its root. HomeCam refuses
-to sync without both the mount and marker; it never silently falls back to the
+to sync without both the marker and a filesystem device distinct from the
+recordings filesystem; it never silently falls back to the
 recordings disk. Protected clips are copied atomically, SHA-256 verified, and
 listed in a mode-0600 manifest. Source clips are not deleted by archive sync.
 Use `deploy/docker-compose.archive.example.yml` as the opt-in Compose override;

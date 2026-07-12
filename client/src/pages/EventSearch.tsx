@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { EventRow } from '../components/EventRow'
@@ -17,8 +17,10 @@ import { useToast } from '../lib/toast'
 
 export function EventSearch() {
   const [searchParams] = useSearchParams()
-  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
-  const [useSemantic, setUseSemantic] = useState(() => searchParams.get('semantic') === '1')
+  const requestedQuery = searchParams.get('q') ?? ''
+  const requestedSemantic = searchParams.get('semantic') === '1'
+  const [query, setQuery] = useState(() => requestedQuery)
+  const [useSemantic, setUseSemantic] = useState(() => requestedSemantic)
   const [result, setResult] = useState<SecuritySearchResponse | null>(null)
   const [saved, setSaved] = useState<SavedSearch[]>([])
   const [saveName, setSaveName] = useState('')
@@ -39,13 +41,12 @@ export function EventSearch() {
     }
   }, [])
 
-  const submit = async () => {
-    const normalized = query.trim()
-    if (!normalized || busy) return
+  const executeSearch = useCallback(async (normalized: string, semantic: boolean) => {
+    if (!normalized) return
     setBusy(true)
     setError(null)
     try {
-      if (useSemantic) {
+      if (semantic) {
         const companion = await semanticSearch(normalized)
         setResult({
           v: 1,
@@ -54,7 +55,7 @@ export function EventSearch() {
             event,
             description: event.person_name ?? event.rule_name ?? event.label,
             match_reason: 'Visual similarity from your private companion',
-            score: 1,
+            score: null,
           })),
           index_status: {
             mode: 'private companion',
@@ -70,6 +71,26 @@ export function EventSearch() {
     } finally {
       setBusy(false)
     }
+  }, [])
+
+  useEffect(() => {
+    const normalized = requestedQuery.trim()
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (cancelled) return
+      setQuery(requestedQuery)
+      setUseSemantic(requestedSemantic)
+      if (normalized) void executeSearch(normalized, requestedSemantic)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [executeSearch, requestedQuery, requestedSemantic])
+
+  const submit = async () => {
+    const normalized = query.trim()
+    if (!normalized || busy) return
+    await executeSearch(normalized, useSemantic)
   }
 
   const saveCurrent = async () => {
@@ -138,6 +159,7 @@ export function EventSearch() {
                 onClick={() => {
                   setQuery(item.query)
                   setUseSemantic(item.semantic)
+                  void executeSearch(item.query, item.semantic)
                 }}
                 className="min-h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm font-semibold"
               >
@@ -176,7 +198,7 @@ export function EventSearch() {
                 <li key={item.event.id} className="card-paper space-y-2 p-2">
                   <EventRow event={item.event} subline={item.description} onOpen={() => setSelected(item.event)} />
                   <p className="px-3 pb-1 text-xs text-[var(--color-text-secondary)]">
-                    Why it matched: {item.match_reason} · {Math.round(item.score * 100)}%
+                    Why it matched: {item.match_reason}{item.score == null ? ' · similarity score unavailable' : ` · ${Math.round(item.score * 100)}%`}
                   </p>
                 </li>
               ))}
