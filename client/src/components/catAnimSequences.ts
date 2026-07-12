@@ -168,6 +168,14 @@ const SHARED_FRAMES = [
   'tailhunt_ab',
   'tailhunt_b',
   'earflick_a',
+  // Frames-30 wave 4: seated micro-life — weight shift, look-around head
+  // pans (look_0a/b are the seated↔lookaround mids), seated paw stretch.
+  'weightshift_a',
+  'lookaround_a',
+  'lookaround_b',
+  'look_0a',
+  'look_0b',
+  'stretch_paws_a',
 ] as const
 
 // Frames-30 burst 4/5 per-cat drops (codex deformed twice → dropped, same
@@ -521,6 +529,29 @@ export const CAT_ANIM_SEQUENCES = {
   earflick: allCats([
     { frame: 'earflick_a', ms: 180 },
     { frame: 'side_stand', ms: 1 },
+  ]),
+  // Frames-30 wave 4: seated micro-life. Small, frequent beats that keep
+  // a long sit alive without stealing attention — a weight shift, a head
+  // pan to either side (through the look_0 mids), a little paw stretch.
+  weight_shift: allCats([
+    { frame: 'weightshift_a', ms: 260 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  look_around_l: allCats([
+    { frame: 'look_0a', ms: 140 },
+    { frame: 'lookaround_a', ms: 600 },
+    { frame: 'look_0a', ms: 140 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  look_around_r: allCats([
+    { frame: 'look_0b', ms: 140 },
+    { frame: 'lookaround_b', ms: 600 },
+    { frame: 'look_0b', ms: 140 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  seated_stretch: allCats([
+    { frame: 'stretch_paws_a', ms: 700 },
+    { frame: 'seated', ms: 1 },
   ]),
   blink: {
     panther: [{ frame: 'blink', ms: 140 }],

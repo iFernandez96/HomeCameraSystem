@@ -21,6 +21,7 @@ import {
   turnPivotSteps,
   type PlayCat,
   type PlaygroundState,
+  PLAYGROUND_SEQUENCE_TABLE,
 } from './playgroundState'
 import {
   CAT_WIDTH_PX,
@@ -281,6 +282,10 @@ function stepCat(
   // dismount leg still has vertical distance, the render layer swaps
   // the walk gait for the climb_a/b cling loop.
   let climbing = false
+  // Frames-30 wave 4: a climb leg's direction + start time drive the
+  // one-shot mount/dismount arc before the cling loop.
+  let climbDir = cat.climbDir
+  let climbStartedAt = cat.climbStartedAt
   // Turn-around pivot lifecycle (2026-07-11): a completed pivot clears
   // and the frozen travel resumes toward the same destination this
   // very tick; an in-flight one plants the paws below.
@@ -337,6 +342,14 @@ function stepCat(
           y += Math.sign(dy) * climb
         }
         climbing = cat.climbTravel && Math.abs(dest.y - y) > CLIMB_ANIM_EPS_PX
+        if (climbing && !cat.climbing) {
+          // Frames-30 wave 4: the one-shot mount/dismount arc only arms on
+          // legs long enough to fit the arc AND a full cling cycle — short
+          // hops keep the plain cling loop (and the pinned a/b alternation).
+          const legMs = Math.abs(dest.y - y) / CLIMB_PX_PER_MS
+          climbDir = legMs >= 900 ? (dest.y < y ? 'up' : 'down') : null
+          climbStartedAt = now
+        }
         if (Math.abs(dest.x - x) < ARRIVE_EPSILON_PX && Math.abs(dest.y - y) < ARRIVE_EPSILON_PX) {
           if (cat.targetAnchor && cat.route.length > 1) arrivedWaypoint = true
           else arrivedFinal = true
@@ -394,6 +407,8 @@ function stepCat(
       moodSecondary,
       poop,
       climbing,
+      climbDir,
+      climbStartedAt,
       turn,
       route: cat.route.slice(1),
       targetAnchor: cat.route[1] ?? null,
@@ -453,20 +468,23 @@ function stepCat(
     const birdLive = ctx.ambient.some((a) => a.kind === 'bird')
     const watchingBird = activity === 'watch' && birdLive
     if (idleSequence) {
-      const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES[idleSequence][cat.id])
+      const steps = CAT_ANIM_SEQUENCES[idleSequence]?.[cat.id]
+        ?? PLAYGROUND_SEQUENCE_TABLE[idleSequence][cat.id]
+      const duration = sequenceDurationMs(steps)
       if (now - idleSequenceStartedAt >= duration) {
         idleSequence = null
-        nextIdleLifeAt = now + nextIdleGap(watchingBird, ctx.random)
+        nextIdleLifeAt = now + nextIdleGap(watchingBird, ctx.random, activity === 'watch')
         changed = true
       }
     } else if (now >= nextIdleLifeAt) {
       if (watchingBird || activity === 'watch') {
-        // Bird chatter: fast tailflicks, no blink filler. The window
-        // hold is a BACK VIEW, so tailflick is also the ONLY micro-life
-        // that composes with it — a front-view blink would spin the cat
-        // around for a frame.
-        idleSequence = 'tailflick'
-        lastIdleLifeWasSpecial = true
+        // Window life: back-view beats only — a front-view blink would
+        // spin the cat around for a frame. Frames-30 wave 4: the head-
+        // tracking chatter bout alternates with the tailflick so the
+        // window cat visibly follows something outside every few
+        // seconds (4-9s cadence, anti-repeat via lastIdleLifeWasSpecial).
+        idleSequence = lastIdleLifeWasSpecial ? 'tailflick' : ('chatter_bout' as CatAnimSequenceName)
+        lastIdleLifeWasSpecial = !lastIdleLifeWasSpecial
       } else if (lastIdleLifeWasSpecial) {
         idleSequence = cat.id === 'coco' ? null : 'blink'
         lastIdleLifeWasSpecial = false
@@ -475,7 +493,7 @@ function stepCat(
         lastIdleLifeWasSpecial = idleSequence !== 'blink'
       }
       idleSequenceStartedAt = now
-      nextIdleLifeAt = now + nextIdleGap(watchingBird, ctx.random)
+      nextIdleLifeAt = now + nextIdleGap(watchingBird, ctx.random, activity === 'watch')
       changed = true
     }
   } else if (activity === 'sleep' && !cat.climbing) {
@@ -497,11 +515,14 @@ function stepCat(
       nextIdleLifeAt = now + 8000 + ctx.random() * 12000
       changed = true
     }
-  } else if (idleSequence === 'look_back' && now < cat.moveRampAt) {
-    // Frames-30 wave-1 pickup: the pre-departure glance — travelToward
-    // armed a look_back inside the regard hold; let it play out. It
-    // self-expires (or moveRampAt passes) before the paws move.
-    const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES.look_back[cat.id])
+  } else if (
+    (idleSequence === 'look_back' || idleSequence === 'earflick') &&
+    now < cat.moveRampAt
+  ) {
+    // Frames-30 wave-1/4 pickup: pre-departure regard-hold beats — the
+    // look-back glance or the little ear flick armed by travelToward.
+    // They self-expire (or moveRampAt passes) before the paws move.
+    const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES[idleSequence][cat.id])
     if (now - idleSequenceStartedAt >= duration) {
       idleSequence = null
       changed = true
@@ -558,6 +579,8 @@ function stepCat(
       moodSecondary,
       poop,
       climbing,
+      climbDir,
+      climbStartedAt,
       turn,
       activityUntil,
       phaseTime,
@@ -572,7 +595,7 @@ function stepCat(
   if (now > activityUntil && gaitReady) {
     const base: PlayCat = {
       ...cat, x, y, laneBlend, direction, mood, moodSecondary, poop, activityUntil, phaseTime,
-      climbTravel: false, climbing: false, turn: null,
+      climbTravel: false, climbing: false, climbDir: null, climbStartedAt: 0, turn: null,
       targetAnchor: null, route: [], arrival: null, targetX: null, targetY: null, focus: null,
       idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial,
     }
@@ -590,6 +613,8 @@ function stepCat(
     moodSecondary,
     poop,
     climbing,
+    climbDir,
+    climbStartedAt,
     turn,
     activityUntil,
     phaseTime,
@@ -637,9 +662,12 @@ function hasOngoingSequence(activity: PlayCat['activity']): boolean {
   }
 }
 
-function nextIdleGap(watchingBird: boolean, random: () => number): number {
-  // Bird chatter runs the tail at ~2× cadence.
-  return watchingBird ? 900 + random() * 1300 : 3000 + random() * 4000
+function nextIdleGap(watchingBird: boolean, random: () => number, watching = false): number {
+  // Bird chatter runs the tail at ~2× cadence; the plain window dwell
+  // paces its chatter/tailflick beats on a 4-9s rhythm (frames-30 w4).
+  if (watchingBird) return 900 + random() * 1300
+  if (watching) return 4000 + random() * 5000
+  return 3000 + random() * 4000
 }
 
 const SEATED_IDLE_CHOICES: Record<PlayCat['id'], readonly { name: CatAnimSequenceName; weight: number }[]> = {

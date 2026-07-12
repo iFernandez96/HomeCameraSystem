@@ -95,6 +95,22 @@ const SHARED_PLAYGROUND_CAT_FRAMES = [
   'sniff_a',
   'sniff_ab',
   'sniff_b',
+  // Frames-30 wave 4 (2026-07-12): habitat transitions — climb mount/
+  // dismount arcs, hammock settle-in circling, window chatter head-
+  // tracking (back views). mount_*/dismount_* ride the 160-tall climb
+  // canvas group where drawn tall; the rest are 128-tall.
+  'mount_a',
+  'mount_ab',
+  'mount_b',
+  'dismount_a',
+  'dismount_ab',
+  'dismount_b',
+  'hamset_a',
+  'hamset_ab',
+  'hamset_b',
+  'chatter_a',
+  'chatter_ab',
+  'chatter_b',
 ] as const
 
 /** Full frame-name union (URL routing + typing). Two tween midpoints

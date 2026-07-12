@@ -157,6 +157,22 @@ export const PLAYGROUND_SEQUENCES = {
     { frame: 'pawdip_b', ms: 700 },
     { frame: 'seated', ms: 1 },
   ],
+  // === Frames-30 wave 4 (2026-07-12) =========================================
+  // Hammock settle-in — test-step, circle, then the lie-down hold follows
+  // (800ms, no hold step; plays as part of the hammock entry chain).
+  hamset_settle: [
+    { frame: 'hamset_a', ms: 260 },
+    { frame: 'hamset_ab', ms: 240 },
+    { frame: 'hamset_b', ms: 300 },
+  ],
+  // Window chatter — back-view head-tracking beats that interrupt the
+  // window_watch hold every few seconds (1350ms, no hold step).
+  chatter_bout: [
+    { frame: 'chatter_a', ms: 400 },
+    { frame: 'chatter_ab', ms: 250 },
+    { frame: 'chatter_b', ms: 450 },
+    { frame: 'chatter_ab', ms: 250 },
+  ],
 } as const satisfies Record<string, readonly PlaygroundAnimStep[]>
 
 export type PlaygroundSequenceName =

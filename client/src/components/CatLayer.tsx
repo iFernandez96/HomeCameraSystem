@@ -1782,10 +1782,18 @@ const SEATED_IDLE_ACTIVITIES = new Set<Activity>([
 const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; weight: number }[]> = {
   // Frames-30: tailwrap_settle joins every pool — the tail sweeping in to
   // wrap the paws is the classic settled-cat beat.
+  // Frames-30 wave 4: the micro-life trio (weight shift / look-around /
+  // seated stretch) sits between the blink-class fillers and the special
+  // beats — frequent enough to read as alive, light enough not to steal
+  // the show from grooms and yawns.
   panther: [
     { name: 'blink', weight: 12 },
     { name: 'tailflick', weight: 4 },
+    { name: 'weight_shift', weight: 3 },
+    { name: 'look_around_l', weight: 2 },
+    { name: 'look_around_r', weight: 2 },
     { name: 'tailwrap_settle', weight: 2 },
+    { name: 'seated_stretch', weight: 1 },
     { name: 'pawraise_wave', weight: 1 },
     { name: 'groom_bout', weight: 2 },
     { name: 'yawn', weight: 1 },
@@ -1793,14 +1801,22 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
   mushu: [
     { name: 'blink', weight: 12 },
     { name: 'tailflick', weight: 4 },
+    { name: 'weight_shift', weight: 3 },
+    { name: 'look_around_l', weight: 2 },
+    { name: 'look_around_r', weight: 2 },
     { name: 'tailwrap_settle', weight: 2 },
+    { name: 'seated_stretch', weight: 1 },
     { name: 'pawraise_wave', weight: 1 },
     { name: 'groom_bout', weight: 3 },
     { name: 'yawn', weight: 1 },
   ],
   coco: [
     { name: 'tailflick', weight: 8 },
+    { name: 'weight_shift', weight: 3 },
+    { name: 'look_around_l', weight: 2 },
+    { name: 'look_around_r', weight: 2 },
     { name: 'tailwrap_settle', weight: 2 },
+    { name: 'seated_stretch', weight: 1 },
     { name: 'pawraise_wave', weight: 1 },
     { name: 'groom_bout', weight: 3 },
     { name: 'yawn', weight: 1 },

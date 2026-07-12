@@ -70,12 +70,13 @@ describe('playgroundSequences', () => {
     const wave1 = new Set(PLAYGROUND_PRELOAD_WAVE_1)
     const wave2 = new Set(PLAYGROUND_PRELOAD_WAVE_2)
 
-    // assert — 12 furniture pieces; 6 toys + 4 ambient + 3 cats × 33
-    // frames each (32 shared: the 16 pre-wave set plus the 16 frames-30
-    // wave-2c variant keys/midpoints, plus drink_ab for panther/mushu
-    // or climb_ab for coco). Count updated deliberately 2026-07-12.
+    // assert — 12 furniture pieces; 6 toys + 4 ambient + 3 cats × 45
+    // frames each (44 shared: the 32 through wave-2c plus the 12 wave-4
+    // habitat frames — mount/dismount/hamset/chatter triples — plus
+    // drink_ab for panther/mushu or climb_ab for coco). Count updated
+    // deliberately 2026-07-12 (frames-30 wave 4).
     expect(wave1.size).toBe(12)
-    expect(wave2.size).toBe(6 + 4 + 3 * 33)
+    expect(wave2.size).toBe(6 + 4 + 3 * 45)
     for (const url of wave1) {
       expect(url).toMatch(/^\/cats\/playground\/furniture\/[a-z_]+\.png$/)
       expect(wave2.has(url)).toBe(false)

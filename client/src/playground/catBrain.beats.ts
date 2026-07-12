@@ -1,5 +1,5 @@
 import { rollWeighted, rollWithoutImmediateRepeat } from '../components/catEngineCore'
-import { CAT_ANIM_SEQUENCES, sequenceDurationMs } from '../components/catAnimSequences'
+import { CAT_ANIM_SEQUENCES, sequenceDurationMs, type CatAnimSequenceName } from '../components/catAnimSequences'
 import type { PlaygroundCatId } from './playgroundAssets'
 import {
   PERCH_NO_REPEAT_MS,
@@ -85,9 +85,14 @@ export function travelToAnchor(
   // before setting off — moveRampAt stretches to cover it.
   const transitionMs = playTransitionDurationMs(cat.id, cat.activity, 'walk')
   const glances = ctx.random() < LOOK_BACK_REGARD_PROB
+  // Frames-30 wave 4: departures that DON'T glance sometimes flick an
+  // ear instead — a cheaper alive-tick during the same regard hold.
+  const flicks = !glances && ctx.random() < EAR_FLICK_REGARD_PROB
   const glanceMs = glances
     ? sequenceDurationMs(CAT_ANIM_SEQUENCES.look_back[cat.id])
-    : 0
+    : flicks
+      ? sequenceDurationMs(CAT_ANIM_SEQUENCES.earflick[cat.id])
+      : 0
   return {
     ...next,
     // A mount or dismount leg plays the climb loop while it still has
@@ -102,9 +107,9 @@ export function travelToAnchor(
     focus: { type: 'anchor', anchorId },
     targetX: null,
     targetY: null,
-    ...(glances
+    ...(glances || flicks
       ? {
-          idleSequence: 'look_back' as const,
+          idleSequence: (glances ? 'look_back' : 'earflick') as CatAnimSequenceName,
           idleSequenceStartedAt: now + transitionMs,
         }
       : {}),
@@ -116,6 +121,7 @@ export function travelToAnchor(
 }
 
 export const LOOK_BACK_REGARD_PROB = 0.25
+export const EAR_FLICK_REGARD_PROB = 0.3
 
 function inPlace(
   cat: PlayCat,

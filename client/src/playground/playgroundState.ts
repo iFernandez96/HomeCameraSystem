@@ -123,6 +123,11 @@ export type PlayCat = {
       swaps the walk gait for the climb loop wherever the leg still has
       vertical distance to cover. Reset by every activity switch. */
   climbTravel: boolean
+  /** Frames-30 wave 4: which way the current climb leg is headed (drives
+      the one-shot mount/dismount arc before the cling loop) and when the
+      leg began (the arc's timeline base). */
+  climbDir: 'up' | 'down' | null
+  climbStartedAt: number
   /** Live per-tick render flag: this frame the cat is actually lerping
       up/down a climbTravel leg, so PlaygroundCat plays climb_a/b. */
   climbing: boolean
@@ -229,6 +234,8 @@ export function setPlayActivity(
     // mount/dismount re-arm climbTravel explicitly after this call.
     climbTravel: false,
     climbing: false,
+    climbDir: null,
+    climbStartedAt: 0,
     // An activity switch also cancels an in-flight turn pivot — its
     // own pose-transition chain re-choreographs the cat from here.
     turn: null,
@@ -355,6 +362,8 @@ export function buildHomeCat(
     targetY: null,
     climbTravel: false,
     climbing: false,
+    climbDir: null,
+    climbStartedAt: 0,
     turn: null,
     boutVariant: null,
     lastBoutByFamily: {},
@@ -428,6 +437,9 @@ export const PLAYGROUND_SEQUENCE_TABLE: SequenceTable = {
   sniff_prelude: perCat(PLAYGROUND_SEQUENCES.sniff_prelude),
   drink_pawdip_bout: perCat(PLAYGROUND_SEQUENCES.drink_pawdip_bout),
   drink_lookup_bout: PLAYGROUND_PER_CAT_SEQUENCES.drink_lookup_bout,
+  // Frames-30 wave 4: hammock settle-in entry + window chatter idle.
+  hamset_settle: perCat(PLAYGROUND_SEQUENCES.hamset_settle),
+  chatter_bout: perCat(PLAYGROUND_SEQUENCES.chatter_bout),
 } as unknown as SequenceTable
 
 const seq = (name: string) => name as CatAnimSequenceName
@@ -498,10 +510,23 @@ export function playTransitionNamesFor(
     fromGroup === 'sleeping' && (toGroup === 'walking' || toGroup === 'standing')
       ? insertAfterWake(base)
       : base
+  // Frames-30 wave 4: arriving at the hammock, the cat test-steps and
+  // circles (hamset_settle) BEFORE curling down — so the settle slots in
+  // front of sleep_down, not after it (nobody circles after lying down).
+  const settled =
+    to === 'hammock' ? insertBeforeSleepDown(stretched) : stretched
   return [
-    ...stretched,
+    ...settled,
     ...(PLAY_ENTRY_SEQUENCES[to] ?? []),
   ]
+}
+
+function insertBeforeSleepDown(
+  chain: readonly CatAnimSequenceName[],
+): readonly CatAnimSequenceName[] {
+  const at = chain.indexOf('sleep_down')
+  if (at < 0) return [...chain, seq('hamset_settle')]
+  return [...chain.slice(0, at), seq('hamset_settle'), ...chain.slice(at)]
 }
 
 function insertAfterWake(
@@ -565,12 +590,38 @@ const CLIMB_STEPS_BY_CAT = PLAYGROUND_PER_CAT_SEQUENCES.climb as unknown as Reco
   readonly { frame: CatAnimFrame; ms: number }[]
 >
 
+// Frames-30 wave 4: one-shot mount/dismount arcs played at the START of a
+// climb leg, before the cling loop takes over. Typed through the same
+// localized cast as CLIMB_STEPS_BY_CAT (playground-only frames).
+const MOUNT_STEPS = [
+  { frame: 'mount_a', ms: 160 },
+  { frame: 'mount_ab', ms: 140 },
+  { frame: 'mount_b', ms: 160 },
+] as unknown as readonly { frame: CatAnimFrame; ms: number }[]
+
+const DISMOUNT_STEPS = [
+  { frame: 'dismount_a', ms: 180 },
+  { frame: 'dismount_ab', ms: 140 },
+  { frame: 'dismount_b', ms: 160 },
+] as unknown as readonly { frame: CatAnimFrame; ms: number }[]
+
 export function playgroundAnimationPlanFor(cat: PlayCat, now: number): AnimationPlan {
   if (cat.climbing) {
     const climbSteps = CLIMB_STEPS_BY_CAT[cat.id]
+    // Long legs open with their one-shot arc (rear-up mount / look-down
+    // dismount) before the cling loop; short hops (climbDir null — the
+    // arc would not fit beside a full cling cycle) loop plainly.
+    const arc = cat.climbDir == null // null OR undefined (test partials)
+      ? []
+      : cat.climbDir === 'down' ? DISMOUNT_STEPS : MOUNT_STEPS
+    const arcMs = arc.reduce((t, step) => t + step.ms, 0)
+    const elapsed = Math.max(0, now - (cat.climbStartedAt || cat.activityStartedAt))
+    const frame = elapsed < arcMs
+      ? frameFromSteps(arc, elapsed, false)
+      : frameFromSteps(climbSteps, elapsed - arcMs, true)
     return {
-      frame: frameFromSteps(climbSteps, Math.max(0, now - cat.activityStartedAt), true),
-      framesToPreload: climbSteps.map((step) => step.frame),
+      frame,
+      framesToPreload: [...arc.map((step) => step.frame), ...climbSteps.map((step) => step.frame)],
       walkFrame: undefined,
     }
   }
