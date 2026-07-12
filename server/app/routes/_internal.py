@@ -301,7 +301,7 @@ class EventClipAssurancePayload(BaseModel):
     event_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$", max_length=128)
     checked_at: float = Field(gt=0)
     sample_bytes: int | None = Field(default=None, ge=0, le=10_000_000_000)
-    elapsed_ms: float | None = Field(default=None, ge=0, le=180_000)
+    elapsed_ms: float | None = Field(default=None, ge=0, le=650_000)
     reason: Literal[
         "no_event_clip",
         "event_playable",
@@ -350,7 +350,7 @@ class RecordingAssurancePayload(BaseModel):
     sample_bytes: int | None = Field(default=None, ge=0, le=1_000_000_000)
     # Includes the bounded synthetic capture/decode plus a full decode of the
     # newest real event, so the legitimate worst case exceeds two minutes.
-    elapsed_ms: float | None = Field(default=None, ge=0, le=240_000)
+    elapsed_ms: float | None = Field(default=None, ge=0, le=700_000)
     storage: RecordingStoragePayload | None = None
     event_clip: EventClipAssurancePayload | None = None
 
