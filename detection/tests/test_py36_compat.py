@@ -69,6 +69,7 @@ _GUARDED_MODULES = (
     "detection/zones.py",
     "detection/recording.py",
     "detection/recording_canary.py",
+    "detection/camera_quality.py",
     "detection/preroll.py",
     "detection/tracks.py",
     "detection/presence.py",

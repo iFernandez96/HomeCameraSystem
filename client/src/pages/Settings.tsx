@@ -198,6 +198,7 @@ export function Settings() {
           >
             <NotificationsSection
               pushSubsCount={status?.push_subs_count ?? null}
+              pushAssurance={status?.push_assurance ?? null}
             />
           </div>
         )}

@@ -147,6 +147,13 @@ class Metrics:
         self.power_watts = 0.0
         self.power_sample_ts = 0.0
         self.power_read_failures = 0
+        # Low-cadence image-quality proof. Status: 0=warming/unknown,
+        # 1=clear, 2=blurred, 3=frozen. Numeric wire fields keep the worker
+        # heartbeat coercion strict and cheap.
+        self.camera_quality_status = 0
+        self.camera_luma = 0.0
+        self.camera_sharpness = 0.0
+        self.camera_frame_delta = 0.0
         self.started = time.time()
 
     def fps(self):
@@ -233,6 +240,10 @@ class Metrics:
             "watchdog_action_count": self.watchdog_action_count,
             "wedge_diag_at": round(self.wedge_diag_at, 1),
             "wedge_diag_nvargus_rss_kb": round(self.wedge_diag_nvargus_rss_kb, 1),
+            "camera_quality_status": self.camera_quality_status,
+            "camera_luma": round(self.camera_luma, 2),
+            "camera_sharpness": round(self.camera_sharpness, 2),
+            "camera_frame_delta": round(self.camera_frame_delta, 3),
             "wedge_diag_gpu_temp_c": round(self.wedge_diag_gpu_temp_c, 1),
             "wedge_diag_mem_avail_mb": round(self.wedge_diag_mem_avail_mb, 1),
             "wedge_diag_argus_pending": round(self.wedge_diag_argus_pending, 1),

@@ -17,6 +17,7 @@ from pywebpush import WebPushException, webpush
 
 from ..config import settings
 from ..log import RateLimitedLog
+from . import push_assurance
 
 log = logging.getLogger(__name__)
 
@@ -478,7 +479,6 @@ class PushService:
             return 0
         if not subs:
             return 0
-        body = json.dumps(payload)
         importance = str(payload.get("importance") or "normal")
         urgency = {
             "critical": "high",
@@ -508,6 +508,10 @@ class PushService:
         def send_one(sub: dict[str, Any]) -> tuple[bool, int | None, str | None]:
             # Host-only — NEVER the full endpoint (carries device secret).
             host = _endpoint_host(sub.get("endpoint"))
+            receipt_id = push_assurance.issue(sub)
+            delivery_payload = dict(payload)
+            delivery_payload["receipt_id"] = receipt_id
+            body = json.dumps(delivery_payload)
             try:
                 webpush(
                     subscription_info=sub,
@@ -519,6 +523,7 @@ class PushService:
                 )
                 return True, None, None
             except WebPushException as e:
+                push_assurance.cancel(receipt_id)
                 code = e.response.status_code if e.response is not None else None
                 # Classify the gateway response so the operator knows
                 # whether this is "device went away" (prune, benign) vs
@@ -552,6 +557,7 @@ class PushService:
                     log.warning("push to %s: %s: %s", host, code, str(e)[:200])
                 return False, code, None
             except Exception as e:
+                push_assurance.cancel(receipt_id)
                 # iter-165: any non-WebPushException (ConnectionError,
                 # ssl.SSLError, OSError, a buggy pywebpush release raising
                 # a TypeError, etc.) used to escape `send_one`, propagate

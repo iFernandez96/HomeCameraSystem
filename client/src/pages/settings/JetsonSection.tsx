@@ -80,6 +80,7 @@ export function JetsonSection({
         subtitle="A real sample is recorded, fully decoded, and removed every 30 minutes."
       >
         <Row label="Playable recording" right={<RecordingProof status={status} />} />
+        <Row label="Recent event video" right={<EventClipProof status={status} />} />
         <Row label="Capture storage" right={<StorageProof status={status} />} />
         <Row label="Drive self-test" right={<SmartProof status={status} />} />
       </Section>
@@ -150,6 +151,10 @@ export function JetsonSection({
         <Row
           label="Dropped frames"
           right={<DroppedFrames metrics={status?.worker_metrics ?? null} />}
+        />
+        <Row
+          label="Image quality"
+          right={<ImageQuality metrics={status?.worker_metrics ?? null} />}
         />
         <Row
           label="Stream recoveries"
@@ -238,6 +243,8 @@ function assuranceReason(reason: string | null | undefined): string {
     decode_timeout: 'Playback check timed out',
     decode_failed: 'Test recording was not playable',
     cleanup_failed: 'Test artifact could not be removed',
+    event_decode_timeout: 'Recent event video verification timed out',
+    event_decode_failed: 'Recent event video is not playable',
   }[reason ?? ''] ?? 'Recording check failed'
 }
 
@@ -254,6 +261,16 @@ function RecordingProof({ status }: { status: ServerStatus | null }) {
   }
   const age = proof.age_s == null ? 'just now' : `${formatUptime(proof.age_s)} ago`
   return <span className="text-right text-[var(--color-success)]">Verified playable · {age}</span>
+}
+
+function EventClipProof({ status }: { status: ServerStatus | null }) {
+  const clip = status?.recording_assurance?.event_clip
+  if (clip == null || clip.state === 'none') return <Mono>No event video to sample yet</Mono>
+  if (clip.state === 'failed') {
+    return <span className="text-right text-[var(--color-danger)]">{assuranceReason(clip.reason)}</span>
+  }
+  const elapsed = clip.elapsed_ms == null ? '' : ` · ${(clip.elapsed_ms / 1000).toFixed(1)}s check`
+  return <span className="text-right text-[var(--color-success)]">Verified playable{elapsed}</span>
 }
 
 function StorageProof({ status }: { status: ServerStatus | null }) {
@@ -345,6 +362,14 @@ function computeVerdict(status: ServerStatus | null): Verdict {
       ? m.infer_ms_p95
       : (m?.infer_ms_recent ?? 0)
 
+  if (m?.camera_quality_status === 3) {
+    return {
+      kind: 'critical',
+      headline: 'Camera image appears frozen',
+      subline: 'Repeated identical samples persisted for at least 30 seconds.',
+    }
+  }
+
   // Critical-tier hardware thresholds.
   if (status.cpu_temp_c != null && status.cpu_temp_c >= 85) {
     return {
@@ -397,6 +422,13 @@ function computeVerdict(status: ServerStatus | null): Verdict {
   }
 
   // Warning-tier (calm "needs an eye" rather than "act now").
+  if (m?.camera_quality_status === 2) {
+    return {
+      kind: 'attention',
+      headline: 'Camera image looks blurred',
+      subline: 'Detail dropped far below this camera’s learned normal level.',
+    }
+  }
   if (status.recording_assurance?.state === 'stale') {
     return {
       kind: 'attention',
@@ -608,6 +640,24 @@ function CpuFreqPct({ pct }: { pct: number | null }) {
       {pct.toFixed(1)} %
     </span>
   )
+}
+
+function ImageQuality({ metrics }: { metrics: WorkerMetrics | null }) {
+  const state = metrics?.camera_quality_status
+  if (state == null || state === 0) return <Mono>Warming up</Mono>
+  if (state === 2) {
+    return <span className="text-right text-[var(--color-warning)]">Sustained blur detected</span>
+  }
+  if (state === 3) {
+    return <span className="text-right text-[var(--color-danger)]">Repeated identical frames</span>
+  }
+  const luma = metrics?.camera_luma
+  const sharpness = metrics?.camera_sharpness
+  const detail =
+    luma == null || sharpness == null
+      ? ''
+      : ` · light ${luma.toFixed(0)} · detail ${sharpness.toFixed(1)}`
+  return <span className="text-right text-[var(--color-success)]">Clear{detail}</span>
 }
 
 function StreamRecoveries({ metrics }: { metrics: WorkerMetrics | null }) {

@@ -307,6 +307,41 @@ def test_delete_clip_returns_false_for_invalid_id(rec_dir):
     assert recording_service.delete_clip("../etc/passwd") is False
 
 
+# --- storage_forecast ---
+
+
+def test_given_bursty_recent_clips_when_forecast_runs_then_it_reports_24h_7d_and_peak(
+    tmp_path, monkeypatch
+):
+    # arrange
+    import os
+    from app.config import settings
+    from app.services import events_db
+
+    now = 1_800_000_000.0
+    recent = tmp_path / "recent.mp4"
+    older = tmp_path / "older.mp4"
+    protected = tmp_path / "protected.mp4"
+    recent.write_bytes(b"r" * 100)
+    older.write_bytes(b"o" * 200)
+    protected.write_bytes(b"p" * 50)
+    os.utime(recent, (now - 3600, now - 3600))
+    os.utime(older, (now - 2 * 86400, now - 2 * 86400))
+    os.utime(protected, (now - 8 * 86400, now - 8 * 86400))
+    monkeypatch.setattr(settings, "recordings_dir", tmp_path)
+    monkeypatch.setattr(events_db, "protected_event_ids", lambda _path: {"protected"})
+
+    # act
+    result = recording_service.storage_forecast(now=now)
+
+    # assert
+    gib = 1024 ** 3
+    assert result["recording_gb_per_day"] == 100 / gib
+    assert result["recording_gb_per_day_7d"] == 300 / (7 * gib)
+    assert result["recording_peak_gb_per_day_7d"] == 200 / gib
+    assert result["protected_recording_gb"] == 50 / gib
+
+
 # --- sweep_old_clips ---
 
 

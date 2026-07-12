@@ -374,6 +374,7 @@ def test_given_watchdog_action_when_reopening_camera_then_old_source_is_closed(
         return new_camera
 
     monkeypatch.setattr(detect.jetson_utils, "videoSource", _fake_video_source)
+    monkeypatch.setattr(detect, "_rtsp_stream_ready", lambda _uri: True)
 
     reopened = detect.reopen_camera_after_watchdog_action(
         "rtsp://127.0.0.1:8554/cam",
@@ -390,11 +391,94 @@ def test_given_watchdog_action_when_reopening_camera_then_old_source_is_closed(
     ]
 
 
+def test_given_rtsp_is_not_published_when_opening_then_reader_waits_for_probe(
+    monkeypatch,
+):
+    # arrange
+    camera = object()
+    ready = iter([False, False, True])
+    sleeps = []
+    source_calls = []
+
+    def _video_source(uri, argv=None):
+        source_calls.append((uri, argv))
+        return camera
+
+    monkeypatch.setattr(detect.jetson_utils, "videoSource", _video_source)
+    monkeypatch.setattr(detect.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    # act
+    opened = detect.open_camera(
+        "rtsp://127.0.0.1:8554/cam",
+        attempts=3,
+        retry_s=0.25,
+        ready_probe=lambda _uri: next(ready),
+    )
+
+    # assert
+    assert opened is camera
+    assert sleeps == [0.25, 0.25]
+    assert source_calls == [
+        ("rtsp://127.0.0.1:8554/cam", ["--input-codec=h264"]),
+    ]
+
+
+def test_given_rtsp_never_publishes_when_opening_then_no_stale_reader_is_created(
+    monkeypatch,
+):
+    # arrange
+    source = MagicMock()
+    monkeypatch.setattr(detect.jetson_utils, "videoSource", source)
+    monkeypatch.setattr(detect.time, "sleep", lambda _seconds: None)
+
+    # act / assert
+    with pytest.raises(SystemExit, match="upstream video stream is not ready"):
+        detect.open_camera(
+            "rtsp://127.0.0.1:8554/cam",
+            attempts=2,
+            retry_s=0.0,
+            ready_probe=lambda _uri: False,
+        )
+    source.assert_not_called()
+
+
 def test_privacy_polygons_become_conservative_pipeline_rectangles():
     masks = [[[0.1, 0.2], [0.4, 0.2], [0.4, 0.6], [0.1, 0.6]]]
     assert detect.privacy_rectangles(masks, width=100, height=50) == [
         (10, 10, 31, 21),
     ]
+
+
+def test_default_privacy_coordinates_keep_durable_1080p_file_contract():
+    masks = [[[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]]
+    assert detect.privacy_rectangles(masks) == [(0, 0, 961, 541)]
+
+
+def test_exposure_region_coordinates_match_native_4k_sensor(tmp_path, monkeypatch):
+    target = tmp_path / ".camera-exposure.env"
+    monkeypatch.setattr(detect, "_EXPOSURE_CONFIG", str(target))
+
+    region = detect._write_exposure_config(
+        (True, 0.25, 0.25, 0.5, 0.5, 0.0, False)
+    )
+
+    assert region == "960 540 2880 1620 1"
+    assert target.read_text() == (
+        "AE_SENSOR_WIDTH='3840'\n"
+        "AE_SENSOR_HEIGHT='2160'\n"
+        "AE_REGION='960 540 2880 1620 1'\n"
+        "AE_COMPENSATION='0.00'\n"
+        "AE_LOCK='false'\n"
+    )
+
+
+def test_camera_ready_requires_720p_detection_and_1440p_uhq(monkeypatch):
+    resolutions = {"cam": (1280, 720), "cam_uhq": (2560, 1440)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
+    assert detect._both_camera_streams_ready(timeout_s=0.1) is True
 
 
 def test_privacy_pipeline_file_is_atomic_and_restart_only_on_change(tmp_path):

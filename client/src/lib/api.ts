@@ -1034,6 +1034,26 @@ export const login = (body: LoginRequest) =>
     body: JSON.stringify(body),
   })
 
+export const getMfaStatus = () => req<{ enabled: boolean }>('/api/auth/mfa')
+
+export const beginMfaSetup = (password: string) =>
+  req<import('./types').MfaSetup>('/api/auth/mfa/setup', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+
+export const confirmMfaSetup = (code: string) =>
+  req<{ ok: boolean; enabled: boolean }>('/api/auth/mfa/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+
+export const disableMfa = (password: string, code: string) =>
+  req<{ ok: boolean; enabled: boolean }>('/api/auth/mfa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ password, code }),
+  })
+
 export const logout = () =>
   req<{ ok: boolean }>('/api/auth/logout', {
     method: 'POST',

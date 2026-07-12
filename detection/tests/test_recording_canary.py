@@ -115,3 +115,60 @@ def test_given_result_endpoint_down_when_sample_is_playable_then_unit_fails_hone
     assert code == 2
     assert not list(tmp_path.glob(".recording-canary-*"))
 
+
+def test_given_recent_real_event_when_canary_runs_then_event_clip_is_fully_verified(tmp_path):
+    # arrange
+    clip = tmp_path / "visit-123.mp4"
+    clip.write_bytes(b"real-event-video")
+    posted = []
+
+    # act
+    code = recording_canary.run_canary(
+        str(tmp_path), "rtsp://cam", "http://result",
+        runner=_success_runner,
+        post_result=lambda _url, body: posted.append(body) or True,
+        clock=lambda: 5000.0,
+    )
+
+    # assert
+    assert code == 0
+    assert posted[0]["event_clip"] == {
+        "state": "playable",
+        "event_id": "visit-123",
+        "checked_at": 5000.0,
+        "sample_bytes": len(b"real-event-video"),
+        "elapsed_ms": posted[0]["event_clip"]["elapsed_ms"],
+        "reason": "event_playable",
+    }
+    assert clip.exists()
+
+
+def test_given_recent_event_is_corrupt_when_canary_runs_then_overall_result_fails_truthfully(tmp_path):
+    # arrange
+    clip = tmp_path / "visit-broken.mp4"
+    clip.write_bytes(b"broken-video")
+    posted = []
+
+    def runner(args, **_kwargs):
+        if "mp4" in args:
+            with open(args[-1], "wb") as handle:
+                handle.write(b"video" * 1024)
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        if str(clip) in args:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"private detail")
+        return SimpleNamespace(returncode=0, stdout=b"PASSED", stderr=b"")
+
+    # act
+    code = recording_canary.run_canary(
+        str(tmp_path), "rtsp://cam", "http://result",
+        runner=runner,
+        post_result=lambda _url, body: posted.append(body) or True,
+    )
+
+    # assert
+    assert code == 1
+    assert posted[0]["stage"] == "event_decode"
+    assert posted[0]["reason"] == "event_decode_failed"
+    assert posted[0]["event_clip"]["state"] == "failed"
+    assert "private detail" not in str(posted[0])
+    assert clip.exists()

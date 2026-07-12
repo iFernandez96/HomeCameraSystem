@@ -64,7 +64,9 @@
         "wedge_diag_argus_pending": {"type": "number"},
         "power_sensor_status": {"type": "number"}, "power_volts": {"type": "number"},
         "power_amps": {"type": "number"}, "power_watts": {"type": "number"},
-        "power_sample_ts": {"type": "number"}, "power_read_failures": {"type": "number"}
+        "power_sample_ts": {"type": "number"}, "power_read_failures": {"type": "number"},
+        "camera_quality_status": {"type": "number"}, "camera_luma": {"type": "number"},
+        "camera_sharpness": {"type": "number"}, "camera_frame_delta": {"type": "number"}
       }
     }
   }

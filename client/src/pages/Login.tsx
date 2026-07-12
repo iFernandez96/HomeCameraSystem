@@ -51,6 +51,8 @@ export function Login() {
   const wasExpired = searchParams.get('expired') === '1'
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+  const [mfaRequired, setMfaRequired] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // iter-356.1: Caps Lock warning. Driven by the password field's
@@ -77,7 +79,8 @@ export function Login() {
     setError(null)
     setSubmitting(true)
     try {
-      await login(username, password)
+      if (mfaRequired) await login(username, password, otpCode)
+      else await login(username, password)
       navigate('/', { replace: true })
     } catch (err) {
       // docs/logging_plan.md §2 (Auth): failed sign-in WARN. GUARDRAIL
@@ -85,12 +88,18 @@ export function Login() {
       // (it's in `password` scope here and must never reach the log).
       // online disambiguates "wrong creds" (401) from "server/network
       // down" (no status). navigator.onLine is the network-edge signal.
-      log.warn('login:failed', {
+      const status = err instanceof HttpError ? err.status : null
+      const fields = {
         username,
-        status: err instanceof HttpError ? err.status : null,
+        status,
         online: typeof navigator !== 'undefined' ? navigator.onLine : null,
-      })
-      if (err instanceof HttpError && err.status === 401) {
+      }
+      if (status === 428) log.info('login:second-factor-required', fields)
+      else log.warn('login:failed', fields)
+      if (err instanceof HttpError && err.status === 428) {
+        setMfaRequired(true)
+        setError('Enter the six-digit code from your authenticator app.')
+      } else if (err instanceof HttpError && err.status === 401) {
         // iter-356.1: human voice + recovery action in the copy itself.
         setError('Wrong username or password — try again.')
       } else if (err instanceof Error) {
@@ -311,6 +320,22 @@ export function Login() {
             </div>
           </label>
         </div>
+        {mfaRequired && (
+          <label className="mb-2 flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5 focus-within:bg-[var(--color-surface)]">
+            <span className="mb-1 text-xs font-medium text-[var(--color-text-secondary)]">
+              Authenticator or recovery code
+            </span>
+            <input
+              type="text"
+              autoComplete="one-time-code"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value.trim())}
+              required
+              aria-label="Authenticator or recovery code"
+              className="bg-transparent text-base tracking-[0.18em] text-[var(--color-text-primary)] outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+            />
+          </label>
+        )}
         <p id="username-hint" className="text-xs text-[var(--color-text-tertiary)] -mt-1 mb-2.5 px-1">
           Created when HomeCam was first set up.
         </p>

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   captureSnapshot,
+  beginMfaSetup,
+  confirmMfaSetup,
+  disableMfa,
   createCameraExposurePreset,
   deleteCameraExposurePreset,
   fetchEvents,
@@ -12,6 +15,7 @@ import {
   fetchLogs,
   getLogsResult,
   getMe,
+  getMfaStatus,
   getRecoverStatus,
   getCameraExposure,
   getStatus,
@@ -1054,6 +1058,29 @@ describe('lib/api', () => {
     mockJson({ user: { username: 'a', role: 'admin' } })
     await login({ username: 'a', password: 'p' })
     expect(asMock().mock.calls[0][1].credentials).toBe('include')
+  })
+
+  it('MFA wrappers keep setup secrets server-bound and send only the entered step-up fields', async () => {
+    mockJson({ enabled: false })
+    expect(await getMfaStatus()).toEqual({ enabled: false })
+    expect(asMock().mock.calls[0][0]).toBe('/api/auth/mfa')
+
+    mockJson({
+      secret: 'BASE32', provisioning_uri: 'otpauth://totp/x',
+      recovery_codes: ['AAAA-BBBB'], expires_in_s: 600,
+    })
+    await beginMfaSetup('current-password')
+    expect(JSON.parse(asMock().mock.calls[1][1].body as string)).toEqual({ password: 'current-password' })
+
+    mockJson({ ok: true, enabled: true })
+    await confirmMfaSetup('123456')
+    expect(JSON.parse(asMock().mock.calls[2][1].body as string)).toEqual({ code: '123456' })
+
+    mockJson({ ok: true, enabled: false })
+    await disableMfa('current-password', 'AAAA-BBBB')
+    expect(JSON.parse(asMock().mock.calls[3][1].body as string)).toEqual({
+      password: 'current-password', code: 'AAAA-BBBB',
+    })
   })
 
   it('logout POSTs /api/auth/logout and returns ok', async () => {

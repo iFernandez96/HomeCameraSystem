@@ -319,6 +319,24 @@ describe('reportPushReceived', () => {
     expect(JSON.stringify(body)).not.toContain('/snapshots/thumb_42.jpg')
   })
 
+  it('given a server receipt capability, when the notification is shown, then the capability is posted separately and never enters client logs', () => {
+    // arrange
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null))
+    vi.stubGlobal('fetch', fetchMock)
+    const receiptId = 'receipt_capability_1234567890abcdef'
+
+    // act
+    reportPushReceived({ event_id: 'evt-42', receipt_id: receiptId }, true)
+
+    // assert
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const logBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    const receiptBody = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/_internal/push-receipt')
+    expect(receiptBody).toEqual({ receipt_id: receiptId, shown: true })
+    expect(JSON.stringify(logBody)).not.toContain(receiptId)
+  })
+
   it('given showNotification fails, when reported, then err is the error name only', () => {
     // arrange
     const fetchMock = vi.fn().mockResolvedValue(new Response(null))

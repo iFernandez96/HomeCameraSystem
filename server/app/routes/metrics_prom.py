@@ -178,6 +178,18 @@ async def metrics_prom() -> str:
                 1 if smart == "healthy" else 0,
                 "SMART overall-health result when exposed by the USB storage bridge",
             ))
+    event_clip = assurance.get("event_clip")
+    if isinstance(event_clip, dict) and event_clip.get("state") != "none":
+        parts.append(_line(
+            "homecam_recent_event_clip_playable",
+            1 if event_clip.get("state") == "playable" else 0,
+            "Whether the most recently sampled real event clip fully decoded",
+        ))
+        parts.append(_line(
+            "homecam_recent_event_clip_check_ms",
+            event_clip.get("elapsed_ms"),
+            "Wall-clock time spent fully decoding the sampled real event clip",
+        ))
 
     # Worker — gauges (fps, infer_ms_*) are gated on `worker_alive`
     # because a stale value misrepresents current state. Counters
@@ -209,6 +221,18 @@ async def metrics_prom() -> str:
             parts.append(_line(
                 "homecam_worker_uptime_seconds", wm.get("uptime_s"),
                 "Worker process uptime in seconds",
+            ))
+            parts.append(_line(
+                "homecam_camera_quality_status", wm.get("camera_quality_status"),
+                "Image quality state: 0 warming, 1 clear, 2 blurred, 3 frozen",
+            ))
+            parts.append(_line(
+                "homecam_camera_luma", wm.get("camera_luma"),
+                "Mean luma of the low-cadence camera quality sample",
+            ))
+            parts.append(_line(
+                "homecam_camera_sharpness", wm.get("camera_sharpness"),
+                "Relative edge-energy score of the camera quality sample",
             ))
             power_sample_ts = wm.get("power_sample_ts", 0.0)
             power_age_s = (

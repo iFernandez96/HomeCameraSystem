@@ -175,6 +175,12 @@ CLAUDE.md           Architectural notes — read first when editing
 
 Working end-to-end on the Jetson Nano 2GB. Live video (WebRTC, ~200 ms LAN), detection events (SSD-MobileNet-v2 at FP16 with idle-gear thermal management), per-person face recognition (when `encodings.pkl` is present and dlib is unblocked), Web Push with VAPID, persisted detection config, and a Settings page surfacing per-component health (CPU/GPU temp, dropped frames, p95 inference latency, mediamtx-watchdog restart count, etc).
 
+Reliability checks include a scheduled RTSP recording/full-decode canary, a
+full decode of a recent real event clip, correlated service-worker push
+receipts, adaptive blur/frozen-frame monitoring, and conservative 24-hour vs
+seven-day storage runway. Privileged accounts can enable encrypted-at-rest
+TOTP two-step verification with one-use recovery codes.
+
 Privileged camera recovery and reboot commands are handed to the host-side worker instead of granting the FastAPI container host control.
 
 ## Security

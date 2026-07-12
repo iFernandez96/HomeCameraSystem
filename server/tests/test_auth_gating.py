@@ -214,6 +214,25 @@ def test_reboot_viewer_403s(client_anon):
     assert res.status_code == 403
 
 
+def test_mfa_setup_owner_passes_and_family_is_hidden_behind_role_gate(client_anon):
+    owner = _seed_and_token("owner")
+    family = _seed_and_token("family")
+
+    owner_result = client_anon.post(
+        "/api/auth/mfa/setup",
+        json={"password": "p"},
+        cookies={COOKIE_ACCESS: owner},
+    )
+    family_result = client_anon.post(
+        "/api/auth/mfa/setup",
+        json={"password": "p"},
+        cookies={COOKIE_ACCESS: family},
+    )
+
+    assert owner_result.status_code == 200, owner_result.text
+    assert family_result.status_code == 403
+
+
 # iter-210 (Feature #10 slice 1): /api/system/backup is owner-only,
 # same RBAC profile as /api/system/reboot. Symmetric coverage —
 # anon / family / viewer 401-or-403; owner / legacy admin pass.
