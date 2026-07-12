@@ -4,7 +4,7 @@ import {
   sequenceDurationMs,
   type CatAnimSequenceName,
 } from '../components/catAnimSequences'
-import { rollWeighted } from '../components/catEngineCore'
+import { rollWeighted, turnPivotView } from '../components/catEngineCore'
 import {
   forceDismountStroll,
   rollNextBeat,
@@ -18,6 +18,7 @@ import {
   playTransitionNamesFor,
   setPlayActivity,
   setPlayMood,
+  turnPivotSteps,
   type PlayCat,
   type PlaygroundState,
 } from './playgroundState'
@@ -280,6 +281,20 @@ function stepCat(
   // dismount leg still has vertical distance, the render layer swaps
   // the walk gait for the climb_a/b cling loop.
   let climbing = false
+  // Turn-around pivot lifecycle (2026-07-11): a completed pivot clears
+  // and the frozen travel resumes toward the same destination this
+  // very tick; an in-flight one plants the paws below.
+  let turn = cat.turn
+  if (turn && turnPivotView(turnPivotSteps(cat), turn, now).done) {
+    turn = null
+    changed = true
+  }
+  // A reversal pivots only once the gait is ESTABLISHED (past its
+  // ease-in): the facing-establishment tick of a fresh travel is the
+  // get-up chain's turn to cover, not a mid-stride whip-around. Never
+  // while clinging to a climb — the pivot frames are standing poses.
+  const strideEstablished =
+    now - Math.max(cat.activityStartedAt, cat.moveRampAt) > GAIT_RAMP_MS && !cat.climbing
   if (gaitReady) {
     const dest = travelDestination(cat, ctx)
     if (dest) {
@@ -289,11 +304,18 @@ function stepCat(
       if (Math.abs(dx) > ARRIVE_EPSILON_PX) {
         const facing: 'L' | 'R' = dx > 0 ? 'R' : 'L'
         if (facing !== direction) {
+          // An IN-MOTION reversal pivots in place (plant → whip around
+          // → resume) instead of mirror-morphing mid-stride. A cat
+          // still waiting on moveRampAt (or just launching) keeps the
+          // instant re-face — its get-up chain covers the turn.
+          if (turn === null && strideEstablished) {
+            turn = { startedAt: now, from: direction, to: facing }
+          }
           direction = facing
           changed = true
         }
       }
-      if (now >= cat.moveRampAt) {
+      if (now >= cat.moveRampAt && turn === null) {
         const gait = activity === 'walk' ? 'walk' : 'run'
         // Ease in from standstill over ~250ms; ease out inside the
         // arrival zone. Never 0-to-full-stride in one frame.
@@ -324,7 +346,7 @@ function stepCat(
     } else if (activity === 'flee' || activity === 'chase') {
       // Un-targeted sprint (ported interaction outcomes): straight run,
       // once the get-up chain has played.
-      if (now >= cat.moveRampAt) {
+      if (now >= cat.moveRampAt && turn === null) {
         const easeIn = Math.max(GAIT_EASE_MIN, Math.min(1, (now - cat.moveRampAt) / GAIT_RAMP_MS))
         const step = gaitVelocityPxPerMs('run', CAT_WIDTH_PX) * dt * easeIn
         x += direction === 'R' ? step : -step
@@ -336,12 +358,17 @@ function stepCat(
     changed = true
   }
 
-  // Wall clamps
+  // Wall clamps — an in-motion bounce whips through the pivot too.
   const clampedX = clampCatX(x, ctx.sceneW)
   if (clampedX !== x) {
     x = clampedX
-    direction = direction === 'L' ? 'R' : 'L'
+    const bounced: 'L' | 'R' = direction === 'L' ? 'R' : 'L'
+    if (turn === null && gaitReady && strideEstablished) {
+      turn = { startedAt: now, from: direction, to: bounced }
+    }
+    direction = bounced
   }
+  if (turn !== cat.turn) changed = true
 
   // --- Depth cross-fade: rendered scale chases the logical lane ---------------
   let laneBlend = cat.laneBlend
@@ -367,6 +394,7 @@ function stepCat(
       moodSecondary,
       poop,
       climbing,
+      turn,
       route: cat.route.slice(1),
       targetAnchor: cat.route[1] ?? null,
       phaseTime: now,
@@ -488,6 +516,7 @@ function stepCat(
       moodSecondary,
       poop,
       climbing,
+      turn,
       activityUntil,
       phaseTime,
       idleSequence,
@@ -501,7 +530,7 @@ function stepCat(
   if (now > activityUntil && gaitReady) {
     const base: PlayCat = {
       ...cat, x, y, laneBlend, direction, mood, moodSecondary, poop, activityUntil, phaseTime,
-      climbTravel: false, climbing: false,
+      climbTravel: false, climbing: false, turn: null,
       targetAnchor: null, route: [], arrival: null, targetX: null, targetY: null, focus: null,
       idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial,
     }
@@ -519,6 +548,7 @@ function stepCat(
     moodSecondary,
     poop,
     climbing,
+    turn,
     activityUntil,
     phaseTime,
     idleSequence,

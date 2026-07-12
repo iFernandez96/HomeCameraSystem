@@ -179,6 +179,39 @@ export function animationPlanFor<A extends string>(
   }
 }
 
+// === Turn-around pivot =======================================================
+
+/** A direction reversal in flight. `from` renders for the first half of
+    the pivot sequence, `to` for the second — the switch lands inside the
+    centered symmetric `stand` frame, so the instant mirror flip has no
+    visible seam. Replaces the 220ms CSS scaleX morph for walking flips
+    (user 2026-07-11: "cats turn around soo slowly"). */
+export type TurnPivot = {
+  startedAt: number
+  from: 'L' | 'R'
+  to: 'L' | 'R'
+}
+
+export type TurnPivotView = {
+  frame: CatAnimFrame
+  facing: 'L' | 'R'
+  done: boolean
+}
+
+export function turnPivotView(
+  steps: readonly CatAnimStep[],
+  pivot: TurnPivot,
+  now: number,
+): TurnPivotView {
+  const elapsed = Math.max(0, now - pivot.startedAt)
+  const duration = sequenceDurationMs(steps)
+  return {
+    frame: frameFromSteps(steps, elapsed, false),
+    facing: elapsed < duration / 2 ? pivot.from : pivot.to,
+    done: elapsed >= duration,
+  }
+}
+
 // === Randomness helpers ======================================================
 
 export function rand(min: number, max: number) {

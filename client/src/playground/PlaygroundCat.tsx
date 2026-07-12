@@ -2,9 +2,11 @@ import { memo, useState } from 'react'
 import { CatParticles } from '../components/CatParticles'
 import { catAnimFrameUrl } from '../components/catAnimSequences'
 import { moodBadgeParts } from '../components/catMoodBadges'
+import { turnPivotView } from '../components/catEngineCore'
 import {
   playFrameUrl,
   playgroundAnimationPlanFor,
+  turnPivotSteps,
   type PlayCat,
 } from './playgroundState'
 import { CAT_HEIGHT_PX, CAT_WIDTH_PX } from './sceneModel'
@@ -62,7 +64,15 @@ function PlaygroundCatImpl({ cat, onPetStart, onPetEnd }: PlaygroundCatProps) {
   // back to the shared seated pose before hiding entirely.
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const hidden = cat.activity === 'tunnel'
-  const frame = plan.frame ?? 'seated'
+  // Turn-around pivot (2026-07-11): while a pivot is in flight the
+  // side→front→side sequence overrides the gait frame, and the rendered
+  // facing comes from the pivot view — OLD facing until the symmetric
+  // frontal midpoint, then the new one. cat.direction already holds the
+  // destination facing throughout.
+  const pivotView = cat.turn ? turnPivotView(turnPivotSteps(cat), cat.turn, cat.phaseTime) : null
+  const pivoting = pivotView !== null && !pivotView.done
+  const facing = pivoting ? pivotView.facing : cat.direction
+  const frame = pivoting ? pivotView.frame : plan.frame ?? 'seated'
   let src = playFrameUrl(cat.id, frame)
   let renderedFrame: string = frame
   if (failedSrc === src) {
@@ -129,10 +139,13 @@ function PlaygroundCatImpl({ cat, onPetStart, onPetEnd }: PlaygroundCatProps) {
             width: '100%',
             height: '100%',
             // Shared PNGs face LEFT by default; flip for 'R'. Safe to
-            // transition here — this div carries no translate.
-            transform: cat.direction === 'R' ? 'scaleX(-1)' : undefined,
+            // transition here — this div carries no translate. During a
+            // turn pivot the flip is INSTANT: it lands exactly on the
+            // symmetric frontal 'stand' frame, where a mirror has no
+            // visible seam — the 220ms morph would smear the pivot.
+            transform: facing === 'R' ? 'scaleX(-1)' : undefined,
             transformOrigin: 'center',
-            transition: 'transform 220ms ease-in-out',
+            transition: pivoting ? 'none' : 'transform 220ms ease-in-out',
           }}
         >
           <div

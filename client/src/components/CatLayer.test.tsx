@@ -295,6 +295,92 @@ describe('CatLayer', () => {
     expect(images).toHaveLength(3 * SIT_TO_WALK_SET_SIZE)
   })
 
+  it('Given a walking cat that reaches a wall, When the bounce fires, Then it plants and plays the turn-around pivot — frames ladder through the frontal stand, the mirror flips exactly once on it, x freezes, and the new heading resumes after (2026-07-11)', async () => {
+    // arrange — deterministic login rolls (Math.random 0.99 → every cat
+    // walks 'R'); Mushu starts 10px from the right wall so he bounces
+    // first while the others are still mid-scene. All frame sets load
+    // up front so the rich pivot frames are observable.
+    vi.useFakeTimers()
+    stubMatchMediaPerQuery({
+      '(prefers-reduced-motion: reduce)': false,
+      '(prefers-reduced-data: reduce)': false,
+    })
+    const images = stubControlledImage()
+    const frames = stubAnimationFrameDriver()
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const { container } = render(<CatLayer placement="login" />)
+    act(() => window.dispatchEvent(new Event('pointerdown')))
+    act(() => vi.advanceTimersByTime(12_000))
+
+    // act — settle → walk roll, then let the staggered per-cat preload
+    // timers fire for the NEW sit→walk sets and feed every request.
+    act(() => frames.runNextFrame(2500))
+    act(() => vi.advanceTimersByTime(12_000))
+    await act(async () => {
+      for (const image of images) image.onload?.()
+      await Promise.resolve()
+    })
+
+    // act — sample every 16ms across bridge → walk → bounce → pivot →
+    // resume. Property assertions below; no timestamp is load-bearing.
+    type Sample = { frame: string | null; transition: string; transform: string; x: string }
+    const samples: Sample[] = []
+    for (let timestamp = 2516; timestamp <= 4450; timestamp += 16) {
+      act(() => frames.runNextFrame(timestamp))
+      const sprite = catSprite(container, 'mushu')
+      const flip = sprite.closest<HTMLElement>('[data-testid="cat-direction-flip"]')
+      const outer = sprite.closest<HTMLElement>('[data-testid="cat-entrance-wrapper"]')
+        ?.parentElement as HTMLElement
+      samples.push({
+        frame: sprite.getAttribute('data-anim-frame'),
+        transition: flip?.style.transition ?? '',
+        transform: flip?.style.transform ?? '',
+        x: outer.style.transform,
+      })
+    }
+
+    // assert — the pivot window is exactly the samples whose flip div
+    // dropped its 220ms ease (the instant-flip contract).
+    const firstPivot = samples.findIndex((s) => s.transition === 'none')
+    expect(firstPivot).toBeGreaterThan(0)
+    const pivot: Sample[] = []
+    for (let i = firstPivot; i < samples.length && samples[i].transition === 'none'; i++) {
+      pivot.push(samples[i])
+    }
+
+    // assert — (a) the pivot frame ladder: side→front→side through the
+    // symmetric stand, in order, nothing else.
+    const ladder = pivot
+      .map((s) => s.frame)
+      .filter((frame, i, all) => i === 0 || frame !== all[i - 1])
+    expect(ladder).toEqual(['turn', 'turn_2', 'stand', 'turn_2', 'turn'])
+
+    // assert — the mirror flips exactly once inside the pivot, ON the
+    // frontal stand frame (scaleX(-1) while facing the old 'R' heading,
+    // cleared for the new 'L'), so the seam is invisible.
+    const flips = pivot.filter((s, i) => i > 0 && s.transform !== pivot[i - 1].transform)
+    expect(flips).toHaveLength(1)
+    expect(flips[0].frame).toBe('stand')
+    expect(pivot[0].transform).toBe('scaleX(-1)')
+    expect(pivot[pivot.length - 1].transform).toBe('')
+
+    // assert — (b) the cat PLANTS: translateX is constant for the whole
+    // pivot (it was walking right up to the bounce).
+    expect(new Set(pivot.map((s) => s.x)).size).toBe(1)
+    expect(samples[firstPivot - 1].x).not.toBe(pivot[0].x)
+
+    // assert — (c) the pivot ends within the sampling window and normal
+    // walking resumes on the new heading: walk frames come back, the
+    // 220ms ease returns, and x moves left away from the wall.
+    const after = samples.slice(firstPivot + pivot.length)
+    expect(after.length).toBeGreaterThan(3)
+    expect(after[0].transition).not.toBe('none')
+    expect(after.some((s) => s.frame?.startsWith('walk_'))).toBe(true)
+    const parseX = (transform: string) => Number(/translateX\(([-\d.]+)px\)/.exec(transform)?.[1])
+    expect(parseX(after[after.length - 1].x)).toBeLessThan(parseX(pivot[0].x))
+  })
+
   it('Given a walk-frame preload error, When the other requests settle, Then that cat keeps its built-in two-pose fallback', async () => {
     // arrange
     vi.useFakeTimers()

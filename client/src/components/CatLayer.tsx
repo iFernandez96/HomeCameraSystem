@@ -33,9 +33,11 @@ import {
   rand,
   rollWeighted,
   rollWithoutImmediateRepeat,
+  turnPivotView,
   type AnimActivityMaps,
   type AnimationPlan,
   type PoseGroup,
+  type TurnPivot,
 } from './catEngineCore'
 import {
   _resetImageCacheForTests,
@@ -150,6 +152,12 @@ type CatState = {
   // poop stays), fades after 6–8 s. One per cat — the anti-repeat roll
   // means a cat can never squat twice inside one lifecycle window.
   poop: (GroundPoopSpawn & { y: number }) | null
+  // Turn-around pivot (2026-07-11 "cats turn around soo slowly"): set
+  // when a gaited cat reverses direction (wall bounce, walk→walk
+  // re-roll). While active the cat plants (no x movement) and the
+  // render layer plays the turn_around sequence, mirror-flipping at
+  // the frontal midpoint instead of the old 220ms scaleX morph.
+  turn: TurnPivot | null
 }
 
 const WALK_FRAME_COUNT = 12
@@ -330,6 +338,9 @@ function setActivity(c: CatState, activity: Activity, durationMs: number, now: n
     idleSequence: null,
     nextIdleLifeAt: now + rand(3000, 7000),
     lastIdleLifeWasSpecial: false,
+    // A new activity owns its own entry choreography — an in-flight
+    // turn pivot from the previous beat must not overlay it.
+    turn: null,
   }
 }
 
@@ -1192,6 +1203,16 @@ const ONGOING_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName
   pooped: 'poop_squat', // loops while active — comedic quickening strain
 }
 
+// Which pivot plays when a gaited activity reverses direction. Only
+// these three route through the turn-around; everything else (pounce
+// targeting, seated re-facing) keeps the soft 220ms flip — front-facing
+// poses are near-symmetric so a pivot would be invisible work.
+const TURN_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName>> = {
+  walk: 'turn_around',
+  chase: 'turn_around_fast',
+  flee: 'turn_around_fast',
+}
+
 const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
   sit: 'seated',
   judge: 'seated',
@@ -1233,9 +1254,23 @@ function CatRenderImpl({
         ? TuxedoSprite
         : CalicoSprite
   const plan = animationPlanFor(cat, cat.phaseTime)
+  // Turn-around pivot: while stepCats holds a live pivot, its frame
+  // overrides the gait loop and its facing (old heading first half,
+  // new heading second half) overrides cat.direction. Gaited cats also
+  // preload the pivot frames up front — for the common sit→walk entry
+  // they're already in the bridge set, so the set (and its cache key)
+  // is unchanged; only a gait→gait re-roll grows it.
+  const turnName = TURN_SEQUENCE_BY_ACTIVITY[cat.activity]
+  const turnSteps = turnName ? CAT_ANIM_SEQUENCES[turnName][cat.id] : null
+  const turnView =
+    cat.turn && turnSteps ? turnPivotView(turnSteps, cat.turn, cat.phaseTime) : null
+  const pivotActive = turnView !== null && !turnView.done
+  const framesToPreload = turnSteps
+    ? Array.from(new Set([...plan.framesToPreload, ...turnSteps.map((step) => step.frame)]))
+    : plan.framesToPreload
   const animationReady = useAnimationFramesReady(
     cat.id,
-    plan.framesToPreload,
+    framesToPreload,
     walkAnimationEnabled,
   )
   // Phase comes from CatState (computed in stepCats), not from a
@@ -1243,8 +1278,10 @@ function CatRenderImpl({
   // after any frame errors—activityToSprite keeps the old two-pose
   // alternation visible, so the cat never disappears.
   const spriteState = activityToSprite(cat.activity, cat.phase)
-  const richFrame = animationReady ? plan.frame : null
-  const walkFrame = animationReady ? plan.walkFrame : undefined
+  const richFrame = animationReady ? (pivotActive ? turnView.frame : plan.frame) : null
+  const walkFrame =
+    animationReady && !pivotActive ? plan.walkFrame : undefined
+  const facing = pivotActive ? turnView.facing : cat.direction
   // Per-activity micro-animation
   const microAnim =
     cat.activity === 'play'
@@ -1327,15 +1364,21 @@ function CatRenderImpl({
           // iter-356.39: curated sprite-sheet PNGs face LEFT by default
           // (Panther's head visible on the LEFT side of walk_a). Pre-iter
           // the SVG art faced RIGHT so direction='L' got the scaleX(-1)
-          // flip; now direction='R' needs the flip instead.
-          transform: cat.direction === 'R' ? 'scaleX(-1)' : undefined,
+          // flip; now direction='R' needs the flip instead. `facing`
+          // is cat.direction except mid-pivot, where the turn-around
+          // choreography owns which way the art points.
+          transform: facing === 'R' ? 'scaleX(-1)' : undefined,
           transformOrigin: 'center',
           // iter-356.40: smooth scaleX flip when a cat changes direction
           // mid-walk OR when an activity transition sets a new direction.
           // SAFE here because this div has NO translateX (translate is
           // on the parent container — see iter-356.21 sharp edge). Was
           // an instant 180° pop that read as a teleport.
-          transition: 'transform 220ms ease-in-out',
+          // 2026-07-11: during a turn-around pivot the flip must be
+          // INSTANT — it lands exactly on the symmetric frontal `stand`
+          // frame, so the mirror seam is invisible; easing it would
+          // paint the very morph the pivot replaces.
+          transition: pivotActive ? 'none' : 'transform 220ms ease-in-out',
         }}
       >
         {/* iter-356.6: third nested wrapper — animation goes here so
@@ -1621,6 +1664,7 @@ function initialCats(placement: 'app' | 'login'): CatState[] {
     nextIdleLifeAt: now + rand(3000, 7000),
     lastIdleLifeWasSpecial: false,
     poop: null,
+    turn: null,
   }))
 }
 
@@ -1717,15 +1761,28 @@ function stepCats(
       poop = null
       catChanged = true
     }
+    // Turn-around pivot: expire a finished one before movement so the
+    // cat resumes on the same tick the pivot completes.
+    let turn = cat.turn
+    const turnName = TURN_SEQUENCE_BY_ACTIVITY[activity]
+    if (turn && turnName) {
+      if (turnPivotView(CAT_ANIM_SEQUENCES[turnName][cat.id], turn, now).done) turn = null
+    } else if (turn) {
+      // Activity changed without setActivity clearing it (defensive).
+      turn = null
+    }
     const oldX = x
     const oldDir = direction
-    if (activity === 'walk' && locomotionReady) {
+    // A pivoting cat PLANTS — paws stop while it whips around, then the
+    // gait resumes on the new heading. `!turn` gates only the gaited
+    // movers; pounce/play keep their soft flip.
+    if (activity === 'walk' && locomotionReady && !turn) {
       const distance = gaitVelocityPxPerMs('walk', SPRITE_WIDTH) * dt
       x += direction === 'R' ? distance : -distance
-    } else if (activity === 'chase' && locomotionReady) {
+    } else if (activity === 'chase' && locomotionReady && !turn) {
       const distance = gaitVelocityPxPerMs('run', SPRITE_WIDTH) * dt
       x += direction === 'R' ? distance : -distance
-    } else if (activity === 'flee' && locomotionReady) {
+    } else if (activity === 'flee' && locomotionReady && !turn) {
       const distance = gaitVelocityPxPerMs('run', SPRITE_WIDTH) * dt
       x += direction === 'R' ? distance : -distance
     } else if (activity === 'pounce' && targetX !== null && locomotionReady) {
@@ -1739,12 +1796,18 @@ function stepCats(
     }
     if (x < 8) {
       x = 8
-      if (direction === 'L') direction = 'R'
+      if (direction === 'L') {
+        direction = 'R'
+        if (turnName && locomotionReady && !turn) turn = { startedAt: now, from: 'L', to: 'R' }
+      }
     } else if (x > w - SPRITE_WIDTH - 8) {
       x = w - SPRITE_WIDTH - 8
-      if (direction === 'R') direction = 'L'
+      if (direction === 'R') {
+        direction = 'L'
+        if (turnName && locomotionReady && !turn) turn = { startedAt: now, from: 'R', to: 'L' }
+      }
     }
-    if (x !== oldX || direction !== oldDir) catChanged = true
+    if (x !== oldX || direction !== oldDir || turn !== cat.turn) catChanged = true
     // Per-activity sprite-frame phase. Only counts as a change when the
     // value flips, so a sleeping cat (always phase=0) stays ref-stable;
     // sitting updates every 600ms, walking every 100ms, and a chase or
@@ -1754,7 +1817,8 @@ function stepCats(
     const timelineActive =
       now - cat.activityStartedAt < transitionDuration ||
       ONGOING_SEQUENCE_BY_ACTIVITY[activity] !== undefined ||
-      idleSequence !== null
+      idleSequence !== null ||
+      turn !== null
     const phaseTime = timelineActive ? now : cat.phaseTime
     if (phaseTime !== cat.phaseTime) catChanged = true
 
@@ -1792,7 +1856,7 @@ function stepCats(
         activity === 'pooped'
           ? { ...spawnGroundPoop(x, direction, SPRITE_WIDTH, now), y }
           : poop
-      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop: poopAfter }
+      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop: poopAfter, turn }
       const next = _rollWithoutImmediateRepeatForTests(
         placement === 'login' ? rollLoginSolo : rollSolo,
         base,
@@ -1800,11 +1864,22 @@ function stepCats(
         w,
       )
       anyChanged = true
+      // A gait→gait re-roll that reverses heading (walk→walk with a
+      // fresh random direction) is the other way a cat "turns around"
+      // — give it the same pivot the wall bounce gets. setActivity
+      // cleared next.turn, so this is the only writer.
+      if (
+        TURN_SEQUENCE_BY_ACTIVITY[next.activity] &&
+        turnName &&
+        next.direction !== direction
+      ) {
+        return { ...next, turn: { startedAt: now, from: direction, to: next.direction } }
+      }
       return next
     }
     if (catChanged) {
       anyChanged = true
-      return { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop }
+      return { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop, turn }
     }
     // No change — return original ref so React.memo bails out.
     return cat

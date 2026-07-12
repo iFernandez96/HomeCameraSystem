@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { gaitVelocityPxPerMs } from '../components/catAnimSequences'
+import {
+  CAT_ANIM_SEQUENCES,
+  gaitVelocityPxPerMs,
+  sequenceDurationMs,
+} from '../components/catAnimSequences'
 import {
   initialPlaygroundState,
   playTransitionDurationMs,
@@ -310,6 +314,130 @@ describe('stepPlayground trio desync (no lockstep)', () => {
     expect(changes.panther.length).toBeGreaterThan(3)
     expect(changes.mushu.length).toBeGreaterThan(3)
     expect(changes.coco.length).toBeGreaterThan(3)
+  })
+})
+
+describe('stepPlayground turn-around pivot (2026-07-11: reversals used a slow scaleX morph)', () => {
+  const PIVOT_MS = sequenceDurationMs(CAT_ANIM_SEQUENCES.turn_around.mushu) // 330
+
+  /** Mushu mid-stride walking RIGHT whose destination sits to his LEFT —
+      the next step must reverse him. */
+  function reverser(state: PlaygroundState, moveRampAt: number): PlaygroundState {
+    return {
+      ...state,
+      cats: state.cats.map((c): PlayCat =>
+        c.id === 'mushu'
+          ? {
+              ...c,
+              activity: 'walk',
+              previousActivity: 'walk',
+              activityStartedAt: START - 5000,
+              activityUntil: START + 60000,
+              direction: 'R',
+              x: 400,
+              anchorId: null,
+              focus: null,
+              targetAnchor: null,
+              route: [],
+              arrival: null,
+              targetX: 200,
+              targetY: c.y,
+              moveRampAt,
+            }
+          : c,
+      ),
+    }
+  }
+
+  it('Given an in-motion reversal, When steps run through the pivot, Then the cat plants (x frozen) for the whole pivot and resumes toward the target after', () => {
+    // arrange — already striding (ramp long open)
+    const random = lcg(13)
+    let state = reverser(initialPlaygroundState(START, W, H, random), START - 5000)
+
+    // act — first step triggers the pivot
+    let now = START + DT
+    state = stepPlayground(state, makeInput(), DT, now, W, H, { random })
+    const entered = state.cats.find((c) => c.id === 'mushu')
+    if (!entered) throw new Error('missing mushu')
+
+    // assert — pivot armed, direction flips in state immediately, paws planted
+    expect(entered.turn).not.toBeNull()
+    expect(entered.turn?.from).toBe('R')
+    expect(entered.turn?.to).toBe('L')
+    expect(entered.direction).toBe('L')
+    expect(entered.x).toBe(400)
+
+    // act — step through the pivot window; x must never move
+    const startedAt = entered.turn?.startedAt ?? 0
+    while (now - startedAt < PIVOT_MS - DT) {
+      now += DT
+      state = stepPlayground(state, makeInput(), DT, now, W, H, { random })
+      expect(state.cats.find((c) => c.id === 'mushu')?.x).toBe(400)
+    }
+
+    // act — a few steps past completion
+    for (let i = 0; i < 4; i++) {
+      now += DT
+      state = stepPlayground(state, makeInput(), DT, now, W, H, { random })
+    }
+
+    // assert — pivot cleared, travel resumed toward the LEFT target
+    const resumed = state.cats.find((c) => c.id === 'mushu')
+    expect(resumed?.turn).toBeNull()
+    expect(resumed?.x ?? 400).toBeLessThan(400)
+  })
+
+  it('Given a stationary re-face (paws still on the regard hold), When a step runs, Then the direction flips WITHOUT a pivot — the get-up chain covers the turn', () => {
+    // arrange — ramp opens far in the future
+    const random = lcg(17)
+    const state = reverser(initialPlaygroundState(START, W, H, random), START + 4000)
+
+    // act
+    const held = stepPlayground(state, makeInput(), DT, START + 100, W, H, { random })
+
+    // assert
+    const mushu = held.cats.find((c) => c.id === 'mushu')
+    expect(mushu?.direction).toBe('L')
+    expect(mushu?.turn).toBeNull()
+    expect(mushu?.x).toBe(400)
+  })
+
+  it('Given a wall bounce at full stride, When the clamp reverses the cat, Then the bounce runs through the pivot too', () => {
+    // arrange — sprinting LEFT into the left wall, un-targeted flee
+    const random = lcg(19)
+    const state: PlaygroundState = {
+      ...initialPlaygroundState(START, W, H, random),
+      cats: initialPlaygroundState(START, W, H, random).cats.map((c): PlayCat =>
+        c.id === 'mushu'
+          ? {
+              ...c,
+              activity: 'flee',
+              previousActivity: 'flee',
+              activityStartedAt: START - 5000,
+              activityUntil: START + 60000,
+              direction: 'L',
+              x: 9, // one stride from the clamp floor at x=8
+              anchorId: null,
+              focus: null,
+              targetAnchor: null,
+              route: [],
+              arrival: null,
+              targetX: null,
+              targetY: null,
+              moveRampAt: START - 5000,
+            }
+          : c,
+      ),
+    }
+
+    // act
+    const bounced = stepPlayground(state, makeInput(), DT, START + DT, W, H, { random })
+
+    // assert — clamped, reversed, pivoting
+    const mushu = bounced.cats.find((c) => c.id === 'mushu')
+    expect(mushu?.direction).toBe('R')
+    expect(mushu?.turn?.from).toBe('L')
+    expect(mushu?.turn?.to).toBe('R')
   })
 })
 

@@ -254,6 +254,29 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'yawn', ms: 750 },
     { frame: 'seated', ms: 1 },
   ]),
+  // Turn-around pivot (2026-07-11, "cats turn around soo slowly"):
+  // replaces the 220ms CSS scaleX mirror-morph for walking direction
+  // reversals. Classic sprite pivot — rotate side→front on the OLD
+  // facing, mirror-flip exactly at the symmetric frontal `stand` frame
+  // (the seam is invisible there), rotate front→side on the NEW facing.
+  // The render layer flips facing at duration/2, which by construction
+  // lands inside the centered `stand` step — keep `stand` centered.
+  turn_around: allCats([
+    { frame: 'turn', ms: 65 },
+    { frame: 'turn_2', ms: 65 },
+    { frame: 'stand', ms: 70 },
+    { frame: 'turn_2', ms: 65 },
+    { frame: 'turn', ms: 65 },
+  ]),
+  // Sprint variant for chase/flee wall bounces — same pivot at whip
+  // speed so a mid-chase reversal keeps its energy.
+  turn_around_fast: allCats([
+    { frame: 'turn', ms: 40 },
+    { frame: 'turn_2', ms: 40 },
+    { frame: 'stand', ms: 45 },
+    { frame: 'turn_2', ms: 40 },
+    { frame: 'turn', ms: 40 },
+  ]),
 } as const satisfies Record<string, PerCatSequence>
 
 export type CatAnimSequenceName = keyof typeof CAT_ANIM_SEQUENCES

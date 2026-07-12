@@ -201,6 +201,65 @@ describe('PlaygroundCat ground shadow (live burst audit 2026-07-11: floating cat
   })
 })
 
+describe('PlaygroundCat turn-around pivot render (2026-07-11: the flip must be instant on the frontal frame)', () => {
+  const T = 1000
+
+  function pivotCat(phaseTime: number): PlayCat {
+    return catFor({
+      activity: 'walk',
+      previousActivity: 'walk',
+      activityStartedAt: T - 5000,
+      direction: 'R', // destination facing, set at pivot start
+      turn: { startedAt: T, from: 'L', to: 'R' },
+      phaseTime,
+    })
+  }
+
+  it('Given a pivot before its frontal midpoint, When rendered, Then the OLD facing shows with the pivot frame and the flip transition is disabled', () => {
+    // arrange — 60ms in: still on 'turn', still facing the old way
+    const cat = pivotCat(T + 60)
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert
+    const flip = screen.getByTestId('playground-cat-direction-flip')
+    expect(flip.style.transform).toBe('') // from='L' → no mirror yet
+    expect(flip.style.transition).toBe('none')
+    expect(screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame')).toBe('turn')
+  })
+
+  it('Given a pivot at its frontal midpoint, When rendered, Then the NEW facing shows on the symmetric stand frame (the invisible seam)', () => {
+    // arrange — 165ms = duration/2, inside the centered stand step
+    const cat = pivotCat(T + 165)
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert
+    const flip = screen.getByTestId('playground-cat-direction-flip')
+    expect(flip.style.transform).toBe('scaleX(-1)') // to='R'
+    expect(flip.style.transition).toBe('none')
+    expect(screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame')).toBe('stand')
+  })
+
+  it('Given a completed pivot, When rendered, Then the gait plan and cat.direction take back over with the 220ms transition restored', () => {
+    // arrange — past the 330ms pivot
+    const cat = pivotCat(T + 400)
+
+    // act
+    render(<PlaygroundCat cat={cat} onPetStart={() => {}} onPetEnd={() => {}} />)
+
+    // assert
+    const flip = screen.getByTestId('playground-cat-direction-flip')
+    expect(flip.style.transform).toBe('scaleX(-1)') // cat.direction='R'
+    expect(flip.style.transition).toBe('transform 220ms ease-in-out')
+    expect(
+      screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame'),
+    ).toMatch(/^walk_/)
+  })
+})
+
 describe('PlaygroundCat behavior', () => {
   it('Given a cat hidden inside the tunnel, When rendered, Then the sprite is invisible (the tunnel rustle carries the beat)', () => {
     // arrange

@@ -3,6 +3,7 @@ import {
   catAnimFrameUrl,
   type CatAnimFrame,
   type CatAnimSequenceName,
+  type CatAnimStep,
 } from '../components/catAnimSequences'
 import {
   POSE_TRANSITIONS,
@@ -12,6 +13,7 @@ import {
   type AnimationPlan,
   type PoseGroup,
   type SequenceTable,
+  type TurnPivot,
 } from '../components/catEngineCore'
 import {
   PLAYGROUND_CAT_FRAME_NAMES,
@@ -124,6 +126,13 @@ export type PlayCat = {
   /** Live per-tick render flag: this frame the cat is actually lerping
       up/down a climbTravel leg, so PlaygroundCat plays climb_a/b. */
   climbing: boolean
+  /** In-flight turn-around pivot (2026-07-11): an IN-MOTION direction
+      reversal plants the cat and plays the side→front→side pivot
+      sequence instead of the old 220ms scaleX mirror-morph. `direction`
+      already holds the NEW facing; turnPivotView renders the old one
+      until the frontal midpoint. Cleared on completion and by every
+      activity switch (the pose-transition chain covers those). */
+  turn: TurnPivot | null
   /** When the cat acquired its current anchor (continuous-stay clock —
       in-place beats on the same anchor do NOT reset it). */
   anchorSince: number
@@ -204,6 +213,9 @@ export function setPlayActivity(
     // mount/dismount re-arm climbTravel explicitly after this call.
     climbTravel: false,
     climbing: false,
+    // An activity switch also cancels an in-flight turn pivot — its
+    // own pose-transition chain re-choreographs the cat from here.
+    turn: null,
     idleSequence: null,
     idleSequenceStartedAt: 0,
     nextIdleLifeAt: now + 3000 + random() * 4000,
@@ -265,6 +277,7 @@ export function buildHomeCat(
     targetY: null,
     climbTravel: false,
     climbing: false,
+    turn: null,
     anchorSince: now,
     perchDwellDeadline: perchDwellDeadlineFor(now, random),
     anchorCooldownId: null,
@@ -445,6 +458,15 @@ export function playgroundAnimationPlanFor(cat: PlayCat, now: number): Animation
     }
   }
   return animationPlanFor(cat, now, PLAYGROUND_ANIM_MAPS)
+}
+
+/** The pivot choreography for a cat's CURRENT gait: the walk pivot for
+    a stroll, the whip-speed variant for a sprint (run/chase/flee).
+    Stable for the pivot's whole life — setPlayActivity clears `turn`,
+    so the activity can't change out from under an in-flight pivot. */
+export function turnPivotSteps(cat: PlayCat): readonly CatAnimStep[] {
+  const name = cat.activity === 'walk' ? 'turn_around' : 'turn_around_fast'
+  return CAT_ANIM_SEQUENCES[name][cat.id]
 }
 
 /** Total duration of the pose-transition chain from one activity into
