@@ -575,6 +575,8 @@ export type RecordingAssuranceStatus = {
   elapsed_ms: number | null
   storage: {
     writable: boolean
+    mountpoint?: string | null
+    device?: string | null
     filesystem: string | null
     read_only: boolean | null
     smart_status: 'healthy' | 'failed' | 'unavailable'

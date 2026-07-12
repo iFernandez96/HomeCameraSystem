@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from ..config import settings
 from ..log import RateLimitedLog
-from . import events_db, recording_assurance, recording_service
+from . import events_db, recording_assurance, recording_jobs, recording_service
 from .detection_config import detection_config
 from .health import worker_health
 from .security_store import security_store
@@ -470,6 +470,65 @@ def sample_health(now: float | None = None) -> dict[str, Any]:
     return security_store.transact(_save)
 
 
+def storage_guardian() -> dict[str, Any]:
+    """Return an honest verdict for the filesystem that owns recordings."""
+    proof = recording_assurance.status()
+    storage = proof.get("storage") if isinstance(proof.get("storage"), dict) else {}
+    reasons = []
+    filesystem = storage.get("filesystem")
+    mountpoint = storage.get("mountpoint")
+    device = storage.get("device")
+    if filesystem not in (None, "ext4"):
+        reasons.append("recordings are not on the expected ext4 filesystem")
+    if mountpoint == "/":
+        reasons.append("recordings are on the Jetson root filesystem instead of the USB mount")
+    if mountpoint is None:
+        reasons.append("the recordings mountpoint has not been independently confirmed")
+    if device is None:
+        reasons.append("the recordings block device has not been independently confirmed")
+    if storage.get("writable") is False:
+        reasons.append("the recordings filesystem rejected a write and fsync probe")
+    if storage.get("read_only") is True:
+        reasons.append("the recordings filesystem is mounted read-only")
+    if storage.get("smart_status") == "failed":
+        reasons.append("the storage device reported a SMART health failure")
+    if proof.get("state") in ("failed", "stale", "unknown"):
+        reasons.append("the end-to-end recording proof is not currently healthy")
+    try:
+        usage = shutil.disk_usage(str(settings.recordings_dir))
+        free_bytes = usage.free
+        total_bytes = usage.total
+    except OSError:
+        free_bytes = None
+        total_bytes = None
+        reasons.append("the recordings path is unavailable")
+    return {
+        "state": "healthy" if not reasons else "degraded",
+        "recordings_path": str(settings.recordings_dir),
+        "filesystem": filesystem,
+        "mountpoint": mountpoint,
+        "device": device,
+        "writable": storage.get("writable"),
+        "read_only": storage.get("read_only"),
+        "smart_status": storage.get("smart_status"),
+        "write_probe_ms": storage.get("write_probe_ms"),
+        "free_bytes": free_bytes,
+        "total_bytes": total_bytes,
+        "reasons": reasons,
+        "checked_at": proof.get("checked_at"),
+    }
+
+
+def recording_integrity() -> dict[str, Any]:
+    recording_jobs.reconcile_recent(validate_limit=3)
+    return {
+        **recording_jobs.summary(),
+        "recent_failures": recording_jobs.recent_failures(),
+        "storage": storage_guardian(),
+        "assurance": recording_assurance.status(),
+    }
+
+
 def health_history(hours: int, now: float | None = None) -> list[dict[str, Any]]:
     now = time.time() if now is None else now
     cutoff = now - hours * 3600
@@ -683,6 +742,7 @@ def companion_search(username: str, query: str, limit: int) -> list[dict[str, An
 async def run(stop: asyncio.Event) -> None:
     last_health = 0.0
     last_archive = 0.0
+    last_recording_reconcile = 0.0
     while not stop.is_set():
         now = time.time()
         try:
@@ -690,6 +750,13 @@ async def run(stop: asyncio.Event) -> None:
             if now - last_health >= 900:
                 await asyncio.to_thread(sample_health, now)
                 last_health = now
+            if now - last_recording_reconcile >= 30:
+                await asyncio.to_thread(
+                    recording_jobs.reconcile_recent,
+                    validate_limit=1,
+                    now=now,
+                )
+                last_recording_reconcile = now
             archive = _ops(security_store.read())["archive"]
             archive_interval = 6 * 3600 if archive.get("last_status") == "verified" else 900
             if archive.get("enabled") is True and now - last_archive >= archive_interval:

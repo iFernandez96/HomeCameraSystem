@@ -8,6 +8,9 @@ import {
   getDailyBriefing,
   getHealthHistory,
   getOperationsState,
+  getRecordingIntegrity,
+  getRecoverStatus,
+  runRecordingTest,
   setHomeProfile,
   setModeSchedules,
   syncExternalArchive,
@@ -16,10 +19,12 @@ import {
   type HomeProfile,
   type ModeSchedule,
   type OperationsState,
+  type RecordingIntegrity,
 } from '../../lib/api'
 import { formatBytes } from '../../lib/format'
 import { useToast } from '../../lib/toast'
 import { Row, Section, Toggle } from './parts'
+import { RecordingIntegrityPanel } from '../control/RecordingIntegrityPanel'
 
 const profiles: Array<{ id: HomeProfile; label: string; description: string }> = [
   { id: 'home', label: 'Home', description: 'Routine household alerts' },
@@ -41,8 +46,11 @@ function fetchControlCenter() {
     getOperationsState(),
     getDailyBriefing(),
     getHealthHistory(24),
+    getRecordingIntegrity(),
   ])
 }
+
+const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
 
 function HealthTimeline({ samples, nowMs }: { samples: HealthHistorySample[]; nowMs: number }) {
   const end = nowMs
@@ -92,6 +100,7 @@ export function OperationsSection() {
   const [briefing, setBriefing] = useState<DailyBriefing | null>(null)
   const [health, setHealth] = useState<HealthHistorySample[]>([])
   const [healthNowMs, setHealthNowMs] = useState(() => Date.now())
+  const [integrity, setIntegrity] = useState<RecordingIntegrity | null>(null)
   const [profileDraft, setProfileDraft] = useState<HomeProfile>('sleep')
   const [timeDraft, setTimeDraft] = useState('22:00')
   const [daysDraft, setDaysDraft] = useState<'daily' | 'weekdays'>('daily')
@@ -103,11 +112,12 @@ export function OperationsSection() {
 
   const load = async () => {
     try {
-      const [operations, daily, history] = await fetchControlCenter()
+      const [operations, daily, history, recording] = await fetchControlCenter()
       setState(operations)
       setCompanionUrl(operations.semantic_companion.base_url)
       setBriefing(daily)
       setHealth(history.items)
+      setIntegrity(recording)
       setHealthNowMs(Date.now())
       setError(null)
     } catch (reason) {
@@ -118,12 +128,13 @@ export function OperationsSection() {
   useEffect(() => {
     let cancelled = false
     fetchControlCenter()
-      .then(([operations, daily, history]) => {
+      .then(([operations, daily, history, recording]) => {
         if (cancelled) return
         setState(operations)
         setCompanionUrl(operations.semantic_companion.base_url)
         setBriefing(daily)
         setHealth(history.items)
+        setIntegrity(recording)
         setHealthNowMs(Date.now())
         setError(null)
       })
@@ -243,6 +254,37 @@ export function OperationsSection() {
     }
   }
 
+  const runCameraTest = async () => {
+    const startedAt = Date.now() / 1000
+    setBusy('recording-test')
+    try {
+      const job = await runRecordingTest()
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const status = await getRecoverStatus(job.request_id)
+        if (status.status === 'failed' || status.status === 'expired') {
+          throw new Error(status.status === 'failed' ? status.detail ?? 'Camera test failed' : 'Camera test timed out')
+        }
+        if (status.status === 'done') break
+        await wait(1000)
+      }
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        const recording = await getRecordingIntegrity()
+        setIntegrity(recording)
+        if ((recording.assurance.checked_at ?? 0) >= startedAt) {
+          if (recording.assurance.state !== 'ok') throw new Error('The end-to-end recording test failed')
+          showToast('Camera test passed from RTSP capture through playable video', 'success')
+          return
+        }
+        await wait(1000)
+      }
+      throw new Error('The camera test did not report a result in time')
+    } catch (reason) {
+      showToast(reason instanceof Error ? reason.message : 'Camera test failed', 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   if (error) {
     return (
       <div role="alert" className="card-paper space-y-3 p-4">
@@ -307,6 +349,8 @@ export function OperationsSection() {
           {briefing.known_people.length ? <p className="text-sm">Recognized: {briefing.known_people.join(', ')}</p> : null}
         </div>
       </Section>
+
+      <RecordingIntegrityPanel integrity={integrity} running={busy === 'recording-test'} disabled={busy !== null} onRun={() => void runCameraTest()} />
 
       <Section title="Retention and protected evidence" subtitle="Ordinary footage expires first; incident and permanent evidence never does.">
         <Row label="Ordinary" right={<span>{state.retention.classes.ordinary} · {state.retention.ordinary_days} days</span>} />

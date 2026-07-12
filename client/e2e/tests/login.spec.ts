@@ -21,7 +21,7 @@ test.describe('Auth — login flow', () => {
     await expect(page).toHaveURL(/\/$/)
     const nav = page.getByRole('navigation', { name: 'Main navigation' })
     await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible()
-    await expect(nav.getByRole('link', { name: 'Events', exact: true })).toBeVisible()
+    await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toBeVisible()
     await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toBeVisible()
   })
 

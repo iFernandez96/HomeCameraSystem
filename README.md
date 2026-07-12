@@ -20,6 +20,10 @@ Self-hosted, Ring-style camera viewer + controller for an Nvidia Jetson Nano 2GB
 - Recovery-derived outage history with an explicit external-monitor limitation
 - Scheduled RTSP-to-MP4 recording assurance with full decode, strict cleanup,
   USB write/fsync proof, SMART health when available, and transition alerts
+- Owner Control Center with persisted recording jobs, playback-latency
+  objectives, manual end-to-end camera testing, and USB mount/device proof
+- Visit-first Activity, with Find and Saved entry points plus an advanced raw
+  detection timeline
 - Push notifications to phone when something is detected
 - Remote control of the Jetson: capture photo, reboot, toggle detection, view stats
 - One codebase, two surfaces: Android home screen + any browser

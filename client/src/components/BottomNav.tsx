@@ -40,7 +40,7 @@ import { isGodModeUser } from '../lib/roles'
 // deep link until a dedicated mobile entry point is designed.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
-  { to: '/events', label: 'Events', icon: EventsIcon },
+  { to: '/events', label: 'Activity', icon: EventsIcon },
   { to: '/people', label: 'Faces', icon: PeopleIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]

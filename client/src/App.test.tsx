@@ -123,13 +123,12 @@ describe('App routing', () => {
     main.scrollTop = 480
     expect(main.scrollTop).toBe(480)
 
-    // act — client-side navigate via the Events tab. Scope to the
-    // BottomNav landmark: the SideRail renders a second Events link.
-    fireEvent.click(within(nav).getByRole('link', { name: /events/i }))
+    // act — client-side navigate via the Activity tab.
+    fireEvent.click(within(nav).getByRole('link', { name: /activity/i }))
 
     // assert — the layout effect keyed on pathname zeroes the
     // scroll offset before the new page paints.
-    await screen.findByRole('heading', { level: 1, name: /^events$/i })
+    await screen.findByRole('heading', { level: 1, name: /^activity$/i })
     expect(main.scrollTop).toBe(0)
   })
 

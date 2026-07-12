@@ -288,6 +288,8 @@ class ClientLog(BaseModel):
 class RecordingStoragePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     writable: bool
+    mountpoint: str | None = Field(default=None, max_length=256)
+    device: str | None = Field(default=None, pattern=r"^/dev/[A-Za-z0-9._/-]+$", max_length=128)
     filesystem: str | None = Field(default=None, max_length=32)
     read_only: bool | None = None
     smart_status: Literal["healthy", "failed", "unavailable"]

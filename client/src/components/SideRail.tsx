@@ -75,7 +75,7 @@ type NavItem = {
 // no such width budget.
 const NAV_ITEMS: NavItem[] = [
   { to: '/',                label: 'Home',       icon: (a) => <LiveIcon active={a} /> },
-  { to: '/events',          label: 'Events',     icon: () => <EventsIcon /> },
+  { to: '/events',          label: 'Activity',   icon: () => <EventsIcon /> },
   { to: '/people',          label: 'Faces',      icon: () => <PeopleIcon /> },
   { to: '/training/review', label: 'Review',     icon: () => <TrainingIcon /> },
   { to: '/playground',      label: 'Playground', icon: () => <PlaygroundIcon /> },

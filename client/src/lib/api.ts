@@ -7,6 +7,7 @@ import type {
   LoginResponse,
   MeResponse,
   PushFilters,
+  RecordingAssuranceStatus,
   Session,
   ServerStatus,
 } from './types'
@@ -348,7 +349,7 @@ export const markAllEventsSeen = () =>
 export const captureSnapshot = () =>
   req<{ url: string }>('/api/capture', { method: 'POST' })
 
-export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot' | 'focus_start' | 'focus_stop' | 'exposure_apply'
+export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot' | 'focus_start' | 'focus_stop' | 'exposure_apply' | 'recording_canary'
 export type LogUnit =
   | 'homecam-detect'
   | 'mediamtx'
@@ -1791,6 +1792,43 @@ export type HealthHistorySample = {
   disk_free_bytes: number | null
   recording_state: string
 }
+export type RecordingIntegrity = {
+  v: 1
+  total: number
+  counts: Record<'recording' | 'finalizing' | 'available' | 'failed' | 'unknown' | 'expired', number>
+  processing: number
+  oldest_processing_age_s: number | null
+  stuck_jobs: number
+  invalid_videos: number
+  median_ready_s: number | null
+  p95_ready_s: number | null
+  objectives: Array<{ id: string; label: string; met: boolean | null; value: number | null; target: number }>
+  recent_failures: Array<{
+    event_id: string
+    event_ts: number
+    state: 'failed'
+    failure_code: string | null
+    failure_summary: string | null
+    updated_ts: number
+  }>
+  storage: {
+    state: 'healthy' | 'degraded'
+    recordings_path: string
+    filesystem: string | null
+    mountpoint: string | null
+    device: string | null
+    writable: boolean | null
+    read_only: boolean | null
+    smart_status: string | null
+    write_probe_ms: number | null
+    free_bytes: number | null
+    total_bytes: number | null
+    reasons: string[]
+    checked_at: number | null
+  }
+  assurance: RecordingAssuranceStatus
+  generated_ts: number
+}
 
 export const getOperationsState = () =>
   req<OperationsState>('/api/security/operations')
@@ -1842,6 +1880,15 @@ export const getDailyBriefing = (day?: string) =>
 
 export const getHealthHistory = (hours = 24) =>
   req<{ v: 1; items: HealthHistorySample[] }>(`/api/security/health-history?hours=${hours}`)
+
+export const getRecordingIntegrity = () =>
+  req<RecordingIntegrity>('/api/security/operations/recording-integrity')
+
+export const runRecordingTest = () =>
+  req<{ v: 1; request_id: string; status: string; worker_online: boolean }>(
+    '/api/security/operations/recording-test',
+    { method: 'POST' },
+  )
 
 export const setEventRetention = (eventId: string, retentionClass: RetentionClass) =>
   req<{ event_id: string; retention_class: RetentionClass }>(

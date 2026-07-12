@@ -80,10 +80,11 @@ def _mount_info(path, mounts_path="/proc/mounts"):
                     if best is None or len(real_mount) > len(best[0]):
                         best = (real_mount, parts[0], parts[2], parts[3].split(","))
     except OSError:
-        return {"filesystem": None, "read_only": None, "device": None}
+        return {"filesystem": None, "read_only": None, "device": None, "mountpoint": None}
     if best is None:
-        return {"filesystem": None, "read_only": None, "device": None}
+        return {"filesystem": None, "read_only": None, "device": None, "mountpoint": None}
     return {
+        "mountpoint": best[0],
         "filesystem": best[2],
         "read_only": "ro" in best[3],
         "device": best[1] if best[1].startswith("/dev/") else None,
@@ -139,6 +140,8 @@ def _storage_snapshot(recordings_dir, runner, clock):
         free_bytes = None
     return {
         "writable": writable,
+        "mountpoint": mount.get("mountpoint"),
+        "device": mount.get("device"),
         "filesystem": mount["filesystem"],
         "read_only": mount["read_only"],
         "smart_status": _smart_status(mount["device"], runner),

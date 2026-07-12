@@ -1,8 +1,32 @@
 # Operations control center
 
-The owner-only **Settings → Control center** page combines the existing camera
+The owner-only **Control Center** route at `/control` combines the existing camera
 policy, recording assurance, event database, incident system, automation engine,
-and push service. It does not create a second capture or detection pipeline.
+and push service. It is separate from preference-oriented Settings and does not
+create a second capture or detection pipeline.
+
+## Recording integrity jobs
+
+The worker's JSON clip-state ledger remains the capture source of truth. The
+server reconciles its 500 most recent events into the private
+`recording-jobs.db` SQLite ledger every 30 seconds. That ledger preserves state
+transitions, full `ffprobe` validation, capture-end-to-playback latency, and
+plain-language failure details across worker and container restarts.
+
+Only an MP4 with a real video stream may remain `available`. A final that fails
+validation is marked failed and the exact event-owned corrupt file is removed;
+the reconciler never deletes unrelated files. The manual camera test uses the
+existing constrained host action to run the real RTSP
+capture/decode/fsync/cleanup canary.
+
+## USB recording guardian
+
+The scheduled canary reports the host block device, mountpoint, filesystem,
+read-only state, free space, fsync latency, and SMART verdict when available.
+Production writers also require the `/srv/homecam-media` mount and marker. If
+the USB drive disappears, writers stop rather than silently spilling private
+footage onto the SD card. The Android wrapper independently checks both the
+Tailscale and LAN health endpoints and notifies on outage and recovery.
 
 ## Household modes and schedules
 

@@ -71,6 +71,20 @@ groups:
         annotations:
           summary: A recent event video is not playable
           description: The recording exists, but a full decode of the sampled real event clip failed.
+      - alert: HomecamRecordingJobStuck
+        expr: homecam_recording_jobs_stuck > 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Event video processing is stuck
+          description: At least one event video has made no recording or finalization progress for over five minutes.
+      - alert: HomecamRecordingUsbGuardianFailed
+        expr: homecam_recording_usb_guardian_ok == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: USB recording storage is not confirmed safe
+          description: HomeCam could not confirm a writable ext4 block-device mount for recordings.
       - alert: HomecamCameraRecoveryLoop
         expr: increase(homecam_worker_mediamtx_restarts_total[15m]) > 2 or increase(homecam_worker_argus_restarts_total[15m]) > 0
         for: 1m

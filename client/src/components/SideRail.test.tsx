@@ -39,7 +39,7 @@ describe('SideRail', () => {
     expect(links).toHaveLength(6)
     const hrefs = {
       home: screen.getByRole('link', { name: /home/i }).getAttribute('href'),
-      events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
+      activity: screen.getByRole('link', { name: /activity/i }).getAttribute('href'),
       faces: screen.getByRole('link', { name: /faces/i }).getAttribute('href'),
       review: screen.getByRole('link', { name: /review/i }).getAttribute('href'),
       playground: screen
@@ -51,7 +51,7 @@ describe('SideRail', () => {
     }
     expect(hrefs).toEqual({
       home: '/',
-      events: '/events',
+      activity: '/events',
       faces: '/people',
       review: '/training/review',
       playground: '/playground',

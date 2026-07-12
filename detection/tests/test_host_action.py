@@ -84,6 +84,10 @@ def _deps(**overrides):
         calls.append(("exposure_apply", args))
         return {"region": "960 540 2880 1620 1", "compensation": 0.0, "locked": False}
 
+    def run_recording_canary():
+        calls.append("recording_canary")
+        return True
+
     deps = SimpleNamespace(
         restart_mediamtx=restart_mediamtx,
         restart_nvargus=restart_nvargus,
@@ -92,6 +96,7 @@ def _deps(**overrides):
         start_focus_mode=start_focus_mode,
         stop_focus_mode=stop_focus_mode,
         apply_exposure=apply_exposure,
+        run_recording_canary=run_recording_canary,
         allow_reboot=True,
         calls=calls,
     )
@@ -194,6 +199,17 @@ def test_given_exposure_apply_when_executed_then_bounded_args_are_forwarded():
     assert (status, detail) == ("done", "camera exposure applied")
     assert result["region"] == "960 540 2880 1620 1"
     assert deps.calls == [("exposure_apply", args)]
+
+
+def test_given_recording_canary_when_executed_then_bounded_systemd_action_runs():
+    deps = _deps()
+    status, detail, result = host_action.execute_action(
+        _record(kind="recording_canary"), deps
+    )
+    assert (status, detail, result) == (
+        "done", "recording integrity test requested", None
+    )
+    assert deps.calls == ["recording_canary"]
 
 
 def test_given_seen_reboot_id_when_planned_twice_then_reboot_at_most_once():

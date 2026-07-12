@@ -7,6 +7,7 @@ import { LoadingState } from './components/states/LoadingState'
 import { PushDeniedBanner } from './components/PushDeniedBanner'
 import { RequireAuth } from './components/RequireAuth'
 import { RequireOwner } from './components/RequireOwner'
+import { RequireGodMode } from './components/RequireGodMode'
 import { SideRail } from './components/SideRail'
 import { WatchRibbon } from './components/WatchRibbon'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -28,6 +29,12 @@ import { ToastProvider } from './lib/toast'
 const Watch = lazy(() => import('./pages/Watch').then((m) => ({ default: m.Watch })))
 const Events = lazy(() =>
   import('./pages/Events').then((m) => ({ default: m.Events })),
+)
+const Activity = lazy(() =>
+  import('./pages/Activity').then((m) => ({ default: m.Activity })),
+)
+const Saved = lazy(() =>
+  import('./pages/Saved').then((m) => ({ default: m.Saved })),
 )
 const Playback = lazy(() =>
   import('./pages/Playback').then((m) => ({ default: m.Playback })),
@@ -61,6 +68,9 @@ const PersonDetail = lazy(() =>
 )
 const Settings = lazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.Settings })),
+)
+const ControlCenter = lazy(() =>
+  import('./pages/ControlCenter').then((m) => ({ default: m.ControlCenter })),
 )
 const FocusAssistant = lazy(() =>
   import('./pages/FocusAssistant').then((m) => ({ default: m.FocusAssistant })),
@@ -343,12 +353,14 @@ function AppShell() {
               path="/events"
               element={
                 <RequireAuth>
-                  <ErrorBoundary label="Events">
-                    <Events />
+                  <ErrorBoundary label="Activity">
+                    <Activity />
                   </ErrorBoundary>
                 </RequireAuth>
               }
             />
+            <Route path="/events/detections" element={<RequireAuth><ErrorBoundary label="Individual detections"><Events /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/saved" element={<RequireAuth><ErrorBoundary label="Saved"><Saved /></ErrorBoundary></RequireAuth>} />
             <Route path="/events/playback" element={<RequireAuth><ErrorBoundary label="Playback"><Playback /></ErrorBoundary></RequireAuth>} />
             <Route path="/events/search" element={<RequireAuth><ErrorBoundary label="Event search"><EventSearch /></ErrorBoundary></RequireAuth>} />
             <Route path="/events/incidents" element={<RequireAuth><ErrorBoundary label="Incidents"><Incidents /></ErrorBoundary></RequireAuth>} />
@@ -417,6 +429,16 @@ function AppShell() {
               }
             />
             <Route
+              path="/control"
+              element={
+                <RequireOwner>
+                  <ErrorBoundary label="Control Center">
+                    <ControlCenter />
+                  </ErrorBoundary>
+                </RequireOwner>
+              }
+            />
+            <Route
               path="/playground"
               element={
                 <RequireAuth>
@@ -429,11 +451,11 @@ function AppShell() {
             <Route
               path="/god"
               element={
-                <RequireAuth>
+                <RequireGodMode>
                   <ErrorBoundary label="God View">
                     <GodView />
                   </ErrorBoundary>
-                </RequireAuth>
+                </RequireGodMode>
               }
             />
             {/* Landscape pass (Task 2): confirmed on a real device

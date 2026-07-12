@@ -1863,6 +1863,37 @@ def _restart_camera_pipeline_for_focus(expected_resolution):
     return False
 
 
+def run_recording_canary():
+    """Start the existing bounded end-to-end canary through systemd.
+
+    The unit owns its timeout, resource limits and result POST. This host
+    action only requests one run and never opens a second camera source.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "sudo", "-n", "systemctl", "start", "--no-block",
+                "homecam-recording-canary.service",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10.0,
+        )
+    except Exception as e:
+        log.error(
+            "recording canary start failed: %s: %s", type(e).__name__, e,
+        )
+        return False
+    if result.returncode != 0:
+        log.error(
+            "recording canary start returned %s: %s",
+            result.returncode,
+            result.stderr.decode("utf-8", "replace")[-300:],
+        )
+        return False
+    return True
+
+
 def start_focus_mode():
     """Confirm the shared 1440p precision stream and arm its UI timeout."""
     expires = int(time.time()) + _FOCUS_MODE_SECONDS
@@ -1995,7 +2026,7 @@ _HOST_ACTION_RESULTS = {}
 _HOST_ACTION_SEEN_PATH = None
 _HostActionDeps = namedtuple(
     "_HostActionDeps",
-    "restart_mediamtx restart_nvargus do_reboot tail_journal start_focus_mode stop_focus_mode apply_exposure allow_reboot now",
+    "restart_mediamtx restart_nvargus do_reboot tail_journal start_focus_mode stop_focus_mode apply_exposure run_recording_canary allow_reboot now",
 )
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
@@ -3324,6 +3355,7 @@ def main():
             start_focus_mode=start_focus_mode,
             stop_focus_mode=stop_focus_mode,
             apply_exposure=apply_exposure,
+            run_recording_canary=run_recording_canary,
             allow_reboot=_allow_reboot,
             now=time.time,
         ),

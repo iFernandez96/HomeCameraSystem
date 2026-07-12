@@ -37,6 +37,30 @@ def test_profiles_and_schedules_round_trip_without_adding_a_camera_owner(client)
     assert state["mode_schedules"] == [schedule]
 
 
+def test_recording_integrity_route_and_manual_test_are_owner_gated_and_durable(
+    client, monkeypatch
+):
+    from app.services import host_bridge
+
+    _event(client, "evt_integrity")
+    integrity = client.get("/api/security/operations/recording-integrity")
+    assert integrity.status_code == 200
+    assert integrity.json()["v"] == 1
+    assert "objectives" in integrity.json()
+    assert "storage" in integrity.json()
+
+    monkeypatch.setattr(
+        host_bridge,
+        "enqueue",
+        lambda kind, args, requested_by, now: {
+            "id": "canary-1", "kind": kind, "status": "pending"
+        },
+    )
+    started = client.post("/api/security/operations/recording-test")
+    assert started.status_code == 200
+    assert started.json()["request_id"] == "canary-1"
+
+
 def test_schedule_catches_up_after_its_exact_minute_but_vacation_stays_sticky(client):
     from app.services import operations
 

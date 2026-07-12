@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
+import { ActivityNav } from '../components/ActivityNav'
 import { EventRow } from '../components/EventRow'
 import { Button } from '../components/primitives/Button'
 import { CatEmptyState } from '../components/CatEmptyState'
@@ -118,6 +119,8 @@ export function EventSearch() {
           Back
         </Link>
       </header>
+
+      <ActivityNav />
 
       <form
         role="search"

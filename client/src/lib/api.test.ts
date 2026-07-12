@@ -2039,6 +2039,31 @@ describe('lib/api', () => {
   })
 })
 
+describe('operations integrity wire contract', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('Given Control Center loads integrity, When requested, Then it uses the owner operations endpoint', async () => {
+    asMock().mockResolvedValueOnce(new Response(JSON.stringify({ v: 1, objectives: [], recent_failures: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const { getRecordingIntegrity } = await import('./api')
+    await getRecordingIntegrity()
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/security/operations/recording-integrity',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('Given an owner starts a camera test, When requested, Then it is a bodyless POST', async () => {
+    asMock().mockResolvedValueOnce(new Response(JSON.stringify({ v: 1, request_id: 'canary-1', status: 'pending', worker_online: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const { runRecordingTest } = await import('./api')
+    await runRecordingTest()
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/operations/recording-test')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBeUndefined()
+  })
+})
+
 describe('lib/api central failure logging', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())

@@ -45,6 +45,7 @@ def _auth_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "push_subs_path", tmp_path / "push_subs.json")
     monkeypatch.setattr(settings, "detection_config_path", tmp_path / "detection_config.json")
     monkeypatch.setattr(settings, "events_db_path", tmp_path / "events.db")
+    monkeypatch.setattr(settings, "recording_jobs_db_path", tmp_path / "recording-jobs.db")
     # Keep the status probe's always-existing directory separate from tests
     # that intentionally create `tmp_path / "recordings"` themselves.
     recordings_dir = tmp_path / "_status-recordings"

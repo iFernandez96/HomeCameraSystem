@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import urllib.error
 from datetime import date
 from typing import Annotated, Any, Literal
@@ -12,7 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..auth.dependencies import get_current_user, require_role
 from ..config import settings
-from ..services import events_db, operations, recording_service
+from ..services import events_db, host_bridge, operations, recording_service
+from ..services.health import worker_health
 
 
 router = APIRouter(prefix="/security", tags=["operations"])
@@ -207,6 +209,30 @@ async def briefing(
 @router.get("/health-history", dependencies=[Depends(require_role("owner"))])
 async def health_history(hours: Annotated[int, Query(ge=1, le=168)] = 24) -> dict[str, Any]:
     return {"v": 1, "items": await asyncio.to_thread(operations.health_history, hours)}
+
+
+@router.get("/operations/recording-integrity", dependencies=[Depends(require_role("owner"))])
+async def recording_integrity() -> dict[str, Any]:
+    return await asyncio.to_thread(operations.recording_integrity)
+
+
+@router.post("/operations/recording-test", dependencies=[Depends(require_role("owner"))])
+async def recording_test(actor: str = Depends(get_current_user)) -> dict[str, Any]:
+    rec = await asyncio.to_thread(
+        host_bridge.enqueue,
+        "recording_canary",
+        {},
+        actor,
+        now=time.time(),
+    )
+    if rec.get("kind") != "recording_canary":
+        raise HTTPException(status_code=409, detail="another host operation is already running")
+    return {
+        "v": 1,
+        "request_id": rec["id"],
+        "status": rec["status"],
+        "worker_online": worker_health.is_alive(),
+    }
 
 
 @router.get("/retention", dependencies=[Depends(require_role("owner"))])

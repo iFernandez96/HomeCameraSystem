@@ -132,6 +132,16 @@ async def lifespan(_app: FastAPI):
             settings.events_db_path, exc_info=True,
         )
         raise
+    from .services.recording_jobs import init_db as _recording_jobs_init_db
+    try:
+        _recording_jobs_init_db(settings.recording_jobs_db_path)
+    except Exception:
+        log.error(
+            "lifespan: init recording_jobs db failed at %s — aborting boot",
+            settings.recording_jobs_db_path,
+            exc_info=True,
+        )
+        raise
     # Resume durable timelapse jobs that were interrupted by a container or
     # host restart. Reconciliation happens after an event loop exists and
     # before requests are served, so duplicate POSTs cannot race recovery.

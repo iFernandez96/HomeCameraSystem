@@ -182,6 +182,12 @@ class Settings:
             "/app/secrets/recording-assurance.json",
         )
     )
+    # Durable, queryable mirror of the worker's clip-state ledger. The worker
+    # remains the lifecycle producer; this database preserves transitions,
+    # validation outcomes and playback-latency history across restarts.
+    recording_jobs_db_path: Path = Path(
+        os.getenv("RECORDING_JOBS_DB_PATH", "/app/secrets/recording-jobs.db")
+    )
     camera_exposure_path: Path = Path(
         os.getenv("CAMERA_EXPOSURE_PATH", "/app/secrets/camera_exposure.json")
     )

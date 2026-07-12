@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 const getOperationsState = vi.fn()
 const getDailyBriefing = vi.fn()
 const getHealthHistory = vi.fn()
+const getRecordingIntegrity = vi.fn()
 const setHomeProfile = vi.fn()
 const setModeSchedules = vi.fn()
 const configureExternalArchive = vi.fn()
@@ -20,6 +21,7 @@ vi.mock('../../lib/api', async () => {
     getOperationsState: (...args: unknown[]) => getOperationsState(...args),
     getDailyBriefing: (...args: unknown[]) => getDailyBriefing(...args),
     getHealthHistory: (...args: unknown[]) => getHealthHistory(...args),
+    getRecordingIntegrity: (...args: unknown[]) => getRecordingIntegrity(...args),
     setHomeProfile: (...args: unknown[]) => setHomeProfile(...args),
     setModeSchedules: (...args: unknown[]) => setModeSchedules(...args),
     configureExternalArchive: (...args: unknown[]) => configureExternalArchive(...args),
@@ -92,6 +94,27 @@ describe('OperationsSection', () => {
         camera_sharpness: 20, power_watts: 12, disk_free_bytes: 10_000,
         recording_state: 'ok',
       }],
+    })
+    getRecordingIntegrity.mockResolvedValue({
+      v: 1,
+      total: 3,
+      counts: { recording: 0, finalizing: 0, available: 3, failed: 0, unknown: 0, expired: 0 },
+      processing: 0,
+      oldest_processing_age_s: null,
+      stuck_jobs: 0,
+      invalid_videos: 0,
+      median_ready_s: 4.2,
+      p95_ready_s: 7.5,
+      objectives: [],
+      recent_failures: [],
+      storage: {
+        state: 'healthy', recordings_path: '/recordings', filesystem: 'ext4',
+        mountpoint: '/srv/homecam-media', device: '/dev/sda1', writable: true,
+        read_only: false, smart_status: 'PASSED', write_probe_ms: 2.1,
+        free_bytes: 10_000, total_bytes: 20_000, reasons: [], checked_at: 2_000_000_000,
+      },
+      assurance: { state: 'ok', checked_at: 2_000_000_000 },
+      generated_ts: 2_000_000_000,
     })
     setHomeProfile.mockResolvedValue({ active_profile: 'away', effective_mode: 'away', changed_at: 2 })
     setModeSchedules.mockImplementation(async (items) => ({ v: 1, items }))

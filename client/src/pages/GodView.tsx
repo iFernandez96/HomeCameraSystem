@@ -12,10 +12,10 @@ import {
   type RecoverAction,
   type RecoverStatus,
 } from '../lib/api'
-import { useAuth } from '../lib/auth'
 import { useConfirm } from '../lib/confirm'
-import { formatError } from '../lib/format'
+import { useAuth } from '../lib/auth'
 import { isGodModeUser } from '../lib/roles'
+import { formatError } from '../lib/format'
 import { useStatus } from '../lib/useStatus'
 import { CrashCartPanels } from '../components/godview/CrashCartPanels'
 import { SessionsPanel } from '../components/godview/SessionsPanel'
@@ -378,6 +378,7 @@ function LogViewerPanel() {
 
 export function GodView() {
   const { user } = useAuth()
+  const canView = isGodModeUser(user)
   const [sinceDay, setSinceDay] = useState(defaultSince)
   const [untilDay, setUntilDay] = useState(defaultUntil)
   // Request-lifecycle state (the textbook shape, replacing an earlier
@@ -394,7 +395,6 @@ export function GodView() {
   } | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
 
-  const canView = isGodModeUser(user)
   const status = useStatus()
 
   const bounds = useMemo(

@@ -44,6 +44,10 @@ final class JetsonHealthMonitor {
         )
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
             .setMinimumLatency(Math.max(0L, delayMs))
+            // One-off persisted jobs avoid JobScheduler's 15-minute periodic
+            // floor. The deadline bounds ordinary scheduler deferral while
+            // still letting Android batch work under Doze.
+            .setOverrideDeadline(Math.max(TimeUnit.MINUTES.toMillis(2), delayMs + TimeUnit.MINUTES.toMillis(5)))
             .setPersisted(true)
             .build();
         scheduler.schedule(job);
@@ -73,7 +77,7 @@ final class JetsonHealthMonitor {
                 context,
                 400,
                 "Jetson offline or unreachable",
-                "HomeCam could not reach the Jetson in two consecutive checks."
+                "The phone could not reach HomeCam through either Tailscale or the local network in two consecutive checks."
             );
         }
         return offline ? OFFLINE_DELAY_MS : RETRY_DELAY_MS;

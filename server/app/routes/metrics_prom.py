@@ -76,6 +76,8 @@ async def metrics_prom() -> str:
     from ..services.health import worker_health
     from ..services.push_service import push_service
     from ..services.recording_assurance import status as recording_assurance_status
+    from ..services.recording_jobs import summary as recording_jobs_summary
+    from ..services.operations import storage_guardian
 
     used_mb, total_mb = _meminfo()
     worker_alive, _last_seen_s, worker_metrics = worker_health.snapshot()
@@ -190,6 +192,29 @@ async def metrics_prom() -> str:
             event_clip.get("elapsed_ms"),
             "Wall-clock time spent fully decoding the sampled real event clip",
         ))
+
+    jobs = recording_jobs_summary()
+    parts.append(_line(
+        "homecam_recording_jobs_stuck",
+        jobs["stuck_jobs"],
+        "Recording jobs with no progress for more than five minutes",
+    ))
+    parts.append(_line(
+        "homecam_recording_ready_seconds_p95",
+        jobs["p95_ready_s"],
+        "95th-percentile seconds from capture end to playable video",
+    ))
+    parts.append(_line(
+        "homecam_recording_invalid_videos",
+        jobs["invalid_videos"],
+        "Published videos rejected by integrity validation",
+    ))
+    guardian = storage_guardian()
+    parts.append(_line(
+        "homecam_recording_usb_guardian_ok",
+        1 if guardian["state"] == "healthy" else 0,
+        "Whether recording storage is confirmed writable ext4 on a distinct block mount",
+    ))
 
     # Worker — gauges (fps, infer_ms_*) are gated on `worker_alive`
     # because a stale value misrepresents current state. Counters
