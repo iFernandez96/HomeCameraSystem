@@ -57,6 +57,14 @@ const SHARED_FRAMES = [
   'sit_ab',
   'sit_b',
   'sit_b1',
+  // Frames-30 burst 3: sit-chain midpoints (stand↔0a, 0a↔a, a↔ab, ab↔b,
+  // b↔b1, b1↔seated)
+  'sit_m0',
+  'sit_m1',
+  'sit_m2',
+  'sit_m3',
+  'sit_m4',
+  'sit_m5',
   'seated',
   'tailflick',
   'groom_a',
@@ -69,12 +77,20 @@ const SHARED_FRAMES = [
   'sleep_mid',
   'sleep_b',
   'sleep',
+  // Frames-30 burst 3: sleep-chain midpoints (a↔a2, a2↔mid, mid↔b, b↔sleep)
+  'sleep_m1',
+  'sleep_m2',
+  'sleep_m3',
+  'sleep_m4',
   'crouch_a',
   'crouch_a2',
   'crouch_mid',
   'crouch_b',
   'crouch_b2',
   'crouch',
+  // Frames-30 burst 3: crouch-chain midpoints (a↔a2, mid↔b)
+  'crouch_m1',
+  'crouch_m2',
   'poop_squat_a',
   'squat_ab',
   'poop_squat_b',
@@ -146,28 +162,42 @@ const walk = WALK_STEP_ORDER.map((frame): CatAnimStep => ({ frame, ms: 38 }))
 // simply THE crouch chain. Mushu/Coco inherit Panther's calibrated
 // timing rather than compressing it — the extra ~280ms is the smooth
 // settle the tweens exist to buy.
+// Frames-30 burst 3: crouch_m1/m2 split the a→a2 and mid→b strides —
+// donor ms halves, so the chain total stays exactly 701ms.
 const crouchDown: readonly CatAnimStep[] = [
-  { frame: 'crouch_a', ms: 130 },
+  { frame: 'crouch_a', ms: 65 },
+  { frame: 'crouch_m1', ms: 65 },
   { frame: 'crouch_a2', ms: 140 },
-  { frame: 'crouch_mid', ms: 140 },
+  { frame: 'crouch_mid', ms: 70 },
+  { frame: 'crouch_m2', ms: 70 },
   { frame: 'crouch_b', ms: 150 },
   { frame: 'crouch_b2', ms: 140 },
   { frame: 'crouch', ms: 1 },
 ]
 
+// Frames-30 burst 3: every sleep stride splits with its midpoint — donor
+// ms halves (300→150+150, 190→95+95, 170→85+85, 160→80+80); 821ms exact.
 const sleepDownShared: readonly CatAnimStep[] = [
-  { frame: 'sleep_a', ms: 300 },
-  { frame: 'sleep_a2', ms: 190 },
-  { frame: 'sleep_mid', ms: 170 },
-  { frame: 'sleep_b', ms: 160 },
+  { frame: 'sleep_a', ms: 150 },
+  { frame: 'sleep_m1', ms: 150 },
+  { frame: 'sleep_a2', ms: 95 },
+  { frame: 'sleep_m2', ms: 95 },
+  { frame: 'sleep_mid', ms: 85 },
+  { frame: 'sleep_m3', ms: 85 },
+  { frame: 'sleep_b', ms: 80 },
+  { frame: 'sleep_m4', ms: 80 },
   { frame: 'sleep', ms: 1 },
 ]
 
 const wakeUpShared: readonly CatAnimStep[] = [
-  { frame: 'sleep', ms: 160 },
-  { frame: 'sleep_b', ms: 160 },
-  { frame: 'sleep_mid', ms: 160 },
-  { frame: 'sleep_a2', ms: 160 },
+  { frame: 'sleep', ms: 80 },
+  { frame: 'sleep_m4', ms: 80 },
+  { frame: 'sleep_b', ms: 80 },
+  { frame: 'sleep_m3', ms: 80 },
+  { frame: 'sleep_mid', ms: 80 },
+  { frame: 'sleep_m2', ms: 80 },
+  { frame: 'sleep_a2', ms: 80 },
+  { frame: 'sleep_m1', ms: 80 },
   { frame: 'sleep_a', ms: 160 },
   { frame: 'seated', ms: 1 },
 ]
@@ -212,33 +242,54 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'turn_0a', ms: 40 },
     { frame: 'side_stand', ms: 220 },
   ]),
+  // Frames-30 burst 3: sit_m0..m5 interleave the whole chain → 13 steps.
+  // Interior ms [25,26]×alternating sums exactly 280, so with the two 1ms
+  // endpoint holds the total stays the calibrated 282ms.
   stand_to_seated: allCats([
     { frame: 'stand', ms: 1 },
-    { frame: 'sit_0a', ms: 56 },
-    { frame: 'sit_a', ms: 56 },
-    { frame: 'sit_ab', ms: 56 },
-    { frame: 'sit_b', ms: 56 },
-    { frame: 'sit_b1', ms: 56 },
+    { frame: 'sit_m0', ms: 25 },
+    { frame: 'sit_0a', ms: 26 },
+    { frame: 'sit_m1', ms: 25 },
+    { frame: 'sit_a', ms: 26 },
+    { frame: 'sit_m2', ms: 25 },
+    { frame: 'sit_ab', ms: 26 },
+    { frame: 'sit_m3', ms: 25 },
+    { frame: 'sit_b', ms: 26 },
+    { frame: 'sit_m4', ms: 25 },
+    { frame: 'sit_b1', ms: 26 },
+    { frame: 'sit_m5', ms: 25 },
     { frame: 'seated', ms: 1 },
   ]),
   seated_to_stand: allCats([
     { frame: 'seated', ms: 1 },
-    { frame: 'sit_b1', ms: 56 },
-    { frame: 'sit_b', ms: 56 },
-    { frame: 'sit_ab', ms: 56 },
-    { frame: 'sit_a', ms: 56 },
-    { frame: 'sit_0a', ms: 56 },
+    { frame: 'sit_m5', ms: 25 },
+    { frame: 'sit_b1', ms: 26 },
+    { frame: 'sit_m4', ms: 25 },
+    { frame: 'sit_b', ms: 26 },
+    { frame: 'sit_m3', ms: 25 },
+    { frame: 'sit_ab', ms: 26 },
+    { frame: 'sit_m2', ms: 25 },
+    { frame: 'sit_a', ms: 26 },
+    { frame: 'sit_m1', ms: 25 },
+    { frame: 'sit_0a', ms: 26 },
+    { frame: 'sit_m0', ms: 25 },
     { frame: 'stand', ms: 1 },
   ]),
   sleep_down: {
     panther: sleepDownShared,
     mushu: sleepDownShared,
     // Coco gets the sleep_b2 tween before the endpoint — her sleep_b →
-    // sleep contraction was the v3 blocker.
+    // sleep contraction was the v3 blocker. sleep_m4 (the b↔sleep 50%
+    // midpoint) is SKIPPED for her: b2 already occupies that stretch and
+    // interleaving an independently-generated 50% pose next to it risks a
+    // non-monotonic wobble. Total stays 971ms.
     coco: [
-      { frame: 'sleep_a', ms: 300 },
-      { frame: 'sleep_a2', ms: 190 },
-      { frame: 'sleep_mid', ms: 170 },
+      { frame: 'sleep_a', ms: 150 },
+      { frame: 'sleep_m1', ms: 150 },
+      { frame: 'sleep_a2', ms: 95 },
+      { frame: 'sleep_m2', ms: 95 },
+      { frame: 'sleep_mid', ms: 85 },
+      { frame: 'sleep_m3', ms: 85 },
       { frame: 'sleep_b', ms: 160 },
       { frame: 'sleep_b2', ms: 150 },
       { frame: 'sleep', ms: 1 },
@@ -247,12 +298,16 @@ export const CAT_ANIM_SEQUENCES = {
   wake_up: {
     panther: wakeUpShared,
     mushu: wakeUpShared,
+    // Reverse interleave, same m4-skip judgment; total stays 951ms.
     coco: [
       { frame: 'sleep', ms: 160 },
       { frame: 'sleep_b2', ms: 150 },
-      { frame: 'sleep_b', ms: 160 },
-      { frame: 'sleep_mid', ms: 160 },
-      { frame: 'sleep_a2', ms: 160 },
+      { frame: 'sleep_b', ms: 80 },
+      { frame: 'sleep_m3', ms: 80 },
+      { frame: 'sleep_mid', ms: 80 },
+      { frame: 'sleep_m2', ms: 80 },
+      { frame: 'sleep_a2', ms: 80 },
+      { frame: 'sleep_m1', ms: 80 },
       { frame: 'sleep_a', ms: 160 },
       { frame: 'seated', ms: 1 },
     ],

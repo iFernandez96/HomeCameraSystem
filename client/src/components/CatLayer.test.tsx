@@ -136,14 +136,21 @@ function walkFrameUrls(catId: string): string[] {
 
 function sitToWalkUrls(catId: string): string[] {
   // seated_to_stand + front_to_walk unique frames (tween wave 2 added
-  // the sit_b1/sit_ab/sit_0a and turn_2 in-betweens) + the walk cycle.
+  // the sit_b1/sit_ab/sit_0a and turn_2 in-betweens; frames-30 burst 3
+  // interleaved sit_m0..m5) + the walk cycle.
   return [
     `/cats/anim/${catId}/seated.png`,
+    `/cats/anim/${catId}/sit_m5.png`,
     `/cats/anim/${catId}/sit_b1.png`,
+    `/cats/anim/${catId}/sit_m4.png`,
     `/cats/anim/${catId}/sit_b.png`,
+    `/cats/anim/${catId}/sit_m3.png`,
     `/cats/anim/${catId}/sit_ab.png`,
+    `/cats/anim/${catId}/sit_m2.png`,
     `/cats/anim/${catId}/sit_a.png`,
+    `/cats/anim/${catId}/sit_m1.png`,
     `/cats/anim/${catId}/sit_0a.png`,
+    `/cats/anim/${catId}/sit_m0.png`,
     `/cats/anim/${catId}/stand.png`,
     `/cats/anim/${catId}/turn_2c.png`,
     `/cats/anim/${catId}/turn_2.png`,
@@ -155,9 +162,10 @@ function sitToWalkUrls(catId: string): string[] {
   ]
 }
 
-/** Per-cat preload set size: 13 bridge frames (frames-30 added the
-    turn_0a/1b/2c ladder midpoints to front_to_walk) + 30 walk frames. */
-const SIT_TO_WALK_SET_SIZE = 43
+/** Per-cat preload set size: 19 bridge frames (frames-30 added the
+    turn_0a/1b/2c ladder midpoints to front_to_walk, then burst 3 added
+    sit_m0..m5 to seated_to_stand) + 30 walk frames. */
+const SIT_TO_WALK_SET_SIZE = 49
 
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined

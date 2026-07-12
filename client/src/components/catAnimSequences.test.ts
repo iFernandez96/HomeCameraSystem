@@ -49,7 +49,7 @@ describe('cat animation sequences', () => {
     expect(blink.panther).toEqual([{ frame: 'blink', ms: 140 }])
     expect(blink.mushu).toEqual([{ frame: 'blink', ms: 140 }])
     expect(blink.coco).toEqual([])
-    const expectedCrouch = ['crouch_a', 'crouch_a2', 'crouch_mid', 'crouch_b', 'crouch_b2', 'crouch']
+    const expectedCrouch = ['crouch_a', 'crouch_m1', 'crouch_a2', 'crouch_mid', 'crouch_m2', 'crouch_b', 'crouch_b2', 'crouch']
     for (const catId of CAT_IDS) {
       expect(crouchFrames[catId]).toEqual(expectedCrouch)
       // crouch_up reverses the same chain and settles seated.
@@ -82,6 +82,33 @@ describe('cat animation sequences', () => {
         expect(after, `${name}:${catId}`).toBeLessThanOrEqual(total * 1.15)
       }
     }
+  })
+
+  it('Given the frames-30 burst-3 chains, When each densified chain is measured, Then step counts double and every total is preserved to the millisecond', () => {
+    // arrange — the calibrated pre-densify totals these chains must keep.
+    const pins: Array<[CatAnimSequenceName, CatAnimId, number, number]> = [
+      // [sequence, cat, steps, exact total ms]
+      ['stand_to_seated', 'panther', 13, 282],
+      ['seated_to_stand', 'panther', 13, 282],
+      ['sleep_down', 'panther', 9, 821],
+      ['sleep_down', 'coco', 9, 971], // m4 skipped: sleep_b2 owns that stretch
+      ['wake_up', 'mushu', 10, 801],
+      ['wake_up', 'coco', 10, 951],
+      ['crouch_down', 'coco', 8, 701],
+    ]
+
+    // act / assert
+    for (const [name, catId, steps, total] of pins) {
+      const seq = CAT_ANIM_SEQUENCES[name][catId]
+      expect(seq.length, `${name}:${catId} steps`).toBe(steps)
+      expect(seq.reduce((s, x) => s + x.ms, 0), `${name}:${catId} total`).toBe(total)
+    }
+
+    // the sit chain interleaves every original with its midpoint
+    expect(CAT_ANIM_SEQUENCES.stand_to_seated.mushu.map((s) => s.frame)).toEqual([
+      'stand', 'sit_m0', 'sit_0a', 'sit_m1', 'sit_a', 'sit_m2', 'sit_ab',
+      'sit_m3', 'sit_b', 'sit_m4', 'sit_b1', 'sit_m5', 'seated',
+    ])
   })
 
   it('Given the 8-frame gallop, When the run cycle is read, Then the ring midpoints interleave the gallop and the cycle total is still 150ms', () => {
