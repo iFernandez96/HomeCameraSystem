@@ -893,6 +893,48 @@ describe('CatLayer', () => {
     expect(result.activity).toBe('sleep')
   })
 
+  describe('frames-30 wave 3 — character beats', () => {
+    it('Given a play bout entry, When the variant is rolled repeatedly, Then it rotates pounce/hop/tailhunt with no immediate repeat', () => {
+      // arrange — scripted roll always takes the pool head.
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      const cat = makeCatForTests({ activity: 'sit', boutVariant: null })
+
+      // act
+      const p1 = _setActivityForTests(cat, 'play', 3000, 1000)
+      const p2 = _setActivityForTests(p1, 'play', 3000, 5000)
+      const p3 = _setActivityForTests(p2, 'play', 3000, 9000)
+
+      // assert — head of ['pounce','hop_bounce','tailhunt'] minus previous.
+      expect(p1.boutVariant).toBe('pounce')
+      expect(p2.boutVariant).toBe('hop_bounce')
+      expect(p3.boutVariant).toBe('pounce')
+    })
+
+    it('Given a scared cat whose bout expires, When stepCats ticks past expiry, Then it recovers through shake_off before any new roll', () => {
+      // arrange — scared since t=1000, expires at t=2000; tick at t=2100.
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const scared = makeCatForTests({
+        activity: 'scared',
+        previousActivity: 'hiss',
+        activityStartedAt: 1000,
+        activityUntil: 2000,
+      })
+
+      // act
+      const stepped = _stepCatsForTests([scared], 2100, 16, { current: 0 }, 'login')[0]
+
+      // assert — the recovery beat interposes; its own expiry rolls next.
+      expect(stepped.activity).toBe('shake_off')
+    })
+
+    it('Given the scared and hiss transitions, When their chains are read, Then scared backs away and hiss escalates into the arch', () => {
+      // arrange / act / assert
+      expect(_catSequenceNamesForTransitionForTests('walk', 'scared')).toEqual(['retreat'])
+      expect(_catSequenceNamesForTransitionForTests('sit', 'hiss')).toEqual(['hiss_arch'])
+      expect(_catSequenceNamesForTransitionForTests('walk', 'hiss')).toEqual(['walk_to_front', 'hiss_arch'])
+    })
+  })
+
   describe('frames-30 variant gaits + sleep life', () => {
     it('Given consecutive sprint bouts, When the gait variant is rolled, Then no bout repeats its predecessor and mushu never draws the dropped lope', () => {
       // arrange — script the roll to always take the first choice.

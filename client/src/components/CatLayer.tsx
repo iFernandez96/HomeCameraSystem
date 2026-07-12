@@ -114,6 +114,7 @@ type Activity =
   | 'snuggle' // Mushu + Coco sit close
   | 'hiss' // Panther hissing
   | 'scared' // jumped back, ears down
+  | 'shake_off' // wave-3: post-scare shake recovery before the next roll
   | 'chase' // running fast at someone
   | 'flee' // running fast away
   | 'play' // happy hopping in place
@@ -355,7 +356,14 @@ function rollBoutVariant(c: CatState, activity: Activity): CatAnimSequenceName |
     return choices[Math.floor(Math.random() * choices.length)] ?? 'groom_bout'
   }
   if (activity === 'pooped') return Math.random() < 0.5 ? 'poop_squat_strained' : 'poop_squat'
-  if (activity === 'pounce' || activity === 'play') return Math.random() < 0.2 ? 'pounce_tumble' : 'pounce'
+  if (activity === 'pounce') return Math.random() < 0.2 ? 'pounce_tumble' : 'pounce'
+  if (activity === 'play') {
+    // Wave 3: play rotates pounce-loop / hop-bounce / tail-chase with no
+    // immediate repeat (the pounce ACTIVITY keeps its own 20% tumble).
+    const pool: CatAnimSequenceName[] = ['pounce', 'hop_bounce', 'tailhunt']
+    const choices = c.boutVariant ? pool.filter((n) => n !== c.boutVariant) : pool
+    return choices[Math.floor(Math.random() * choices.length)] ?? 'pounce'
+  }
   return null
 }
 
@@ -1216,6 +1224,7 @@ const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
   pooped: 'crouched',
   hiss: 'standing',
   scared: 'standing',
+  shake_off: 'standing',
   // standing so the rise chains (crouch_up + seated_to_stand) play on the
   // way out of the squat before the kicks.
   kick_dirt: 'standing',
@@ -1231,6 +1240,9 @@ const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenc
   // Frames-30 wave 2: the post-poop dirt-kick beat — the kicks are the
   // entry choreography, then the cat holds side_stand until expiry.
   kick_dirt: ['kick_dirt'],
+  // Wave 3: the shake-off recovery IS the entry choreography; the cat
+  // then holds side_stand until expiry rolls the next beat.
+  shake_off: ['shake_off'],
 }
 
 export function _catSequenceNamesForTransitionForTests(
@@ -1239,11 +1251,13 @@ export function _catSequenceNamesForTransitionForTests(
 ): readonly CatAnimSequenceName[] {
   const fromGroup = POSE_GROUP_BY_ACTIVITY[from]
   const toGroup = POSE_GROUP_BY_ACTIVITY[to]
-  if (to === 'scared') return []
+  // Wave 3: scared cats visibly back away (was an instant pose swap).
+  if (to === 'scared') return ['retreat']
   if (to === 'hiss') {
+    // Wave 3: the windup escalates into the full Halloween arch.
     return fromGroup === 'walking'
-      ? ['walk_to_front', 'hiss_windup']
-      : ['hiss_windup']
+      ? ['walk_to_front', 'hiss_arch']
+      : ['hiss_arch']
   }
   return [
     ...POSE_TRANSITIONS[fromGroup][toGroup],
@@ -1291,6 +1305,10 @@ const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
   sleep: 'sleep',
   stretch: 'crouch',
   kick_dirt: 'side_stand',
+  // Wave 3: hiss holds the peak arch; scared holds the low retreat.
+  hiss: 'arch_b',
+  scared: 'retreat_b',
+  shake_off: 'side_stand',
 }
 
 // Playground Slice A: the plan builder is now the shared, activity-
@@ -1645,6 +1663,7 @@ function activityToSprite(
     case 'flee':
     case 'walk':
     case 'kick_dirt': // standing-side fallback until frames preload
+    case 'shake_off': // same standing fallback
       return phase % 2 === 0 ? 'walk' : 'walk2'
     case 'sit':
     case 'judge':
@@ -1767,6 +1786,7 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
     { name: 'blink', weight: 12 },
     { name: 'tailflick', weight: 4 },
     { name: 'tailwrap_settle', weight: 2 },
+    { name: 'pawraise_wave', weight: 1 },
     { name: 'groom_bout', weight: 2 },
     { name: 'yawn', weight: 1 },
   ],
@@ -1774,12 +1794,14 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
     { name: 'blink', weight: 12 },
     { name: 'tailflick', weight: 4 },
     { name: 'tailwrap_settle', weight: 2 },
+    { name: 'pawraise_wave', weight: 1 },
     { name: 'groom_bout', weight: 3 },
     { name: 'yawn', weight: 1 },
   ],
   coco: [
     { name: 'tailflick', weight: 8 },
     { name: 'tailwrap_settle', weight: 2 },
+    { name: 'pawraise_wave', weight: 1 },
     { name: 'groom_bout', weight: 3 },
     { name: 'yawn', weight: 1 },
   ],
@@ -1992,6 +2014,12 @@ function stepCats(
       if (activity === 'pooped') {
         anyChanged = true
         return setActivity(base, 'kick_dirt', 2600, now)
+      }
+      // Wave 3: a scare always ends with the shake-off recovery beat
+      // (541ms entry; 1500ms nominal covers it at the jitter floor).
+      if (activity === 'scared') {
+        anyChanged = true
+        return setActivity(base, 'shake_off', 1500, now)
       }
       const next = _rollWithoutImmediateRepeatForTests(
         placement === 'login' ? rollLoginSolo : rollSolo,

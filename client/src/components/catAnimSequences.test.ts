@@ -430,4 +430,46 @@ describe('cat animation sequences', () => {
       expect(resurrected).toEqual([])
     })
   })
+
+  describe('frames-30 wave 3 — character and comedy', () => {
+    it('Given every wave-3 sequence, When totals are measured, Then each matches its designed duration', () => {
+      // arrange / act / assert — durations are load-bearing: activity
+      // nominal lengths were chosen so jitter floors still cover them.
+      const totals: Array<[keyof typeof CAT_ANIM_SEQUENCES, number]> = [
+        ['hiss_arch', 1200],
+        ['retreat', 661],
+        ['shake_off', 541],
+        ['hop_bounce', 450],
+        ['tailhunt', 880],
+        ['pawraise_wave', 401],
+        ['earflick', 181],
+      ]
+      for (const [name, expected] of totals) {
+        for (const catId of CAT_IDS) {
+          expect(
+            sequenceDurationMs(CAT_ANIM_SEQUENCES[name][catId]),
+            `${name}:${catId}`,
+          ).toBe(expected)
+        }
+      }
+    })
+
+    it('Given the hiss escalation, When its frame order is read, Then it climbs windup to the held peak arch', () => {
+      // arrange / act
+      const frames = CAT_ANIM_SEQUENCES.hiss_arch.panther.map((s2) => s2.frame)
+
+      // assert — windup -> bristle -> midpoint -> peak; the 500ms arch_b
+      // step is the visible Halloween-cat hold before HOLD_FRAME takes over.
+      expect(frames).toEqual(['hiss_windup', 'arch_a', 'arch_ab', 'arch_b'])
+      expect(CAT_ANIM_SEQUENCES.hiss_arch.panther[3].ms).toBe(500)
+    })
+
+    it('Given the tail-chase loop, When its frames are read, Then it ping-pongs through the C-spin midpoint', () => {
+      // arrange / act
+      const frames = CAT_ANIM_SEQUENCES.tailhunt.coco.map((s2) => s2.frame)
+
+      // assert
+      expect(frames).toEqual(['tailhunt_a', 'tailhunt_ab', 'tailhunt_b', 'tailhunt_ab'])
+    })
+  })
 })

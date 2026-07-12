@@ -148,6 +148,26 @@ const SHARED_FRAMES = [
   'dream_b',
   'lookback_0',
   'lookback_a',
+  // Frames-30 wave 3: character/comedy — Halloween-arch hiss escalation,
+  // scared retreat + shake-off recovery, happy-hop and tail-chase play
+  // variants, and the pawraise/earflick micro-idles.
+  'arch_a',
+  'arch_ab',
+  'arch_b',
+  'retreat_a',
+  'retreat_ab',
+  'retreat_b',
+  'shake_a',
+  'shake_ab',
+  'shake_b',
+  'hop_a',
+  'hop_ab',
+  'hop_b',
+  'pawraise_a',
+  'tailhunt_a',
+  'tailhunt_ab',
+  'tailhunt_b',
+  'earflick_a',
 ] as const
 
 // Frames-30 burst 4/5 per-cat drops (codex deformed twice → dropped, same
@@ -450,6 +470,58 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'jump_post', ms: 150 },
   ]),
   hiss_windup: allCats([{ frame: 'hiss_windup', ms: 240 }]),
+  // Frames-30 wave 3: the hiss is a full Halloween-arch escalation now —
+  // windup, bristle up through the arch midpoint, then HOLD the peak arch.
+  // 1200ms total; the hiss bout (1800ms nominal, jitter floor ~1404ms)
+  // always outlasts it, holding arch_b via HOLD_FRAME_BY_ACTIVITY.
+  hiss_arch: allCats([
+    { frame: 'hiss_windup', ms: 240 },
+    { frame: 'arch_a', ms: 260 },
+    { frame: 'arch_ab', ms: 200 },
+    { frame: 'arch_b', ms: 500 },
+  ]),
+  // Scared entry: back away low (661ms), then hold retreat_b until the
+  // bout expires into the shake_off recovery.
+  retreat: allCats([
+    { frame: 'retreat_a', ms: 180 },
+    { frame: 'retreat_ab', ms: 160 },
+    { frame: 'retreat_b', ms: 320 },
+    { frame: 'retreat_b', ms: 1 },
+  ]),
+  // Post-scare recovery: a quick head/fur shake, then compose yourself.
+  shake_off: allCats([
+    { frame: 'shake_a', ms: 140 },
+    { frame: 'shake_ab', ms: 120 },
+    { frame: 'shake_b', ms: 140 },
+    { frame: 'shake_a', ms: 140 },
+    { frame: 'side_stand', ms: 1 },
+  ]),
+  // Play bout variants (rotate with the pounce loop via boutVariant):
+  // a bouncing hop loop and the tail-chase spin (ping-pong through the
+  // C-shape midpoint so it reads as circling).
+  hop_bounce: allCats([
+    { frame: 'hop_a', ms: 120 },
+    { frame: 'hop_ab', ms: 90 },
+    { frame: 'hop_b', ms: 150 },
+    { frame: 'hop_ab', ms: 90 },
+  ]),
+  tailhunt: allCats([
+    { frame: 'tailhunt_a', ms: 260 },
+    { frame: 'tailhunt_ab', ms: 200 },
+    { frame: 'tailhunt_b', ms: 220 },
+    { frame: 'tailhunt_ab', ms: 200 },
+  ]),
+  // Seated micro-idle: a playful single-paw wave.
+  pawraise_wave: allCats([
+    { frame: 'pawraise_a', ms: 400 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  // Standing micro-idle — defined for the playground's regard-holds
+  // (the home engine has no standing-idle scheduler; see wave-3 notes).
+  earflick: allCats([
+    { frame: 'earflick_a', ms: 180 },
+    { frame: 'side_stand', ms: 1 },
+  ]),
   blink: {
     panther: [{ frame: 'blink', ms: 140 }],
     mushu: [{ frame: 'blink', ms: 140 }],
