@@ -6,7 +6,7 @@ import {
   getMyPushFilters,
   setMyPushFilters,
 } from '../../lib/api'
-import { formatError } from '../../lib/format'
+import { formatError, formatUptime } from '../../lib/format'
 import { log, errFields } from '../../lib/log'
 import {
   disablePushSubscription,
@@ -16,7 +16,7 @@ import {
   sendTestPush,
 } from '../../lib/push'
 import { useReportError, useToast } from '../../lib/toast'
-import type { PushFilters } from '../../lib/types'
+import type { PushAssuranceStatus, PushFilters } from '../../lib/types'
 import { Mono, Row, Section, TimeInput, Toggle } from './parts'
 
 // iter-289: extracted from Settings.tsx (~165 lines of inline JSX +
@@ -53,8 +53,10 @@ type FiltersInput = {
 
 export function NotificationsSection({
   pushSubsCount,
+  pushAssurance,
 }: {
   pushSubsCount: number | null | undefined
+  pushAssurance?: PushAssuranceStatus | null
 }) {
   const { showToast } = useToast()
   const reportError = useReportError()
@@ -486,6 +488,24 @@ export function NotificationsSection({
             </p>
           )}
         </>
+      )}
+      {pushAvailable && pushAssurance != null && pushAssurance.devices > 0 && (
+        <Row
+          label="Last confirmed delivery"
+          right={
+            pushAssurance.state === 'delivered' ? (
+              <span className="text-right text-[var(--color-success)]">
+                Shown on {pushAssurance.received_recent}{' '}
+                {pushAssurance.received_recent === 1 ? 'device' : 'devices'}
+                {pushAssurance.latest_age_s == null
+                  ? ''
+                  : ` · ${formatUptime(pushAssurance.latest_age_s)} ago`}
+              </span>
+            ) : (
+              <Mono>Waiting for a phone receipt</Mono>
+            )
+          }
+        />
       )}
       {/* iter-208 (Feature #4 slice 3b): per-user notification
           filters. iter-303 (user "instead of free-typing… have a

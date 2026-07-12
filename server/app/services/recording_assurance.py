@@ -24,6 +24,7 @@ class AssuranceStatus(TypedDict, total=False):
     sample_bytes: int | None
     elapsed_ms: float | None
     storage: dict[str, Any] | None
+    event_clip: dict[str, Any] | None
 
 
 def _read_raw(path: Path | None = None) -> dict[str, Any] | None:
@@ -55,6 +56,7 @@ def status(now: float | None = None, path: Path | None = None) -> AssuranceStatu
             "sample_bytes": None,
             "elapsed_ms": None,
             "storage": None,
+            "event_clip": None,
         }
     checked_at = float(value["checked_at"])
     age_s = max(0.0, now - checked_at)
@@ -70,6 +72,7 @@ def status(now: float | None = None, path: Path | None = None) -> AssuranceStatu
         "sample_bytes": value.get("sample_bytes"),
         "elapsed_ms": value.get("elapsed_ms"),
         "storage": value.get("storage"),
+        "event_clip": value.get("event_clip"),
     }
 
 
@@ -100,4 +103,3 @@ def record(payload: dict[str, Any], path: Path | None = None) -> str | None:
     if current_status == "ok" and previous_status == "failed":
         return "recovered"
     return None
-

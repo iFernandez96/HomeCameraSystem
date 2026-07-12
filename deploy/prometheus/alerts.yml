@@ -15,6 +15,13 @@ groups:
         annotations:
           summary: Camera frames have stopped
           description: The worker is alive but has not captured a frame for over 30 seconds.
+      - alert: HomecamCameraImageDegraded
+        expr: homecam_camera_quality_status >= 2
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: Camera image quality is degraded
+          description: Low-cadence samples indicate sustained blur or repeated identical frames.
       - alert: HomecamJetsonHot
         expr: (homecam_cpu_temp_celsius > 80) or (homecam_gpu_temp_celsius > 80)
         for: 5m
@@ -57,6 +64,13 @@ groups:
         annotations:
           summary: Capture drive reports SMART failure
           description: Preserve important clips and replace the capture drive.
+      - alert: HomecamRecentEventClipUnplayable
+        expr: homecam_recent_event_clip_playable == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: A recent event video is not playable
+          description: The recording exists, but a full decode of the sampled real event clip failed.
       - alert: HomecamCameraRecoveryLoop
         expr: increase(homecam_worker_mediamtx_restarts_total[15m]) > 2 or increase(homecam_worker_argus_restarts_total[15m]) > 0
         for: 1m

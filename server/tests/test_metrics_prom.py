@@ -70,6 +70,14 @@ def test_metrics_exposes_fresh_recording_and_storage_proof(
             "free_bytes": 100000,
             "write_probe_ms": 1.5,
         },
+        "event_clip": {
+            "state": "playable",
+            "event_id": "visit-123",
+            "checked_at": time.time(),
+            "sample_bytes": 50000,
+            "elapsed_ms": 250.0,
+            "reason": "event_playable",
+        },
     }))
     monkeypatch.setattr(settings, "recording_assurance_path", path)
 
@@ -81,6 +89,8 @@ def test_metrics_exposes_fresh_recording_and_storage_proof(
     assert "homecam_recording_storage_writable 1" in body
     assert "homecam_recording_storage_write_probe_ms 1.5" in body
     assert "homecam_recording_drive_smart_healthy 1" in body
+    assert "homecam_recent_event_clip_playable 1" in body
+    assert "homecam_recent_event_clip_check_ms 250.0" in body
 
 
 def test_metrics_endpoint_skips_worker_block_when_dead(client_anon: TestClient):

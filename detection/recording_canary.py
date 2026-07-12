@@ -22,6 +22,7 @@ import urllib.request
 _TEMP_PREFIX = ".recording-canary-"
 _TEMP_SUFFIX = ".mp4.tmp"
 _WRITE_PREFIX = ".recording-canary-write-"
+_EVENT_CLIP_RE = re.compile(r"^([A-Za-z0-9_-]+)\.mp4$")
 
 
 def _safe_unlink(path):
@@ -159,6 +160,69 @@ def _run_command(args, timeout, runner):
         return None, "exec_failed"
 
 
+def _newest_event_clip(recordings_dir):
+    """Return the newest published event MP4, excluding owned temporaries."""
+    newest = None
+    try:
+        names = os.listdir(recordings_dir)
+    except OSError:
+        return None
+    for name in names:
+        match = _EVENT_CLIP_RE.match(name)
+        if match is None:
+            continue
+        path = os.path.join(recordings_dir, name)
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        if not os.path.isfile(path) or stat.st_size <= 0:
+            continue
+        candidate = (stat.st_mtime, match.group(1), path, stat.st_size)
+        if newest is None or candidate[0] > newest[0]:
+            newest = candidate
+    return newest
+
+
+def _verify_recent_event_clip(recordings_dir, runner, clock):
+    newest = _newest_event_clip(recordings_dir)
+    if newest is None:
+        return {
+            "state": "none",
+            "event_id": None,
+            "checked_at": clock(),
+            "sample_bytes": None,
+            "elapsed_ms": None,
+            "reason": "no_event_clip",
+        }
+    _mtime, event_id, path, sample_bytes = newest
+    started = time.monotonic()
+    decode_args = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+        "-threads", "1", "-xerror", "-i", path, "-map", "0:v:0",
+        "-f", "null", "-",
+    ]
+    decoded, error = _run_command(decode_args, 120, runner)
+    elapsed_ms = round(max(0.0, (time.monotonic() - started) * 1000.0), 1)
+    if error == "timeout":
+        state = "failed"
+        reason = "event_decode_timeout"
+    elif error or decoded.returncode != 0:
+        state = "failed"
+        reason = "event_decode_failed"
+    else:
+        state = "playable"
+        reason = "event_playable"
+    return {
+        "state": state,
+        "event_id": event_id,
+        "checked_at": clock(),
+        "sample_bytes": sample_bytes,
+        "elapsed_ms": elapsed_ms,
+        "reason": reason,
+    }
+
+
 def run_canary(
     recordings_dir,
     rtsp_url,
@@ -182,6 +246,7 @@ def run_canary(
         "sample_bytes": None,
         "elapsed_ms": None,
         "storage": None,
+        "event_clip": None,
     }
     try:
         os.makedirs(recordings_dir, exist_ok=True)
@@ -236,6 +301,15 @@ def run_canary(
     swept = cleanup_owned_temps(recordings_dir)
     if not removed or not swept:
         result.update(status="failed", stage="cleanup", reason="cleanup_failed")
+    if result["status"] == "ok":
+        event_clip = _verify_recent_event_clip(recordings_dir, runner, clock)
+        result["event_clip"] = event_clip
+        if event_clip["state"] == "failed":
+            result.update(
+                status="failed",
+                stage="event_decode",
+                reason=event_clip["reason"],
+            )
     return _finish(result, result_url, post_result, started)
 
 

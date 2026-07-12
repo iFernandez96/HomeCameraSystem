@@ -197,6 +197,109 @@ def test_recording_assurance_rejects_incoherent_success(client: TestClient):
     assert response.status_code == 422
 
 
+def test_recording_assurance_accepts_failed_real_event_decode(client: TestClient, tmp_path, monkeypatch):
+    # arrange
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "recording_assurance_path", tmp_path / "assurance.json")
+    now = time.time()
+
+    # act
+    response = client.post(
+        "/api/_internal/recording-assurance",
+        json={
+            "v": 1,
+            "status": "failed",
+            "checked_at": now,
+            "stage": "event_decode",
+            "reason": "event_decode_failed",
+            "sample_bytes": 8192,
+            "elapsed_ms": 500,
+            "storage": {
+                "writable": True,
+                "filesystem": "ext4",
+                "read_only": False,
+                "smart_status": "unavailable",
+                "free_bytes": 100000,
+                "write_probe_ms": 1.0,
+            },
+            "event_clip": {
+                "state": "failed",
+                "event_id": "visit-broken",
+                "checked_at": now,
+                "sample_bytes": 4096,
+                "elapsed_ms": 200,
+                "reason": "event_decode_failed",
+            },
+        },
+    )
+
+    # assert
+    assert response.status_code == 200, response.text
+
+
+def test_recording_assurance_rejects_event_failure_without_matching_detail(client: TestClient):
+    # act
+    response = client.post(
+        "/api/_internal/recording-assurance",
+        json={
+            "v": 1,
+            "status": "failed",
+            "checked_at": time.time(),
+            "stage": "event_decode",
+            "reason": "event_decode_failed",
+            "sample_bytes": 8192,
+            "elapsed_ms": 500,
+            "storage": None,
+            "event_clip": None,
+        },
+    )
+
+    # assert
+    assert response.status_code == 422
+
+
+def test_push_receipt_endpoint_accepts_only_issued_one_use_capability(
+    client: TestClient, tmp_path, monkeypatch
+):
+    # arrange
+    from app.config import settings
+    from app.services import push_assurance
+
+    path = tmp_path / "push-assurance.json"
+    monkeypatch.setattr(settings, "push_assurance_path", path)
+    token = push_assurance.issue({
+        "endpoint": "https://push.example/secret",
+        "user_id": "israel",
+    })
+
+    # act
+    first = client.post(
+        "/api/_internal/push-receipt",
+        json={"receipt_id": token, "shown": True},
+    )
+    replay = client.post(
+        "/api/_internal/push-receipt",
+        json={"receipt_id": token, "shown": False},
+    )
+
+    # assert — same response prevents token-validity probing; state changes once.
+    assert first.status_code == 202
+    assert replay.status_code == 202
+    value = push_assurance.status(
+        [{"endpoint": "https://push.example/secret"}], path=path,
+    )
+    assert value["state"] == "delivered"
+
+
+def test_push_receipt_endpoint_rejects_extra_fields(client: TestClient):
+    response = client.post(
+        "/api/_internal/push-receipt",
+        json={"receipt_id": "x" * 32, "shown": True, "endpoint": "secret"},
+    )
+    assert response.status_code == 422
+
+
 def test_internal_event_rejects_missing_boxes(client: TestClient):
     r = client.post("/api/_internal/event", json=_payload(boxes=[]))
     assert r.status_code == 422
@@ -1665,6 +1768,10 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         "power_watts": 6.287,
         "power_sample_ts": 1700000102.0,
         "power_read_failures": 0,
+        "camera_quality_status": 1,
+        "camera_luma": 82.5,
+        "camera_sharpness": 14.2,
+        "camera_frame_delta": 1.25,
     }
     # If this assertion fires, _ALLOWED_METRIC_FIELDS has grown a key
     # the test doesn't know about — add it to `payload` above.

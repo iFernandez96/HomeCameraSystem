@@ -68,6 +68,14 @@ function baseStatus(over: Partial<ServerStatus> = {}): ServerStatus {
         free_bytes: 20_000_000_000,
         write_probe_ms: 1.4,
       },
+      event_clip: {
+        state: 'playable',
+        event_id: 'visit-123',
+        checked_at: 590,
+        sample_bytes: 120_000,
+        elapsed_ms: 2400,
+        reason: 'event_playable',
+      },
     },
     ...over,
   } as ServerStatus
@@ -100,9 +108,38 @@ describe('JetsonSection — health verdict (premium-launch slice)', () => {
     render(<JetsonSection status={baseStatus()} />)
 
     // assert
-    expect(screen.getByText(/verified playable/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/verified playable/i)).toHaveLength(2)
+    expect(screen.getByText(/verified playable · 2\.4s check/i)).toBeInTheDocument()
     expect(screen.getByText(/writable · ext4 · 1\.4 ms fsync/i)).toBeInTheDocument()
     expect(screen.getByText(/unavailable through this usb adapter/i)).toBeInTheDocument()
+  })
+
+  it('Given a recent real event clip fails full decode, When the panel renders, Then it names that failure and never claims the event is playable', () => {
+    // arrange
+    const healthy = baseStatus().recording_assurance!
+
+    // act
+    render(
+      <JetsonSection
+        status={baseStatus({
+          recording_assurance: {
+            ...healthy,
+            state: 'failed',
+            stage: 'event_decode',
+            reason: 'event_decode_failed',
+            event_clip: {
+              ...healthy.event_clip!,
+              state: 'failed',
+              reason: 'event_decode_failed',
+            },
+          },
+        })}
+      />,
+    )
+
+    // assert
+    expect(screen.getAllByText(/recent event video is not playable/i)).toHaveLength(3)
+    expect(screen.queryByText(/verified playable · 2\.4s check/i)).not.toBeInTheDocument()
   })
 
   it('Given the full-decode check fails, When the verdict computes, Then it is critical and never claims video is playable', () => {
@@ -116,6 +153,7 @@ describe('JetsonSection — health verdict (premium-launch slice)', () => {
             state: 'failed',
             stage: 'decode',
             reason: 'decode_failed',
+            event_clip: null,
           },
         })}
       />,

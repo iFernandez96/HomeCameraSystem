@@ -6,6 +6,7 @@ import { useConfirm } from '../../lib/confirm'
 import { isOwner } from '../../lib/roles'
 import { Mono, Row, Section } from './parts'
 import { ChangePasswordRow, ManageUsersPanel } from './UserMgmt'
+import { MfaControls } from './MfaControls'
 
 // iter-294: extracted from Settings.tsx (~35 lines of inline JSX +
 // serverVersion state + getServerVersion mount effect). Owns the
@@ -85,6 +86,7 @@ export function AccountSection() {
         right={<Mono>{serverVersion ?? '—'}</Mono>}
       />
       <ChangePasswordRow />
+      {canManageUsers ? <MfaControls /> : null}
       {/* Bug sweep (2026-07-02): the "Show ambient cats" toggle was
           removed — the CatLayer it controlled is unmounted since the
           Watch structural overhaul (sprites walked over the today-

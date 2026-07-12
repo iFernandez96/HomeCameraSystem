@@ -74,7 +74,7 @@ def _deps(**overrides):
 
     def start_focus_mode():
         calls.append("focus_start")
-        return {"expires_at": 400.0, "width": 1920, "height": 1080}
+        return {"expires_at": 400.0, "width": 2560, "height": 1440}
 
     def stop_focus_mode():
         calls.append("focus_stop")
@@ -82,7 +82,7 @@ def _deps(**overrides):
 
     def apply_exposure(args):
         calls.append(("exposure_apply", args))
-        return {"region": "480 270 1440 810 1", "compensation": 0.0, "locked": False}
+        return {"region": "960 540 2880 1620 1", "compensation": 0.0, "locked": False}
 
     deps = SimpleNamespace(
         restart_mediamtx=restart_mediamtx,
@@ -168,8 +168,8 @@ def test_given_focus_start_when_executed_then_mode_metadata_returned():
     status, detail, result = host_action.execute_action(
         _record(kind="focus_start"), deps
     )
-    assert (status, detail) == ("done", "1080p focus mode started")
-    assert result == {"expires_at": 400.0, "width": 1920, "height": 1080}
+    assert (status, detail) == ("done", "1440p precision mode ready")
+    assert result == {"expires_at": 400.0, "width": 2560, "height": 1440}
     assert deps.calls == ["focus_start"]
 
 
@@ -179,7 +179,7 @@ def test_given_focus_stop_when_executed_then_normal_camera_restored():
         _record(kind="focus_stop"), deps
     )
     assert (status, detail, result) == (
-        "done", "720p camera restore requested", None
+        "done", "shared camera mode confirmation requested", None
     )
     assert deps.calls == ["focus_stop"]
 
@@ -192,7 +192,7 @@ def test_given_exposure_apply_when_executed_then_bounded_args_are_forwarded():
         _record(kind="exposure_apply", args=args), deps
     )
     assert (status, detail) == ("done", "camera exposure applied")
-    assert result["region"] == "480 270 1440 810 1"
+    assert result["region"] == "960 540 2880 1620 1"
     assert deps.calls == [("exposure_apply", args)]
 
 

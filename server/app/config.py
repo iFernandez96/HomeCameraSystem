@@ -105,6 +105,9 @@ class Settings:
     jwt_secret_path: Path = Path(
         os.getenv("JWT_SECRET_PATH", "./jwt_secret.bin")
     )
+    mfa_key_path: Path = Path(
+        os.getenv("MFA_KEY_PATH", "/app/secrets/mfa_key.bin")
+    )
     access_token_ttl_s: int = int(os.getenv("ACCESS_TOKEN_TTL_S", "900"))
     refresh_token_ttl_s: int = int(os.getenv("REFRESH_TOKEN_TTL_S", "604800"))
     cookie_secure: bool = (
@@ -134,6 +137,9 @@ class Settings:
     )
     backup_ledger_path: Path = Path(
         os.getenv("BACKUP_LEDGER_PATH", "/app/secrets/backup-ledger.jsonl")
+    )
+    push_assurance_path: Path = Path(
+        os.getenv("PUSH_ASSURANCE_PATH", "/app/secrets/push-assurance.json")
     )
 
     # iter-213 (Feature #8 slice 1): the dir that daily-timelapse

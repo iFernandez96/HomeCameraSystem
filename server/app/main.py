@@ -516,6 +516,7 @@ def _build_status() -> dict[str, object]:
         log.info("/api/status probe aggregation recovered")
     from .services.recording_service import storage_forecast
     from .services.recording_assurance import status as recording_assurance_status
+    from .services.push_assurance import status as push_assurance_status
     recording_forecast = storage_forecast()
     return {
         "ok": True,
@@ -539,6 +540,7 @@ def _build_status() -> dict[str, object]:
         "system_disk_free_gb": _disk_free_gb("/"),
         **recording_forecast,
         "recording_assurance": recording_assurance_status(),
+        "push_assurance": push_assurance_status(push_service.subs),
         # iter-246: top-level fps mirrors worker_metrics["fps"] when
         # available. Pre-iter-246 this read `camera_service.fps`, a
         # field that's initialised to 0.0 and never updated (the

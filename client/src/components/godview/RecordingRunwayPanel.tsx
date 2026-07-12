@@ -9,9 +9,13 @@ function runwayTone(days: number | null): string {
 }
 
 export function RecordingRunwayPanel({ status }: { status: ServerStatus }) {
+  const conservativeRate = Math.max(
+    status.recording_gb_per_day ?? 0,
+    status.recording_gb_per_day_7d ?? 0,
+  )
   const runway = estimateDaysLeft(
     status.disk_free_gb,
-    status.recording_gb_per_day,
+    conservativeRate,
   )
   const days = runway.daysLeft
   const daysLabel = days == null ? '—' : `≈ ${Math.floor(days)} days left`
@@ -37,7 +41,7 @@ export function RecordingRunwayPanel({ status }: { status: ServerStatus }) {
       </dl>
       <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
         {runway.basis === 'measured-rate'
-          ? `Based on ${status.recording_gb_per_day?.toFixed(2)} GB recorded in the last day.`
+          ? `Based on the higher recent rate: ${conservativeRate.toFixed(2)} GB/day (24h ${(status.recording_gb_per_day ?? 0).toFixed(2)} · 7d avg ${(status.recording_gb_per_day_7d ?? 0).toFixed(2)}).`
           : `Estimate at ~${ASSUMED_GB_PER_DAY} GB/day until a full day is measured.`}{' '}
         Free: {freeLabel}. Protected: {(status.protected_recording_gb ?? 0).toFixed(2)} GB.
       </p>

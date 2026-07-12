@@ -34,6 +34,7 @@ def auth_env(tmp_path, monkeypatch):
     cookies on subsequent requests within the same session."""
     monkeypatch.setattr(settings, "users_db_path", tmp_path / "users.db")
     monkeypatch.setattr(settings, "jwt_secret_path", tmp_path / "jwt.bin")
+    monkeypatch.setattr(settings, "mfa_key_path", tmp_path / "mfa-key.bin")
     monkeypatch.setattr(settings, "sessions_db_path", tmp_path / "sessions.db")
     monkeypatch.setattr(settings, "cookie_secure", False)
     users_db.init_db(tmp_path / "users.db")

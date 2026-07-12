@@ -9,7 +9,7 @@ vi.mock('../lib/auth', () => ({
   useAuth: () => ({
     state: _authState,
     user: null,
-    login: (u: string, p: string) => loginFn(u, p),
+    login: (...args: [string, string, string?]) => loginFn(...args),
     logout: vi.fn(),
   }),
 }))
@@ -62,6 +62,26 @@ describe('Login page', () => {
     expect(screen.getByLabelText(/username/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
+  })
+
+  it('Given the password is correct and MFA is enabled, When prompted, Then the recovery-or-authenticator code completes sign-in', async () => {
+    // arrange
+    loginFn
+      .mockRejectedValueOnce(new HttpError('/api/auth/login', 428, ''))
+      .mockResolvedValueOnce(undefined)
+    renderLogin()
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'israel' } })
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'secret' } })
+
+    // act — password step.
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+    const code = await screen.findByLabelText(/authenticator or recovery code/i)
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    // assert
+    await waitFor(() => expect(loginFn).toHaveBeenLastCalledWith('israel', 'secret', '123456'))
+    expect(await screen.findByTestId('home')).toBeInTheDocument()
   })
 
   it('Given an anonymous user, When Login renders, Then ambient cats sit behind the reachable sign-in form', () => {

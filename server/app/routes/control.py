@@ -483,7 +483,7 @@ async def camera_focus_mode(
     body: _FocusModeBody,
     user: str = Depends(get_current_user),
 ) -> dict[str, object]:
-    """Queue a temporary 1080p mode or restore the normal 720p pipeline."""
+    """Confirm or end a session on the shared 1440p precision stream."""
     kind = "focus_start" if body.enabled else "focus_stop"
     rec = host_bridge.enqueue(kind, {}, requested_by=user, now=time.time())
     # The audit schema intentionally has a closed action vocabulary. Record
@@ -498,7 +498,7 @@ async def camera_focus_mode(
             request_id=rec["id"],
             phase="requested",
             status=None,
-            detail="camera_focus_mode={}".format("1080p" if body.enabled else "720p"),
+            detail="camera_focus_mode={}".format("1440p" if body.enabled else "shared"),
         )
     except Exception:
         log.warning("focus mode request audit failed id=%s", rec["id"], exc_info=True)

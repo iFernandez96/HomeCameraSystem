@@ -81,6 +81,7 @@ import clip_state  # noqa: E402
 from activity_rules import ActivityRuleEngine, sanitize_rules  # noqa: E402
 from audio_events import sanitize_audio_labels  # noqa: E402
 from scene_guard import SceneGuard  # noqa: E402
+from camera_quality import CameraQualityGuard  # noqa: E402
 from doorbell import DebouncedButton  # noqa: E402
 from power_monitor import start_power_sampler  # noqa: E402
 
@@ -1739,12 +1740,15 @@ def _write_exposure_config(values):
     enabled, x, y, width, height, compensation, locked = values
     region = ""
     if enabled:
-        left = int(round(x * 1920))
-        top = int(round(y * 1080))
-        right = int(round((x + width) * 1920))
-        bottom = int(round((y + height) * 1080))
+        left = int(round(x * 3840))
+        top = int(round(y * 2160))
+        right = int(round((x + width) * 3840))
+        bottom = int(round((y + height) * 2160))
         region = "{} {} {} {} 1".format(left, top, right, bottom)
-    content = "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n".format(
+    content = (
+        "AE_SENSOR_WIDTH='3840'\nAE_SENSOR_HEIGHT='2160'\n"
+        "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n"
+    ).format(
         region, compensation, "true" if locked else "false"
     )
     tmp = _EXPOSURE_CONFIG + ".tmp"
@@ -1759,7 +1763,7 @@ def _both_camera_streams_ready(timeout_s=25.0):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if (_camera_resolution("cam") == (1280, 720) and
-                _camera_resolution("cam_uhq") == (1920, 1080)):
+                _camera_resolution("cam_uhq") == (2560, 1440)):
             return True
         time.sleep(1.0)
     return False
@@ -1784,7 +1788,7 @@ def apply_exposure(args):
         # schedules this worker to reconnect its decoder.
         if (not _restart_camera_pipeline_for_focus((1280, 720)) or
                 not _both_camera_streams_ready()):
-            raise RuntimeError("720p and 1080p streams did not recover")
+            raise RuntimeError("720p and 1440p streams did not recover")
         return {"region": region, "compensation": values[5], "locked": values[6]}
     except Exception as e:
         log.error("exposure apply failed; restoring prior config: %s: %s", type(e).__name__, e)
@@ -1860,7 +1864,7 @@ def _restart_camera_pipeline_for_focus(expected_resolution):
 
 
 def start_focus_mode():
-    """Atomically select 1080p and arm an independent systemd timeout."""
+    """Confirm the shared 1440p precision stream and arm its UI timeout."""
     expires = int(time.time()) + _FOCUS_MODE_SECONDS
     tmp = _FOCUS_MARKER + ".tmp"
     try:
@@ -1882,9 +1886,9 @@ def start_focus_mode():
             raise RuntimeError(
                 scheduled.stderr.decode("utf-8", "replace")[-300:]
             )
-        if not _restart_camera_pipeline_for_focus((1920, 1080)):
-            raise RuntimeError("camera reset failed")
-        return {"expires_at": expires, "width": 1920, "height": 1080}
+        if not _both_camera_streams_ready():
+            raise RuntimeError("720p and 1440p streams are not ready")
+        return {"expires_at": expires, "width": 2560, "height": 1440}
     except Exception as e:
         try:
             os.remove(_FOCUS_MARKER)
@@ -1896,7 +1900,7 @@ def start_focus_mode():
 
 
 def stop_focus_mode():
-    """Restore the normal pipeline; old tokenized timers become harmless."""
+    """End the precision session; the shared camera graph stays unchanged."""
     try:
         os.remove(_FOCUS_MARKER)
     except FileNotFoundError:
@@ -1904,7 +1908,7 @@ def stop_focus_mode():
     except OSError as e:
         log.error("focus mode marker removal failed: %s", e)
         return False
-    return _restart_camera_pipeline_for_focus((1280, 720))
+    return _both_camera_streams_ready()
 
 
 def escalate_argus_recovery():
@@ -2449,10 +2453,50 @@ def _recover_open_visits(recordings_dir, clip_recorder, runner,
     )
 
 
-def open_camera(uri, attempts=30, retry_s=2.0):
-    """Wait for the upstream RTSP to come up (mediamtx may still be starting)."""
+def _rtsp_stream_ready(uri, timeout_s=5.0):
+    """Return true only after ffprobe can see a real video stream.
+
+    ``jetson_utils.videoSource`` can return an object before MediaMTX has a
+    publisher.  That object remains stuck even after ``/cam`` appears, which
+    turns an ordinary service restart into a watchdog escalation storm.  Use
+    the same lightweight metadata probe already required by the camera-control
+    path, without opening another camera owner or decoding frames.
+    """
+    if not str(uri).lower().startswith("rtsp://"):
+        return True
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-rtsp_transport", "tcp",
+                "-select_streams", "v:0", "-show_entries",
+                "stream=codec_type", "-of", "default=nw=1:nk=1", str(uri),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_s,
+        )
+        return (
+            result.returncode == 0
+            and result.stdout.decode("utf-8", "replace").strip() == "video"
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def open_camera(uri, attempts=30, retry_s=2.0, ready_probe=None):
+    """Open a reader only after the upstream RTSP publication is real."""
     last_err = None
+    probe = ready_probe or _rtsp_stream_ready
     for i in range(attempts):
+        if not probe(uri):
+            last_err = RuntimeError("upstream video stream is not ready")
+            print(
+                "[detect] RTSP stream not ready (attempt {}/{}); retrying in {:.1f}s"
+                .format(i + 1, attempts, retry_s),
+                flush=True,
+            )
+            time.sleep(retry_s)
+            continue
         try:
             cam = jetson_utils.videoSource(uri, argv=["--input-codec=h264"])
             return cam
@@ -3308,8 +3352,10 @@ def main():
     # `_read_thermal_zone_by_name` syscall per ~10 s — negligible.
     thermal_check_every_n_frames = 10
     scene_guard = SceneGuard()
+    camera_quality_guard = CameraQualityGuard()
     scene_last_sample_at = 0.0
     scene_reference = None
+    scene_previous = None
     while True:
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
@@ -3542,20 +3588,24 @@ def main():
         if not runtime.enabled or runtime.operating_mode == "privacy":
             activity_engine.suspend()
             scene_guard.suspend()
+            camera_quality_guard.suspend()
             scene_reference = None
+            scene_previous = None
             _set_gear("off")
             del img
             continue
         if runtime.schedule_says_off():
             activity_engine.suspend()
             scene_guard.suspend()
+            camera_quality_guard.suspend()
             scene_reference = None
+            scene_previous = None
             _set_gear("scheduled-off")
             del img
             continue
 
         # Low-cadence tamper guard. Downsampling before the CPU copy keeps the
-        # comparison tiny; three consecutive five-second samples are required
+        # comparison tiny; six consecutive five-second samples are required
         # so exposure transitions and a hand passing the lens do not alert.
         if now - scene_last_sample_at >= 5.0:
             scene_last_sample_at = now
@@ -3580,6 +3630,27 @@ def main():
                     scene_reference = sample.copy()
                 if tamper_kind:
                     signal_emitter.emit("tamper", tamper_kind, now=now)
+                frame_delta = None
+                if scene_previous is not None and scene_previous.shape == sample.shape:
+                    frame_delta = float(np.abs(sample - scene_previous).mean())
+                sharpness = float(
+                    np.abs(sample[:, 1:] - sample[:, :-1]).mean()
+                    + np.abs(sample[1:, :] - sample[:-1, :]).mean()
+                )
+                quality_transition = camera_quality_guard.observe(
+                    sharpness, frame_delta,
+                )
+                metrics.camera_quality_status = camera_quality_guard.state
+                metrics.camera_luma = float(sample.mean())
+                metrics.camera_sharpness = sharpness
+                metrics.camera_frame_delta = (
+                    0.0 if frame_delta is None else frame_delta
+                )
+                scene_previous = sample.copy()
+                if quality_transition in ("camera_blurred", "camera_frozen"):
+                    signal_emitter.emit(
+                        "tamper", quality_transition, now=now,
+                    )
             except Exception as e:
                 log.warning("scene guard sample failed: %s: %s", type(e).__name__, e)
 

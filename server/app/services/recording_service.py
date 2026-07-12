@@ -572,11 +572,13 @@ def _list_clips_by_mtime(rec_dir: Path) -> list:
 
 
 def storage_forecast(now: float | None = None) -> dict:
-    """Measure recent clip growth and protected bytes for runway estimates."""
+    """Measure 24-hour and seven-day clip growth for runway estimates."""
     if now is None:
         now = time.time()
     rec_dir = settings.recordings_dir
     recent_bytes = 0
+    seven_day_bytes = 0
+    daily_bytes = [0] * 7
     protected_bytes = 0
     try:
         from .events_db import protected_event_ids
@@ -593,12 +595,18 @@ def storage_forecast(now: float | None = None) -> dict:
                 continue
             if mtime >= now - 86400:
                 recent_bytes += size
+            age_s = max(0.0, now - mtime)
+            if age_s < 7 * 86400:
+                seven_day_bytes += size
+                daily_bytes[min(6, int(age_s // 86400))] += size
             if Path(path.name).stem in protected_ids:
                 protected_bytes += size
     except Exception:
         log.exception("storage forecast: clip scan failed")
     return {
         "recording_gb_per_day": recent_bytes / (1024 ** 3),
+        "recording_gb_per_day_7d": seven_day_bytes / (7 * (1024 ** 3)),
+        "recording_peak_gb_per_day_7d": max(daily_bytes) / (1024 ** 3),
         "protected_recording_gb": protected_bytes / (1024 ** 3),
     }
 
