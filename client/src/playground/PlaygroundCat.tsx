@@ -42,8 +42,10 @@ const SPRITE_CANVAS_BASE_PX = 128
 const SPRITE_CANVAS_TALL_PX = 160
 const TALL_CANVAS_FRAMES: ReadonlySet<string> = new Set([
   'scratch_a',
+  'scratch_ab',
   'scratch_b',
   'climb_a',
+  'climb_ab',
   'climb_b',
 ])
 

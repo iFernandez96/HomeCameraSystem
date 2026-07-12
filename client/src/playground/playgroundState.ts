@@ -20,7 +20,11 @@ import {
   type PlaygroundCatId,
 } from './playgroundAssets'
 import type { GroundPoopSpawn } from '../components/GroundPoop'
-import { PLAYGROUND_SEQUENCES, type PlaygroundAnimStep } from './playgroundSequences'
+import {
+  PLAYGROUND_PER_CAT_SEQUENCES,
+  PLAYGROUND_SEQUENCES,
+  type PlaygroundAnimStep,
+} from './playgroundSequences'
 import {
   HOME_ANCHOR,
   anchorById,
@@ -318,8 +322,9 @@ export const PLAYGROUND_SEQUENCE_TABLE: SequenceTable = {
   eat_bout: perCat(PLAYGROUND_SEQUENCES.eat_bout),
   purr_hold: perCat(PLAYGROUND_SEQUENCES.purr_hold),
   scratch_bout: perCat(PLAYGROUND_SEQUENCES.scratch_bout),
-  drink_bout: perCat(PLAYGROUND_SEQUENCES.drink_bout),
-  climb: perCat(PLAYGROUND_SEQUENCES.climb),
+  // drink_bout / climb are per-cat (tween-wave-2 midpoint asymmetry).
+  drink_bout: PLAYGROUND_PER_CAT_SEQUENCES.drink_bout,
+  climb: PLAYGROUND_PER_CAT_SEQUENCES.climb,
   hammock_hold: perCat(PLAYGROUND_SEQUENCES.hammock_hold),
   window_hold: perCat(PLAYGROUND_SEQUENCES.window_hold),
 } as unknown as SequenceTable
@@ -425,16 +430,17 @@ export const PLAYGROUND_ANIM_MAPS: AnimActivityMaps<PlayActivity> = {
 // The climb loop is travel-phase state, not an activity: while a mount/
 // dismount leg still has vertical distance, the cling frames override
 // the walk gait (stepPlayground maintains cat.climbing per tick).
-const CLIMB_STEPS = PLAYGROUND_SEQUENCES.climb as unknown as readonly {
-  frame: CatAnimFrame
-  ms: number
-}[]
+const CLIMB_STEPS_BY_CAT = PLAYGROUND_PER_CAT_SEQUENCES.climb as unknown as Record<
+  PlaygroundCatId,
+  readonly { frame: CatAnimFrame; ms: number }[]
+>
 
 export function playgroundAnimationPlanFor(cat: PlayCat, now: number): AnimationPlan {
   if (cat.climbing) {
+    const climbSteps = CLIMB_STEPS_BY_CAT[cat.id]
     return {
-      frame: frameFromSteps(CLIMB_STEPS, Math.max(0, now - cat.activityStartedAt), true),
-      framesToPreload: CLIMB_STEPS.map((step) => step.frame),
+      frame: frameFromSteps(climbSteps, Math.max(0, now - cat.activityStartedAt), true),
+      framesToPreload: climbSteps.map((step) => step.frame),
       walkFrame: undefined,
     }
   }

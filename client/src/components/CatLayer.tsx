@@ -1529,7 +1529,7 @@ function activityToSprite(
 }
 
 // Per-activity phase cadence, driven exclusively by the existing rAF
-// timestamp. Normal walks use ~10fps; chase/flee run at ~15fps. Static
+// timestamp. Normal walks use ~10fps; chase/flee run at ~27fps. Static
 // poses stay at zero and sitting keeps its 600ms two-frame tail flick.
 function phaseFor(activity: Activity, now: number): number {
   switch (activity) {
@@ -1537,7 +1537,8 @@ function phaseFor(activity: Activity, now: number): number {
       return Math.floor(now / (CYCLE_DURATION_MS.walk / WALK_FRAME_COUNT)) % WALK_FRAME_COUNT
     case 'chase':
     case 'flee':
-      return Math.floor(now / (CYCLE_DURATION_MS.run / 2)) % 2
+      // Tween wave 2: the gallop is 4 frames per 150ms cycle now.
+      return Math.floor(now / (CYCLE_DURATION_MS.run / 4)) % 4
     case 'sit':
     case 'judge':
     case 'loaf':
@@ -1747,7 +1748,7 @@ function stepCats(
     // Per-activity sprite-frame phase. Only counts as a change when the
     // value flips, so a sleeping cat (always phase=0) stays ref-stable;
     // sitting updates every 600ms, walking every 100ms, and a chase or
-    // flee every ~67ms (moving cats already update because x changes).
+    // flee every ~38ms (moving cats already update because x changes).
     const newPhase = phaseFor(activity, now)
     if (newPhase !== cat.phase) catChanged = true
     const timelineActive =
