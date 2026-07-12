@@ -178,31 +178,42 @@ function sitToWalkUrls(catId: string): string[] {
   return [
     `/cats/anim/${catId}/seated.png`,
     `/cats/anim/${catId}/sit_m5.png`,
+    `/cats/anim/${catId}/sit_n5.png`,
     `/cats/anim/${catId}/sit_b1.png`,
     `/cats/anim/${catId}/sit_m4.png`,
+    `/cats/anim/${catId}/sit_n4.png`,
     `/cats/anim/${catId}/sit_b.png`,
     `/cats/anim/${catId}/sit_m3.png`,
+    `/cats/anim/${catId}/sit_n3.png`,
     `/cats/anim/${catId}/sit_ab.png`,
     `/cats/anim/${catId}/sit_m2.png`,
+    `/cats/anim/${catId}/sit_n2.png`,
     `/cats/anim/${catId}/sit_a.png`,
     `/cats/anim/${catId}/sit_m1.png`,
+    `/cats/anim/${catId}/sit_n1.png`,
     `/cats/anim/${catId}/sit_0a.png`,
     `/cats/anim/${catId}/sit_m0.png`,
+    `/cats/anim/${catId}/sit_n0.png`,
     `/cats/anim/${catId}/stand.png`,
+    `/cats/anim/${catId}/turn_n5.png`,
     `/cats/anim/${catId}/turn_2c.png`,
     `/cats/anim/${catId}/turn_2.png`,
+    `/cats/anim/${catId}/turn_n4.png`,
     `/cats/anim/${catId}/turn_1b.png`,
+    `/cats/anim/${catId}/turn_n3.png`,
     `/cats/anim/${catId}/turn.png`,
+    `/cats/anim/${catId}/turn_n2.png`,
     `/cats/anim/${catId}/turn_0a.png`,
+    `/cats/anim/${catId}/turn_n1.png`,
     `/cats/anim/${catId}/side_stand.png`,
     ...walkFrameUrls(catId),
   ]
 }
 
-/** Per-cat preload set size: 19 bridge frames (frames-30 added the
-    turn_0a/1b/2c ladder midpoints to front_to_walk, then burst 3 added
-    sit_m0..m5 to seated_to_stand) + 30 walk frames. */
-const SIT_TO_WALK_SET_SIZE = 49
+/** Per-cat preload set size: 30 bridge frames (wave 5 added sit_n0..n5
+    to seated_to_stand and turn_n1..n5 to front_to_walk on top of the
+    burst-3/wave-1 midpoints) + 30 walk frames. */
+const SIT_TO_WALK_SET_SIZE = 60
 
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined
@@ -408,12 +419,14 @@ describe('CatLayer', () => {
     const ladder = pivot
       .map((s) => s.frame)
       .filter((frame, i, all) => i === 0 || frame !== all[i - 1])
-    // frames-30: the ladder carries its midpoints — 11 rungs at 30ms each,
-    // so the 16ms sampling still catches every rung at least once.
+    // wave 5: the ladder carries the level-2 rungs — 19 rungs at 17-18ms,
+    // still >= the 16ms sampling interval, so every rung is caught once.
     expect(ladder).toEqual([
-      'turn_0a', 'turn', 'turn_1b', 'turn_2', 'turn_2c',
+      'turn_0a', 'turn_n2', 'turn', 'turn_n3', 'turn_1b', 'turn_n4',
+      'turn_2', 'turn_2c', 'turn_n5',
       'stand',
-      'turn_2c', 'turn_2', 'turn_1b', 'turn', 'turn_0a',
+      'turn_n5', 'turn_2c', 'turn_2', 'turn_n4', 'turn_1b', 'turn_n3',
+      'turn', 'turn_n2', 'turn_0a',
     ])
 
     // assert — the mirror flips exactly once inside the pivot, ON the
@@ -479,8 +492,10 @@ describe('CatLayer', () => {
     expect(catSprite(container, 'mushu').getAttribute('src')).toContain('/cats/anim/mushu/')
     expect(catSprite(container, 'coco').getAttribute('src')).toContain('/cats/anim/coco/')
 
-    // act — unaffected cats complete the bridge and enter the rich walk loop.
-    act(() => frames.runNextFrame(3700))
+    // act — unaffected cats complete the bridge and enter the rich walk
+    // loop (wave 5 re-budgeted the sit chain 282→420ms, so the bridge ends
+    // ~140ms later than before).
+    act(() => frames.runNextFrame(4000))
 
     // assert
     expect(catSprite(container, 'mushu').getAttribute('src')).toMatch(

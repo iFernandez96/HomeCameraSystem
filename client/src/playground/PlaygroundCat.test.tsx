@@ -230,7 +230,8 @@ describe('PlaygroundCat turn-around pivot render (2026-07-11: the flip must be i
     const flip = screen.getByTestId('playground-cat-direction-flip')
     expect(flip.style.transform).toBe('') // from='L' → no mirror yet
     expect(flip.style.transition).toBe('none')
-    expect(screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame')).toBe('turn_1b')
+    // wave 5: 60ms into the 19-rung ladder is the turn_n3 level-2 rung
+    expect(screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame')).toBe('turn_n3')
   })
 
   it('Given a pivot at its frontal midpoint, When rendered, Then the NEW facing shows on the symmetric stand frame (the invisible seam)', () => {

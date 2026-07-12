@@ -50,7 +50,8 @@ describe('cat animation sequences', () => {
     expect(blink.panther).toEqual([{ frame: 'blink', ms: 140 }])
     expect(blink.mushu).toEqual([{ frame: 'blink', ms: 140 }])
     expect(blink.coco).toEqual([])
-    const expectedCrouch = ['crouch_a', 'crouch_m1', 'crouch_a2', 'crouch_mid', 'crouch_m2', 'crouch_b', 'crouch_b2', 'crouch']
+    // Wave 5: crouch_n1..n5 fill every remaining gap -> 13 steps, 701ms.
+    const expectedCrouch = ['crouch_a', 'crouch_n1', 'crouch_m1', 'crouch_a2', 'crouch_n2', 'crouch_mid', 'crouch_m2', 'crouch_n3', 'crouch_b', 'crouch_n4', 'crouch_b2', 'crouch_n5', 'crouch']
     for (const catId of CAT_IDS) {
       expect(crouchFrames[catId]).toEqual(expectedCrouch)
       // crouch_up reverses the same chain and settles seated.
@@ -66,8 +67,11 @@ describe('cat animation sequences', () => {
       run: 150,
       walk_to_front: 840,
       front_to_walk: 840,
-      stand_to_seated: 282,
-      seated_to_stand: 282,
+      // wave-5: 282 -> 420 was a DELIBERATE re-budget — 17 interior steps
+      // under 282ms would sit below the 17ms display floor, and a 420ms
+      // sit-down reads more feline. Nothing engine-side consumed 282.
+      stand_to_seated: 420,
+      seated_to_stand: 420,
       // wave-2b: +441ms wiggle windup was a DELIBERATE total change —
       // the arc + 200ms hit-pause inside are unchanged.
       pounce: 872,
@@ -90,14 +94,16 @@ describe('cat animation sequences', () => {
   it('Given the frames-30 burst-3 chains, When each densified chain is measured, Then step counts double and every total is preserved to the millisecond', () => {
     // arrange — the calibrated pre-densify totals these chains must keep.
     const pins: Array<[CatAnimSequenceName, CatAnimId, number, number]> = [
-      // [sequence, cat, steps, exact total ms]
-      ['stand_to_seated', 'panther', 13, 282],
-      ['seated_to_stand', 'panther', 13, 282],
-      ['sleep_down', 'panther', 9, 821],
-      ['sleep_down', 'coco', 9, 971], // m4 skipped: sleep_b2 owns that stretch
-      ['wake_up', 'mushu', 10, 801],
-      ['wake_up', 'coco', 10, 951],
-      ['crouch_down', 'coco', 8, 701],
+      // [sequence, cat, steps, exact total ms] — wave-5 level-2 counts;
+      // sit chains re-budgeted to 420 (see the re-timing test), everything
+      // else keeps its calibrated total to the millisecond.
+      ['stand_to_seated', 'panther', 19, 420],
+      ['seated_to_stand', 'panther', 19, 420],
+      ['sleep_down', 'panther', 13, 821],
+      ['sleep_down', 'coco', 12, 971], // m4+n4 skipped: sleep_b2 owns that stretch
+      ['wake_up', 'mushu', 14, 801],
+      ['wake_up', 'coco', 13, 951],
+      ['crouch_down', 'coco', 13, 701],
     ]
 
     // act / assert
@@ -109,8 +115,9 @@ describe('cat animation sequences', () => {
 
     // the sit chain interleaves every original with its midpoint
     expect(CAT_ANIM_SEQUENCES.stand_to_seated.mushu.map((s) => s.frame)).toEqual([
-      'stand', 'sit_m0', 'sit_0a', 'sit_m1', 'sit_a', 'sit_m2', 'sit_ab',
-      'sit_m3', 'sit_b', 'sit_m4', 'sit_b1', 'sit_m5', 'seated',
+      'stand', 'sit_n0', 'sit_m0', 'sit_0a', 'sit_n1', 'sit_m1', 'sit_a',
+      'sit_n2', 'sit_m2', 'sit_ab', 'sit_n3', 'sit_m3', 'sit_b', 'sit_n4',
+      'sit_m4', 'sit_b1', 'sit_n5', 'sit_m5', 'seated',
     ])
   })
 
@@ -321,15 +328,25 @@ describe('cat animation sequences', () => {
     // arrange — tween wave 2: each pre-tween strain (700/500/600/400)
     // split in half with its squat_ab midpoint; the trailing squat_ab
     // smooths the loop wrap back to poop_squat_a. Total stays 2200ms.
+    // Wave 5: squat_n1/n2 split every flank; the quickening pair budgets
+    // (700 -> 500 -> 600 -> 400) survive as 4-step runs. 2200ms exact.
     const expected = [
-      { frame: 'poop_squat_a', ms: 350 },
-      { frame: 'squat_ab', ms: 350 },
-      { frame: 'poop_squat_b', ms: 250 },
-      { frame: 'squat_ab', ms: 250 },
-      { frame: 'poop_squat_a', ms: 300 },
-      { frame: 'squat_ab', ms: 300 },
-      { frame: 'poop_squat_b', ms: 200 },
-      { frame: 'squat_ab', ms: 200 },
+      { frame: 'poop_squat_a', ms: 175 },
+      { frame: 'squat_n1', ms: 175 },
+      { frame: 'squat_ab', ms: 175 },
+      { frame: 'squat_n2', ms: 175 },
+      { frame: 'poop_squat_b', ms: 125 },
+      { frame: 'squat_n2', ms: 125 },
+      { frame: 'squat_ab', ms: 125 },
+      { frame: 'squat_n1', ms: 125 },
+      { frame: 'poop_squat_a', ms: 150 },
+      { frame: 'squat_n1', ms: 150 },
+      { frame: 'squat_ab', ms: 150 },
+      { frame: 'squat_n2', ms: 150 },
+      { frame: 'poop_squat_b', ms: 100 },
+      { frame: 'squat_n2', ms: 100 },
+      { frame: 'squat_ab', ms: 100 },
+      { frame: 'squat_n1', ms: 100 },
     ]
 
     // act
@@ -460,8 +477,8 @@ describe('cat animation sequences', () => {
 
       // assert — windup -> bristle -> midpoint -> peak; the 500ms arch_b
       // step is the visible Halloween-cat hold before HOLD_FRAME takes over.
-      expect(frames).toEqual(['hiss_windup', 'arch_a', 'arch_ab', 'arch_b'])
-      expect(CAT_ANIM_SEQUENCES.hiss_arch.panther[3].ms).toBe(500)
+      expect(frames).toEqual(['hiss_windup', 'arch_n1', 'arch_a', 'arch_n2', 'arch_ab', 'arch_n3', 'arch_b'])
+      expect(CAT_ANIM_SEQUENCES.hiss_arch.panther[6].ms).toBe(500)
     })
 
     it('Given the tail-chase loop, When its frames are read, Then it ping-pongs through the C-spin midpoint', () => {
@@ -469,7 +486,10 @@ describe('cat animation sequences', () => {
       const frames = CAT_ANIM_SEQUENCES.tailhunt.coco.map((s2) => s2.frame)
 
       // assert
-      expect(frames).toEqual(['tailhunt_a', 'tailhunt_ab', 'tailhunt_b', 'tailhunt_ab'])
+      expect(frames).toEqual([
+        'tailhunt_a', 'tailhunt_n1', 'tailhunt_ab', 'tailhunt_n2',
+        'tailhunt_b', 'tailhunt_n2', 'tailhunt_ab', 'tailhunt_n1',
+      ])
     })
   })
 })
