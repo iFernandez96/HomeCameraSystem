@@ -6,7 +6,15 @@ const pivot: TurnPivot = { startedAt: 1000, from: 'L', to: 'R' }
 
 describe('turn-around pivot', () => {
   it('Given the turn_around sequence, When its shape is inspected, Then it is a symmetric side→front→side ladder with the frontal stand frame centered', () => {
-    // arrange / act
+    // arrange — frames-30: the ladder carries its midpoints (turn_0a/1b/2c),
+    // 11 palindromic steps with stand at index 5.
+    const LADDER = [
+      'turn_0a', 'turn', 'turn_1b', 'turn_2', 'turn_2c',
+      'stand',
+      'turn_2c', 'turn_2', 'turn_1b', 'turn', 'turn_0a',
+    ]
+
+    // act / assert
     for (const catId of CAT_IDS) {
       const steps = CAT_ANIM_SEQUENCES.turn_around[catId]
       const fast = CAT_ANIM_SEQUENCES.turn_around_fast[catId]
@@ -15,10 +23,10 @@ describe('turn-around pivot', () => {
       // flip at duration/2 must land INSIDE the stand step or the
       // mirror seam becomes visible on an asymmetric frame.
       for (const seq of [steps, fast]) {
-        expect(seq.map((s) => s.frame)).toEqual(['turn', 'turn_2', 'stand', 'turn_2', 'turn'])
+        expect(seq.map((s) => s.frame)).toEqual(LADDER)
         const half = sequenceDurationMs(seq) / 2
-        const standStart = seq[0].ms + seq[1].ms
-        const standEnd = standStart + seq[2].ms
+        const standStart = seq.slice(0, 5).reduce((t, s) => t + s.ms, 0)
+        const standEnd = standStart + seq[5].ms
         expect(half).toBeGreaterThanOrEqual(standStart)
         expect(half).toBeLessThan(standEnd)
       }
@@ -30,9 +38,10 @@ describe('turn-around pivot', () => {
     const steps = CAT_ANIM_SEQUENCES.turn_around.panther
     const duration = sequenceDurationMs(steps) // 330
 
-    // act / assert — old facing through the first half
+    // act / assert — old facing through the first half (60ms into 30ms
+    // steps = the turn_1b midpoint rung)
     const early = turnPivotView(steps, pivot, 1000 + 60)
-    expect(early).toEqual({ frame: 'turn', facing: 'L', done: false })
+    expect(early).toEqual({ frame: 'turn_1b', facing: 'L', done: false })
 
     // mid-pivot: frontal frame, ALREADY flipped to the new facing
     const mid = turnPivotView(steps, pivot, 1000 + duration / 2)
@@ -40,7 +49,7 @@ describe('turn-around pivot', () => {
 
     // exit ramp: new facing on the way back out to profile
     const late = turnPivotView(steps, pivot, 1000 + duration - 30)
-    expect(late).toEqual({ frame: 'turn', facing: 'R', done: false })
+    expect(late).toEqual({ frame: 'turn_0a', facing: 'R', done: false })
 
     // completion
     expect(turnPivotView(steps, pivot, 1000 + duration).done).toBe(true)
@@ -54,7 +63,7 @@ describe('turn-around pivot', () => {
     const view = turnPivotView(steps, pivot, 900)
 
     // assert
-    expect(view).toEqual({ frame: 'turn', facing: 'L', done: false })
+    expect(view).toEqual({ frame: 'turn_0a', facing: 'L', done: false })
   })
 
   it('Given both pivot speeds, When their totals are measured, Then the walk pivot is ~330ms and the sprint pivot ~205ms — both faster than reading as a hesitation', () => {

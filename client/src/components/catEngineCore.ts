@@ -64,18 +64,26 @@ export type AnimationPlan = {
   walkFrame: number | undefined
 }
 
+export function stepIndexFromSteps(
+  steps: readonly { frame: CatAnimFrame; ms: number }[],
+  elapsedMs: number,
+  loop: boolean,
+): number {
+  const duration = sequenceDurationMs(steps)
+  let cursor = loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1)
+  for (let i = 0; i < steps.length; i++) {
+    if (cursor < steps[i].ms) return i
+    cursor -= steps[i].ms
+  }
+  return steps.length - 1
+}
+
 export function frameFromSteps(
   steps: readonly { frame: CatAnimFrame; ms: number }[],
   elapsedMs: number,
   loop: boolean,
 ): CatAnimFrame {
-  const duration = sequenceDurationMs(steps)
-  let cursor = loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1)
-  for (const step of steps) {
-    if (cursor < step.ms) return step.frame
-    cursor -= step.ms
-  }
-  return steps[steps.length - 1].frame
+  return steps[stepIndexFromSteps(steps, elapsedMs, loop)].frame
 }
 
 export function transitionFrame(
@@ -165,9 +173,12 @@ export function animationPlanFor<A extends string>(
   }
   if (ongoingName) {
     const steps = sequences[ongoingName][actor.id]
-    const frame = frameFromSteps(steps, Math.max(0, elapsed - transitionDuration), true)
+    const cycleElapsed = Math.max(0, elapsed - transitionDuration)
+    const frame = frameFromSteps(steps, cycleElapsed, true)
+    // Frames-30: walkFrame is the step INDEX (0..29), not a filename parse —
+    // midpoint frames (walk_mXX / walk_nXX) have no numeric suffix.
     const walkFrame = ongoingName === 'walk'
-      ? Number(frame.slice('walk_'.length)) - 1
+      ? stepIndexFromSteps(steps, cycleElapsed, true)
       : undefined
     return { frame, framesToPreload, walkFrame }
   }

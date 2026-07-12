@@ -15,13 +15,42 @@ const SHARED_FRAMES = [
   'walk_10',
   'walk_11',
   'walk_12',
+  // Frames-30 wave 1 (2026-07-11): level-1 walk midpoints (m12 wraps 12→1)
+  'walk_m01',
+  'walk_m02',
+  'walk_m03',
+  'walk_m04',
+  'walk_m05',
+  'walk_m06',
+  'walk_m07',
+  'walk_m08',
+  'walk_m09',
+  'walk_m10',
+  'walk_m11',
+  'walk_m12',
+  // ...and level-2 midpoints between each odd original and its m-frame
+  'walk_n01',
+  'walk_n03',
+  'walk_n05',
+  'walk_n07',
+  'walk_n09',
+  'walk_n11',
   'run_a',
   'run_ab',
   'run_b',
   'run_ba',
+  // Frames-30 wave 1: run-ring midpoints (a↔ab, ab↔b, b↔ba, ba↔a)
+  'run_m1',
+  'run_m2',
+  'run_m3',
+  'run_m4',
   'side_stand',
   'turn',
   'turn_2',
+  // Frames-30 wave 1: turn-ladder midpoints (side↔turn, turn↔turn_2, turn_2↔stand)
+  'turn_0a',
+  'turn_1b',
+  'turn_2c',
   'stand',
   'sit_0a',
   'sit_a',
@@ -88,10 +117,29 @@ const allCats = (steps: readonly CatAnimStep[]): PerCatSequence => ({
   coco: steps,
 })
 
-const walk = Array.from({ length: 12 }, (_, index): CatAnimStep => ({
-  frame: `walk_${String(index + 1).padStart(2, '0')}` as CatAnimFrame,
-  ms: 95,
-}))
+// Frames-30 wave 1: the walk cycle is a 30-frame explicit list — original
+// walk_XX every half-step, level-1 midpoints (walk_mXX) between originals,
+// level-2 midpoints (walk_nXX) splitting each ODD original's first half.
+// 30 × 38ms = 1140ms, EXACTLY the old 12 × 95ms cycle, so the stride
+// calibration (STRIDE_PX_PER_CYCLE) and ground speed are untouched.
+// walkFrame is derived from the step INDEX (0..29), not the filename —
+// midpoint names don't parse as numbers.
+export const WALK_STEP_ORDER = [
+  'walk_01', 'walk_n01', 'walk_m01',
+  'walk_02', 'walk_m02',
+  'walk_03', 'walk_n03', 'walk_m03',
+  'walk_04', 'walk_m04',
+  'walk_05', 'walk_n05', 'walk_m05',
+  'walk_06', 'walk_m06',
+  'walk_07', 'walk_n07', 'walk_m07',
+  'walk_08', 'walk_m08',
+  'walk_09', 'walk_n09', 'walk_m09',
+  'walk_10', 'walk_m10',
+  'walk_11', 'walk_n11', 'walk_m11',
+  'walk_12', 'walk_m12',
+] as const satisfies readonly CatAnimFrame[]
+
+const walk = WALK_STEP_ORDER.map((frame): CatAnimStep => ({ frame, ms: 38 }))
 
 // Tween wave 2 (2026-07-11): all three cats now carry crouch_a2/b2,
 // so the once-Panther-only 6-frame chain (the v3 crouch-snap fix) is
@@ -131,26 +179,38 @@ const wakeUpShared: readonly CatAnimStep[] = [
  */
 export const CAT_ANIM_SEQUENCES = {
   walk: allCats(walk),
-  // Tween wave 2: 4-frame gallop (a → ab → b → ba) at the SAME 150ms
-  // cycle — per-step ms halves as the frame count doubles, so
-  // STRIDE_PX_PER_CYCLE and the foot-slide calibration are untouched.
+  // Frames-30 wave 1: 8-frame gallop (ring midpoints interleaved) at the
+  // SAME 150ms cycle — STRIDE_PX_PER_CYCLE and the foot-slide calibration
+  // are untouched. 19×6 + 18×2 = 150 exactly.
   run: allCats([
-    { frame: 'run_a', ms: 38 },
-    { frame: 'run_ab', ms: 37 },
-    { frame: 'run_b', ms: 38 },
-    { frame: 'run_ba', ms: 37 },
+    { frame: 'run_a', ms: 19 },
+    { frame: 'run_m1', ms: 19 },
+    { frame: 'run_ab', ms: 19 },
+    { frame: 'run_m2', ms: 18 },
+    { frame: 'run_b', ms: 19 },
+    { frame: 'run_m3', ms: 19 },
+    { frame: 'run_ba', ms: 19 },
+    { frame: 'run_m4', ms: 18 },
   ]),
+  // Frames-30 wave 1: turn-ladder midpoints interleaved; totals stay 840ms
+  // each (260+80+80+420 pre-wave), holds shortened to pay for the mids.
   walk_to_front: allCats([
-    { frame: 'side_stand', ms: 260 },
-    { frame: 'turn', ms: 80 },
-    { frame: 'turn_2', ms: 80 },
-    { frame: 'stand', ms: 420 },
+    { frame: 'side_stand', ms: 220 },
+    { frame: 'turn_0a', ms: 40 },
+    { frame: 'turn', ms: 55 },
+    { frame: 'turn_1b', ms: 50 },
+    { frame: 'turn_2', ms: 55 },
+    { frame: 'turn_2c', ms: 40 },
+    { frame: 'stand', ms: 380 },
   ]),
   front_to_walk: allCats([
-    { frame: 'stand', ms: 420 },
-    { frame: 'turn_2', ms: 80 },
-    { frame: 'turn', ms: 80 },
-    { frame: 'side_stand', ms: 260 },
+    { frame: 'stand', ms: 380 },
+    { frame: 'turn_2c', ms: 40 },
+    { frame: 'turn_2', ms: 55 },
+    { frame: 'turn_1b', ms: 50 },
+    { frame: 'turn', ms: 55 },
+    { frame: 'turn_0a', ms: 40 },
+    { frame: 'side_stand', ms: 220 },
   ]),
   stand_to_seated: allCats([
     { frame: 'stand', ms: 1 },
@@ -261,29 +321,46 @@ export const CAT_ANIM_SEQUENCES = {
   // (the seam is invisible there), rotate front→side on the NEW facing.
   // The render layer flips facing at duration/2, which by construction
   // lands inside the centered `stand` step — keep `stand` centered.
+  // Frames-30 wave 1: the ladder gained its midpoints (turn_0a/1b/2c),
+  // 11 steps at the SAME totals (330ms / 205ms) so pivot feel is
+  // unchanged — just twice the rotation resolution.
   turn_around: allCats([
-    { frame: 'turn', ms: 65 },
-    { frame: 'turn_2', ms: 65 },
-    { frame: 'stand', ms: 70 },
-    { frame: 'turn_2', ms: 65 },
-    { frame: 'turn', ms: 65 },
+    { frame: 'turn_0a', ms: 30 },
+    { frame: 'turn', ms: 30 },
+    { frame: 'turn_1b', ms: 30 },
+    { frame: 'turn_2', ms: 30 },
+    { frame: 'turn_2c', ms: 30 },
+    { frame: 'stand', ms: 30 },
+    { frame: 'turn_2c', ms: 30 },
+    { frame: 'turn_2', ms: 30 },
+    { frame: 'turn_1b', ms: 30 },
+    { frame: 'turn', ms: 30 },
+    { frame: 'turn_0a', ms: 30 },
   ]),
   // Sprint variant for chase/flee wall bounces — same pivot at whip
-  // speed so a mid-chase reversal keeps its energy.
+  // speed so a mid-chase reversal keeps its energy. 205ms exact; the
+  // first five steps sum to 94 and stand ends at 113, so the flip at
+  // 102.5 stays inside the frontal frame.
   turn_around_fast: allCats([
-    { frame: 'turn', ms: 40 },
-    { frame: 'turn_2', ms: 40 },
-    { frame: 'stand', ms: 45 },
-    { frame: 'turn_2', ms: 40 },
-    { frame: 'turn', ms: 40 },
+    { frame: 'turn_0a', ms: 19 },
+    { frame: 'turn', ms: 19 },
+    { frame: 'turn_1b', ms: 19 },
+    { frame: 'turn_2', ms: 18 },
+    { frame: 'turn_2c', ms: 19 },
+    { frame: 'stand', ms: 19 },
+    { frame: 'turn_2c', ms: 18 },
+    { frame: 'turn_2', ms: 19 },
+    { frame: 'turn_1b', ms: 18 },
+    { frame: 'turn', ms: 19 },
+    { frame: 'turn_0a', ms: 18 },
   ]),
 } as const satisfies Record<string, PerCatSequence>
 
 export type CatAnimSequenceName = keyof typeof CAT_ANIM_SEQUENCES
 
 export const CYCLE_DURATION_MS = {
-  walk: 12 * 95,
-  run: 38 + 37 + 38 + 37, // 150 — same cycle, 4 gallop frames
+  walk: 30 * 38, // 1140 — same cycle as the old 12 × 95, 30 frames deep
+  run: 19 * 6 + 18 * 2, // 150 — same cycle, 8 gallop frames
 } as const
 
 /**

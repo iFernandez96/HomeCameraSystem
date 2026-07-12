@@ -216,7 +216,8 @@ describe('PlaygroundCat turn-around pivot render (2026-07-11: the flip must be i
   }
 
   it('Given a pivot before its frontal midpoint, When rendered, Then the OLD facing shows with the pivot frame and the flip transition is disabled', () => {
-    // arrange — 60ms in: still on 'turn', still facing the old way
+    // arrange — 60ms in: frames-30 ladder runs 30ms steps, so this is
+    // the turn_1b midpoint rung; still facing the old way
     const cat = pivotCat(T + 60)
 
     // act
@@ -226,7 +227,7 @@ describe('PlaygroundCat turn-around pivot render (2026-07-11: the flip must be i
     const flip = screen.getByTestId('playground-cat-direction-flip')
     expect(flip.style.transform).toBe('') // from='L' → no mirror yet
     expect(flip.style.transition).toBe('none')
-    expect(screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame')).toBe('turn')
+    expect(screen.getByTestId('playground-cat-sprite').getAttribute('data-anim-frame')).toBe('turn_1b')
   })
 
   it('Given a pivot at its frontal midpoint, When rendered, Then the NEW facing shows on the symmetric stand frame (the invisible seam)', () => {

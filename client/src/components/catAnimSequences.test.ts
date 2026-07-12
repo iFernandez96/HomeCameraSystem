@@ -84,13 +84,15 @@ describe('cat animation sequences', () => {
     }
   })
 
-  it('Given the 4-frame gallop, When the run cycle is read, Then a/ab/b/ba play in order and the cycle total is still 150ms', () => {
+  it('Given the 8-frame gallop, When the run cycle is read, Then the ring midpoints interleave the gallop and the cycle total is still 150ms', () => {
     // arrange / act
     const run = CAT_ANIM_SEQUENCES.run.panther
 
-    // assert — doubling gallop frames halved per-step ms; stride
-    // calibration (STRIDE_PX_PER_CYCLE) is untouched by design.
-    expect(run.map((s) => s.frame)).toEqual(['run_a', 'run_ab', 'run_b', 'run_ba'])
+    // assert — frames-30 doubled the gallop again (ring midpoints); the
+    // stride calibration (STRIDE_PX_PER_CYCLE) is untouched by design.
+    expect(run.map((s) => s.frame)).toEqual([
+      'run_a', 'run_m1', 'run_ab', 'run_m2', 'run_b', 'run_m3', 'run_ba', 'run_m4',
+    ])
     expect(run.reduce((sum, s) => sum + s.ms, 0)).toBe(150)
     expect(CYCLE_DURATION_MS.run).toBe(150)
   })
@@ -120,19 +122,35 @@ describe('cat animation sequences', () => {
     expect(STRIDE_PX_PER_CYCLE.walk(bodyWidthPx)).toBeCloseTo(bodyWidthPx * 0.55 * 2)
   })
 
-  it('Given the walk sequence, When its frame order is read, Then walk_01..walk_12 play strictly in ascending order', () => {
-    // arrange
-    const expected = Array.from({ length: 12 }, (_, i) =>
-      `walk_${String(i + 1).padStart(2, '0')}`,
-    )
+  it('Given the 30-frame walk cycle, When its order and timing are read, Then originals/midpoints interleave canonically at 38ms and the cycle total stays 1140ms', () => {
+    // arrange — frames-30 canonical order: each ODD original is followed
+    // by its level-2 (nXX) then level-1 (mXX) midpoint; evens by mXX only.
+    const expected = [
+      'walk_01', 'walk_n01', 'walk_m01',
+      'walk_02', 'walk_m02',
+      'walk_03', 'walk_n03', 'walk_m03',
+      'walk_04', 'walk_m04',
+      'walk_05', 'walk_n05', 'walk_m05',
+      'walk_06', 'walk_m06',
+      'walk_07', 'walk_n07', 'walk_m07',
+      'walk_08', 'walk_m08',
+      'walk_09', 'walk_n09', 'walk_m09',
+      'walk_10', 'walk_m10',
+      'walk_11', 'walk_n11', 'walk_m11',
+      'walk_12', 'walk_m12',
+    ]
 
     // act
-    const orders = CAT_IDS.map((catId) =>
-      CAT_ANIM_SEQUENCES.walk[catId].map((s) => s.frame),
-    )
+    const orders = CAT_IDS.map((catId) => CAT_ANIM_SEQUENCES.walk[catId])
 
-    // assert — a reordered or reversed cycle reads as moonwalking.
-    for (const order of orders) expect(order).toEqual(expected)
+    // assert — a reordered or reversed cycle reads as moonwalking, and a
+    // drifted total desyncs the stride calibration (foot-slide).
+    for (const steps of orders) {
+      expect(steps.map((s) => s.frame)).toEqual(expected)
+      expect(steps.every((s) => s.ms === 38)).toBe(true)
+      expect(steps.reduce((sum, s) => sum + s.ms, 0)).toBe(1140)
+    }
+    expect(CYCLE_DURATION_MS.walk).toBe(1140)
   })
 
   it('Given every manifest frame, When the exported asset dir is scanned, Then each frame PNG exists on disk', () => {

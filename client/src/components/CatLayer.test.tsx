@@ -6,6 +6,7 @@ import {
   _resetCatWalkAnimationCacheForTests,
   _rollWithoutImmediateRepeatForTests,
 } from './CatLayer'
+import { WALK_STEP_ORDER } from './catAnimSequences'
 
 type MqlInit = {
   matches: boolean
@@ -128,10 +129,9 @@ function catSprite(container: HTMLElement, catId: string): HTMLImageElement {
 }
 
 function walkFrameUrls(catId: string): string[] {
-  return Array.from(
-    { length: 12 },
-    (_, frame) => `/cats/anim/${catId}/walk_${String(frame + 1).padStart(2, '0')}.png`,
-  )
+  // Frames-30: the walk cycle is 30 frames (originals + m/n midpoints);
+  // preload follows the canonical step order.
+  return WALK_STEP_ORDER.map((frame) => `/cats/anim/${catId}/${frame}.png`)
 }
 
 function sitToWalkUrls(catId: string): string[] {
@@ -145,15 +145,19 @@ function sitToWalkUrls(catId: string): string[] {
     `/cats/anim/${catId}/sit_a.png`,
     `/cats/anim/${catId}/sit_0a.png`,
     `/cats/anim/${catId}/stand.png`,
+    `/cats/anim/${catId}/turn_2c.png`,
     `/cats/anim/${catId}/turn_2.png`,
+    `/cats/anim/${catId}/turn_1b.png`,
     `/cats/anim/${catId}/turn.png`,
+    `/cats/anim/${catId}/turn_0a.png`,
     `/cats/anim/${catId}/side_stand.png`,
     ...walkFrameUrls(catId),
   ]
 }
 
-/** Per-cat preload set size: 10 bridge frames + 12 walk frames. */
-const SIT_TO_WALK_SET_SIZE = 22
+/** Per-cat preload set size: 13 bridge frames (frames-30 added the
+    turn_0a/1b/2c ladder midpoints to front_to_walk) + 30 walk frames. */
+const SIT_TO_WALK_SET_SIZE = 43
 
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined
@@ -189,7 +193,7 @@ describe('CatLayer', () => {
     expect(resumingWalk).toEqual(['seated_to_stand', 'front_to_walk'])
   })
 
-  it('Given walking cats and fully loaded frame sets, When rAF advances, Then the twelve-frame walk sprites cycle', async () => {
+  it('Given walking cats and fully loaded frame sets, When rAF advances, Then the thirty-frame walk sprites cycle', async () => {
     // arrange
     vi.useFakeTimers()
     stubMatchMediaPerQuery({
@@ -263,30 +267,35 @@ describe('CatLayer', () => {
       )
     }
 
-    // act — finish the bridge, then observe the full 95ms walk cycle.
+    // act — finish the bridge, then observe the full 38ms walk cycle.
+    // The 3795 frame is the observation base: loadedSources and the wrap
+    // comparison below both reference the state at this exact timestamp.
     act(() => frames.runNextFrame(3700))
+    act(() => frames.runNextFrame(3795))
 
     // assert
     const loadedSources = ['panther', 'mushu', 'coco'].map((catId) => {
       const sprite = catSprite(container, catId)
       expect(sprite.getAttribute('src')).toMatch(
-        new RegExp(`^/cats/anim/${catId}/walk_(?:0[1-9]|1[0-2])\\.png$`),
+        // frames-30: any of the 30 walk-cycle frames (originals + m/n mids)
+        new RegExp(`^/cats/anim/${catId}/walk_(?:0[1-9]|1[0-2]|m(?:0[1-9]|1[0-2])|n(?:0[13579]|11))\\.png$`),
       )
       expect(sprite).toHaveAttribute('data-walk-frame')
       return sprite.getAttribute('src')
     })
 
-    // act — the same rAF/phase path advances at 95ms, visits all 12
-    // frame numbers, and wraps to the frame at which observation began.
+    // act — the same rAF/phase path advances at 38ms (frames-30 step),
+    // visits all 30 step indices, and wraps to the frame at which
+    // observation began.
     const observedFrames = [Number(catSprite(container, 'panther').dataset.walkFrame)]
-    for (let timestamp = 3795; timestamp <= 4840; timestamp += 95) {
+    for (let timestamp = 3795 + 38; timestamp <= 3795 + 1140; timestamp += 38) {
       act(() => frames.runNextFrame(timestamp))
       observedFrames.push(Number(catSprite(container, 'panther').dataset.walkFrame))
     }
 
     // assert
     expect(new Set(observedFrames)).toEqual(
-      new Set(Array.from({ length: 12 }, (_, index) => index + 1)),
+      new Set(Array.from({ length: 30 }, (_, index) => index + 1)),
     )
     expect(observedFrames[observedFrames.length - 1]).toBe(observedFrames[0])
     for (const [index, catId] of ['panther', 'mushu', 'coco'].entries()) {
@@ -354,7 +363,13 @@ describe('CatLayer', () => {
     const ladder = pivot
       .map((s) => s.frame)
       .filter((frame, i, all) => i === 0 || frame !== all[i - 1])
-    expect(ladder).toEqual(['turn', 'turn_2', 'stand', 'turn_2', 'turn'])
+    // frames-30: the ladder carries its midpoints — 11 rungs at 30ms each,
+    // so the 16ms sampling still catches every rung at least once.
+    expect(ladder).toEqual([
+      'turn_0a', 'turn', 'turn_1b', 'turn_2', 'turn_2c',
+      'stand',
+      'turn_2c', 'turn_2', 'turn_1b', 'turn', 'turn_0a',
+    ])
 
     // assert — the mirror flips exactly once inside the pivot, ON the
     // frontal stand frame (scaleX(-1) while facing the old 'R' heading,
@@ -424,10 +439,12 @@ describe('CatLayer', () => {
 
     // assert
     expect(catSprite(container, 'mushu').getAttribute('src')).toMatch(
-      /^\/cats\/anim\/mushu\/walk_(?:0[1-9]|1[0-2])\.png$/,
+      // frames-30: the rich walk loop may land on an original OR a
+      // midpoint (walk_mXX / walk_nXX) — all 30 exist on disk.
+      /^\/cats\/anim\/mushu\/walk_(?:0[1-9]|1[0-2]|m(?:0[1-9]|1[0-2])|n(?:0[13579]|11))\.png$/,
     )
     expect(catSprite(container, 'coco').getAttribute('src')).toMatch(
-      /^\/cats\/anim\/coco\/walk_(?:0[1-9]|1[0-2])\.png$/,
+      /^\/cats\/anim\/coco\/walk_(?:0[1-9]|1[0-2]|m(?:0[1-9]|1[0-2])|n(?:0[13579]|11))\.png$/,
     )
 
     // act — the failed cat still alternates the original pair as its

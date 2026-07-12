@@ -1,3 +1,5 @@
+import { WALK_STEP_ORDER } from './catAnimSequences'
+
 /**
  * iter-356.31 — high-detail mascot SVG cats. Replaces the iter-356.4
  * pixel-art era which the user (and Frank) called "small colored
@@ -344,10 +346,13 @@ function RasterSprite({
   className?: string
 }) {
   const pose = poseFor(state)
+  // Frames-30: walkFrame is a step INDEX into the 30-frame walk cycle —
+  // resolve it through the canonical step order (midpoint frames like
+  // walk_m07 have no numeric filename to derive).
   const src =
     walkFrame === undefined
       ? `/cats/${cat}-${pose}.png`
-      : `/cats/anim/${cat}/walk_${String(walkFrame + 1).padStart(2, '0')}.png`
+      : `/cats/anim/${cat}/${WALK_STEP_ORDER[walkFrame] ?? 'walk_01'}.png`
   // iter-356.39: render IMG at a slightly-taller-than-square box so the
   // curated PNGs (which stand tail-up, taller than wide) aren't clipped
   // at the bottom by a wide-aspect 3:2 container. width = `size`;
