@@ -76,6 +76,15 @@ export function JetsonSection({
       <HealthVerdict status={status} />
 
       <Section
+        title="Recording assurance"
+        subtitle="A real sample is recorded, fully decoded, and removed every 30 minutes."
+      >
+        <Row label="Playable recording" right={<RecordingProof status={status} />} />
+        <Row label="Capture storage" right={<StorageProof status={status} />} />
+        <Row label="Drive self-test" right={<SmartProof status={status} />} />
+      </Section>
+
+      <Section
         title="Camera box"
         subtitle="Physical reachability of the Jetson hardware."
       >
@@ -218,6 +227,56 @@ function PowerRow({ status }: { status: ServerStatus | null }) {
   )
 }
 
+function assuranceReason(reason: string | null | undefined): string {
+  return {
+    storage_unavailable: 'Storage could not be opened',
+    storage_read_only: 'Storage became read-only',
+    storage_not_writable: 'Storage rejected a test write',
+    capture_timeout: 'Camera sample timed out',
+    capture_failed: 'Camera sample could not be recorded',
+    capture_empty: 'Camera sample was empty',
+    decode_timeout: 'Playback check timed out',
+    decode_failed: 'Test recording was not playable',
+    cleanup_failed: 'Test artifact could not be removed',
+  }[reason ?? ''] ?? 'Recording check failed'
+}
+
+function RecordingProof({ status }: { status: ServerStatus | null }) {
+  const proof = status?.recording_assurance
+  if (proof == null || proof.state === 'unknown') {
+    return <Mono>Waiting for first check</Mono>
+  }
+  if (proof.state === 'failed') {
+    return <span className="text-right text-[var(--color-danger)]">{assuranceReason(proof.reason)}</span>
+  }
+  if (proof.state === 'stale') {
+    return <span className="text-right text-[var(--color-warning)]">Check overdue</span>
+  }
+  const age = proof.age_s == null ? 'just now' : `${formatUptime(proof.age_s)} ago`
+  return <span className="text-right text-[var(--color-success)]">Verified playable · {age}</span>
+}
+
+function StorageProof({ status }: { status: ServerStatus | null }) {
+  const storage = status?.recording_assurance?.storage
+  if (storage == null) return <Mono>Not checked yet</Mono>
+  if (storage.read_only === true) {
+    return <span className="text-[var(--color-danger)]">Read-only</span>
+  }
+  if (!storage.writable) {
+    return <span className="text-[var(--color-danger)]">Write failed</span>
+  }
+  const filesystem = storage.filesystem == null ? '' : ` · ${storage.filesystem}`
+  const latency = storage.write_probe_ms == null ? '' : ` · ${storage.write_probe_ms.toFixed(1)} ms fsync`
+  return <Mono>Writable{filesystem}{latency}</Mono>
+}
+
+function SmartProof({ status }: { status: ServerStatus | null }) {
+  const smart = status?.recording_assurance?.storage?.smart_status
+  if (smart === 'failed') return <span className="text-[var(--color-danger)]">Drive reports failure</span>
+  if (smart === 'healthy') return <span className="text-[var(--color-success)]">Healthy</span>
+  return <Mono>Unavailable through this USB adapter</Mono>
+}
+
 // ───────────────────────────────────────────────────────────
 // Top-line verdict
 // ───────────────────────────────────────────────────────────
@@ -258,6 +317,20 @@ function computeVerdict(status: ServerStatus | null): Verdict {
       kind: 'critical',
       headline: 'Detection process is offline',
       subline: `No heartbeat for ${Math.floor(status.worker_last_seen_s)}s — detection auto-restarts; check Settings → System if it persists.`,
+    }
+  }
+  if (status.recording_assurance?.state === 'failed') {
+    return {
+      kind: 'critical',
+      headline: 'Recording verification failed',
+      subline: `${assuranceReason(status.recording_assurance.reason)} — HomeCam will retry automatically.`,
+    }
+  }
+  if (status.recording_assurance?.storage?.smart_status === 'failed') {
+    return {
+      kind: 'critical',
+      headline: 'Capture drive reports a failure',
+      subline: 'Protect important clips and replace the drive as soon as possible.',
     }
   }
 
@@ -324,6 +397,23 @@ function computeVerdict(status: ServerStatus | null): Verdict {
   }
 
   // Warning-tier (calm "needs an eye" rather than "act now").
+  if (status.recording_assurance?.state === 'stale') {
+    return {
+      kind: 'attention',
+      headline: 'Recording check is overdue',
+      subline: 'The last end-to-end recording proof is older than 45 minutes.',
+    }
+  }
+  if (
+    (status.recording_assurance == null || status.recording_assurance.state === 'unknown')
+    && status.uptime_s > 3600
+  ) {
+    return {
+      kind: 'attention',
+      headline: 'Recording has not been verified yet',
+      subline: 'The scheduled recording check has not reported a result.',
+    }
+  }
   if (status.cpu_temp_c != null && status.cpu_temp_c >= 75) {
     return {
       kind: 'attention',

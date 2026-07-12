@@ -52,6 +52,23 @@ function baseStatus(over: Partial<ServerStatus> = {}): ServerStatus {
       emitted: 0,
       uptime_s: 600,
     },
+    recording_assurance: {
+      state: 'ok',
+      checked_at: 590,
+      age_s: 10,
+      stage: 'complete',
+      reason: 'playable',
+      sample_bytes: 8192,
+      elapsed_ms: 320,
+      storage: {
+        writable: true,
+        filesystem: 'ext4',
+        read_only: false,
+        smart_status: 'unavailable',
+        free_bytes: 20_000_000_000,
+        write_probe_ms: 1.4,
+      },
+    },
     ...over,
   } as ServerStatus
 }
@@ -76,6 +93,40 @@ describe('JetsonSection — health verdict (premium-launch slice)', () => {
     expect(verdict.getAttribute('data-verdict-kind')).toBe('healthy')
     expect(verdict.textContent).toMatch(/all systems normal/i)
     expect(verdict.textContent).toMatch(/running smoothly/i)
+  })
+
+  it('Given the scheduled sample decoded and cleaned, When the panel renders, Then it shows truthful playable and storage proof', () => {
+    // arrange / act
+    render(<JetsonSection status={baseStatus()} />)
+
+    // assert
+    expect(screen.getByText(/verified playable/i)).toBeInTheDocument()
+    expect(screen.getByText(/writable · ext4 · 1\.4 ms fsync/i)).toBeInTheDocument()
+    expect(screen.getByText(/unavailable through this usb adapter/i)).toBeInTheDocument()
+  })
+
+  it('Given the full-decode check fails, When the verdict computes, Then it is critical and never claims video is playable', () => {
+    // arrange
+    const healthy = baseStatus().recording_assurance!
+    render(
+      <JetsonSection
+        status={baseStatus({
+          recording_assurance: {
+            ...healthy,
+            state: 'failed',
+            stage: 'decode',
+            reason: 'decode_failed',
+          },
+        })}
+      />,
+    )
+
+    // assert
+    const verdict = screen.getByTestId('jetson-health-verdict')
+    expect(verdict.getAttribute('data-verdict-kind')).toBe('critical')
+    expect(verdict.textContent).toMatch(/recording verification failed/i)
+    expect(screen.getAllByText(/test recording was not playable/i)).toHaveLength(2)
+    expect(screen.queryByText(/verified playable/i)).not.toBeInTheDocument()
   })
 
   it('Given the camera box is unreachable (status.ok=false), When the verdict computes, Then it renders a critical headline with recovery guidance', () => {

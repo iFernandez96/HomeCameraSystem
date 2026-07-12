@@ -132,6 +132,7 @@ describe('VideoTile', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    vi.useRealTimers()
   })
 
   it('shows Connecting then LIVE on a successful WHEP handshake', async () => {
@@ -734,7 +735,6 @@ describe('VideoTile', () => {
     // by allowing multiple results.
     expect(screen.getAllByText(/Offline/i).length).toBeGreaterThan(0)
     expect(screen.queryByText('LIVE')).not.toBeInTheDocument()
-    vi.useRealTimers()
   })
 
   it('when the box-overlay toggle is clicked, then aria-pressed flips and persists in localStorage (iter-246)', async () => {
@@ -1009,6 +1009,45 @@ describe('VideoTile', () => {
       screen.getByRole('button', { name: /stream quality/i }),
     ).toHaveTextContent('Ultra-low')
     window.localStorage.removeItem('homecam:streamQuality')
+  })
+
+  it('given Auto and sustained packet loss, when live WebRTC stats stay bad, then it downshifts one rung with hysteresis', async () => {
+    // arrange
+    vi.useFakeTimers()
+    window.localStorage.removeItem('homecam:streamQuality')
+    const pc = fakePc() as ReturnType<typeof fakePc> & {
+      getStats: ReturnType<typeof vi.fn>
+    }
+    const samples = [
+      { packetsLost: 0, packetsReceived: 100, framesDropped: 0, framesDecoded: 100 },
+      { packetsLost: 6, packetsReceived: 194, framesDropped: 0, framesDecoded: 200 },
+      { packetsLost: 12, packetsReceived: 288, framesDropped: 0, framesDecoded: 300 },
+    ]
+    let index = 0
+    pc.getStats = vi.fn(async () => new Map([['video', {
+      id: 'video',
+      type: 'inbound-rtp',
+      kind: 'video',
+      jitter: 0.01,
+      freezeCount: 0,
+      ...samples[Math.min(index++, samples.length - 1)],
+    }]]))
+    connectWhep.mockResolvedValue({ close: closeFn, pc })
+
+    // act
+    render(<VideoTile detectionActive={null} />)
+    await fireFirstFrame()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_100)
+    })
+
+    // assert
+    expect(connectWhep).toHaveBeenLastCalledWith(
+      `${window.location.origin}/whep/cam_lq/whep`,
+      expect.any(Object),
+      expect.any(Object),
+    )
+    vi.useRealTimers()
   })
 
   it('observes the video element and redraws on resize', async () => {

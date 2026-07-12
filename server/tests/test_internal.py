@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -122,6 +123,78 @@ def test_internal_live_detection_accepts_empty_boxes(client: TestClient):
     )
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True
+
+
+async def test_recording_assurance_failure_persists_and_schedules_one_alert(
+    client: TestClient, tmp_path, monkeypatch
+):
+    # arrange
+    from unittest.mock import AsyncMock
+    from app.config import settings
+    from app.services.push_service import push_service
+
+    monkeypatch.setattr(settings, "recording_assurance_path", tmp_path / "assurance.json")
+    send = AsyncMock(return_value=1)
+    monkeypatch.setattr(push_service, "send_all", send)
+    payload = {
+        "v": 1,
+        "status": "failed",
+        "checked_at": time.time(),
+        "stage": "decode",
+        "reason": "decode_failed",
+        "sample_bytes": 8192,
+        "elapsed_ms": 400.0,
+        "storage": {
+            "writable": True,
+            "filesystem": "ext4",
+            "read_only": False,
+            "smart_status": "unavailable",
+            "free_bytes": 100000,
+            "write_probe_ms": 1.0,
+        },
+    }
+
+    # act
+    first = client.post("/api/_internal/recording-assurance", json=payload)
+    second = client.post(
+        "/api/_internal/recording-assurance",
+        json={**payload, "checked_at": time.time()},
+    )
+    for _ in range(20):
+        if send.called:
+            break
+        await asyncio.sleep(0.01)
+
+    # assert
+    assert first.status_code == 200, first.text
+    assert first.json()["transition"] == "failed"
+    assert second.status_code == 200, second.text
+    assert second.json()["transition"] is None
+    assert send.call_count == 1
+    notice = send.call_args.args[0]
+    assert notice["title"] == "Recording check failed"
+    assert notice["body"] == "The test recording was not playable."
+    assert "rtsp" not in str(notice).lower()
+
+
+def test_recording_assurance_rejects_incoherent_success(client: TestClient):
+    # act
+    response = client.post(
+        "/api/_internal/recording-assurance",
+        json={
+            "v": 1,
+            "status": "ok",
+            "checked_at": time.time(),
+            "stage": "decode",
+            "reason": "decode_failed",
+            "sample_bytes": 10,
+            "elapsed_ms": 5,
+            "storage": None,
+        },
+    )
+
+    # assert
+    assert response.status_code == 422
 
 
 def test_internal_event_rejects_missing_boxes(client: TestClient):
