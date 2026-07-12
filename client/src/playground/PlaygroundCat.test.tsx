@@ -74,7 +74,10 @@ describe('PlaygroundCat sprite render (RESIDUAL A 2026-07-11: fixed BODY SCALE, 
     // (playground eat_a is a 165×128 canvas: contain-fitting it into the
     // 44px box was the "cat gets smaller while eating" size complaint)
     const walking = catFor({ activity: 'walk', previousActivity: 'walk' })
-    const eating = catFor({ activity: 'eat', previousActivity: 'eat' })
+    // Frames-30 wave 2c: eat now opens with a 700ms sniff_prelude entry,
+    // so sample the sprite 1s into the bout where the chew frames run.
+    const eatingBase = catFor({ activity: 'eat', previousActivity: 'eat' })
+    const eating = { ...eatingBase, phaseTime: eatingBase.activityStartedAt + 1000 }
 
     // act
     const first = render(

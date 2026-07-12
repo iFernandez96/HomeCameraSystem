@@ -83,6 +83,80 @@ export const PLAYGROUND_SEQUENCES = {
   window_hold: [
     { frame: 'window_watch', ms: 1 },
   ],
+  // === Frames-30 wave 2c bout variants (2026-07-12) =========================
+  // Each variant of an existing bout keeps that bout's slot shape and
+  // EXACT total, so beat durations and arrival math never see the roll.
+  //
+  // High-stretch scratch — same 3-stroke cadence as scratch_bout
+  // (1561ms), reaching to the top of the post. 160-tall canvases.
+  scrhi_bout: [
+    { frame: 'scrhi_a', ms: 140 },
+    { frame: 'scrhi_ab', ms: 140 },
+    { frame: 'scrhi_b', ms: 120 },
+    { frame: 'scrhi_ab', ms: 120 },
+    { frame: 'scrhi_a', ms: 140 },
+    { frame: 'scrhi_ab', ms: 140 },
+    { frame: 'scrhi_b', ms: 120 },
+    { frame: 'scrhi_ab', ms: 120 },
+    { frame: 'scrhi_a', ms: 140 },
+    { frame: 'scrhi_ab', ms: 140 },
+    { frame: 'scrhi_b', ms: 240 },
+    { frame: 'seated', ms: 1 },
+  ],
+  // Left-paw / right-paw bat variants — the far-reach key rides the
+  // contact slots of bat_bout's 401ms swipe pattern.
+  bat_left: [
+    { frame: 'batl_a', ms: 70 },
+    { frame: 'bat_ab', ms: 70 },
+    { frame: 'bat_b', ms: 60 },
+    { frame: 'bat_ab', ms: 60 },
+    { frame: 'batl_a', ms: 140 },
+    { frame: 'seated', ms: 1 },
+  ],
+  bat_right: [
+    { frame: 'batr_a', ms: 70 },
+    { frame: 'bat_ab', ms: 70 },
+    { frame: 'bat_b', ms: 60 },
+    { frame: 'bat_ab', ms: 60 },
+    { frame: 'batr_a', ms: 140 },
+    { frame: 'seated', ms: 1 },
+  ],
+  // Head-lift eat variant — the middle chew cycle lifts the head
+  // mid-meal (eatlift frames), same 1951ms total as eat_bout.
+  eat_lift_bout: [
+    { frame: 'eat_a', ms: 175 },
+    { frame: 'eat_ab', ms: 175 },
+    { frame: 'eat_b', ms: 150 },
+    { frame: 'eat_ab', ms: 150 },
+    { frame: 'eatlift_a', ms: 175 },
+    { frame: 'eatlift_ab', ms: 175 },
+    { frame: 'eatlift_b', ms: 150 },
+    { frame: 'eatlift_ab', ms: 150 },
+    { frame: 'eat_a', ms: 175 },
+    { frame: 'eat_ab', ms: 175 },
+    { frame: 'eat_b', ms: 300 },
+    { frame: 'seated', ms: 1 },
+  ],
+  // Sniff-the-bowl prelude — plays as an ENTRY sequence before every
+  // eat bout (700ms, no hold step; the bout follows immediately).
+  sniff_prelude: [
+    { frame: 'sniff_a', ms: 200 },
+    { frame: 'sniff_ab', ms: 150 },
+    { frame: 'sniff_b', ms: 250 },
+    { frame: 'sniff_ab', ms: 100 },
+  ],
+  // Paw-dip drink variant (rare) — the cat dips a paw in the bowl and
+  // licks it instead of lapping. Its own total (2951ms), pinned.
+  drink_pawdip_bout: [
+    { frame: 'pawdip_a', ms: 400 },
+    { frame: 'pawdip_ab', ms: 250 },
+    { frame: 'pawdip_b', ms: 700 },
+    { frame: 'pawdip_ab', ms: 250 },
+    { frame: 'pawdip_a', ms: 400 },
+    { frame: 'pawdip_ab', ms: 250 },
+    { frame: 'pawdip_b', ms: 700 },
+    { frame: 'seated', ms: 1 },
+  ],
 } as const satisfies Record<string, readonly PlaygroundAnimStep[]>
 
 export type PlaygroundSequenceName =
@@ -149,11 +223,43 @@ const climbPlain: readonly PlaygroundAnimStep[] = [
   { frame: 'climb_b', ms: 200 },
 ]
 
+// Frames-30 wave 2c: look-up-from-the-bowl drink ending (25% roll) —
+// two lap cycles, then the drip look-up. Per-cat because the lap
+// rhythm is (coco has no drink_ab). Own totals, pinned.
+const drinkLookupTweened: readonly PlaygroundAnimStep[] = [
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_ab', ms: 130 },
+  { frame: 'drink_b', ms: 150 },
+  { frame: 'drink_ab', ms: 150 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_ab', ms: 130 },
+  { frame: 'drink_b', ms: 150 },
+  { frame: 'drink_ab', ms: 150 },
+  { frame: 'drinkup_a', ms: 350 },
+  { frame: 'drinkup_b', ms: 450 },
+  { frame: 'seated', ms: 1 },
+]
+
+const drinkLookupPlain: readonly PlaygroundAnimStep[] = [
+  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_b', ms: 300 },
+  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_b', ms: 300 },
+  { frame: 'drinkup_a', ms: 350 },
+  { frame: 'drinkup_b', ms: 450 },
+  { frame: 'seated', ms: 1 },
+]
+
 export const PLAYGROUND_PER_CAT_SEQUENCES = {
   drink_bout: {
     panther: drinkTweened,
     mushu: drinkTweened,
     coco: drinkPlain,
+  },
+  drink_lookup_bout: {
+    panther: drinkLookupTweened,
+    mushu: drinkLookupTweened,
+    coco: drinkLookupPlain,
   },
   climb: {
     panther: climbPlain,

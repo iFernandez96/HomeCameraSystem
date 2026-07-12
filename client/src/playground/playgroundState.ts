@@ -133,6 +133,15 @@ export type PlayCat = {
       until the frontal midpoint. Cleared on completion and by every
       activity switch (the pose-transition chain covers those). */
   turn: TurnPivot | null
+  /** Frames-30 wave 2c: the bout/gait variant rolled for the CURRENT
+      activity (scratch high-stretch, bat paw sides, eat head-lift,
+      drink look-up/paw-dip, gallop bound/lope). null = the base
+      sequence from PLAY_ONGOING_SEQUENCE. Rolled by setPlayActivity. */
+  boutVariant: CatAnimSequenceName | null
+  /** Per-family variant memory for anti-repeat ACROSS visits (scratch →
+      walk → scratch must not play the same scratch twice in a row).
+      Keys: 'scratch' | 'bat' | 'eat' | 'run' (gaits share one). */
+  lastBoutByFamily: Partial<Record<string, CatAnimSequenceName>>
   /** When the cat acquired its current anchor (continuous-stay clock —
       in-place beats on the same anchor do NOT reset it). */
   anchorSince: number
@@ -202,12 +211,19 @@ export function setPlayActivity(
   random: () => number = Math.random,
 ): PlayCat {
   const jitter = ACTIVITY_JITTER_MIN + random() * (ACTIVITY_JITTER_MAX - ACTIVITY_JITTER_MIN)
+  const boutVariant = rollBoutVariant(cat, activity, random)
+  const family = boutFamilyOf(activity)
+  const lastBoutByFamily = family
+    ? { ...cat.lastBoutByFamily, [family]: boutVariant ?? boutBaseOf(activity, cat.id) }
+    : cat.lastBoutByFamily
   return {
     ...cat,
     previousActivity: cat.activity,
     activity,
     activityStartedAt: now,
     activityUntil: now + durationMs * jitter,
+    boutVariant,
+    lastBoutByFamily,
     phaseTime: now,
     // Every activity switch closes any climb leg; travel starters that
     // mount/dismount re-arm climbTravel explicitly after this call.
@@ -221,6 +237,68 @@ export function setPlayActivity(
     nextIdleLifeAt: now + 3000 + random() * 4000,
     lastIdleLifeWasSpecial: false,
   }
+}
+
+// === Frames-30 wave 2c: bout/gait variant rolls ==============================
+// Anti-repeat pools roll uniformly among the options that are NOT the
+// cat's previous variant for the same family; probability families
+// (drink) roll fixed odds instead so the rare quirks stay rare.
+
+const seqName = (name: string) => name as CatAnimSequenceName
+
+/** Gallop pool per cat — run_lope was dropped for mushu (deformed twice). */
+export function gaitVariantPool(catId: PlaygroundCatId): readonly CatAnimSequenceName[] {
+  return catId === 'mushu'
+    ? ['run', seqName('run_bound')]
+    : ['run', seqName('run_bound'), seqName('run_lope')]
+}
+
+const ANTI_REPEAT_POOLS: Partial<Record<PlayActivity, readonly CatAnimSequenceName[]>> = {
+  scratch: [seqName('scratch_bout'), seqName('scrhi_bout')],
+  bat: [seqName('bat_bout'), seqName('bat_left'), seqName('bat_right')],
+  eat: [seqName('eat_bout'), seqName('eat_lift_bout')],
+}
+
+export const DRINK_PAWDIP_PROB = 0.15
+export const DRINK_LOOKUP_PROB = 0.25 // of the remaining 85%
+
+export function rollBoutVariant(
+  cat: PlayCat,
+  activity: PlayActivity,
+  random: () => number,
+): CatAnimSequenceName | null {
+  const isGait = (a: PlayActivity) => a === 'run' || a === 'chase' || a === 'flee'
+  const family = isGait(activity) ? 'run' : activity
+  const pool = isGait(activity) ? gaitVariantPool(cat.id) : ANTI_REPEAT_POOLS[activity]
+  if (pool) {
+    const prev = cat.lastBoutByFamily[family] ?? null
+    const eligible = pool.filter((name) => name !== prev)
+    const pick = eligible[Math.min(eligible.length - 1, Math.floor(random() * eligible.length))]
+    return pick === pool[0] ? null : pick
+  }
+  if (activity === 'drink') {
+    const r = random()
+    if (r < DRINK_PAWDIP_PROB) return seqName('drink_pawdip_bout')
+    if (r < DRINK_PAWDIP_PROB + (1 - DRINK_PAWDIP_PROB) * DRINK_LOOKUP_PROB) {
+      return seqName('drink_lookup_bout')
+    }
+    return null
+  }
+  return null
+}
+
+/** The concrete sequence a rolled variant resolves to for its family
+    (null roll = the family's base sequence). Exported for the memory
+    write in setPlayActivity and for tests. */
+export function boutFamilyOf(activity: PlayActivity): string | null {
+  if (activity === 'run' || activity === 'chase' || activity === 'flee') return 'run'
+  if (ANTI_REPEAT_POOLS[activity]) return activity
+  return null
+}
+
+export function boutBaseOf(activity: PlayActivity, catId: PlaygroundCatId): CatAnimSequenceName {
+  if (activity === 'run' || activity === 'chase' || activity === 'flee') return 'run'
+  return ANTI_REPEAT_POOLS[activity]?.[0] ?? gaitVariantPool(catId)[0]
 }
 
 export function setPlayMood(
@@ -278,6 +356,8 @@ export function buildHomeCat(
     climbTravel: false,
     climbing: false,
     turn: null,
+    boutVariant: null,
+    lastBoutByFamily: {},
     anchorSince: now,
     perchDwellDeadline: perchDwellDeadlineFor(now, random),
     anchorCooldownId: null,
@@ -340,6 +420,14 @@ export const PLAYGROUND_SEQUENCE_TABLE: SequenceTable = {
   climb: PLAYGROUND_PER_CAT_SEQUENCES.climb,
   hammock_hold: perCat(PLAYGROUND_SEQUENCES.hammock_hold),
   window_hold: perCat(PLAYGROUND_SEQUENCES.window_hold),
+  // Frames-30 wave 2c bout variants + the sniff entry prelude.
+  scrhi_bout: perCat(PLAYGROUND_SEQUENCES.scrhi_bout),
+  bat_left: perCat(PLAYGROUND_SEQUENCES.bat_left),
+  bat_right: perCat(PLAYGROUND_SEQUENCES.bat_right),
+  eat_lift_bout: perCat(PLAYGROUND_SEQUENCES.eat_lift_bout),
+  sniff_prelude: perCat(PLAYGROUND_SEQUENCES.sniff_prelude),
+  drink_pawdip_bout: perCat(PLAYGROUND_SEQUENCES.drink_pawdip_bout),
+  drink_lookup_bout: PLAYGROUND_PER_CAT_SEQUENCES.drink_lookup_bout,
 } as unknown as SequenceTable
 
 const seq = (name: string) => name as CatAnimSequenceName
@@ -383,7 +471,11 @@ export const POSE_GROUP_BY_PLAY_ACTIVITY: Record<PlayActivity, PoseGroup> = {
 // currently re-enters here; low floor-level hops (litter box, tunnel)
 // never had an entry pop and read fine without one (the tunnel cat is
 // hidden anyway). Keep this map as the slot for future arrival flair.
-const PLAY_ENTRY_SEQUENCES: Partial<Record<PlayActivity, readonly CatAnimSequenceName[]>> = {}
+const PLAY_ENTRY_SEQUENCES: Partial<Record<PlayActivity, readonly CatAnimSequenceName[]>> = {
+  // Frames-30 wave 2c: every eat visit sniffs the bowl/treat first —
+  // a 700ms nose-down prelude between the pose chain and the chew loop.
+  eat: [seq('sniff_prelude')],
+}
 
 export function playTransitionNamesFor(
   from: PlayActivity,
@@ -395,10 +487,29 @@ export function playTransitionNamesFor(
   if (to === 'hiss') {
     return fromGroup === 'walking' ? ['walk_to_front', 'hiss_windup'] : ['hiss_windup']
   }
+  const base = POSE_TRANSITIONS[fromGroup][toGroup]
+  // Frames-30 wave-1 pickup: leaving a nap (sleep/hammock) for anything
+  // standing/walking plays the wake-up STRETCH after the wake chain —
+  // downward-dog, rear-leg follow-through, then the get-up. wake_stretch
+  // both starts and ends on 'seated' poses, so it slots after wake_up
+  // (which ends seated) without a pose break. moveRampAt consumers pick
+  // the extra 1261ms up automatically via playTransitionDurationMs.
+  const stretched =
+    fromGroup === 'sleeping' && (toGroup === 'walking' || toGroup === 'standing')
+      ? insertAfterWake(base)
+      : base
   return [
-    ...POSE_TRANSITIONS[fromGroup][toGroup],
+    ...stretched,
     ...(PLAY_ENTRY_SEQUENCES[to] ?? []),
   ]
+}
+
+function insertAfterWake(
+  chain: readonly CatAnimSequenceName[],
+): readonly CatAnimSequenceName[] {
+  const at = chain.indexOf('wake_up')
+  if (at < 0) return chain
+  return [...chain.slice(0, at + 1), seq('wake_stretch'), ...chain.slice(at + 1)]
 }
 
 export const PLAY_ONGOING_SEQUENCE: Partial<Record<PlayActivity, CatAnimSequenceName>> = {
@@ -414,6 +525,12 @@ export const PLAY_ONGOING_SEQUENCE: Partial<Record<PlayActivity, CatAnimSequence
   bat: seq('bat_bout'),
   eat: seq('eat_bout'),
   drink: seq('drink_bout'),
+  // Frames-30 wave-1 pickup: sleeping cats breathe (1400ms inhale/
+  // exhale loop) instead of holding one curl frame. The sleep_down
+  // chain ends on the near-identical 'sleep' curl, so the loop start
+  // never pops. stepPlayground quantizes phaseTime for plain sleep so
+  // this does not undo the ref-stable bail-out.
+  sleep: seq('sleep_breathe'),
 }
 
 export const PLAY_HOLD_FRAME: Partial<Record<PlayActivity, CatAnimFrame>> = {
@@ -456,6 +573,18 @@ export function playgroundAnimationPlanFor(cat: PlayCat, now: number): Animation
       framesToPreload: climbSteps.map((step) => step.frame),
       walkFrame: undefined,
     }
+  }
+  // Frames-30 wave 2c: a rolled bout/gait variant swaps the ongoing
+  // sequence for THIS activity only (tiny per-render override object —
+  // variant cats are mid-bout and re-render on their bout cadence).
+  if (cat.boutVariant && PLAY_ONGOING_SEQUENCE[cat.activity]) {
+    return animationPlanFor(cat, now, {
+      ...PLAYGROUND_ANIM_MAPS,
+      ongoingSequenceByActivity: {
+        ...PLAY_ONGOING_SEQUENCE,
+        [cat.activity]: cat.boutVariant,
+      },
+    })
   }
   return animationPlanFor(cat, now, PLAYGROUND_ANIM_MAPS)
 }

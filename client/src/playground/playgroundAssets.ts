@@ -75,6 +75,26 @@ const SHARED_PLAYGROUND_CAT_FRAMES = [
   'scratch_ab',
   'eat_ab',
   'bat_ab',
+  // Frames-30 wave 2c (2026-07-12): bout-variant keys + midpoints, all
+  // three cats. scrhi_* ride the 160-tall scratch canvas; the rest are
+  // 128-tall. sniff_* are dual-homed (also in /cats/anim/) — the
+  // playground copies keep the URL router total.
+  'scrhi_a',
+  'scrhi_ab',
+  'scrhi_b',
+  'batl_a',
+  'batr_a',
+  'eatlift_a',
+  'eatlift_ab',
+  'eatlift_b',
+  'drinkup_a',
+  'drinkup_b',
+  'pawdip_a',
+  'pawdip_ab',
+  'pawdip_b',
+  'sniff_a',
+  'sniff_ab',
+  'sniff_b',
 ] as const
 
 /** Full frame-name union (URL routing + typing). Two tween midpoints

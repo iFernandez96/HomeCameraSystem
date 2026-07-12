@@ -1,4 +1,5 @@
 import { rollWeighted, rollWithoutImmediateRepeat } from '../components/catEngineCore'
+import { CAT_ANIM_SEQUENCES, sequenceDurationMs } from '../components/catAnimSequences'
 import type { PlaygroundCatId } from './playgroundAssets'
 import {
   PERCH_NO_REPEAT_MS,
@@ -79,6 +80,14 @@ export function travelToAnchor(
     }
   }
   const next = setPlayActivity(cat, 'walk', 60000, now, ctx.random)
+  // Frames-30 wave-1 pickup: 25% of departures glance back over the
+  // shoulder during the regard hold (the look_back standing sequence)
+  // before setting off — moveRampAt stretches to cover it.
+  const transitionMs = playTransitionDurationMs(cat.id, cat.activity, 'walk')
+  const glances = ctx.random() < LOOK_BACK_REGARD_PROB
+  const glanceMs = glances
+    ? sequenceDurationMs(CAT_ANIM_SEQUENCES.look_back[cat.id])
+    : 0
   return {
     ...next,
     // A mount or dismount leg plays the climb loop while it still has
@@ -93,12 +102,20 @@ export function travelToAnchor(
     focus: { type: 'anchor', anchorId },
     targetX: null,
     targetY: null,
+    ...(glances
+      ? {
+          idleSequence: 'look_back' as const,
+          idleSequenceStartedAt: now + transitionMs,
+        }
+      : {}),
     // Look before you go: the stand-up transition plays out, then a
-    // small jittered regard-the-destination hold, THEN paws move.
-    moveRampAt:
-      now + playTransitionDurationMs(cat.id, cat.activity, 'walk') + 150 + ctx.random() * 250,
+    // small jittered regard-the-destination hold (sometimes a full
+    // look-back glance), THEN paws move.
+    moveRampAt: now + transitionMs + glanceMs + 150 + ctx.random() * 250,
   }
 }
+
+export const LOOK_BACK_REGARD_PROB = 0.25
 
 function inPlace(
   cat: PlayCat,

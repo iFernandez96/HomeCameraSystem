@@ -478,6 +478,34 @@ function stepCat(
       nextIdleLifeAt = now + nextIdleGap(watchingBird, ctx.random)
       changed = true
     }
+  } else if (activity === 'sleep' && !cat.climbing) {
+    // Frames-30 wave-1 pickup: sleeping cats get their own rare idle —
+    // the dream twitch — on an 8–20s cadence over the breathe loop.
+    if (idleSequence === 'dream_twitch') {
+      const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES.dream_twitch[cat.id])
+      if (now - idleSequenceStartedAt >= duration) {
+        idleSequence = null
+        nextIdleLifeAt = now + 8000 + ctx.random() * 12000
+        changed = true
+      }
+    } else if (idleSequence) {
+      idleSequence = null
+      changed = true
+    } else if (now >= nextIdleLifeAt) {
+      idleSequence = 'dream_twitch'
+      idleSequenceStartedAt = now
+      nextIdleLifeAt = now + 8000 + ctx.random() * 12000
+      changed = true
+    }
+  } else if (idleSequence === 'look_back' && now < cat.moveRampAt) {
+    // Frames-30 wave-1 pickup: the pre-departure glance — travelToward
+    // armed a look_back inside the regard hold; let it play out. It
+    // self-expires (or moveRampAt passes) before the paws move.
+    const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES.look_back[cat.id])
+    if (now - idleSequenceStartedAt >= duration) {
+      idleSequence = null
+      changed = true
+    }
   } else if (idleSequence) {
     idleSequence = null
     changed = true
@@ -494,6 +522,20 @@ function stepCat(
     hasOngoingSequence(activity) ||
     idleSequence !== null
   let phaseTime = timelineActive ? now : cat.phaseTime
+  // Frames-30 wave-1 pickup: plain sleep runs the 1400ms breathe loop —
+  // quantize its clock to 700ms buckets so a sleeping cat re-renders
+  // twice per breath instead of 60×/s (the ref-stable bail-out stays
+  // effective). Transitions, twitches and climbs stay unquantized.
+  if (
+    activity === 'sleep' &&
+    timelineActive &&
+    idleSequence === null &&
+    now - cat.activityStartedAt >= transitionDuration
+  ) {
+    phaseTime =
+      cat.activityStartedAt +
+      Math.floor((now - cat.activityStartedAt) / 700) * 700
+  }
   // The statue bug (FINDING 9): freezing phaseTime a tick BEFORE the
   // transition chain ends pins the plan on the LAST transition frame
   // (a perched cat held jump_post for seconds instead of its seated
@@ -588,6 +630,7 @@ function hasOngoingSequence(activity: PlayCat['activity']): boolean {
     case 'bat':
     case 'eat':
     case 'drink':
+    case 'sleep': // breathe loop (phaseTime quantized to 700ms buckets above)
       return true
     default:
       return false
