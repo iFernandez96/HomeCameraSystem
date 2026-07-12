@@ -101,23 +101,53 @@ const SHARED_FRAMES = [
   'pounce_land',
   'jump_post',
   'hiss_windup',
+  // Frames-30 burst 4/5: variant sets shared by ALL three cats — bounding
+  // gallop, tail-wrap settle, slump-into-loaf, sleep breathing + dream
+  // twitch, wake stretch, and the look-back glance base (lookback_0/a).
+  'bound_a',
+  'bound_ab',
+  'bound_b',
+  'tailwrap_a',
+  'tailwrap_ab',
+  'tailwrap_b',
+  'slump_a',
+  'slump_ab',
+  'slump_b',
+  'wakestretch_a',
+  'wakestretch_ab',
+  'wakestretch_b',
+  'breath_a',
+  'breath_b',
+  'dream_a',
+  'dream_b',
+  'lookback_0',
+  'lookback_a',
 ] as const
+
+// Frames-30 burst 4/5 per-cat drops (codex deformed twice → dropped, same
+// policy as coco's climb_ab): mushu has NO lope frames; coco has NO
+// lookback_ab (her glance is a 2-step: lookback_0 → lookback_a).
+const LOPE_FRAMES = ['lope_a', 'lope_ab', 'lope_b'] as const
 
 export type CatAnimFrame =
   | (typeof SHARED_FRAMES)[number]
   | 'blink'
   | 'sleep_b2'
+  | (typeof LOPE_FRAMES)[number]
+  | 'lookback_ab'
 
 /** The checked-in asset manifest. Coco deliberately has no blink.
     sleep_b2 (Coco) is the 2026-07-11 tween insert fixing the v3
     sleep-endpoint snap. The tween-wave-2 in-betweens (run_ab/ba,
     sit_0a/ab/b1, turn_2, yawn_0, groom_ab, squat_ab, pounce_l2/a2)
     are shared across all three cats — and crouch_a2/b2, once
-    Panther-only, are now shared too, so the crouch asymmetry is gone. */
+    Panther-only, are now shared too, so the crouch asymmetry is gone.
+    Frames-30 variants: lope is panther+coco, lookback_ab panther+mushu
+    (each dropped for the third cat after two deformed generations). */
 export const CAT_ANIM_MANIFEST: Record<CatAnimId, readonly CatAnimFrame[]> = {
-  panther: [...SHARED_FRAMES, 'blink'],
-  mushu: [...SHARED_FRAMES, 'blink'],
-  coco: [...SHARED_FRAMES, 'sleep_b2'],
+  panther: [...SHARED_FRAMES, 'blink', ...LOPE_FRAMES, 'lookback_ab'],
+  mushu: [...SHARED_FRAMES, 'blink', 'lookback_ab'],
+  coco: [...SHARED_FRAMES, 'sleep_b2', ...LOPE_FRAMES],
 }
 
 export type CatAnimStep = Readonly<{
@@ -408,6 +438,100 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'turn_1b', ms: 18 },
     { frame: 'turn', ms: 19 },
     { frame: 'turn_0a', ms: 18 },
+  ]),
+  // Frames-30 variant gaits: alternate gallops rolled per chase/flee bout
+  // (CatLayer's gaitVariant rotation). Both run the SAME 150ms cycle as
+  // `run`, so gaitVelocityPxPerMs('run', …) stays correct whichever
+  // variant renders — ground speed never depends on the roll.
+  // Mushu's lope pair was dropped (deformed twice) → empty, and the
+  // rotation pool simply never offers it to him (same idiom as coco's
+  // empty blink).
+  run_lope: {
+    panther: [
+      { frame: 'lope_a', ms: 38 },
+      { frame: 'lope_ab', ms: 37 },
+      { frame: 'lope_b', ms: 38 },
+      { frame: 'lope_ab', ms: 37 },
+    ],
+    mushu: [],
+    coco: [
+      { frame: 'lope_a', ms: 38 },
+      { frame: 'lope_ab', ms: 37 },
+      { frame: 'lope_b', ms: 38 },
+      { frame: 'lope_ab', ms: 37 },
+    ],
+  },
+  run_bound: allCats([
+    { frame: 'bound_a', ms: 38 },
+    { frame: 'bound_ab', ms: 37 },
+    { frame: 'bound_b', ms: 38 },
+    { frame: 'bound_ab', ms: 37 },
+  ]),
+  // Seated idle bout: the tail sweeps around and settles over the paws.
+  tailwrap_settle: allCats([
+    { frame: 'tailwrap_a', ms: 220 },
+    { frame: 'tailwrap_ab', ms: 220 },
+    { frame: 'tailwrap_b', ms: 360 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  // Standing glance over the shoulder. Coco lacks lookback_ab (dropped),
+  // so her glance is the 2-step ladder with slightly longer holds —
+  // both shapes read as "heard something behind me". Not yet rolled by
+  // any idle pool (the idle system is seated-only); wired for the
+  // playground's look-before-go pass and future standing surfaces.
+  look_back: {
+    panther: [
+      { frame: 'lookback_0', ms: 140 },
+      { frame: 'lookback_ab', ms: 140 },
+      { frame: 'lookback_a', ms: 700 },
+      { frame: 'lookback_ab', ms: 140 },
+      { frame: 'lookback_0', ms: 140 },
+    ],
+    mushu: [
+      { frame: 'lookback_0', ms: 140 },
+      { frame: 'lookback_ab', ms: 140 },
+      { frame: 'lookback_a', ms: 700 },
+      { frame: 'lookback_ab', ms: 140 },
+      { frame: 'lookback_0', ms: 140 },
+    ],
+    coco: [
+      { frame: 'lookback_0', ms: 180 },
+      { frame: 'lookback_a', ms: 760 },
+      { frame: 'lookback_0', ms: 180 },
+    ],
+  },
+  // The dignity-loss slide from sitting tall into a loaf. Entry chain for
+  // the loaf activity; the final 1ms slump_b is the hold pose (loaf's
+  // hold frame is slump_b now — it used to fake it with `seated`).
+  slump_to_loaf: allCats([
+    { frame: 'slump_a', ms: 250 },
+    { frame: 'slump_ab', ms: 240 },
+    { frame: 'slump_b', ms: 1 },
+  ]),
+  // Ongoing loop while sleeping — the curl visibly breathes instead of
+  // freezing. sleep_down ends on the near-identical `sleep` curl so the
+  // loop start doesn't pop; both frames export at the 0.85 curl scale.
+  sleep_breathe: allCats([
+    { frame: 'breath_a', ms: 1400 },
+    { frame: 'breath_b', ms: 1400 },
+  ]),
+  // Rare mid-sleep idle bout: a paw twitch and a nose scrunch, then back
+  // to the breathing loop.
+  dream_twitch: allCats([
+    { frame: 'dream_a', ms: 320 },
+    { frame: 'dream_b', ms: 320 },
+    { frame: 'dream_a', ms: 260 },
+    { frame: 'sleep', ms: 1 },
+  ]),
+  // Wake-up stretch chain (downward-dog then rear-leg follow-through).
+  // Frames shipped and typed; sequence reserved for the wake choreography
+  // pass — appending it to wake_up changes that chain's calibrated total,
+  // which is a deliberate follow-up, not a drive-by.
+  wake_stretch: allCats([
+    { frame: 'wakestretch_a', ms: 480 },
+    { frame: 'wakestretch_ab', ms: 300 },
+    { frame: 'wakestretch_b', ms: 480 },
+    { frame: 'seated', ms: 1 },
   ]),
 } as const satisfies Record<string, PerCatSequence>
 

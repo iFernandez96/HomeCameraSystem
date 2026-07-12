@@ -158,6 +158,12 @@ type CatState = {
   // render layer plays the turn_around sequence, mirror-flipping at
   // the frontal midpoint instead of the old 220ms scaleX morph.
   turn: TurnPivot | null
+  // Frames-30 variant gait: which gallop sequence THIS chase/flee bout
+  // plays (run / run_bound / run_lope-if-available). Rolled once per
+  // bout entry with no immediate repeat, null outside gaited sprints.
+  // All variants share run's 150ms cycle so velocity never depends on
+  // the roll.
+  gaitVariant: CatAnimSequenceName | null
 }
 
 const WALK_FRAME_COUNT = 12
@@ -323,6 +329,18 @@ type InteractionOutcome = {
 function setMood(c: CatState, mood: string, durationMs: number, now: number, secondary?: string): CatState {
   return { ...c, mood, moodSecondary: secondary ?? null, moodUntil: now + durationMs }
 }
+// Frames-30 variant gaits: the gallop pool a chase/flee bout rolls from.
+// run_lope is empty for mushu (dropped frames) so his pool is [run,
+// run_bound] — availability is read off the sequence table, not hardcoded.
+function rollGaitVariant(catId: CatId, previous: CatAnimSequenceName | null): CatAnimSequenceName {
+  const pool: CatAnimSequenceName[] = ['run', 'run_bound']
+  if (CAT_ANIM_SEQUENCES.run_lope[catId].length > 0) pool.push('run_lope')
+  // No immediate repeat: a cat never opens two consecutive sprints on
+  // the same gallop. One Math.random() call (tests script the roll).
+  const choices = previous ? pool.filter((name) => name !== previous) : pool
+  return choices[Math.floor(Math.random() * choices.length)] ?? 'run'
+}
+
 function setActivity(c: CatState, activity: Activity, durationMs: number, now: number): CatState {
   return {
     ...c,
@@ -336,11 +354,17 @@ function setActivity(c: CatState, activity: Activity, durationMs: number, now: n
     activityUntil: now + durationMs * rand(0.78, 1.32),
     phaseTime: now,
     idleSequence: null,
-    nextIdleLifeAt: now + rand(3000, 7000),
+    // Sleep idles (dream twitches) run on a slower 8–20s cadence than the
+    // seated blink/groom pool.
+    nextIdleLifeAt: now + (activity === 'sleep' ? rand(8000, 20000) : rand(3000, 7000)),
     lastIdleLifeWasSpecial: false,
     // A new activity owns its own entry choreography — an in-flight
     // turn pivot from the previous beat must not overlay it.
     turn: null,
+    gaitVariant:
+      activity === 'chase' || activity === 'flee'
+        ? rollGaitVariant(c.id, c.gaitVariant)
+        : null,
   }
 }
 
@@ -708,6 +732,15 @@ function rollSolo(c: CatState, now: number, w: number): CatState {
 // its full rationale comment; re-exported under the original test-seam
 // name so CatLayer.test.tsx stays unchanged.
 export const _rollWithoutImmediateRepeatForTests = rollWithoutImmediateRepeat
+// Frames-30 variant wiring: unit surfaces for the gait-variant roll, the
+// bout-entry state writer, and the plan builder (rotation and the sleep
+// breathe/dream loops are engine behavior, not render behavior, so the
+// tests pin them here instead of driving a full interaction scene).
+export const _rollGaitVariantForTests = rollGaitVariant
+export const _setActivityForTests = setActivity
+export const _animationPlanForForTests = (cat: CatState, now: number) =>
+  animationPlanFor(cat, now)
+export type _CatStateForTests = CatState
 
 // Login is a tiny household vignette, not the app's quiet ambient mascot.
 // Events are intentionally short and toy/prop-led so a new beat begins every
@@ -1170,6 +1203,11 @@ const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
 
 const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenceName[]>> = {
   on_post: ['jump_post'],
+  // Frames-30: loafing now EARNS its shape — the slump chain slides from
+  // seated into the bread pose instead of faking loaf with the seated
+  // hold. Exit plays the seated-group chains from their usual start; the
+  // slump_b→sit_m5 step reads as the cat pushing up out of the loaf.
+  loaf: ['slump_to_loaf'],
 }
 
 export function _catSequenceNamesForTransitionForTests(
@@ -1195,12 +1233,18 @@ export function _catSequenceNamesForTransitionForTests(
 
 const ONGOING_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName>> = {
   walk: 'walk',
+  // chase/flee resolve through CatState.gaitVariant (rolled per bout);
+  // 'run' here is the fallback and the timelineActive signal.
   chase: 'run',
   flee: 'run',
   groom: 'groom_bout',
   play: 'pounce',
   pounce: 'pounce',
   pooped: 'poop_squat', // loops while active — comedic quickening strain
+  // Frames-30: sleeping cats breathe (1.4s in / 1.4s out) instead of
+  // freezing on the static curl. stepCats quantizes phaseTime to 700ms
+  // buckets during sleep so the loop doesn't undo the perf-A2 bail-out.
+  sleep: 'sleep_breathe',
 }
 
 // Which pivot plays when a gaited activity reverses direction. Only
@@ -1216,7 +1260,9 @@ const TURN_SEQUENCE_BY_ACTIVITY: Partial<Record<Activity, CatAnimSequenceName>> 
 const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
   sit: 'seated',
   judge: 'seated',
-  loaf: 'seated',
+  // Frames-30: the loaf finally holds an actual loaf pose (slump chain's
+  // end frame) instead of borrowing `seated`.
+  loaf: 'slump_b',
   snuggle: 'seated',
   in_box: 'seated',
   sleep: 'sleep',
@@ -1235,6 +1281,19 @@ const CAT_LAYER_ANIM_MAPS: AnimActivityMaps<Activity> = {
 }
 
 function animationPlanFor(cat: CatState, now: number): AnimationPlan {
+  // Frames-30 variant gaits: a sprinting cat's rolled gallop replaces the
+  // base 'run' ongoing sequence for this bout. The override object is
+  // tiny and only allocated while a cat is actively chasing/fleeing —
+  // those cats re-render every frame anyway.
+  if (cat.gaitVariant && (cat.activity === 'chase' || cat.activity === 'flee')) {
+    return buildAnimationPlan(cat, now, {
+      ...CAT_LAYER_ANIM_MAPS,
+      ongoingSequenceByActivity: {
+        ...ONGOING_SEQUENCE_BY_ACTIVITY,
+        [cat.activity]: cat.gaitVariant,
+      },
+    })
+  }
   return buildAnimationPlan(cat, now, CAT_LAYER_ANIM_MAPS)
 }
 
@@ -1665,6 +1724,7 @@ function initialCats(placement: 'app' | 'login'): CatState[] {
     lastIdleLifeWasSpecial: false,
     poop: null,
     turn: null,
+    gaitVariant: null,
   }))
 }
 
@@ -1676,20 +1736,25 @@ const SEATED_IDLE_ACTIVITIES = new Set<Activity>([
 ])
 
 const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; weight: number }[]> = {
+  // Frames-30: tailwrap_settle joins every pool — the tail sweeping in to
+  // wrap the paws is the classic settled-cat beat.
   panther: [
     { name: 'blink', weight: 12 },
     { name: 'tailflick', weight: 4 },
+    { name: 'tailwrap_settle', weight: 2 },
     { name: 'groom_bout', weight: 2 },
     { name: 'yawn', weight: 1 },
   ],
   mushu: [
     { name: 'blink', weight: 12 },
     { name: 'tailflick', weight: 4 },
+    { name: 'tailwrap_settle', weight: 2 },
     { name: 'groom_bout', weight: 3 },
     { name: 'yawn', weight: 1 },
   ],
   coco: [
     { name: 'tailflick', weight: 8 },
+    { name: 'tailwrap_settle', weight: 2 },
     { name: 'groom_bout', weight: 3 },
     { name: 'yawn', weight: 1 },
   ],
@@ -1819,8 +1884,7 @@ function stepCats(
       ONGOING_SEQUENCE_BY_ACTIVITY[activity] !== undefined ||
       idleSequence !== null ||
       turn !== null
-    const phaseTime = timelineActive ? now : cat.phaseTime
-    if (phaseTime !== cat.phaseTime) catChanged = true
+    let phaseTime = timelineActive ? now : cat.phaseTime
 
     if (SEATED_IDLE_ACTIVITIES.has(activity)) {
       if (idleSequence) {
@@ -1842,10 +1906,44 @@ function stepCats(
         nextIdleLifeAt = now + rand(3000, 7000)
         catChanged = true
       }
+    } else if (activity === 'sleep') {
+      // Frames-30: rare mid-sleep idle — a dream twitch every 8–20s rides
+      // on top of the breathing loop, reusing the seated scheduler's
+      // fields (sleep entry seeds nextIdleLifeAt into the 8–20s band).
+      if (idleSequence) {
+        const duration = sequenceDurationMs(CAT_ANIM_SEQUENCES[idleSequence][cat.id])
+        if (now - idleSequenceStartedAt >= duration) {
+          idleSequence = null
+          nextIdleLifeAt = now + rand(8000, 20000)
+          catChanged = true
+        }
+      } else if (now >= nextIdleLifeAt) {
+        idleSequence = 'dream_twitch'
+        idleSequenceStartedAt = now
+        nextIdleLifeAt = now + rand(8000, 20000)
+        catChanged = true
+      }
     } else if (idleSequence) {
       idleSequence = null
       catChanged = true
     }
+    // Frames-30 sleep_breathe perf guard: the breathing loop's frames are
+    // 1400ms each, so a sleeping cat's timeline only needs ~1.4 updates/s
+    // — quantize phaseTime to 700ms buckets (2 samples per breath frame,
+    // boundaries land exactly) so the perf-A2 bail-out keeps skipping
+    // 60fps re-renders through long sleeps. Dream twitches and the
+    // curl-down transition play un-quantized.
+    if (
+      activity === 'sleep' &&
+      idleSequence === null &&
+      turn === null &&
+      now - cat.activityStartedAt >= transitionDuration
+    ) {
+      phaseTime =
+        cat.activityStartedAt +
+        Math.floor((now - cat.activityStartedAt) / 700) * 700
+    }
+    if (phaseTime !== cat.phaseTime) catChanged = true
     // Activity expiry → roll a solo event for the next state. This
     // ALWAYS counts as a change because rollSolo returns a new state.
     if (now > activityUntil) {

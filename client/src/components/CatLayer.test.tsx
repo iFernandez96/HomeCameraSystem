@@ -2,11 +2,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
 import {
   CatLayer,
+  _animationPlanForForTests,
   _catSequenceNamesForTransitionForTests,
   _resetCatWalkAnimationCacheForTests,
+  _rollGaitVariantForTests,
   _rollWithoutImmediateRepeatForTests,
+  _setActivityForTests,
+  type _CatStateForTests,
 } from './CatLayer'
 import { WALK_STEP_ORDER } from './catAnimSequences'
+
+// Frames-30 variant wiring: a minimal in-repose cat for the engine-level
+// pins below (gait rotation, sleep breathe/dream). Field defaults mirror
+// initialCats; tests override what they exercise.
+function makeCatForTests(over: Partial<_CatStateForTests>): _CatStateForTests {
+  return {
+    id: 'panther',
+    x: 100,
+    y: 0,
+    direction: 'L',
+    activity: 'sit',
+    previousActivity: 'sit',
+    activityStartedAt: 0,
+    activityUntil: 10_000,
+    mood: null,
+    moodSecondary: null,
+    moodUntil: 0,
+    targetX: null,
+    lastInteractedWith: null,
+    lastInteractedAt: 0,
+    phase: 0,
+    phaseTime: 0,
+    idleSequence: null,
+    idleSequenceStartedAt: 0,
+    nextIdleLifeAt: 0,
+    lastIdleLifeWasSpecial: false,
+    poop: null,
+    turn: null,
+    gaitVariant: null,
+    ...over,
+  }
+}
 
 type MqlInit = {
   matches: boolean
@@ -854,5 +890,96 @@ describe('CatLayer', () => {
     // assert — exactly two attempts, then acquiesce (cats DO nap twice).
     expect(count).toBe(2)
     expect(result.activity).toBe('sleep')
+  })
+
+  describe('frames-30 variant gaits + sleep life', () => {
+    it('Given consecutive sprint bouts, When the gait variant is rolled, Then no bout repeats its predecessor and mushu never draws the dropped lope', () => {
+      // arrange — script the roll to always take the first choice.
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+
+      // act
+      const pantherAfterRun = _rollGaitVariantForTests('panther', 'run')
+      const pantherAfterBound = _rollGaitVariantForTests('panther', 'run_bound')
+      const mushuAfterRun = _rollGaitVariantForTests('mushu', 'run')
+      const mushuAfterBound = _rollGaitVariantForTests('mushu', 'run_bound')
+
+      // assert — previous variant is excluded; mushu's pool is [run,
+      // run_bound] because his lope frames were dropped.
+      expect(pantherAfterRun).toBe('run_bound')
+      expect(pantherAfterBound).not.toBe('run_bound')
+      expect(mushuAfterRun).toBe('run_bound')
+      expect(mushuAfterBound).toBe('run')
+    })
+
+    it('Given a bout entry, When setActivity runs, Then chase/flee roll a gait variant and calm activities clear it', () => {
+      // arrange
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      const cat = makeCatForTests({ activity: 'sit', gaitVariant: null })
+
+      // act — first sprint has no predecessor, so the scripted roll takes
+      // the pool head ('run'); the follow-up sit clears the variant.
+      const sprinting = _setActivityForTests(cat, 'chase', 3000, 1000)
+      const settled = _setActivityForTests(sprinting, 'sit', 3000, 5000)
+
+      // assert
+      expect(sprinting.gaitVariant).toBe('run')
+      expect(settled.gaitVariant).toBeNull()
+    })
+
+    it('Given a chasing cat with a rolled bound gallop, When the plan is built across a cycle, Then bound frames render instead of the base run ring', () => {
+      // arrange — previousActivity chase ⇒ no transition chain; timeline
+      // starts at 0 so plan time maps directly onto the 150ms cycle.
+      const cat = makeCatForTests({
+        activity: 'chase',
+        previousActivity: 'chase',
+        gaitVariant: 'run_bound',
+      })
+
+      // act
+      const early = _animationPlanForForTests(cat, 10)
+      const mid = _animationPlanForForTests(cat, 40)
+
+      // assert — [bound_a 38, bound_ab 37, ...]
+      expect(early.frame).toBe('bound_a')
+      expect(mid.frame).toBe('bound_ab')
+    })
+
+    it('Given a sleeping cat past its curl-down, When the plan samples the breathe loop, Then the curl inhales and exhales on the 1400ms beat', () => {
+      // arrange
+      const cat = makeCatForTests({ activity: 'sleep', previousActivity: 'sleep' })
+
+      // act
+      const inhale = _animationPlanForForTests(cat, 100)
+      const exhale = _animationPlanForForTests(cat, 1500)
+      const wrap = _animationPlanForForTests(cat, 2900)
+
+      // assert — breath_a 0..1400, breath_b 1400..2800, loops.
+      expect(inhale.frame).toBe('breath_a')
+      expect(exhale.frame).toBe('breath_b')
+      expect(wrap.frame).toBe('breath_a')
+    })
+
+    it('Given a mid-sleep dream twitch, When the idle plays, Then dream frames override the breathe loop and hand back to it', () => {
+      // arrange
+      const cat = makeCatForTests({
+        activity: 'sleep',
+        previousActivity: 'sleep',
+        idleSequence: 'dream_twitch',
+        idleSequenceStartedAt: 5000,
+      })
+
+      // act — dream_twitch is [dream_a 320, dream_b 320, dream_a 260, sleep 1]
+      const twitchStart = _animationPlanForForTests(cat, 5100)
+      const twitchFlinch = _animationPlanForForTests(cat, 5450)
+      const afterIdle = _animationPlanForForTests(makeCatForTests({
+        activity: 'sleep',
+        previousActivity: 'sleep',
+      }), 5450)
+
+      // assert
+      expect(twitchStart.frame).toBe('dream_a')
+      expect(twitchFlinch.frame).toBe('dream_b')
+      expect(afterIdle.frame).toMatch(/^breath_/)
+    })
   })
 })

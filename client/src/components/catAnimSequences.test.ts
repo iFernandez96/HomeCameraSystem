@@ -8,6 +8,7 @@ import {
   CYCLE_DURATION_MS,
   STRIDE_PX_PER_CYCLE,
   gaitVelocityPxPerMs,
+  sequenceDurationMs,
   type CatAnimId,
   type CatAnimSequenceName,
 } from './catAnimSequences'
@@ -207,7 +208,8 @@ describe('cat animation sequences', () => {
     ] as const
     const legalJoins: Record<string, readonly string[]> = {
       stand: ['stand', 'sit_a', 'hiss_windup'],
-      seated: ['seated', 'sleep_a', 'crouch_a', 'sit_b', 'groom_a'],
+      // slump_a: the loaf entry chain slides out of the seated hold
+      seated: ['seated', 'sleep_a', 'crouch_a', 'sit_b', 'groom_a', 'slump_a'],
       crouch: ['crouch', 'pounce_launch', 'jump_post', 'crouch_b'],
       sleep: ['sleep', 'sleep_b'],
       side_stand: ['side_stand', 'turn'],
@@ -321,5 +323,81 @@ describe('cat animation sequences', () => {
 
     // assert
     expect(missing).toEqual([])
+  })
+
+  describe('frames-30 variant sets', () => {
+    it('Given the variant gallops, When each available cycle is measured, Then both run at exactly the run cycle so velocity never depends on the roll', () => {
+      // arrange / act / assert — run_bound is universal; run_lope skips
+      // mushu (frames dropped after two deformed generations).
+      for (const catId of CAT_IDS) {
+        expect(sequenceDurationMs(CAT_ANIM_SEQUENCES.run_bound[catId])).toBe(
+          CYCLE_DURATION_MS.run,
+        )
+      }
+      expect(sequenceDurationMs(CAT_ANIM_SEQUENCES.run_lope.panther)).toBe(CYCLE_DURATION_MS.run)
+      expect(sequenceDurationMs(CAT_ANIM_SEQUENCES.run_lope.coco)).toBe(CYCLE_DURATION_MS.run)
+      expect(CAT_ANIM_SEQUENCES.run_lope.mushu).toEqual([])
+    })
+
+    it('Given the look_back glance, When each ladder is read, Then coco omits the dropped lookback_ab and every shape starts and ends on lookback_0', () => {
+      // arrange
+      const pantherFrames = CAT_ANIM_SEQUENCES.look_back.panther.map((s) => s.frame)
+      const cocoFrames = CAT_ANIM_SEQUENCES.look_back.coco.map((s) => s.frame)
+
+      // act / assert
+      expect(pantherFrames).toEqual(['lookback_0', 'lookback_ab', 'lookback_a', 'lookback_ab', 'lookback_0'])
+      expect(CAT_ANIM_SEQUENCES.look_back.mushu.map((s) => s.frame)).toEqual(pantherFrames)
+      expect(cocoFrames).toEqual(['lookback_0', 'lookback_a', 'lookback_0'])
+    })
+
+    it('Given the idle and transition variants, When their totals are measured, Then each bout duration is pinned', () => {
+      // arrange — tailwrap 220+220+360+1, slump 250+240+1, breathe loop
+      // 1400×2, dream 320+320+260+1, wake stretch 480+300+480+1.
+      const expected = [
+        ['tailwrap_settle', 801],
+        ['slump_to_loaf', 491],
+        ['sleep_breathe', 2800],
+        ['dream_twitch', 901],
+        ['wake_stretch', 1261],
+      ] as const
+
+      // act / assert — all three cats share these variant tables.
+      for (const [name, total] of expected) {
+        for (const catId of CAT_IDS) {
+          expect(sequenceDurationMs(CAT_ANIM_SEQUENCES[name][catId]), `${name}:${catId}`).toBe(total)
+        }
+      }
+    })
+
+    it('Given the slump chain, When its hold pose is read, Then the loaf holds slump_b — a real loaf, not the borrowed seated frame', () => {
+      // arrange
+      const steps = CAT_ANIM_SEQUENCES.slump_to_loaf.panther
+
+      // act
+      const last = steps[steps.length - 1]
+
+      // assert — 1ms terminal step is the hold-pose convention.
+      expect(last).toEqual({ frame: 'slump_b', ms: 1 })
+    })
+
+    it('Given the per-cat variant manifests, When the exported asset dir is scanned, Then every manifest frame exists and every dropped frame stays absent', () => {
+      // arrange
+      const assetRoot = join(__dirname, '..', '..', 'public', 'cats', 'anim')
+
+      // act
+      const missing = CAT_IDS.flatMap((catId) =>
+        CAT_ANIM_MANIFEST[catId]
+          .filter((frame) => !existsSync(join(assetRoot, catId, `${frame}.png`)))
+          .map((frame) => `${catId}/${frame}.png`),
+      )
+      const resurrected = ([
+        ['mushu', 'lope_a'], ['mushu', 'lope_ab'], ['mushu', 'lope_b'],
+        ['coco', 'lookback_ab'],
+      ] as const).filter(([catId, frame]) => existsSync(join(assetRoot, catId, `${frame}.png`)))
+
+      // assert — a resurrected file means the manifest should be revisited.
+      expect(missing).toEqual([])
+      expect(resurrected).toEqual([])
+    })
   })
 })
