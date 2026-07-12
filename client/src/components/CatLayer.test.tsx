@@ -135,16 +135,25 @@ function walkFrameUrls(catId: string): string[] {
 }
 
 function sitToWalkUrls(catId: string): string[] {
+  // seated_to_stand + front_to_walk unique frames (tween wave 2 added
+  // the sit_b1/sit_ab/sit_0a and turn_2 in-betweens) + the walk cycle.
   return [
     `/cats/anim/${catId}/seated.png`,
+    `/cats/anim/${catId}/sit_b1.png`,
     `/cats/anim/${catId}/sit_b.png`,
+    `/cats/anim/${catId}/sit_ab.png`,
     `/cats/anim/${catId}/sit_a.png`,
+    `/cats/anim/${catId}/sit_0a.png`,
     `/cats/anim/${catId}/stand.png`,
+    `/cats/anim/${catId}/turn_2.png`,
     `/cats/anim/${catId}/turn.png`,
     `/cats/anim/${catId}/side_stand.png`,
     ...walkFrameUrls(catId),
   ]
 }
+
+/** Per-cat preload set size: 10 bridge frames + 12 walk frames. */
+const SIT_TO_WALK_SET_SIZE = 22
 
 describe('CatLayer', () => {
   let originalMatchMedia: typeof window.matchMedia | undefined
@@ -203,12 +212,12 @@ describe('CatLayer', () => {
     expect(images).toHaveLength(0)
 
     // act — the first interaction unlocks progressive enhancement. Cat sets
-    // are staggered so one tap never starts a 36-image request burst.
+    // are staggered so one tap never starts a 66-image request burst.
     act(() => window.dispatchEvent(new Event('pointerdown')))
     act(() => vi.advanceTimersByTime(0))
-    expect(images).toHaveLength(18)
+    expect(images).toHaveLength(SIT_TO_WALK_SET_SIZE)
     act(() => vi.advanceTimersByTime(6000))
-    expect(images).toHaveLength(36)
+    expect(images).toHaveLength(2 * SIT_TO_WALK_SET_SIZE)
     act(() => vi.advanceTimersByTime(6000))
 
     // assert — all 12 frames per cat are requested once, while the
@@ -218,7 +227,7 @@ describe('CatLayer', () => {
       ...sitToWalkUrls('mushu'),
       ...sitToWalkUrls('coco'),
     ]
-    expect(images).toHaveLength(54)
+    expect(images).toHaveLength(3 * SIT_TO_WALK_SET_SIZE)
     expect(new Set(images.map((image) => image.src))).toEqual(new Set(expectedUrls))
     const pendingSources: Array<string | null> = []
     for (const catId of ['panther', 'mushu', 'coco']) {
@@ -250,7 +259,7 @@ describe('CatLayer', () => {
     // assert — the reverse sit/turn bridge is visible before locomotion.
     for (const catId of ['panther', 'mushu', 'coco']) {
       expect(catSprite(container, catId).getAttribute('src')).toMatch(
-        new RegExp(`^/cats/anim/${catId}/(?:seated|sit_[ab]|stand|turn|side_stand)\\.png$`),
+        new RegExp(`^/cats/anim/${catId}/(?:seated|sit_(?:0a|ab|b1|[ab])|stand|turn(?:_2)?|side_stand)\\.png$`),
       )
     }
 
@@ -283,7 +292,7 @@ describe('CatLayer', () => {
     for (const [index, catId] of ['panther', 'mushu', 'coco'].entries()) {
       expect(catSprite(container, catId).getAttribute('src')).toBe(loadedSources[index])
     }
-    expect(images).toHaveLength(54)
+    expect(images).toHaveLength(3 * SIT_TO_WALK_SET_SIZE)
   })
 
   it('Given a walk-frame preload error, When the other requests settle, Then that cat keeps its built-in two-pose fallback', async () => {

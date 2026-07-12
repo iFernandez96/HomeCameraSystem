@@ -32,8 +32,9 @@ describe('cat animation sequences', () => {
     expect(invalid).toEqual([])
   })
 
-  it('Given per-cat availability, When blink and crouch variants are read, Then Coco has no blink and only Panther uses crouch_a2', () => {
-    // arrange
+  it('Given per-cat availability, When blink and crouch variants are read, Then Coco has no blink and every cat shares the 6-frame tweened crouch', () => {
+    // arrange — tween wave 2 (2026-07-11) shipped crouch_a2/b2 for
+    // Mushu and Coco too, so the old Panther-only asymmetry is gone.
     const blink = CAT_ANIM_SEQUENCES.blink
 
     // act
@@ -44,13 +45,54 @@ describe('cat animation sequences', () => {
       ]),
     ) as Record<CatAnimId, string[]>
 
-    // assert
+    // assert — blink stays Panther/Mushu-only; crouch is uniform.
     expect(blink.panther).toEqual([{ frame: 'blink', ms: 140 }])
     expect(blink.mushu).toEqual([{ frame: 'blink', ms: 140 }])
     expect(blink.coco).toEqual([])
-    expect(crouchFrames.panther).toContain('crouch_a2')
-    expect(crouchFrames.mushu).not.toContain('crouch_a2')
-    expect(crouchFrames.coco).not.toContain('crouch_a2')
+    const expectedCrouch = ['crouch_a', 'crouch_a2', 'crouch_mid', 'crouch_b', 'crouch_b2', 'crouch']
+    for (const catId of CAT_IDS) {
+      expect(crouchFrames[catId]).toEqual(expectedCrouch)
+      // crouch_up reverses the same chain and settles seated.
+      expect(CAT_ANIM_SEQUENCES.crouch_up[catId].map((s) => s.frame)).toEqual(
+        [...expectedCrouch].reverse().concat('seated'),
+      )
+    }
+  })
+
+  it('Given the tween-wave-2 re-timing, When each retimed sequence total is measured, Then it stays within 15% of its pre-tween duration', () => {
+    // arrange — pre-tween totals (the calibrated beat/bout budget).
+    const before: Partial<Record<CatAnimSequenceName, number>> = {
+      run: 150,
+      walk_to_front: 840,
+      front_to_walk: 840,
+      stand_to_seated: 282,
+      seated_to_stand: 282,
+      pounce: 432,
+      poop_squat: 2200,
+      groom_bout: 1801,
+      yawn: 901,
+    }
+
+    // act / assert
+    for (const [name, total] of Object.entries(before)) {
+      for (const catId of CAT_IDS) {
+        const steps = CAT_ANIM_SEQUENCES[name as CatAnimSequenceName][catId]
+        const after = steps.reduce((sum, step) => sum + step.ms, 0)
+        expect(after, `${name}:${catId}`).toBeGreaterThanOrEqual(total * 0.85)
+        expect(after, `${name}:${catId}`).toBeLessThanOrEqual(total * 1.15)
+      }
+    }
+  })
+
+  it('Given the 4-frame gallop, When the run cycle is read, Then a/ab/b/ba play in order and the cycle total is still 150ms', () => {
+    // arrange / act
+    const run = CAT_ANIM_SEQUENCES.run.panther
+
+    // assert — doubling gallop frames halved per-step ms; stride
+    // calibration (STRIDE_PX_PER_CYCLE) is untouched by design.
+    expect(run.map((s) => s.frame)).toEqual(['run_a', 'run_ab', 'run_b', 'run_ba'])
+    expect(run.reduce((sum, s) => sum + s.ms, 0)).toBe(150)
+    expect(CYCLE_DURATION_MS.run).toBe(150)
   })
 
   it('Given the pounce choreography, When the landing frame is inspected, Then it has a deliberate hit-pause', () => {
@@ -198,13 +240,19 @@ describe('cat animation sequences', () => {
     expect(bad).toEqual([])
   })
 
-  it('Given the poop_squat bout, When its steps are read, Then it alternates a/b with a comedic quickening cadence', () => {
-    // arrange
+  it('Given the poop_squat bout, When its steps are read, Then squat_ab rides every flank and the quickening cadence survives the split', () => {
+    // arrange — tween wave 2: each pre-tween strain (700/500/600/400)
+    // split in half with its squat_ab midpoint; the trailing squat_ab
+    // smooths the loop wrap back to poop_squat_a. Total stays 2200ms.
     const expected = [
-      { frame: 'poop_squat_a', ms: 700 },
-      { frame: 'poop_squat_b', ms: 500 },
-      { frame: 'poop_squat_a', ms: 600 },
-      { frame: 'poop_squat_b', ms: 400 },
+      { frame: 'poop_squat_a', ms: 350 },
+      { frame: 'squat_ab', ms: 350 },
+      { frame: 'poop_squat_b', ms: 250 },
+      { frame: 'squat_ab', ms: 250 },
+      { frame: 'poop_squat_a', ms: 300 },
+      { frame: 'squat_ab', ms: 300 },
+      { frame: 'poop_squat_b', ms: 200 },
+      { frame: 'squat_ab', ms: 200 },
     ]
 
     // act
