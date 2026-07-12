@@ -71,6 +71,7 @@ const SHARED_FRAMES = [
   'groom_ab',
   'groom_b',
   'yawn_0',
+  'yawn_1',
   'yawn',
   'sleep_a',
   'sleep_a2',
@@ -98,6 +99,11 @@ const SHARED_FRAMES = [
   'pounce_l2',
   'pounce_air',
   'pounce_a2',
+  // Frames-30 wave 2: pounce arc second-level midpoints
+  'pounce_n1',
+  'pounce_n2',
+  'pounce_n3',
+  'pounce_n4',
   'pounce_land',
   'jump_post',
   'hiss_windup',
@@ -359,12 +365,19 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'poop_squat_b', ms: 200 },
     { frame: 'squat_ab', ms: 200 },
   ]),
+  // Frames-30 wave 2: second-level arc midpoints (pounce_n1..n4) — each
+  // original step splits in half; the 200ms landing hit-pause and the
+  // 432ms total stay exact.
   pounce: allCats([
     { frame: 'crouch', ms: 1 },
-    { frame: 'pounce_launch', ms: 50 },
-    { frame: 'pounce_l2', ms: 50 },
-    { frame: 'pounce_air', ms: 65 },
-    { frame: 'pounce_a2', ms: 65 },
+    { frame: 'pounce_launch', ms: 25 },
+    { frame: 'pounce_n1', ms: 25 },
+    { frame: 'pounce_l2', ms: 25 },
+    { frame: 'pounce_n2', ms: 25 },
+    { frame: 'pounce_air', ms: 33 },
+    { frame: 'pounce_n3', ms: 32 },
+    { frame: 'pounce_a2', ms: 33 },
+    { frame: 'pounce_n4', ms: 32 },
     { frame: 'pounce_land', ms: 200 },
     { frame: 'crouch', ms: 1 },
   ]),
@@ -392,10 +405,11 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'groom_b', ms: 480 },
     { frame: 'seated', ms: 1 },
   ]),
-  // yawn_0 is the seated→gape lead-in; it borrows from the hold so
-  // the 901ms total stands.
+  // yawn_0 is the seated→gape lead-in; wave 2 splits it with yawn_1 so
+  // the mouth opens through a midpoint — the 901ms total stands.
   yawn: allCats([
-    { frame: 'yawn_0', ms: 150 },
+    { frame: 'yawn_0', ms: 75 },
+    { frame: 'yawn_1', ms: 75 },
     { frame: 'yawn', ms: 750 },
     { frame: 'seated', ms: 1 },
   ]),
