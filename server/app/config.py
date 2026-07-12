@@ -170,6 +170,12 @@ class Settings:
     host_action_state_path: Path = Path(
         os.getenv("HOST_ACTION_STATE_PATH", "/app/secrets/host_action.json")
     )
+    recording_assurance_path: Path = Path(
+        os.getenv(
+            "RECORDING_ASSURANCE_PATH",
+            "/app/secrets/recording-assurance.json",
+        )
+    )
     camera_exposure_path: Path = Path(
         os.getenv("CAMERA_EXPOSURE_PATH", "/app/secrets/camera_exposure.json")
     )

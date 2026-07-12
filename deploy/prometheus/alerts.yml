@@ -29,6 +29,34 @@ groups:
         annotations:
           summary: Recording disk space is low
           description: Less than 5 GB remains on the server filesystem.
+      - alert: HomecamRecordingCanaryFailed
+        expr: homecam_recording_canary_ok == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Test recording is not playable
+          description: The latest RTSP-to-MP4 check failed capture, full decode, storage, or cleanup validation.
+      - alert: HomecamRecordingCanaryOverdue
+        expr: homecam_recording_canary_checked_age_seconds > 2700 or absent(homecam_recording_canary_checked_age_seconds)
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: Recording verification is overdue
+          description: No fresh end-to-end recording proof arrived within the expected 45-minute window.
+      - alert: HomecamRecordingStorageNotWritable
+        expr: homecam_recording_storage_writable == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Capture storage is not writable
+          description: The recording filesystem rejected or could not fsync the canary write probe.
+      - alert: HomecamRecordingDriveSmartFailed
+        expr: homecam_recording_drive_smart_healthy == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Capture drive reports SMART failure
+          description: Preserve important clips and replace the capture drive.
       - alert: HomecamCameraRecoveryLoop
         expr: increase(homecam_worker_mediamtx_restarts_total[15m]) > 2 or increase(homecam_worker_argus_restarts_total[15m]) > 0
         for: 1m

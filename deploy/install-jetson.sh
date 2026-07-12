@@ -29,9 +29,9 @@ cd "$REPO"
 
 # 1. System packages -----------------------------------------------------------
 
-log "Installing system packages (gstreamer-rtsp, curl)"
+log "Installing system packages (gstreamer-rtsp, curl, smartmontools)"
 sudo apt-get update -qq
-sudo apt-get install -y --no-install-recommends gstreamer1.0-rtsp curl > /dev/null
+sudo apt-get install -y --no-install-recommends gstreamer1.0-rtsp curl smartmontools > /dev/null
 ok "apt deps ready"
 
 # 1.5. Swapfile ----------------------------------------------------------------
@@ -120,6 +120,8 @@ chmod +x "$REPO/detection/run-detect.sh"
 sudo cp "$REPO/deploy/systemd/mediamtx.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-server.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-detect.service" /etc/systemd/system/
+sudo cp "$REPO/deploy/systemd/homecam-recording-canary.service" /etc/systemd/system/
+sudo cp "$REPO/deploy/systemd/homecam-recording-canary.timer" /etc/systemd/system/
 # Install the optional acoustic-event watcher definition, but deliberately do
 # not enable or start it below.  It must remain dormant until microphone
 # hardware is intentionally configured and the operator enables audio events.
@@ -153,6 +155,7 @@ sudo systemctl enable --now homecam-jetson-perf.service || true
 sudo systemctl enable --now mediamtx.service
 sudo systemctl enable --now homecam-server.service
 sudo systemctl enable --now homecam-detect.service
+sudo systemctl enable --now homecam-recording-canary.timer
 
 # Brief settle.
 sleep 5

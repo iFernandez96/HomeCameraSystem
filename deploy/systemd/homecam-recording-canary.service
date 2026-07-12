@@ -1,0 +1,22 @@
+[Unit]
+Description=HomeCam end-to-end recording assurance check
+Wants=mediamtx.service homecam-server.service
+After=mediamtx.service homecam-server.service srv-homecam\x2dmedia.mount
+RequiresMountsFor=/srv/homecam-media
+
+[Service]
+Type=oneshot
+User=israel
+Group=israel
+UMask=0077
+WorkingDirectory=/home/israel/HomeCameraSystem
+Environment=RECORDINGS_DIR=/srv/homecam-media/recordings
+Environment=CANARY_RTSP_URL=rtsp://127.0.0.1:8554/cam
+Environment=CANARY_RESULT_URL=http://127.0.0.1:8000/api/_internal/recording-assurance
+ExecStartPre=/bin/mountpoint -q /srv/homecam-media
+ExecStartPre=/usr/bin/test -f /srv/homecam-media/.homecam-media
+ExecStart=/usr/bin/python3 /home/israel/HomeCameraSystem/detection/recording_canary.py
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=90
+

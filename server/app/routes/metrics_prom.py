@@ -75,6 +75,7 @@ async def metrics_prom() -> str:
     from ..services.detection import detection_service
     from ..services.health import worker_health
     from ..services.push_service import push_service
+    from ..services.recording_assurance import status as recording_assurance_status
 
     used_mb, total_mb = _meminfo()
     worker_alive, _last_seen_s, worker_metrics = worker_health.snapshot()
@@ -145,6 +146,38 @@ async def metrics_prom() -> str:
         round(time.time() - START_TIME, 1),
         "Server process uptime in seconds",
     ))
+
+    assurance = recording_assurance_status()
+    if assurance["checked_at"] is not None:
+        parts.append(_line(
+            "homecam_recording_canary_ok",
+            1 if assurance["state"] == "ok" else 0,
+            "Whether the latest RTSP recording sample fully decoded and cleaned",
+        ))
+        parts.append(_line(
+            "homecam_recording_canary_checked_age_seconds",
+            assurance["age_s"],
+            "Seconds since the most recent end-to-end recording check",
+        ))
+    storage = assurance.get("storage")
+    if isinstance(storage, dict):
+        parts.append(_line(
+            "homecam_recording_storage_writable",
+            1 if storage.get("writable") and storage.get("read_only") is not True else 0,
+            "Whether the recording filesystem accepted and fsynced a test write",
+        ))
+        parts.append(_line(
+            "homecam_recording_storage_write_probe_ms",
+            storage.get("write_probe_ms"),
+            "Fsync latency of the recording filesystem test write in milliseconds",
+        ))
+        smart = storage.get("smart_status")
+        if smart in ("healthy", "failed"):
+            parts.append(_line(
+                "homecam_recording_drive_smart_healthy",
+                1 if smart == "healthy" else 0,
+                "SMART overall-health result when exposed by the USB storage bridge",
+            ))
 
     # Worker — gauges (fps, infer_ms_*) are gated on `worker_alive`
     # because a stale value misrepresents current state. Counters

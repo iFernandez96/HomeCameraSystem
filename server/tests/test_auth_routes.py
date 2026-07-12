@@ -21,7 +21,9 @@ import sqlite3
 import pytest
 
 from app.auth import passwords, tokens, users_db
+from app.auth.login_throttle import LoginThrottle
 from app.config import settings
+from app.routes import auth as auth_routes
 from app.sessions import sessions_db
 
 
@@ -36,7 +38,9 @@ def auth_env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "cookie_secure", False)
     users_db.init_db(tmp_path / "users.db")
     sessions_db.init_db(tmp_path / "sessions.db")
+    auth_routes._login_throttle.clear()
     yield tmp_path
+    auth_routes._login_throttle.clear()
 
 
 @pytest.fixture
@@ -106,6 +110,50 @@ def test_login_unknown_user_returns_401(client, auth_env):
     )
     assert res.status_code == 401
     assert "homecam_access" not in res.cookies
+
+
+def test_given_repeated_bad_passwords_when_limit_reached_then_login_is_throttled(
+    client, seeded_user, monkeypatch
+):
+    # arrange — a small deterministic gate keeps the route test fast.
+    now = [100.0]
+    monkeypatch.setattr(
+        auth_routes,
+        "_login_throttle",
+        LoginThrottle(failure_limit=2, base_block_s=7, clock=lambda: now[0]),
+    )
+    body = {"username": "alice", "password": "wrong"}
+
+    # act
+    first = client.post("/api/auth/login", json=body)
+    second = client.post("/api/auth/login", json=body)
+    blocked = client.post("/api/auth/login", json=body)
+
+    # assert
+    assert first.status_code == 401
+    assert second.status_code == 401
+    assert blocked.status_code == 429
+    assert blocked.headers["retry-after"] == "7"
+    assert blocked.json() == {"detail": "too many login attempts; try again shortly"}
+    assert "homecam_access" not in blocked.cookies
+
+
+def test_given_throttled_username_when_different_peer_logs_in_then_attempt_is_independent(
+    client, seeded_user, monkeypatch
+):
+    # arrange
+    throttle = LoginThrottle(failure_limit=1, base_block_s=30)
+    throttle.record_failure("alice", "198.51.100.8")
+    monkeypatch.setattr(auth_routes, "_login_throttle", throttle)
+
+    # act — TestClient's socket peer is not the blocked address.
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "hunter2"},
+    )
+
+    # assert
+    assert response.status_code == 200
 
 
 def test_login_extra_field_rejected_as_422(client, seeded_user):

@@ -182,6 +182,7 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
             "audio_enabled",
             "recording_gb_per_day",
             "protected_recording_gb",
+            "recording_assurance",
         }
 
 

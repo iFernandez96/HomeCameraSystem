@@ -42,6 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from fastapi import Depends
 
 from ..auth import passwords, tokens, users_db
+from ..auth.login_throttle import LoginThrottle
 from ..auth.dependencies import (
     COOKIE_ACCESS,
     COOKIE_REFRESH,
@@ -59,6 +60,7 @@ log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+_login_throttle = LoginThrottle()
 
 
 def _ua(request: Request) -> str:
@@ -224,6 +226,23 @@ def _clear_session_cookies(response: Response) -> None:
 
 @router.post("/login", response_model=LoginOut)
 async def login(body: LoginIn, response: Response, request: Request) -> LoginOut:
+    remote_addr = _remote_addr(request)
+    retry_after = _login_throttle.retry_after(body.username, remote_addr)
+    if retry_after > 0:
+        auth_rejected(
+            log,
+            "POST",
+            "/api/auth/login",
+            "login throttled",
+            sub=body.username,
+            cookie_present=False,
+        )
+        _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        raise HTTPException(
+            status_code=429,
+            detail="too many login attempts; try again shortly",
+            headers={"Retry-After": str(retry_after)},
+        )
     user = users_db.get_user(settings.users_db_path, body.username)
     if user is None:
         # Timing-oracle defense: spend the same ~120 ms verifying
@@ -239,6 +258,7 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
             sub=body.username, cookie_present=False,
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        _login_throttle.record_failure(body.username, remote_addr)
         raise HTTPException(status_code=401, detail="invalid credentials")
     if not passwords.verify_password(body.password, user["password_hash"]):
         auth_rejected(
@@ -246,7 +266,9 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
             sub=body.username, cookie_present=False,
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        _login_throttle.record_failure(body.username, remote_addr)
         raise HTTPException(status_code=401, detail="invalid credentials")
+    _login_throttle.record_success(body.username, remote_addr)
     now = time.time()
     access_jti, refresh_jti = _set_session_cookies(
         response, request, user["username"], user["role"]

@@ -18,6 +18,8 @@ Self-hosted, Ring-style camera viewer + controller for an Nvidia Jetson Nano 2GB
 - Software-ready two-way Opus audio, physical doorbell input, and optional acoustic-event watcher
 - Guarded deterrence adapter with foreground confirmation, arming, cooldown, and audit history
 - Recovery-derived outage history with an explicit external-monitor limitation
+- Scheduled RTSP-to-MP4 recording assurance with full decode, strict cleanup,
+  USB write/fsync proof, SMART health when available, and transition alerts
 - Push notifications to phone when something is detected
 - Remote control of the Jetson: capture photo, reboot, toggle detection, view stats
 - One codebase, two surfaces: Android home screen + any browser
