@@ -592,7 +592,8 @@ describe('stepPlayground vertical mounts play the climb loop (interaction wave 2
       const panther = sim.cats.find((c) => c.id === 'panther')
       if (panther?.climbing) {
         sawClimb = true
-        expect(playgroundAnimationPlanFor(panther, panther.phaseTime).frame).toMatch(/^climb_/)
+        // wave-5: the climb family rotates plain cling with paw-over-paw
+        expect(playgroundAnimationPlanFor(panther, panther.phaseTime).frame).toMatch(/^(climb_|pawover_)/)
       }
     }
 

@@ -28,7 +28,7 @@ describe('SideRail', () => {
     authUser = { username: 'alice', role: 'viewer' }
   })
 
-  it('GIVEN the desktop rail WHEN it renders THEN it exposes all 6 destinations including Review and Playground (NAV-1 2026-07-07: the phone BottomNav stays at 4 in every orientation; Playground Slice A is desktop-rail-only — see the width-math note in BottomNav.tsx)', () => {
+  it('GIVEN the desktop rail WHEN it renders THEN it exposes the same four primary destinations as mobile', () => {
     // arrange / act
     renderRail()
     const links = screen.getAllByRole('link')
@@ -36,15 +36,11 @@ describe('SideRail', () => {
     // assert — pin count + destinations so a roster change here is a
     // conscious decision, not a side effect of a BottomNav edit (the
     // two used to share copy-pasted glyphs and drifted together).
-    expect(links).toHaveLength(6)
+    expect(links).toHaveLength(4)
     const hrefs = {
       home: screen.getByRole('link', { name: /home/i }).getAttribute('href'),
       events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
       faces: screen.getByRole('link', { name: /faces/i }).getAttribute('href'),
-      review: screen.getByRole('link', { name: /review/i }).getAttribute('href'),
-      playground: screen
-        .getByRole('link', { name: /playground/i })
-        .getAttribute('href'),
       settings: screen
         .getByRole('link', { name: /settings/i })
         .getAttribute('href'),
@@ -53,27 +49,16 @@ describe('SideRail', () => {
       home: '/',
       events: '/events',
       faces: '/people',
-      review: '/training/review',
-      playground: '/playground',
       settings: '/settings',
     })
   })
 
-  it('Given the admin operator account, When SideRail renders, Then God View is visible', () => {
-    // arrange
+  it('Given the admin operator account, When SideRail renders, Then advanced tools stay out of primary navigation', () => {
     authUser = { username: 'admin', role: 'admin' }
-
-    // act
-    renderRail()
-
-    // assert
-    expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
-  })
-
-  it('Given another owner account, When SideRail renders, Then God View is undiscoverable', () => {
-    authUser = { username: 'not-admin', role: 'owner' }
     renderRail()
     expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /review/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /playground/i })).not.toBeInTheDocument()
   })
 
   it('GIVEN the rail renders WHEN screen readers walk the landmarks THEN a "Main navigation" nav landmark is announced and every icon is aria-hidden (shared NavIcons module keeps the Dana #2 treatment on both nav surfaces)', () => {

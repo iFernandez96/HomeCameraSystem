@@ -228,18 +228,40 @@ const SHARED_FRAMES = [
   'squat_n2',
   'strain_ab',
   'kick_ab',
+  // Wave-5 slices 2-4: poop arc, groom targets, stalk/freeze, sleep
+  // variants, gait variants + skid, dig, head-lead, puff, micro-tails.
+  'circle_a', 'circle_ab', 'circle_b', 'sniffspot_a',
+  'gface_a', 'gface_ab', 'gface_b',
+  'gtail_a', 'gtail_ab', 'gtail_b',
+  'gshoulder_0', 'gshoulder_a',
+  'stalk_a', 'stalk_ab', 'stalk_b', 'freeze_0', 'freeze_a',
+  'sprawl_a', 'sprawl_ab', 'sprawl_b', 'belly_a', 'belly_b',
+  'dash_a', 'dash_ab', 'dash_b',
+  'trot_a', 'trot_ab', 'trot_b',
+  'skid_a', 'skid_ab', 'skid_b',
+  'dropland_a', 'dropland_ab', 'dropland_b',
+  'dig_a', 'dig_ab', 'dig_b', 'relief_a',
+  'headlead_0', 'headlead_a', 'puff_0', 'puff_a',
+  'pounce_land2', 'sniff_n1',
+  'tflup_a', 'tflup_b', 'tflslam_a', 'yawn_2', 'earflick_b',
 ] as const
 
 // Frames-30 burst 4/5 per-cat drops (codex deformed twice → dropped, same
 // policy as coco's climb_ab): mushu has NO lope frames; coco has NO
 // lookback_ab (her glance is a 2-step: lookback_0 → lookback_a).
 const LOPE_FRAMES = ['lope_a', 'lope_ab', 'lope_b'] as const
+// Wave-5 per-cat micro frames: lid beats need visible eyes (Panther/Mushu);
+// Coco's specials keep her eyes-closed canon.
+const LID_FRAMES = ['blinkh_a', 'blinkw_a'] as const
+const COCO_MICRO_FRAMES = ['cwhisker_a', 'cnose_a'] as const
 
 export type CatAnimFrame =
   | (typeof SHARED_FRAMES)[number]
   | 'blink'
   | 'sleep_b2'
   | (typeof LOPE_FRAMES)[number]
+  | (typeof LID_FRAMES)[number]
+  | (typeof COCO_MICRO_FRAMES)[number]
   | 'lookback_ab'
 
 /** The checked-in asset manifest. Coco deliberately has no blink.
@@ -251,9 +273,9 @@ export type CatAnimFrame =
     Frames-30 variants: lope is panther+coco, lookback_ab panther+mushu
     (each dropped for the third cat after two deformed generations). */
 export const CAT_ANIM_MANIFEST: Record<CatAnimId, readonly CatAnimFrame[]> = {
-  panther: [...SHARED_FRAMES, 'blink', ...LOPE_FRAMES, 'lookback_ab'],
-  mushu: [...SHARED_FRAMES, 'blink', 'lookback_ab'],
-  coco: [...SHARED_FRAMES, 'sleep_b2', ...LOPE_FRAMES],
+  panther: [...SHARED_FRAMES, 'blink', ...LOPE_FRAMES, ...LID_FRAMES, 'lookback_ab'],
+  mushu: [...SHARED_FRAMES, 'blink', ...LID_FRAMES, 'lookback_ab'],
+  coco: [...SHARED_FRAMES, 'sleep_b2', ...LOPE_FRAMES, ...COCO_MICRO_FRAMES],
 }
 
 export type CatAnimStep = Readonly<{
@@ -630,9 +652,12 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'arch_n3', ms: 100 },
     { frame: 'arch_b', ms: 500 },
   ]),
-  // Scared entry: back away low (661ms), then hold retreat_b until the
-  // bout expires into the shake_off recovery.
+  // Scared entry: the tail PUFFS bottle-brush first (wave-5 slice 4),
+  // then the cat backs away low. 661 -> 1061ms, deliberate growth; the
+  // scared bout's nominal duration comfortably covers it.
   retreat: allCats([
+    { frame: 'puff_0', ms: 130 },
+    { frame: 'puff_a', ms: 270 },
     { frame: 'retreat_a', ms: 90 },
     { frame: 'retreat_n1', ms: 90 },
     { frame: 'retreat_ab', ms: 80 },
@@ -771,10 +796,13 @@ export const CAT_ANIM_SEQUENCES = {
   ]),
   // yawn_0 is the seated→gape lead-in; wave 2 splits it with yawn_1 so
   // the mouth opens through a midpoint — the 901ms total stands.
+  // Wave-5: yawn_2 closes the jaw through a midpoint — 901 -> 1021ms,
+  // deliberate.
   yawn: allCats([
     { frame: 'yawn_0', ms: 75 },
     { frame: 'yawn_1', ms: 75 },
     { frame: 'yawn', ms: 750 },
+    { frame: 'yawn_2', ms: 120 },
     { frame: 'seated', ms: 1 },
   ]),
   // Frames-30 wave 2: ~25% of yawns end in a blep — the tongue just...
@@ -783,6 +811,7 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'yawn_0', ms: 75 },
     { frame: 'yawn_1', ms: 75 },
     { frame: 'yawn', ms: 750 },
+    { frame: 'yawn_2', ms: 120 },
     { frame: 'blep', ms: 900 },
     { frame: 'seated', ms: 1 },
   ]),
@@ -797,6 +826,10 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'kick_ab', ms: 70 },
     { frame: 'kick_a', ms: 110 },
     { frame: 'kick_ab', ms: 110 },
+    // Wave-5: inspect your work, then the relieved face. 721 -> 1920ms,
+    // deliberate; the kick_dirt activity duration grew to cover it.
+    { frame: 'sniffspot_a', ms: 500 },
+    { frame: 'relief_a', ms: 699 },
     { frame: 'side_stand', ms: 1 },
   ]),
   // Turn-around pivot (2026-07-11, "cats turn around soo slowly"):
@@ -946,6 +979,149 @@ export const CAT_ANIM_SEQUENCES = {
     { frame: 'wakestretch_ab', ms: 300 },
     { frame: 'wakestretch_b', ms: 480 },
     { frame: 'seated', ms: 1 },
+  ]),
+  // === Wave-5 slice 2-4 wiring ==============================================
+  // Two more 150ms gallop variants for the chase/flee rotation — dash is
+  // the flat-out ears-pinned sprint (mushu's lope substitute), trot the
+  // bouncy diagonal gait. Velocity math is untouched (same cycle).
+  run_dash: allCats([
+    { frame: 'dash_a', ms: 38 },
+    { frame: 'dash_ab', ms: 37 },
+    { frame: 'dash_b', ms: 38 },
+    { frame: 'dash_ab', ms: 37 },
+  ]),
+  run_trot: allCats([
+    { frame: 'trot_a', ms: 38 },
+    { frame: 'trot_ab', ms: 37 },
+    { frame: 'trot_b', ms: 38 },
+    { frame: 'trot_ab', ms: 37 },
+  ]),
+  // The comedic brake: a chase/flee bout ends through a skid-stop beat
+  // (interposed activity, same idiom as shake_off/kick_dirt).
+  skid_stop: allCats([
+    { frame: 'skid_a', ms: 90 },
+    { frame: 'skid_ab', ms: 80 },
+    { frame: 'skid_b', ms: 130 },
+    { frame: 'side_stand', ms: 1 },
+  ]),
+  // Pre-squat ritual: tight circling with a couple of testing digs, then
+  // the squat bout takes over. Entry choreography for `pooped` (900ms).
+  poop_circle: allCats([
+    { frame: 'circle_a', ms: 130 },
+    { frame: 'circle_ab', ms: 120 },
+    { frame: 'circle_b', ms: 130 },
+    { frame: 'circle_ab', ms: 120 },
+    { frame: 'dig_a', ms: 130 },
+    { frame: 'dig_ab', ms: 120 },
+    { frame: 'dig_b', ms: 130 },
+    { frame: 'dig_ab', ms: 119 },
+    // settle into the squat-ready crouch — keeps the pose-join sweep
+    // legal (the squat bout opens from the crouched group).
+    { frame: 'crouch', ms: 1 },
+  ]),
+  // Sleep-entry variants rolled per nap (boutVariant): the flat side
+  // sprawl (slow shifting hold) and the full belly-up trust pose. The
+  // curl-down chain still plays first — a cat settling then rolling over
+  // reads exactly right — the variant swaps the ONGOING loop.
+  sprawl_nap: allCats([
+    { frame: 'sprawl_a', ms: 500 },
+    { frame: 'sprawl_ab', ms: 450 },
+    { frame: 'sprawl_b', ms: 2200 },
+    { frame: 'sprawl_ab', ms: 450 },
+  ]),
+  belly_nap: allCats([
+    { frame: 'belly_a', ms: 1600 },
+    { frame: 'belly_b', ms: 1600 },
+  ]),
+  // Groom rotation grows to six targets: the face wash (paw over ear),
+  // the tail groom, and the shoulder twist join the paw/chest/hind-leg
+  // bouts. Face/tail mirror the 1801ms bout shape; shoulder is a short
+  // 1200ms twist-and-lick.
+  gface_bout: allCats([
+    { frame: 'gface_a', ms: 210 },
+    { frame: 'gface_ab', ms: 210 },
+    { frame: 'gface_b', ms: 240 },
+    { frame: 'gface_ab', ms: 240 },
+    { frame: 'gface_a', ms: 210 },
+    { frame: 'gface_ab', ms: 210 },
+    { frame: 'gface_b', ms: 480 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  gtail_bout: allCats([
+    { frame: 'gtail_a', ms: 210 },
+    { frame: 'gtail_ab', ms: 210 },
+    { frame: 'gtail_b', ms: 240 },
+    { frame: 'gtail_ab', ms: 240 },
+    { frame: 'gtail_a', ms: 210 },
+    { frame: 'gtail_ab', ms: 210 },
+    { frame: 'gtail_b', ms: 480 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  gshoulder_bout: allCats([
+    { frame: 'gshoulder_0', ms: 180 },
+    { frame: 'gshoulder_a', ms: 420 },
+    { frame: 'gshoulder_0', ms: 180 },
+    { frame: 'gshoulder_a', ms: 419 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  // Micro-idles (seated pools). Coco never opens her eyes, so she skips
+  // the lid beats and gets her own whisker-fan + air-sniff specials —
+  // the per-cat empty-array idiom the pools already understand.
+  blink_half: {
+    panther: [{ frame: 'blinkh_a', ms: 200 }, { frame: 'seated', ms: 1 }],
+    mushu: [{ frame: 'blinkh_a', ms: 200 }, { frame: 'seated', ms: 1 }],
+    coco: [],
+  },
+  wink: {
+    panther: [{ frame: 'blinkw_a', ms: 300 }, { frame: 'seated', ms: 1 }],
+    mushu: [{ frame: 'blinkw_a', ms: 300 }, { frame: 'seated', ms: 1 }],
+    coco: [],
+  },
+  whisker_fan: {
+    panther: [],
+    mushu: [],
+    coco: [{ frame: 'cwhisker_a', ms: 350 }, { frame: 'seated', ms: 1 }],
+  },
+  nose_sniff: {
+    panther: [],
+    mushu: [],
+    coco: [{ frame: 'cnose_a', ms: 400 }, { frame: 'seated', ms: 1 }],
+  },
+  tail_slam: allCats([
+    { frame: 'tflslam_a', ms: 500 },
+    { frame: 'seated', ms: 1 },
+  ]),
+  // Standing micro-beats for the playground regard-hold pool: the high
+  // content tail sway and the head-leads-the-body glance.
+  tail_sway: allCats([
+    { frame: 'tflup_a', ms: 300 },
+    { frame: 'tflup_b', ms: 300 },
+    { frame: 'tflup_a', ms: 300 },
+    { frame: 'side_stand', ms: 1 },
+  ]),
+  // Belly-low hunting creep, loopable; the freeze variant holds a
+  // mid-step paw for a long alert beat. Rolled by the play pool — a
+  // stalking loop IS a cat at play.
+  stalk_creep: allCats([
+    { frame: 'stalk_a', ms: 140 },
+    { frame: 'stalk_ab', ms: 130 },
+    { frame: 'stalk_b', ms: 140 },
+    { frame: 'stalk_ab', ms: 130 },
+  ]),
+  stalk_freeze: allCats([
+    { frame: 'stalk_a', ms: 140 },
+    { frame: 'stalk_ab', ms: 130 },
+    { frame: 'stalk_b', ms: 140 },
+    { frame: 'freeze_0', ms: 120 },
+    { frame: 'freeze_a', ms: 600 },
+    { frame: 'freeze_0', ms: 120 },
+    { frame: 'stalk_ab', ms: 130 },
+  ]),
+  headlead_glance: allCats([
+    { frame: 'headlead_0', ms: 120 },
+    { frame: 'headlead_a', ms: 300 },
+    { frame: 'headlead_0', ms: 120 },
+    { frame: 'side_stand', ms: 1 },
   ]),
 } as const satisfies Record<string, PerCatSequence>
 

@@ -1,16 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { BottomNav } from './BottomNav'
-
-let authUser: { username: string; role: string } = { username: 'alice', role: 'viewer' }
-
-vi.mock('../lib/auth', () => ({
-  useAuth: () => ({
-    user: authUser,
-    logout: vi.fn(),
-  }),
-}))
 
 function renderAt(path: string) {
   return render(
@@ -21,10 +12,6 @@ function renderAt(path: string) {
 }
 
 describe('BottomNav', () => {
-  beforeEach(() => {
-    authUser = { username: 'alice', role: 'viewer' }
-  })
-
   it('when rendered, then a nav landmark with "Bottom navigation" label is announced to screen readers (iter-338: BDD-lite migration on touch)', () => {
     // arrange
     renderAt('/live')
@@ -88,21 +75,10 @@ describe('BottomNav', () => {
     })
   })
 
-  it('Given the Israel owner account, When BottomNav renders, Then God View is visible', () => {
-    // arrange
-    authUser = { username: 'Israel', role: 'owner' }
-
-    // act
-    renderAt('/')
-
-    // assert
-    expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
-  })
-
-  it('Given another owner account, When BottomNav renders, Then God View is undiscoverable', () => {
-    authUser = { username: 'not-admin', role: 'owner' }
+  it('Given an operator account, When BottomNav renders, Then advanced tools do not overload the four primary destinations', () => {
     renderAt('/')
     expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('link')).toHaveLength(4)
   })
 
   it('GIVEN the docked landscape-phone rail WHEN BottomNav renders THEN tab labels stay accessible but become visually hidden', () => {

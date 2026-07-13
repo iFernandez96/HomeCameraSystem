@@ -115,6 +115,7 @@ type Activity =
   | 'hiss' // Panther hissing
   | 'scared' // jumped back, ears down
   | 'shake_off' // wave-3: post-scare shake recovery before the next roll
+  | 'skid_stop' // wave-5: comedic brake after a chase/flee sprint
   | 'chase' // running fast at someone
   | 'flee' // running fast away
   | 'play' // happy hopping in place
@@ -336,7 +337,9 @@ function setMood(c: CatState, mood: string, durationMs: number, now: number, sec
 // run_lope is empty for mushu (dropped frames) so his pool is [run,
 // run_bound] — availability is read off the sequence table, not hardcoded.
 function rollGaitVariant(catId: CatId, previous: CatAnimSequenceName | null): CatAnimSequenceName {
-  const pool: CatAnimSequenceName[] = ['run', 'run_bound']
+  // Wave-5: dash (flat-out sprint — mushu's lope substitute) and trot
+  // join every pool; lope stays panther/coco per the drop.
+  const pool: CatAnimSequenceName[] = ['run', 'run_bound', 'run_dash', 'run_trot']
   if (CAT_ANIM_SEQUENCES.run_lope[catId].length > 0) pool.push('run_lope')
   // No immediate repeat: a cat never opens two consecutive sprints on
   // the same gallop. One Math.random() call (tests script the roll).
@@ -351,16 +354,33 @@ function rollGaitVariant(catId: CatId, previous: CatAnimSequenceName | null): Ca
 function rollBoutVariant(c: CatState, activity: Activity): CatAnimSequenceName | null {
   if (activity === 'chase' || activity === 'flee') return rollGaitVariant(c.id, c.boutVariant)
   if (activity === 'groom') {
-    const pool: CatAnimSequenceName[] = ['groom_bout', 'groom_chest_bout', 'groom_leg_bout']
+    // Wave-5: six groom targets — paw, chest, hind-leg, face wash, tail,
+    // shoulder — still one roll, still no immediate repeat.
+    const pool: CatAnimSequenceName[] = [
+      'groom_bout', 'groom_chest_bout', 'groom_leg_bout',
+      'gface_bout', 'gtail_bout', 'gshoulder_bout',
+    ]
     const choices = c.boutVariant ? pool.filter((n) => n !== c.boutVariant) : pool
     return choices[Math.floor(Math.random() * choices.length)] ?? 'groom_bout'
+  }
+  if (activity === 'sleep') {
+    // Wave-5 nap variants: curl (weighted 2x, returns null = the default
+    // sleep_breathe loop), flat side sprawl, or the belly-up trust pose.
+    // The curl-down chain always plays first; the variant swaps the
+    // ONGOING loop, and the cat "rolling over" after settling reads
+    // exactly like a real cat shifting position.
+    const r = Math.random()
+    if (r < 0.5) return null
+    return r < 0.75 ? 'sprawl_nap' : 'belly_nap'
   }
   if (activity === 'pooped') return Math.random() < 0.5 ? 'poop_squat_strained' : 'poop_squat'
   if (activity === 'pounce') return Math.random() < 0.2 ? 'pounce_tumble' : 'pounce'
   if (activity === 'play') {
     // Wave 3: play rotates pounce-loop / hop-bounce / tail-chase with no
     // immediate repeat (the pounce ACTIVITY keeps its own 20% tumble).
-    const pool: CatAnimSequenceName[] = ['pounce', 'hop_bounce', 'tailhunt']
+    // Wave-5: the hunting stalk (and its freeze-alert variant) joins the
+    // play rotation — a belly-low creep loop IS a cat at play.
+    const pool: CatAnimSequenceName[] = ['pounce', 'hop_bounce', 'tailhunt', 'stalk_creep', 'stalk_freeze']
     const choices = c.boutVariant ? pool.filter((n) => n !== c.boutVariant) : pool
     return choices[Math.floor(Math.random() * choices.length)] ?? 'pounce'
   }
@@ -1225,6 +1245,7 @@ const POSE_GROUP_BY_ACTIVITY: Record<Activity, PoseGroup> = {
   hiss: 'standing',
   scared: 'standing',
   shake_off: 'standing',
+  skid_stop: 'standing',
   // standing so the rise chains (crouch_up + seated_to_stand) play on the
   // way out of the squat before the kicks.
   kick_dirt: 'standing',
@@ -1240,9 +1261,14 @@ const ACTIVITY_ENTRY_SEQUENCES: Partial<Record<Activity, readonly CatAnimSequenc
   // Frames-30 wave 2: the post-poop dirt-kick beat — the kicks are the
   // entry choreography, then the cat holds side_stand until expiry.
   kick_dirt: ['kick_dirt'],
+  // Wave-5: the pre-squat ritual — tight circling and a couple of test
+  // digs before the squat bout takes over.
+  pooped: ['poop_circle'],
   // Wave 3: the shake-off recovery IS the entry choreography; the cat
   // then holds side_stand until expiry rolls the next beat.
   shake_off: ['shake_off'],
+  // Wave-5: the skid IS the entry choreography; hold side_stand after.
+  skid_stop: ['skid_stop'],
 }
 
 export function _catSequenceNamesForTransitionForTests(
@@ -1309,6 +1335,7 @@ const HOLD_FRAME_BY_ACTIVITY: Partial<Record<Activity, CatAnimFrame>> = {
   hiss: 'arch_b',
   scared: 'retreat_b',
   shake_off: 'side_stand',
+  skid_stop: 'side_stand',
 }
 
 // Playground Slice A: the plan builder is now the shared, activity-
@@ -1664,6 +1691,7 @@ function activityToSprite(
     case 'walk':
     case 'kick_dirt': // standing-side fallback until frames preload
     case 'shake_off': // same standing fallback
+    case 'skid_stop': // same standing fallback
       return phase % 2 === 0 ? 'walk' : 'walk2'
     case 'sit':
     case 'judge':
@@ -1788,6 +1816,9 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
   // the show from grooms and yawns.
   panther: [
     { name: 'blink', weight: 12 },
+    { name: 'blink_half', weight: 3 },
+    { name: 'wink', weight: 1 },
+    { name: 'tail_slam', weight: 2 },
     { name: 'tailflick', weight: 4 },
     { name: 'weight_shift', weight: 3 },
     { name: 'look_around_l', weight: 2 },
@@ -1800,6 +1831,9 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
   ],
   mushu: [
     { name: 'blink', weight: 12 },
+    { name: 'blink_half', weight: 3 },
+    { name: 'wink', weight: 1 },
+    { name: 'tail_slam', weight: 2 },
     { name: 'tailflick', weight: 4 },
     { name: 'weight_shift', weight: 3 },
     { name: 'look_around_l', weight: 2 },
@@ -1812,6 +1846,9 @@ const SEATED_IDLE_CHOICES: Record<CatId, readonly { name: CatAnimSequenceName; w
   ],
   coco: [
     { name: 'tailflick', weight: 8 },
+    { name: 'whisker_fan', weight: 3 },
+    { name: 'nose_sniff', weight: 2 },
+    { name: 'tail_slam', weight: 2 },
     { name: 'weight_shift', weight: 3 },
     { name: 'look_around_l', weight: 2 },
     { name: 'look_around_r', weight: 2 },
@@ -1983,7 +2020,9 @@ function stepCats(
           nextIdleLifeAt = now + rand(8000, 20000)
           catChanged = true
         }
-      } else if (now >= nextIdleLifeAt) {
+      } else if (now >= nextIdleLifeAt && !cat.boutVariant) {
+        // Curl naps only — the dream frames are curled poses and would
+        // pop a sprawled or belly-up sleeper back into a ball.
         idleSequence = 'dream_twitch'
         idleSequenceStartedAt = now
         nextIdleLifeAt = now + rand(8000, 20000)
@@ -2029,13 +2068,19 @@ function stepCats(
       // duration-jitter floor.
       if (activity === 'pooped') {
         anyChanged = true
-        return setActivity(base, 'kick_dirt', 2600, now)
+        return setActivity(base, 'kick_dirt', 3900, now)
       }
       // Wave 3: a scare always ends with the shake-off recovery beat
       // (541ms entry; 1500ms nominal covers it at the jitter floor).
       if (activity === 'scared') {
         anyChanged = true
         return setActivity(base, 'shake_off', 1500, now)
+      }
+      // Wave-5: sprints end with the comedic skid-stop brake (301ms entry;
+      // 900ms nominal covers it at the jitter floor).
+      if (activity === 'chase' || activity === 'flee') {
+        anyChanged = true
+        return setActivity(base, 'skid_stop', 900, now)
       }
       const next = _rollWithoutImmediateRepeatForTests(
         placement === 'login' ? rollLoginSolo : rollSolo,

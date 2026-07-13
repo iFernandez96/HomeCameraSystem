@@ -17,7 +17,9 @@ import { reconnectIfClosed, subscribeWsState, type WsState } from '../lib/ws'
  *
  * Premium-launch slice — three-step cadence + recovery announcement:
  *
- *  1. `connecting` — calm amber, "Connecting to camera…" — unchanged.
+ *  1. `connecting` — calm amber, "Connecting live alerts…". This
+ *      socket carries realtime event notifications, not camera media, so the
+ *      copy must remain truthful when WebRTC video is already playing.
  *  2. `closed` for ≤ ESCALATE_AFTER_MS — calm amber, "Trying to
  *      reconnect…" — covers the typical Tailscale-cellular blip
  *      without flashing red on a returning user.
@@ -328,7 +330,7 @@ function Banner({
 
   switch (kind.variant) {
     case 'connecting':
-      label = 'Connecting to camera…'
+      label = 'Connecting live alerts…'
       role = 'status'
       aria = 'polite'
       toneClass =
@@ -337,7 +339,7 @@ function Banner({
       dotPulse = 'animate-pulse'
       break
     case 'closed-soft':
-      label = 'Trying to reconnect…'
+      label = 'Reconnecting live alerts…'
       role = 'status'
       aria = 'polite'
       toneClass =

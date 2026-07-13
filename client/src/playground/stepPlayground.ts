@@ -479,11 +479,19 @@ function stepCat(
     } else if (now >= nextIdleLifeAt) {
       if (watchingBird || activity === 'watch') {
         // Window life: back-view beats only — a front-view blink would
-        // spin the cat around for a frame. Frames-30 wave 4: the head-
-        // tracking chatter bout alternates with the tailflick so the
-        // window cat visibly follows something outside every few
-        // seconds (4-9s cadence, anti-repeat via lastIdleLifeWasSpecial).
-        idleSequence = lastIdleLifeWasSpecial ? 'tailflick' : ('chatter_bout' as CatAnimSequenceName)
+        // spin the cat around for a frame. Wave-5: the binary chatter/
+        // tailflick alternation grew into a rolled pool of back-view
+        // beats; no immediate repeat (idleSequence-based filter), and
+        // 30% of sill-stands become the kneading variant.
+        const pool = [
+          'chatter_bout', 'wtail_sway', 'wpan_pan', 'wear_flick',
+          'wsill_stand', 'wduck_bout', 'wstretch_bout', 'wlie_settle',
+        ] as const
+        const prev = cat.idleSequence as string | null
+        const choices = pool.filter((n) => n !== prev)
+        let pick: string = choices[Math.floor(ctx.random() * choices.length)] ?? 'chatter_bout'
+        if (pick === 'wsill_stand' && ctx.random() < 0.3) pick = 'wsill_knead'
+        idleSequence = pick as CatAnimSequenceName
         lastIdleLifeWasSpecial = !lastIdleLifeWasSpecial
       } else if (lastIdleLifeWasSpecial) {
         idleSequence = cat.id === 'coco' ? null : 'blink'

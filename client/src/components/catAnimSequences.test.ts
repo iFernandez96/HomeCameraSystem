@@ -155,10 +155,11 @@ describe('cat animation sequences', () => {
       const miss = CAT_ANIM_SEQUENCES.pounce_tumble[catId].map((s2) => s2.frame)
       expect(miss.slice(0, hit.indexOf('pounce_land'))).toEqual(hit.slice(0, hit.indexOf('pounce_land')))
       expect(miss).toContain('tumble_b')
-      // yawn keeps 901; the blep variant owns 1801; dirt-kick exit 721
-      expect(total('yawn')).toBe(901)
-      expect(total('yawn_blep')).toBe(1801)
-      expect(total('kick_dirt')).toBe(721)
+      // Wave-5: yawn_2 winds the jaw down (+120ms deliberate); the
+      // dirt-kick exit gained the inspect + relieved-face coda.
+      expect(total('yawn')).toBe(1021)
+      expect(total('yawn_blep')).toBe(1921)
+      expect(total('kick_dirt')).toBe(1920)
     }
   })
 
@@ -247,7 +248,10 @@ describe('cat animation sequences', () => {
       stand: ['stand', 'sit_a', 'hiss_windup'],
       // slump_a: the loaf entry chain slides out of the seated hold
       seated: ['seated', 'sleep_a', 'crouch_a', 'sit_b', 'groom_a', 'slump_a'],
-      crouch: ['crouch', 'pounce_launch', 'jump_post', 'crouch_b'],
+      // circle_a: the pre-squat ritual (wave-5) deliberately rises out of
+      // the crouch to circle and dig the spot — the real-cat reposition
+      // shuffle — before settling back into the squat.
+      crouch: ['crouch', 'pounce_launch', 'jump_post', 'crouch_b', 'circle_a'],
       sleep: ['sleep', 'sleep_b'],
       side_stand: ['side_stand', 'turn'],
     }
@@ -448,13 +452,58 @@ describe('cat animation sequences', () => {
     })
   })
 
+  describe('frames-30 wave 5 — top-up sequences', () => {
+    const total = (name: keyof typeof CAT_ANIM_SEQUENCES, catId: (typeof CAT_IDS)[number] = 'panther') =>
+      CAT_ANIM_SEQUENCES[name][catId].reduce((t, s2) => t + s2.ms, 0)
+
+    it('Given the new gallop variants, When their cycles are measured, Then dash and trot both run the exact 150ms run cycle', () => {
+      // arrange / act / assert — velocity math must not depend on the roll
+      for (const catId of CAT_IDS) {
+        expect(total('run_dash', catId)).toBe(150)
+        expect(total('run_trot', catId)).toBe(150)
+      }
+    })
+
+    it('Given the wave-5 beats, When totals are measured, Then each matches its designed budget', () => {
+      // arrange / act / assert
+      expect(total('skid_stop')).toBe(301)
+      expect(total('poop_circle')).toBe(1000) // ~900ms design, 1000 as built
+      expect(total('sprawl_nap')).toBe(3600)
+      expect(total('belly_nap')).toBe(3200)
+      expect(total('gface_bout')).toBe(1801)
+      expect(total('gtail_bout')).toBe(1801)
+      expect(total('gshoulder_bout')).toBe(1200)
+      expect(total('stalk_creep')).toBe(540)
+      expect(total('stalk_freeze')).toBe(1380)
+      expect(total('tail_slam')).toBe(501)
+      expect(total('tail_sway')).toBe(901)
+      expect(total('headlead_glance')).toBe(541)
+      // poop_circle settles into the crouch so the squat bout joins legally
+      expect(CAT_ANIM_SEQUENCES.poop_circle.panther.at(-1)?.frame).toBe('crouch')
+    })
+
+    it('Given the per-cat micro idles, When availability is read, Then lids are Panther/Mushu-only and the whisker/nose specials Coco-only', () => {
+      // arrange / act / assert — the empty-array idiom the pools understand
+      expect(CAT_ANIM_SEQUENCES.blink_half.coco).toEqual([])
+      expect(CAT_ANIM_SEQUENCES.wink.coco).toEqual([])
+      expect(CAT_ANIM_SEQUENCES.blink_half.panther.length).toBeGreaterThan(0)
+      expect(CAT_ANIM_SEQUENCES.wink.mushu.length).toBeGreaterThan(0)
+      expect(CAT_ANIM_SEQUENCES.whisker_fan.panther).toEqual([])
+      expect(CAT_ANIM_SEQUENCES.nose_sniff.mushu).toEqual([])
+      expect(CAT_ANIM_SEQUENCES.whisker_fan.coco.length).toBeGreaterThan(0)
+      expect(CAT_ANIM_SEQUENCES.nose_sniff.coco.length).toBeGreaterThan(0)
+    })
+  })
+
   describe('frames-30 wave 3 — character and comedy', () => {
     it('Given every wave-3 sequence, When totals are measured, Then each matches its designed duration', () => {
       // arrange / act / assert — durations are load-bearing: activity
       // nominal lengths were chosen so jitter floors still cover them.
       const totals: Array<[keyof typeof CAT_ANIM_SEQUENCES, number]> = [
         ['hiss_arch', 1200],
-        ['retreat', 661],
+        // Wave-5: the tail puffs bottle-brush before the retreat (+400ms
+        // deliberate).
+        ['retreat', 1061],
         ['shake_off', 541],
         ['hop_bounce', 450],
         ['tailhunt', 880],

@@ -2,15 +2,11 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
   EventsIcon,
-  GodViewIcon,
   LiveIcon,
   PeopleIcon,
-  PlaygroundIcon,
   SettingsIcon,
-  TrainingIcon,
 } from './NavIcons'
 import { useRipple } from '../lib/ripple'
-import { isGodModeUser } from '../lib/roles'
 
 /**
  * iter-356.58 (layout rebuild) — SideRail replaces SideNav.
@@ -23,7 +19,7 @@ import { isGodModeUser } from '../lib/roles'
  * sits above this rail). The username/sign-out moves to the
  * bottom of the rail as icons.
  *
- * Design: 5 nav-items as 48px-tall icon buttons centered in the
+ * Design: four primary nav items as 48px-tall icon buttons centered in the
  * 64px rail. Active state = ember-on-rail-bg ring + tooltip-style
  * label that shows on hover. Bottom: sign-out icon. The rail is
  * `lg:fixed top-14` (below the 56px WatchRibbon) so the ribbon
@@ -44,41 +40,13 @@ type NavItem = {
   icon: (active: boolean) => React.ReactNode
 }
 
-// iter-356.x (Frank P3-6): Training back on the rail. Pre-fix it was
-// only reachable via the People page header link, which non-technical
-// users routinely missed; the active-learning loop and Review queue
-// were effectively invisible. Adding it as a peer entry surfaces the
-// loop on both desktop rail and mobile BottomNav (matching change in
-// BottomNav.tsx). The iter-356.65 IA collapse traded discoverability
-// for visual quietness — that trade is reversed.
-//
-// Playroom Modern (Task 4): relabeled to match the pebble BottomNav's
-// vocabulary — Home (was Watch), Events (was History), Faces (was
-// People), Review (was Training). Routes are unchanged.
-//
-// Nav-coherence fix (painfix): the "Review" item routed to /training
-// (the raw capture browser), which doesn't match what the label
-// promises — a review QUEUE of only the captures the classifier is
-// uncertain about. /training/review (Review.tsx, shipped iter-356.12)
-// is that queue. Label stays "Review"; only the destination moves.
-//
-// UI/UX overhaul 2026-07-07 (NAV-1): the desktop rail DELIBERATELY
-// keeps 5 items while the phone BottomNav has 4 in every
-// orientation. Cross-device difference is fine; cross-orientation
-// difference (the retired `landscapeOnly` Review) was the bug.
-//
-// Playground (Slice A): desktop-rail-only destination. It stays OFF
-// the phone BottomNav deliberately — see the width-math note in
-// BottomNav.tsx (a 5th base tab means 6 with the god-mode entry,
-// which overflows the pebble at 360px) plus the NAV-1 rule that the
-// phone's 4-destination IA is a conscious cap. The vertical rail has
-// no such width budget.
+// Desktop and mobile expose the same primary destinations. Secondary
+// tools remain available from the relevant product surface instead of
+// competing with the daily camera workflow in global navigation.
 const NAV_ITEMS: NavItem[] = [
   { to: '/',                label: 'Home',       icon: (a) => <LiveIcon active={a} /> },
   { to: '/events',          label: 'Events',     icon: () => <EventsIcon /> },
   { to: '/people',          label: 'Faces',      icon: () => <PeopleIcon /> },
-  { to: '/training/review', label: 'Review',     icon: () => <TrainingIcon /> },
-  { to: '/playground',      label: 'Playground', icon: () => <PlaygroundIcon /> },
   { to: '/settings',        label: 'Settings',   icon: () => <SettingsIcon /> },
 ]
 
@@ -86,17 +54,13 @@ export function SideRail() {
   const { user, logout } = useAuth()
   const ripple = useRipple()
   const navigate = useNavigate()
-  const navItems =
-    isGodModeUser(user)
-      ? [...NAV_ITEMS, { to: '/god', label: 'God View', icon: () => <GodViewIcon /> }]
-      : NAV_ITEMS
   return (
     <nav
       aria-label="Main navigation"
       className="hidden lg:flex flex-col fixed top-14 left-0 bottom-0 w-16 bg-[var(--color-surface)] border-r border-[var(--color-border-subtle)] z-10 shadow-[var(--shadow-subtle)]"
     >
       <ul className="flex-1 flex flex-col items-center gap-1 pt-4">
-        {navItems.map((t) => (
+        {NAV_ITEMS.map((t) => (
           <li key={t.to} className="w-full flex justify-center">
             <NavLink
               to={t.to}

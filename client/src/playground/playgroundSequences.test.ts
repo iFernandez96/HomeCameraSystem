@@ -74,9 +74,10 @@ describe('playgroundSequences', () => {
     // frames each (44 shared: the 32 through wave-2c plus the 12 wave-4
     // habitat frames — mount/dismount/hamset/chatter triples — plus
     // drink_ab for panther/mushu or climb_ab for coco). Count updated
-    // deliberately 2026-07-12 (frames-30 wave 4).
+    // deliberately 2026-07-12 (frames-30 wave 4), and again 2026-07-13
+    // for the wave-5 window/climb/bout-mid pack (45 -> 85 frames/cat).
     expect(wave1.size).toBe(12)
-    expect(wave2.size).toBe(6 + 4 + 3 * 45)
+    expect(wave2.size).toBe(6 + 4 + 3 * 85)
     for (const url of wave1) {
       expect(url).toMatch(/^\/cats\/playground\/furniture\/[a-z_]+\.png$/)
       expect(wave2.has(url)).toBe(false)
@@ -95,11 +96,15 @@ describe('playgroundSequences', () => {
     // assert — tween wave 2: each stroke split in half around its
     // scratch_ab midpoint; the final full stroke keeps its original ms
     // so the pre-tween 1561ms bout total is exact.
-    expect(scratch.slice(0, 4)).toEqual([
-      { frame: 'scratch_a', ms: 140 },
-      { frame: 'scratch_ab', ms: 140 },
-      { frame: 'scratch_b', ms: 120 },
-      { frame: 'scratch_ab', ms: 120 },
+    // Wave-5: the strokes split again through the level-2 mids
+    // (scratch_n1 = a<->ab, scratch_n2 = ab<->b), totals still exact.
+    expect(scratch.slice(0, 6)).toEqual([
+      { frame: 'scratch_a', ms: 70 },
+      { frame: 'scratch_n1', ms: 70 },
+      { frame: 'scratch_ab', ms: 70 },
+      { frame: 'scratch_n2', ms: 70 },
+      { frame: 'scratch_b', ms: 60 },
+      { frame: 'scratch_n2', ms: 60 },
     ])
     expect(scratch.filter((s) => s.frame === 'scratch_a')).toHaveLength(3)
     expect(scratch.filter((s) => s.frame === 'scratch_b')).toHaveLength(3)
@@ -116,8 +121,11 @@ describe('playgroundSequences', () => {
       expect(steps[2]).toEqual({ frame: 'drink_b', ms: 150 })
     }
     expect(drink.coco.filter((s) => s.frame === 'drink_ab')).toHaveLength(0)
-    expect(drink.coco[0]).toEqual({ frame: 'drink_a', ms: 260 })
-    expect(drink.coco[1]).toEqual({ frame: 'drink_b', ms: 300 })
+    // Wave-5: coco finally laps through a midpoint — drink_n1 (the
+    // direct a<->b mid) fills the role her dropped drink_ab left.
+    expect(drink.coco[0]).toEqual({ frame: 'drink_a', ms: 130 })
+    expect(drink.coco[1]).toEqual({ frame: 'drink_n1', ms: 130 })
+    expect(drink.coco[2]).toEqual({ frame: 'drink_b', ms: 300 })
     for (const catId of PLAYGROUND_CAT_IDS) {
       const steps = drink[catId]
       expect(steps.filter((s) => s.frame === 'drink_a')).toHaveLength(4)
@@ -139,9 +147,13 @@ describe('playgroundSequences', () => {
       { frame: 'climb_ab', ms: 100 },
     ])
     for (const catId of ['panther', 'mushu'] as const) {
+      // Wave-5: climb_n1 (the direct a<->b mid) gives panther/mushu the
+      // same 4-step ping-pong coco's climb_ab always had.
       expect(PLAYGROUND_PER_CAT_SEQUENCES.climb[catId]).toEqual([
-        { frame: 'climb_a', ms: 200 },
-        { frame: 'climb_b', ms: 200 },
+        { frame: 'climb_a', ms: 100 },
+        { frame: 'climb_n1', ms: 100 },
+        { frame: 'climb_b', ms: 100 },
+        { frame: 'climb_n1', ms: 100 },
       ])
     }
     expect(PLAYGROUND_SEQUENCES.hammock_hold).toEqual([{ frame: 'hammock_lie', ms: 1 }])

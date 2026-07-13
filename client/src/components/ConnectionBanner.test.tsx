@@ -65,7 +65,7 @@ describe('ConnectionBanner', () => {
       return () => {}
     })
     render(<ConnectionBanner />)
-    expect(screen.getByRole('status')).toHaveTextContent(/connecting to camera/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/connecting live alerts/i)
   })
 
   it('Given the socket goes closed past the post-auth grace, When the first 10 s have not yet elapsed, Then a soft amber "Trying to reconnect" status is announced via role="status" (premium-launch slice)', () => {
@@ -87,7 +87,7 @@ describe('ConnectionBanner', () => {
       })
 
       // assert — soft state is polite role="status", not alert.
-      expect(screen.getByRole('status')).toHaveTextContent(/trying to reconnect/i)
+      expect(screen.getByRole('status')).toHaveTextContent(/reconnecting live alerts/i)
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
@@ -193,7 +193,7 @@ describe('ConnectionBanner', () => {
       act(() => {
         vi.advanceTimersByTime(2_100)
       })
-      expect(screen.getByText(/trying to reconnect/i)).toBeInTheDocument()
+      expect(screen.getByText(/reconnecting live alerts/i)).toBeInTheDocument()
 
       // act — socket recovers.
       act(() => {

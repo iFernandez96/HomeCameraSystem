@@ -5,6 +5,7 @@ import {
   _animationPlanForForTests,
   _catSequenceNamesForTransitionForTests,
   _resetCatWalkAnimationCacheForTests,
+  _rollBoutVariantForTests,
   _rollGaitVariantForTests,
   _rollWithoutImmediateRepeatForTests,
   _setActivityForTests,
@@ -1100,5 +1101,59 @@ describe('CatLayer', () => {
       expect(twitchFlinch.frame).toBe('dream_b')
       expect(afterIdle.frame).toMatch(/^breath_/)
     })
+  })
+})
+
+describe('frames-30 wave 5 — engine behaviors', () => {
+  it('Given a chase that expires, When stepCats rolls the next beat, Then the cat brakes through the skid_stop activity first', () => {
+    // arrange — a chasing cat past its activityUntil
+    const cat = {
+      ...makeCatForTests({ id: 'panther' }),
+      activity: 'chase' as const,
+      previousActivity: 'walk' as const,
+      activityStartedAt: 0,
+      activityUntil: 900,
+    }
+
+    // act
+    const out = _stepCatsForTests([cat], 1000, 16, { current: 0 }, 'app')
+
+    // assert
+    expect(out[0]!.activity).toBe('skid_stop')
+  })
+
+  it('Given the groom pool, When bouts are rolled repeatedly, Then all six targets appear and no bout repeats back-to-back', () => {
+    // arrange
+    let cat = { ...makeCatForTests({ id: 'mushu' }), boutVariant: null as string | null }
+    const seen = new Set<string>()
+
+    // act
+    let prev: string | null = null
+    for (let i = 0; i < 120; i++) {
+      const rolled = _rollBoutVariantForTests(cat as never, 'groom')
+      expect(rolled).not.toBe(prev)
+      seen.add(String(rolled))
+      prev = rolled
+      cat = { ...cat, boutVariant: rolled }
+    }
+
+    // assert
+    expect([...seen].sort()).toEqual([
+      'gface_bout', 'groom_bout', 'groom_chest_bout',
+      'groom_leg_bout', 'gshoulder_bout', 'gtail_bout',
+    ])
+  })
+
+  it('Given nap rolls under scripted random, When sleep starts, Then curl/sprawl/belly follow the 50/25/25 thresholds', () => {
+    // arrange / act / assert
+    const cat = makeCatForTests({ id: 'coco' })
+    const r = vi.spyOn(Math, 'random')
+    r.mockReturnValue(0.4)
+    expect(_rollBoutVariantForTests(cat as never, 'sleep')).toBeNull()
+    r.mockReturnValue(0.6)
+    expect(_rollBoutVariantForTests(cat as never, 'sleep')).toBe('sprawl_nap')
+    r.mockReturnValue(0.9)
+    expect(_rollBoutVariantForTests(cat as never, 'sleep')).toBe('belly_nap')
+    r.mockRestore()
   })
 })

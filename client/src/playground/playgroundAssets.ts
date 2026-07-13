@@ -111,6 +111,25 @@ const SHARED_PLAYGROUND_CAT_FRAMES = [
   'chatter_a',
   'chatter_ab',
   'chatter_b',
+  // Wave-5 slices 3-4 (2026-07-12/13): bout second-level midpoints, the
+  // window-life pack (all back views), paw-over-paw climbing, and the
+  // crunch chew. scrhi_n*/mount_n*/dismount_n* ride their pairs' canvas
+  // groups; everything else is 128-tall.
+  'scratch_n1', 'scratch_n2',
+  'scrhi_n1', 'scrhi_n2',
+  'bat_n1', 'bat_n2',
+  'eat_n1', 'eat_n2', 'eatlift_n1', 'crunch_a',
+  'drink_n1', 'pawdip_n1',
+  'mount_n1', 'mount_n2', 'dismount_n1', 'dismount_n2', 'climb_n1',
+  'hamset_n1', 'chatter_n1', 'chatter_n2',
+  'wtail_a', 'wtail_ab', 'wtail_b',
+  'wear_a',
+  'wpan_a', 'wpan_ab', 'wpan_b',
+  'wcrouch_a',
+  'wsill_a', 'wsill_ab', 'wsill_b',
+  'wduck_a', 'wlie_a', 'wstretch_a',
+  'knead_a', 'knead_ab', 'knead_b',
+  'pawover_a', 'pawover_ab', 'pawover_b',
 ] as const
 
 /** Full frame-name union (URL routing + typing). Two tween midpoints

@@ -1,43 +1,10 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { EventsIcon, GodViewIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
+import { EventsIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
 import { useRipple } from '../lib/ripple'
-import { useAuth } from '../lib/auth'
-import { isGodModeUser } from '../lib/roles'
 
-// iter-356.x (Frank P3-6): pre-fix Training and Review queue were
-// only reachable via the People page header link, which non-technical
-// users routinely missed. Adding Training as a peer BottomNav entry
-// surfaces the active-learning loop on mobile. 5 tabs at 390px ≈ 78px
-// each — comfortable for the 22px icons plus a single short label.
-// Structural overhaul (2026-07-02): four tabs. Watch (the new home:
-// live + today) replaces Live; Events reads as History; Training
-// moved off the bar — it lives one tap inside People (its header
-// link), which matches how often a family member actually visits it.
-//
-// Playroom Modern (Task 4): relabeled for the pebble bar — Home
-// (was Watch), Events (was History), Faces (was People). Routes are
-// unchanged; only the accessible names/visible copy moved.
-//
-// UI/UX overhaul 2026-07-07 (NAV-1): the previous nav-coherence fix
-// added a `landscapeOnly` Review entry that showed ONLY in the
-// landscape-phone left-rail dock. The live device run-through found
-// the opposite bug: rotating the phone now CHANGED the app's
-// information architecture — 4 destinations in portrait, 5 in
-// landscape — which is disorienting on rotate. Orientation must not
-// change IA. Phone (portrait AND landscape) exposes the same 4
-// destinations; Review is one tap inside Faces (the People page
-// header link). The desktop SideRail keeps its 5-item roster — a
-// cross-DEVICE difference is acceptable, a cross-ORIENTATION one
-// is not.
-//
-// Playground (Slice A): deliberately NOT a tab here. The width math
-// fails at 360px: the pebble's inner strip is ~360 - 28 (mx-3.5) -
-// 20 (px-2.5) - 3 (border) ≈ 309px, and each tab's icon row is a
-// w-14 (56px) span — 5 base tabs + the god-mode God View entry = 6
-// tabs at ~51px each, which overflows the 56px icon span. It also
-// re-litigates the NAV-1 4-destination phone IA cap above. The
-// Playground lives on the desktop SideRail; phones reach it by URL /
-// deep link until a dedicated mobile entry point is designed.
+// One stable four-destination information architecture on every device.
+// Contextual tools stay where they are used: Training/Review in Faces,
+// Playground on Home, and God View in Settings → Account & System.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },
@@ -48,11 +15,6 @@ const tabs = [
 export function BottomNav() {
   const ripple = useRipple()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const visibleTabs =
-    isGodModeUser(user)
-      ? [...tabs, { to: '/god', label: 'God View', icon: GodViewIcon }]
-      : tabs
   return (
     <nav
       aria-label="Bottom navigation"
@@ -101,7 +63,7 @@ export function BottomNav() {
     >
       {/* Premium-launch slice (mobile-view-auditor A2): lateral
           safe-area inset on the inner tab strip in landscape. Pre-
-          fix the 5-tab `flex-1` distribution didn't reserve room
+          fix the tab distribution didn't reserve room
           for the iPhone Dynamic Island (~47 px left) or the home-
           indicator strip (~21 px right) in landscape PWA standalone.
           The leftmost "Live" tab's icon + label sat partially behind
@@ -113,7 +75,7 @@ export function BottomNav() {
           targets to the safe inner band. Android (zero insets) is
           unchanged. */}
       <div className="bottomnav-inner flex landscape-phone:flex-col landscape-phone:h-full landscape-phone:justify-center landscape-phone:gap-1.5">
-        {visibleTabs.map((t) => (
+        {tabs.map((t) => (
           <NavLink
             key={t.to}
             to={t.to}

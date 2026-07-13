@@ -28,25 +28,39 @@ export const PLAYGROUND_SEQUENCES = {
   // Toy-batting bout — two quick paw swipes, then settle back to the
   // shared seated hold (served from /cats/anim/, not the playground set).
   bat_bout: [
-    { frame: 'bat_a', ms: 70 },
-    { frame: 'bat_ab', ms: 70 },
-    { frame: 'bat_b', ms: 60 },
-    { frame: 'bat_ab', ms: 60 },
+    { frame: 'bat_a', ms: 35 },
+    { frame: 'bat_n1', ms: 35 },
+    { frame: 'bat_ab', ms: 35 },
+    { frame: 'bat_n2', ms: 35 },
+    { frame: 'bat_b', ms: 30 },
+    { frame: 'bat_n2', ms: 30 },
+    { frame: 'bat_ab', ms: 30 },
+    { frame: 'bat_n1', ms: 30 },
     { frame: 'bat_a', ms: 140 },
     { frame: 'seated', ms: 1 },
   ],
   // Food-bowl bout — three unhurried chew cycles, then the seated hold.
   eat_bout: [
-    { frame: 'eat_a', ms: 175 },
-    { frame: 'eat_ab', ms: 175 },
-    { frame: 'eat_b', ms: 150 },
-    { frame: 'eat_ab', ms: 150 },
-    { frame: 'eat_a', ms: 175 },
-    { frame: 'eat_ab', ms: 175 },
-    { frame: 'eat_b', ms: 150 },
-    { frame: 'eat_ab', ms: 150 },
-    { frame: 'eat_a', ms: 175 },
-    { frame: 'eat_ab', ms: 175 },
+    { frame: 'eat_a', ms: 87 },
+    { frame: 'eat_n1', ms: 88 },
+    { frame: 'eat_ab', ms: 87 },
+    { frame: 'eat_n2', ms: 88 },
+    { frame: 'eat_b', ms: 75 },
+    { frame: 'eat_n2', ms: 75 },
+    { frame: 'eat_ab', ms: 75 },
+    { frame: 'eat_n1', ms: 75 },
+    { frame: 'eat_a', ms: 87 },
+    { frame: 'eat_n1', ms: 88 },
+    { frame: 'eat_ab', ms: 87 },
+    { frame: 'eat_n2', ms: 88 },
+    { frame: 'eat_b', ms: 75 },
+    { frame: 'eat_n2', ms: 75 },
+    { frame: 'eat_ab', ms: 75 },
+    { frame: 'eat_n1', ms: 75 },
+    { frame: 'eat_a', ms: 87 },
+    { frame: 'eat_n1', ms: 88 },
+    { frame: 'eat_ab', ms: 87 },
+    { frame: 'eat_n2', ms: 88 },
     { frame: 'eat_b', ms: 300 },
     { frame: 'seated', ms: 1 },
   ],
@@ -58,16 +72,26 @@ export const PLAYGROUND_SEQUENCES = {
   // Scratching-post bout — three deliberate full-arm strokes (slower
   // than the toy-bat flurry), then settle back to the seated hold.
   scratch_bout: [
-    { frame: 'scratch_a', ms: 140 },
-    { frame: 'scratch_ab', ms: 140 },
-    { frame: 'scratch_b', ms: 120 },
-    { frame: 'scratch_ab', ms: 120 },
-    { frame: 'scratch_a', ms: 140 },
-    { frame: 'scratch_ab', ms: 140 },
-    { frame: 'scratch_b', ms: 120 },
-    { frame: 'scratch_ab', ms: 120 },
-    { frame: 'scratch_a', ms: 140 },
-    { frame: 'scratch_ab', ms: 140 },
+    { frame: 'scratch_a', ms: 70 },
+    { frame: 'scratch_n1', ms: 70 },
+    { frame: 'scratch_ab', ms: 70 },
+    { frame: 'scratch_n2', ms: 70 },
+    { frame: 'scratch_b', ms: 60 },
+    { frame: 'scratch_n2', ms: 60 },
+    { frame: 'scratch_ab', ms: 60 },
+    { frame: 'scratch_n1', ms: 60 },
+    { frame: 'scratch_a', ms: 70 },
+    { frame: 'scratch_n1', ms: 70 },
+    { frame: 'scratch_ab', ms: 70 },
+    { frame: 'scratch_n2', ms: 70 },
+    { frame: 'scratch_b', ms: 60 },
+    { frame: 'scratch_n2', ms: 60 },
+    { frame: 'scratch_ab', ms: 60 },
+    { frame: 'scratch_n1', ms: 60 },
+    { frame: 'scratch_a', ms: 70 },
+    { frame: 'scratch_n1', ms: 70 },
+    { frame: 'scratch_ab', ms: 70 },
+    { frame: 'scratch_n2', ms: 70 },
     { frame: 'scratch_b', ms: 240 },
     { frame: 'seated', ms: 1 },
   ],
@@ -90,16 +114,26 @@ export const PLAYGROUND_SEQUENCES = {
   // High-stretch scratch — same 3-stroke cadence as scratch_bout
   // (1561ms), reaching to the top of the post. 160-tall canvases.
   scrhi_bout: [
-    { frame: 'scrhi_a', ms: 140 },
-    { frame: 'scrhi_ab', ms: 140 },
-    { frame: 'scrhi_b', ms: 120 },
-    { frame: 'scrhi_ab', ms: 120 },
-    { frame: 'scrhi_a', ms: 140 },
-    { frame: 'scrhi_ab', ms: 140 },
-    { frame: 'scrhi_b', ms: 120 },
-    { frame: 'scrhi_ab', ms: 120 },
-    { frame: 'scrhi_a', ms: 140 },
-    { frame: 'scrhi_ab', ms: 140 },
+    { frame: 'scrhi_a', ms: 70 },
+    { frame: 'scrhi_n1', ms: 70 },
+    { frame: 'scrhi_ab', ms: 70 },
+    { frame: 'scrhi_n2', ms: 70 },
+    { frame: 'scrhi_b', ms: 60 },
+    { frame: 'scrhi_n2', ms: 60 },
+    { frame: 'scrhi_ab', ms: 60 },
+    { frame: 'scrhi_n1', ms: 60 },
+    { frame: 'scrhi_a', ms: 70 },
+    { frame: 'scrhi_n1', ms: 70 },
+    { frame: 'scrhi_ab', ms: 70 },
+    { frame: 'scrhi_n2', ms: 70 },
+    { frame: 'scrhi_b', ms: 60 },
+    { frame: 'scrhi_n2', ms: 60 },
+    { frame: 'scrhi_ab', ms: 60 },
+    { frame: 'scrhi_n1', ms: 60 },
+    { frame: 'scrhi_a', ms: 70 },
+    { frame: 'scrhi_n1', ms: 70 },
+    { frame: 'scrhi_ab', ms: 70 },
+    { frame: 'scrhi_n2', ms: 70 },
     { frame: 'scrhi_b', ms: 240 },
     { frame: 'seated', ms: 1 },
   ],
@@ -124,23 +158,30 @@ export const PLAYGROUND_SEQUENCES = {
   // Head-lift eat variant — the middle chew cycle lifts the head
   // mid-meal (eatlift frames), same 1951ms total as eat_bout.
   eat_lift_bout: [
-    { frame: 'eat_a', ms: 175 },
-    { frame: 'eat_ab', ms: 175 },
-    { frame: 'eat_b', ms: 150 },
+    { frame: 'eat_a', ms: 87 },
+    { frame: 'eat_n1', ms: 88 },
+    { frame: 'eat_ab', ms: 87 },
+    { frame: 'eat_n2', ms: 88 },
+    { frame: 'eat_b', ms: 75 },
+    { frame: 'eat_n2', ms: 75 },
     { frame: 'eat_ab', ms: 150 },
-    { frame: 'eatlift_a', ms: 175 },
+    { frame: 'eatlift_a', ms: 87 },
+    { frame: 'eatlift_n1', ms: 88 },
     { frame: 'eatlift_ab', ms: 175 },
     { frame: 'eatlift_b', ms: 150 },
     { frame: 'eatlift_ab', ms: 150 },
-    { frame: 'eat_a', ms: 175 },
-    { frame: 'eat_ab', ms: 175 },
+    { frame: 'eat_a', ms: 87 },
+    { frame: 'eat_n1', ms: 88 },
+    { frame: 'eat_ab', ms: 87 },
+    { frame: 'eat_n2', ms: 88 },
     { frame: 'eat_b', ms: 300 },
     { frame: 'seated', ms: 1 },
   ],
   // Sniff-the-bowl prelude — plays as an ENTRY sequence before every
   // eat bout (700ms, no hold step; the bout follows immediately).
   sniff_prelude: [
-    { frame: 'sniff_a', ms: 200 },
+    { frame: 'sniff_a', ms: 100 },
+    { frame: 'sniff_n1', ms: 100 },
     { frame: 'sniff_ab', ms: 150 },
     { frame: 'sniff_b', ms: 250 },
     { frame: 'sniff_ab', ms: 100 },
@@ -148,11 +189,14 @@ export const PLAYGROUND_SEQUENCES = {
   // Paw-dip drink variant (rare) — the cat dips a paw in the bowl and
   // licks it instead of lapping. Its own total (2951ms), pinned.
   drink_pawdip_bout: [
-    { frame: 'pawdip_a', ms: 400 },
+    { frame: 'pawdip_a', ms: 200 },
+    { frame: 'pawdip_n1', ms: 200 },
     { frame: 'pawdip_ab', ms: 250 },
     { frame: 'pawdip_b', ms: 700 },
-    { frame: 'pawdip_ab', ms: 250 },
-    { frame: 'pawdip_a', ms: 400 },
+    { frame: 'pawdip_ab', ms: 125 },
+    { frame: 'pawdip_n1', ms: 125 },
+    { frame: 'pawdip_a', ms: 200 },
+    { frame: 'pawdip_n1', ms: 200 },
     { frame: 'pawdip_ab', ms: 250 },
     { frame: 'pawdip_b', ms: 700 },
     { frame: 'seated', ms: 1 },
@@ -161,17 +205,68 @@ export const PLAYGROUND_SEQUENCES = {
   // Hammock settle-in — test-step, circle, then the lie-down hold follows
   // (800ms, no hold step; plays as part of the hammock entry chain).
   hamset_settle: [
-    { frame: 'hamset_a', ms: 260 },
+    { frame: 'hamset_a', ms: 130 },
+    { frame: 'hamset_n1', ms: 130 },
     { frame: 'hamset_ab', ms: 240 },
     { frame: 'hamset_b', ms: 300 },
   ],
   // Window chatter — back-view head-tracking beats that interrupt the
   // window_watch hold every few seconds (1350ms, no hold step).
   chatter_bout: [
-    { frame: 'chatter_a', ms: 400 },
+    { frame: 'chatter_a', ms: 200 },
+    { frame: 'chatter_n1', ms: 200 },
+    { frame: 'chatter_ab', ms: 125 },
+    { frame: 'chatter_n2', ms: 125 },
+    { frame: 'chatter_b', ms: 225 },
+    { frame: 'chatter_n2', ms: 225 },
     { frame: 'chatter_ab', ms: 250 },
-    { frame: 'chatter_b', ms: 450 },
-    { frame: 'chatter_ab', ms: 250 },
+  ],
+  // === Wave-5: window-life dwell pool (all back-view beats) =================
+  wtail_sway: [
+    { frame: 'wtail_a', ms: 350 },
+    { frame: 'wtail_ab', ms: 300 },
+    { frame: 'wtail_b', ms: 350 },
+    { frame: 'wtail_ab', ms: 300 },
+  ],
+  wpan_pan: [
+    { frame: 'wpan_a', ms: 400 },
+    { frame: 'wpan_ab', ms: 350 },
+    { frame: 'wpan_b', ms: 450 },
+  ],
+  wear_flick: [
+    { frame: 'wear_a', ms: 400 },
+  ],
+  wsill_stand: [
+    { frame: 'wsill_a', ms: 500 },
+    { frame: 'wsill_ab', ms: 400 },
+    { frame: 'wsill_b', ms: 500 },
+    { frame: 'wsill_ab', ms: 200 },
+  ],
+  // The kneading variant of the sill-stand (rolled 30% of sill beats).
+  wsill_knead: [
+    { frame: 'wsill_a', ms: 300 },
+    { frame: 'knead_a', ms: 250 },
+    { frame: 'knead_ab', ms: 200 },
+    { frame: 'knead_b', ms: 250 },
+    { frame: 'knead_ab', ms: 200 },
+    { frame: 'knead_a', ms: 250 },
+    { frame: 'wsill_ab', ms: 150 },
+  ],
+  wduck_bout: [
+    { frame: 'wduck_a', ms: 600 },
+  ],
+  wstretch_bout: [
+    { frame: 'wstretch_a', ms: 800 },
+  ],
+  wlie_settle: [
+    { frame: 'wlie_a', ms: 2400 },
+  ],
+  // Paw-over-paw climb cycle — rotates with the cling loop per climb.
+  pawover_cycle: [
+    { frame: 'pawover_a', ms: 100 },
+    { frame: 'pawover_ab', ms: 100 },
+    { frame: 'pawover_b', ms: 100 },
+    { frame: 'pawover_ab', ms: 100 },
   ],
 } as const satisfies Record<string, readonly PlaygroundAnimStep[]>
 
@@ -209,14 +304,20 @@ const drinkTweened: readonly PlaygroundAnimStep[] = [
 ]
 
 // Coco has no drink_ab — she keeps the plain 2-frame lapping rhythm.
+// Wave-5: drink_n1 (the direct a<->b midpoint) finally gives coco a
+// tweened lap — the role her dropped drink_ab left open. 2241ms exact.
 const drinkPlain: readonly PlaygroundAnimStep[] = [
-  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_n1', ms: 130 },
   { frame: 'drink_b', ms: 300 },
-  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_n1', ms: 130 },
   { frame: 'drink_b', ms: 300 },
-  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_n1', ms: 130 },
   { frame: 'drink_b', ms: 300 },
-  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_n1', ms: 130 },
   { frame: 'drink_b', ms: 300 },
   { frame: 'seated', ms: 1 },
 ]
@@ -234,9 +335,13 @@ const climbPingPong: readonly PlaygroundAnimStep[] = [
   { frame: 'climb_ab', ms: 100 },
 ]
 
+// Wave-5: climb_n1 (the direct a<->b midpoint, third-roll success) gives
+// panther/mushu the same 4-step ping-pong coco's climb_ab always had.
 const climbPlain: readonly PlaygroundAnimStep[] = [
-  { frame: 'climb_a', ms: 200 },
-  { frame: 'climb_b', ms: 200 },
+  { frame: 'climb_a', ms: 100 },
+  { frame: 'climb_n1', ms: 100 },
+  { frame: 'climb_b', ms: 100 },
+  { frame: 'climb_n1', ms: 100 },
 ]
 
 // Frames-30 wave 2c: look-up-from-the-bowl drink ending (25% roll) —
@@ -257,9 +362,11 @@ const drinkLookupTweened: readonly PlaygroundAnimStep[] = [
 ]
 
 const drinkLookupPlain: readonly PlaygroundAnimStep[] = [
-  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_n1', ms: 130 },
   { frame: 'drink_b', ms: 300 },
-  { frame: 'drink_a', ms: 260 },
+  { frame: 'drink_a', ms: 130 },
+  { frame: 'drink_n1', ms: 130 },
   { frame: 'drink_b', ms: 300 },
   { frame: 'drinkup_a', ms: 350 },
   { frame: 'drinkup_b', ms: 450 },

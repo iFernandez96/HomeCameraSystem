@@ -440,6 +440,17 @@ export const PLAYGROUND_SEQUENCE_TABLE: SequenceTable = {
   // Frames-30 wave 4: hammock settle-in entry + window chatter idle.
   hamset_settle: perCat(PLAYGROUND_SEQUENCES.hamset_settle),
   chatter_bout: perCat(PLAYGROUND_SEQUENCES.chatter_bout),
+  // Wave-5: the window-life dwell pool (all back-view beats) + the
+  // paw-over-paw climb cycle.
+  wtail_sway: perCat(PLAYGROUND_SEQUENCES.wtail_sway),
+  wpan_pan: perCat(PLAYGROUND_SEQUENCES.wpan_pan),
+  wear_flick: perCat(PLAYGROUND_SEQUENCES.wear_flick),
+  wsill_stand: perCat(PLAYGROUND_SEQUENCES.wsill_stand),
+  wsill_knead: perCat(PLAYGROUND_SEQUENCES.wsill_knead),
+  wduck_bout: perCat(PLAYGROUND_SEQUENCES.wduck_bout),
+  wstretch_bout: perCat(PLAYGROUND_SEQUENCES.wstretch_bout),
+  wlie_settle: perCat(PLAYGROUND_SEQUENCES.wlie_settle),
+  pawover_cycle: perCat(PLAYGROUND_SEQUENCES.pawover_cycle),
 } as unknown as SequenceTable
 
 const seq = (name: string) => name as CatAnimSequenceName
@@ -594,20 +605,30 @@ const CLIMB_STEPS_BY_CAT = PLAYGROUND_PER_CAT_SEQUENCES.climb as unknown as Reco
 // climb leg, before the cling loop takes over. Typed through the same
 // localized cast as CLIMB_STEPS_BY_CAT (playground-only frames).
 const MOUNT_STEPS = [
-  { frame: 'mount_a', ms: 160 },
-  { frame: 'mount_ab', ms: 140 },
+  { frame: 'mount_a', ms: 80 },
+  { frame: 'mount_n1', ms: 80 },
+  { frame: 'mount_ab', ms: 70 },
+  { frame: 'mount_n2', ms: 70 },
   { frame: 'mount_b', ms: 160 },
 ] as unknown as readonly { frame: CatAnimFrame; ms: number }[]
 
 const DISMOUNT_STEPS = [
-  { frame: 'dismount_a', ms: 180 },
-  { frame: 'dismount_ab', ms: 140 },
+  { frame: 'dismount_a', ms: 90 },
+  { frame: 'dismount_n1', ms: 90 },
+  { frame: 'dismount_ab', ms: 70 },
+  { frame: 'dismount_n2', ms: 70 },
   { frame: 'dismount_b', ms: 160 },
 ] as unknown as readonly { frame: CatAnimFrame; ms: number }[]
 
 export function playgroundAnimationPlanFor(cat: PlayCat, now: number): AnimationPlan {
   if (cat.climbing) {
-    const climbSteps = CLIMB_STEPS_BY_CAT[cat.id]
+    // Wave-5: climbs alternate the cling loop with the paw-over-paw
+    // cycle. Deterministic per leg (climbStartedAt parity), so a climb
+    // never mixes styles mid-leg and tests can pin either.
+    const pawover = Math.floor(cat.climbStartedAt || 0) % 2 === 1
+    const climbSteps = pawover
+      ? (PLAYGROUND_SEQUENCES.pawover_cycle as unknown as (typeof CLIMB_STEPS_BY_CAT)[PlaygroundCatId])
+      : CLIMB_STEPS_BY_CAT[cat.id]
     // Long legs open with their one-shot arc (rear-up mount / look-down
     // dismount) before the cling loop; short hops (climbDir null — the
     // arc would not fit beside a full cling cycle) loop plainly.
