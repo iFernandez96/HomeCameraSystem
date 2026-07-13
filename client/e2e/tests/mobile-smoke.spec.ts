@@ -13,6 +13,10 @@ test('phone journey: sign in, watch controls, and Focus Assistant remain usable'
 
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByTestId('live-scene')).toBeVisible()
+  const cameraControls = page.getByRole('button', { name: 'Camera controls' })
+  await expect(cameraControls).toHaveAttribute('aria-expanded', 'false')
+  await cameraControls.click()
+  await expect(cameraControls).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByRole('button', { name: /stream quality/i })).toBeVisible()
   await expect(page.getByRole('button', { name: /snapshot/i })).toBeVisible()
 

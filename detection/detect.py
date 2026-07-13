@@ -1679,6 +1679,10 @@ def metadata_signal_allowed(runtime):
 _FOCUS_MODE_SECONDS = 300
 _FOCUS_MARKER = "/home/israel/HomeCameraSystem/.focus-mode-expires"
 _FOCUS_RESTORE_SCRIPT = "/home/israel/HomeCameraSystem/deploy/restore-focus-mode.sh"
+_FOCUS_GUARD_SCRIPT = "/home/israel/HomeCameraSystem/deploy/guard-focus-mode.sh"
+_PRECISION_MIN_MEM_MB = 450
+_PRECISION_MAX_GPU_TEMP_C = 75.0
+_PRECISION_MIN_UPTIME_S = 180.0
 
 
 def _camera_resolution(path="cam"):
@@ -1759,14 +1763,65 @@ def _write_exposure_config(values):
     return region
 
 
-def _both_camera_streams_ready(timeout_s=25.0):
+def _precision_marker_active(now=None):
+    now = time.time() if now is None else now
+    try:
+        with open(_FOCUS_MARKER) as handle:
+            expires = int(handle.read().strip())
+    except (OSError, ValueError):
+        return False
+    uptime_s = _host_uptime_s()
+    return expires > now and uptime_s is not None and uptime_s >= 120.0
+
+
+def _both_camera_streams_ready(timeout_s=25.0, precision=None):
+    if precision is None:
+        precision = _precision_marker_active()
+    expected_uhq = (2560, 1440) if precision else (1280, 720)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if (_camera_resolution("cam") == (1280, 720) and
-                _camera_resolution("cam_uhq") == (2560, 1440)):
+                _camera_resolution("cam_uhq") == expected_uhq):
             return True
         time.sleep(1.0)
     return False
+
+
+def _host_uptime_s(path="/proc/uptime"):
+    try:
+        with open(path) as handle:
+            return float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def precision_preflight():
+    """Fail closed unless the Nano has measurable precision headroom."""
+    memory_mb = read_mem_available_mb()
+    gpu_temp_c = read_gpu_temp_c()
+    uptime_s = _host_uptime_s()
+    reasons = []
+    if memory_mb is None:
+        reasons.append("memory headroom unavailable")
+    elif memory_mb < _PRECISION_MIN_MEM_MB:
+        reasons.append("only {} MB memory available".format(memory_mb))
+    if gpu_temp_c is None:
+        reasons.append("GPU temperature unavailable")
+    elif gpu_temp_c >= _PRECISION_MAX_GPU_TEMP_C:
+        reasons.append("GPU temperature is {:.1f} C".format(gpu_temp_c))
+    if uptime_s is None:
+        reasons.append("host uptime unavailable")
+    elif uptime_s < _PRECISION_MIN_UPTIME_S:
+        reasons.append("Jetson is still settling after boot")
+    return {
+        "safe": not reasons,
+        "reasons": reasons,
+        "memory_mb": memory_mb,
+        "gpu_temp_c": gpu_temp_c,
+        "uptime_s": uptime_s,
+        "minimum_memory_mb": _PRECISION_MIN_MEM_MB,
+        "maximum_gpu_temp_c": _PRECISION_MAX_GPU_TEMP_C,
+    }
 
 
 def apply_exposure(args):
@@ -1788,7 +1843,7 @@ def apply_exposure(args):
         # schedules this worker to reconnect its decoder.
         if (not _restart_camera_pipeline_for_focus((1280, 720)) or
                 not _both_camera_streams_ready()):
-            raise RuntimeError("720p and 1440p streams did not recover")
+            raise RuntimeError("the active camera publications did not recover")
         return {"region": region, "compensation": values[5], "locked": values[6]}
     except Exception as e:
         log.error("exposure apply failed; restoring prior config: %s: %s", type(e).__name__, e)
@@ -1896,6 +1951,13 @@ def run_recording_canary():
 
 def start_focus_mode():
     """Confirm the shared 1440p precision stream and arm its UI timeout."""
+    preflight = precision_preflight()
+    if not preflight["safe"]:
+        log.warning(
+            "focus mode blocked by precision preflight: %s",
+            "; ".join(preflight["reasons"]),
+        )
+        return {"blocked": True, "preflight": preflight}
     expires = int(time.time()) + _FOCUS_MODE_SECONDS
     tmp = _FOCUS_MARKER + ".tmp"
     try:
@@ -1917,9 +1979,28 @@ def start_focus_mode():
             raise RuntimeError(
                 scheduled.stderr.decode("utf-8", "replace")[-300:]
             )
+        guard_unit = "homecam-focus-guard-{}".format(expires)
+        guarded = subprocess.run(
+            [
+                "sudo", "-n", "systemd-run", "--unit", guard_unit,
+                _FOCUS_GUARD_SCRIPT, str(expires),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        if guarded.returncode != 0:
+            raise RuntimeError(guarded.stderr.decode("utf-8", "replace")[-300:])
+        if not _restart_camera_pipeline_for_focus((1280, 720)):
+            raise RuntimeError("camera did not restart into precision mode")
         if not _both_camera_streams_ready():
             raise RuntimeError("720p and 1440p streams are not ready")
-        return {"expires_at": expires, "width": 2560, "height": 1440}
+        return {
+            "expires_at": expires,
+            "width": 2560,
+            "height": 1440,
+            "preflight": preflight,
+        }
     except Exception as e:
         try:
             os.remove(_FOCUS_MARKER)
@@ -1931,7 +2012,7 @@ def start_focus_mode():
 
 
 def stop_focus_mode():
-    """End the precision session; the shared camera graph stays unchanged."""
+    """End the precision session and restore the bounded stable graph."""
     try:
         os.remove(_FOCUS_MARKER)
     except FileNotFoundError:
@@ -1939,7 +2020,9 @@ def stop_focus_mode():
     except OSError as e:
         log.error("focus mode marker removal failed: %s", e)
         return False
-    return _both_camera_streams_ready()
+    if not _restart_camera_pipeline_for_focus((1280, 720)):
+        return False
+    return _both_camera_streams_ready(precision=False)
 
 
 def escalate_argus_recovery():

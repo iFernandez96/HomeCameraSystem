@@ -105,6 +105,8 @@ def execute_action(record, deps):
 
     if kind == "focus_start":
         result = deps.start_focus_mode()
+        if result and result.get("blocked"):
+            return ("failed", "precision mode blocked by safety preflight", result)
         if result:
             return ("done", "1440p precision mode ready", result)
         return ("failed", "1440p precision mode unavailable", None)

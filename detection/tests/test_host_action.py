@@ -178,6 +178,23 @@ def test_given_focus_start_when_executed_then_mode_metadata_returned():
     assert deps.calls == ["focus_start"]
 
 
+def test_given_focus_preflight_blocks_when_executed_then_reason_is_returned():
+    blocked = {
+        "blocked": True,
+        "preflight": {"safe": False, "reasons": ["only 200 MB memory available"]},
+    }
+    deps = _deps(start_focus_mode=lambda: blocked)
+
+    status, detail, result = host_action.execute_action(
+        _record(kind="focus_start"), deps
+    )
+
+    assert (status, detail) == (
+        "failed", "precision mode blocked by safety preflight"
+    )
+    assert result == blocked
+
+
 def test_given_focus_stop_when_executed_then_normal_camera_restored():
     deps = _deps()
     status, detail, result = host_action.execute_action(

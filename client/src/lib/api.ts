@@ -375,7 +375,13 @@ export type RecoverStatus =
       requested_by: string
       requested_at: number
       result_at: number | null
-      result?: { expires_at?: number; width?: number; height?: number } | null
+      result?: {
+        expires_at?: number
+        width?: number
+        height?: number
+        blocked?: boolean
+        preflight?: { safe: boolean; reasons: string[] }
+      } | null
       worker_online: boolean
     }
 
@@ -545,8 +551,17 @@ export const triggerUpdate = () =>
 // informational, not destructive. Used by the Settings UI to show
 // "Server version: X" + slice 3c will compare to a registry tag
 // for "update available?" checks.
+export type SystemVersion = {
+  v: 1
+  version: string
+  source_fingerprint: string
+  build_epoch: number | null
+  api_compat: number
+  minimum_client_compat: number
+}
+
 export const getServerVersion = () =>
-  req<{ version: string }>('/api/system/version')
+  req<SystemVersion>('/api/system/version')
 
 // iter-214 (Feature #8 slice 3): daily-timelapse client wrappers.
 // `date` is YYYY-MM-DD (server-side regex `^[0-9]{4}-[01][0-9]-[0-3]
@@ -1792,8 +1807,7 @@ export type HealthHistorySample = {
   disk_free_bytes: number | null
   recording_state: string
 }
-export type RecordingIntegrity = {
-  v: 1
+export type RecordingIntegrityWindow = {
   total: number
   counts: Record<'recording' | 'finalizing' | 'available' | 'failed' | 'unknown' | 'expired', number>
   processing: number
@@ -1802,7 +1816,14 @@ export type RecordingIntegrity = {
   invalid_videos: number
   median_ready_s: number | null
   p95_ready_s: number | null
+  latency_samples?: number
   objectives: Array<{ id: string; label: string; met: boolean | null; value: number | null; target: number }>
+}
+export type RecordingIntegrity = RecordingIntegrityWindow & {
+  v: 2
+  default_window: '24h'
+  release_since: number | null
+  windows?: Record<'24h' | '7d' | 'release' | 'all', RecordingIntegrityWindow>
   recent_failures: Array<{
     event_id: string
     event_ts: number
@@ -1827,6 +1848,7 @@ export type RecordingIntegrity = {
     checked_at: number | null
   }
   assurance: RecordingAssuranceStatus
+  alerts?: Array<{ id: string; severity: 'warning' | 'critical'; title: string; detail: string }>
   generated_ts: number
 }
 

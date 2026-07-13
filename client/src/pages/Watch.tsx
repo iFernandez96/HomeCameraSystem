@@ -259,6 +259,7 @@ export function Watch() {
 
   const [full, setFull] = useState(false)
   const [dockedControlsTarget, setDockedControlsTarget] = useState<HTMLElement | null>(null)
+  const [showCameraControls, setShowCameraControls] = useState(false)
   const [dockedChromeVisible, setDockedChromeVisible] = useState(true)
   const [detectionToggleBusy, setDetectionToggleBusy] = useState(false)
   // Fullscreen chrome auto-hide (fullscreen contract item 4): controls
@@ -1083,8 +1084,8 @@ export function Watch() {
             // element and carries the hour scrubber; the native
             // Fullscreen API button would be a second, competing one).
             showFullscreenButton={false}
-            showQualityMenu
-            showBoxToggle
+            showQualityMenu={full || showCameraControls}
+            showBoxToggle={full || showCameraControls}
             controlsTarget={full ? null : dockedControlsTarget}
             safeAreaBottom={full}
             // Fullscreen: the scrubber now OVERLAYS the bottom of the
@@ -1095,7 +1096,7 @@ export function Watch() {
             }
             dimControls={chromeHidden}
             actions={
-              full ? undefined : (
+              full || !showCameraControls ? undefined : (
                 <>
                   <button
                     type="button"
@@ -1231,11 +1232,12 @@ export function Watch() {
         </div>
 
         {!full && (
-          <div
-            ref={setDockedControlsTarget}
-            aria-label="Camera controls"
-            className="flex min-h-16 items-center bg-black px-4 py-2"
-          />
+          <div className="bg-black px-4 py-2">
+            <button type="button" aria-expanded={showCameraControls} onClick={() => setShowCameraControls((visible) => !visible)} className="flex min-h-11 w-full items-center justify-center rounded-full text-sm font-semibold text-white/80 focus-visible:outline-2 focus-visible:outline-white">
+              {showCameraControls ? 'Hide camera controls' : 'Camera controls'}
+            </button>
+            {showCameraControls ? <div ref={setDockedControlsTarget} aria-label="Camera controls" className="flex min-h-14 items-center" /> : null}
+          </div>
         )}
 
         {!full && (
@@ -1342,6 +1344,18 @@ export function Watch() {
             </span>
           </button>
         )}
+
+        {status?.recording_assurance && (
+          status.recording_assurance.state !== 'ok' ||
+          status.recording_assurance.storage?.writable === false ||
+          status.recording_assurance.storage?.read_only === true ||
+          status.recording_assurance.storage?.mountpoint === '/'
+        ) ? (
+          <button type="button" onClick={() => navigate(canTalk ? '/control' : '/settings')} className="mx-4 mt-3 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-danger)] bg-[var(--color-danger-bg)] p-3 text-left lg:mx-0">
+            <span className="block font-bold text-[var(--color-danger)]">Recording safety needs attention</span>
+            <span className="mt-1 block text-xs text-[var(--color-text-secondary)]">{status.recording_assurance.reason ?? 'USB recording storage is not currently verified. Tap for the exact reason and recovery status.'}</span>
+          </button>
+        ) : null}
 
         <PackageStatusCard />
 

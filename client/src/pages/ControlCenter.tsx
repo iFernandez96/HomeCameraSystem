@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { OperationsSection } from './settings/OperationsSection'
+import { IndependentMonitorPanel } from './control/IndependentMonitorPanel'
 
 export function ControlCenter() {
   return (
@@ -12,6 +13,7 @@ export function ControlCenter() {
         </div>
         <Link to="/settings" className="inline-flex min-h-11 items-center rounded-full px-3 text-sm font-semibold text-[var(--color-accent-deep)]">Settings</Link>
       </header>
+      <IndependentMonitorPanel />
       <OperationsSection />
     </section>
   )

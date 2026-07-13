@@ -93,11 +93,15 @@ CAMERA_SOURCE=(nvarguscamerasrc "${SOURCE_ARGS[@]}")
 # around the clock. Both stable paths are fed by one encoded 720p bitstream, so
 # /cam_uhq remains truthful and available as a graceful fallback.
 now=$(date +%s)
+UPTIME_PATH="${HOMECAM_UPTIME_PATH:-/proc/uptime}"
+host_uptime_s=$(cut -d. -f1 "$UPTIME_PATH" 2>/dev/null || echo 0)
 precision_expires=0
 if [[ -r "$FOCUS_MARKER" ]]; then
     read -r precision_expires < "$FOCUS_MARKER" || precision_expires=0
 fi
-if ! [[ "$precision_expires" =~ ^[0-9]+$ ]] || (( precision_expires <= now )); then
+if ! [[ "$precision_expires" =~ ^[0-9]+$ ]] \
+    || ! [[ "$host_uptime_s" =~ ^[0-9]+$ ]] \
+    || (( precision_expires <= now || host_uptime_s < 120 )); then
     rm -f "$FOCUS_MARKER"
 
     # AE_REGION has been normalized above into the precision pipeline's

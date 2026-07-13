@@ -248,12 +248,7 @@ def reconcile_recent(
     return {"examined": len(events), "validated": validated, "transitions": transitions}
 
 
-def summary(*, now: float | None = None, path: Path | None = None) -> dict[str, Any]:
-    now = time.time() if now is None else now
-    with _connect(path or settings.recording_jobs_db_path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM recording_jobs ORDER BY event_ts DESC LIMIT 1000"
-        ).fetchall()
+def _summarize_rows(rows: list[sqlite3.Row], now: float) -> dict[str, Any]:
     counts = {name: 0 for name in _VALID_STATES}
     latency = []
     oldest_processing_ts = None
@@ -266,7 +261,9 @@ def summary(*, now: float | None = None, path: Path | None = None) -> dict[str, 
             oldest_processing_ts = (
                 progress_ts if oldest_processing_ts is None else min(oldest_processing_ts, progress_ts)
             )
-        if row["ready_ts"] is not None:
+        # A clip that was later rejected by integrity validation was never a
+        # truthful playback success and must not improve latency statistics.
+        if row["ready_ts"] is not None and state == "available" and row["validation_state"] != "invalid":
             reference_ts = row["capture_end_ts"] if row["capture_end_ts"] is not None else row["event_ts"]
             latency.append(max(0.0, float(row["ready_ts"]) - float(reference_ts)))
         if row["validation_state"] == "invalid":
@@ -294,7 +291,6 @@ def summary(*, now: float | None = None, path: Path | None = None) -> dict[str, 
         },
     ]
     return {
-        "v": 1,
         "total": len(rows),
         "counts": counts,
         "processing": counts["recording"] + counts["finalizing"],
@@ -303,7 +299,35 @@ def summary(*, now: float | None = None, path: Path | None = None) -> dict[str, 
         "invalid_videos": invalid,
         "median_ready_s": median_latency,
         "p95_ready_s": p95_latency,
+        "latency_samples": len(latency),
         "objectives": objectives,
+    }
+
+
+def summary(*, now: float | None = None, path: Path | None = None) -> dict[str, Any]:
+    now = time.time() if now is None else now
+    with _connect(path or settings.recording_jobs_db_path) as conn:
+        rows = conn.execute(
+            # Every named window must be exact. A silent row cap would make
+            # "All time" and long-running release statistics under-count.
+            "SELECT * FROM recording_jobs ORDER BY event_ts DESC"
+        ).fetchall()
+    windows = {
+        "24h": _summarize_rows([row for row in rows if float(row["event_ts"]) >= now - 86400], now),
+        "7d": _summarize_rows([row for row in rows if float(row["event_ts"]) >= now - 7 * 86400], now),
+        "all": _summarize_rows(rows, now),
+    }
+    release_since = settings.build_epoch if settings.build_epoch > 0 else None
+    windows["release"] = _summarize_rows(
+        [row for row in rows if release_since is not None and float(row["event_ts"]) >= release_since],
+        now,
+    )
+    return {
+        "v": 2,
+        **windows["24h"],
+        "default_window": "24h",
+        "release_since": release_since,
+        "windows": windows,
         "generated_ts": now,
     }
 

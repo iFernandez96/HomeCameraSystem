@@ -5,6 +5,7 @@ import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { LoadingState } from './components/states/LoadingState'
 import { PushDeniedBanner } from './components/PushDeniedBanner'
+import { UpdateCompatibilityBanner } from './components/UpdateCompatibilityBanner'
 import { RequireAuth } from './components/RequireAuth'
 import { RequireOwner } from './components/RequireOwner'
 import { RequireGodMode } from './components/RequireGodMode'
@@ -212,6 +213,7 @@ function AppShell() {
       }`}
     >
       <ConnectionBanner />
+      <UpdateCompatibilityBanner />
       {/* Nav-coherence fix (painfix, item 4): push permission denial
           is a silent, standing dead-end for alerts — the Settings
           toggle can look "on" while nothing ever arrives. Same fixed-

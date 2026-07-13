@@ -521,11 +521,46 @@ def storage_guardian() -> dict[str, Any]:
 
 def recording_integrity() -> dict[str, Any]:
     recording_jobs.reconcile_recent(validate_limit=3)
+    jobs = recording_jobs.summary()
+    assurance = recording_assurance.status()
+    storage = storage_guardian()
+    alerts = []
+    if storage["state"] != "healthy":
+        alerts.append({
+            "id": "recording_storage", "severity": "critical",
+            "title": "Recording is not safely writing to USB storage",
+            "detail": "; ".join(storage["reasons"]) or "The recordings path is unavailable.",
+        })
+    if jobs["windows"]["all"]["stuck_jobs"]:
+        alerts.append({
+            "id": "recording_stuck", "severity": "critical",
+            "title": "An event video is stuck",
+            "detail": "At least one recording has made no progress for over five minutes.",
+        })
+    if jobs["invalid_videos"]:
+        alerts.append({
+            "id": "invalid_video_24h", "severity": "warning",
+            "title": "A video failed validation in the last 24 hours",
+            "detail": "Open the failed event below for its exact capture and processing reason.",
+        })
+    if assurance.get("state") in ("failed", "stale", "unknown"):
+        alerts.append({
+            "id": "recording_assurance", "severity": "warning",
+            "title": "The end-to-end camera proof is not current",
+            "detail": str(assurance.get("reason") or "Run the end-to-end camera test."),
+        })
+    if not worker_health.is_alive():
+        alerts.append({
+            "id": "detection_worker", "severity": "critical",
+            "title": "Detection is offline",
+            "detail": "Live video may still work, but events and alerts are not being produced.",
+        })
     return {
-        **recording_jobs.summary(),
+        **jobs,
         "recent_failures": recording_jobs.recent_failures(),
-        "storage": storage_guardian(),
-        "assurance": recording_assurance.status(),
+        "storage": storage,
+        "assurance": assurance,
+        "alerts": alerts,
     }
 
 

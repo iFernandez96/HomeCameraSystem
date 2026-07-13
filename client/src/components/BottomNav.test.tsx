@@ -88,7 +88,7 @@ describe('BottomNav', () => {
     })
   })
 
-  it('Given the Israel owner account, When BottomNav renders, Then God View is visible', () => {
+  it('Given the Israel owner account, When BottomNav renders, Then admin tools stay out of the daily phone bar', () => {
     // arrange
     authUser = { username: 'Israel', role: 'owner' }
 
@@ -96,7 +96,8 @@ describe('BottomNav', () => {
     renderAt('/')
 
     // assert
-    expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
+    expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('link')).toHaveLength(4)
   })
 
   it('Given another owner account, When BottomNav renders, Then God View is undiscoverable', () => {

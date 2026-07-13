@@ -478,7 +478,83 @@ def test_camera_ready_requires_720p_detection_and_1440p_uhq(monkeypatch):
         detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
     )
 
+    assert detect._both_camera_streams_ready(
+        timeout_s=0.1, precision=True
+    ) is True
+
+
+def test_stable_camera_ready_requires_both_paths_at_720p(monkeypatch):
+    resolutions = {"cam": (1280, 720), "cam_uhq": (1280, 720)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
+    assert detect._both_camera_streams_ready(
+        timeout_s=0.1, precision=False
+    ) is True
+
+
+def test_camera_ready_defaults_to_the_active_marker_mode(tmp_path, monkeypatch):
+    marker = tmp_path / "focus-mode"
+    marker.write_text("2000\n")
+    monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
+    monkeypatch.setattr(detect, "_host_uptime_s", lambda: 600.0)
+    monkeypatch.setattr(detect.time, "time", lambda: 1000.0)
+    resolutions = {"cam": (1280, 720), "cam_uhq": (2560, 1440)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
     assert detect._both_camera_streams_ready(timeout_s=0.1) is True
+
+    marker.unlink()
+    resolutions["cam_uhq"] = (1280, 720)
+    assert detect._both_camera_streams_ready(timeout_s=0.1) is True
+
+
+def test_precision_preflight_reports_every_unsafe_condition(monkeypatch):
+    monkeypatch.setattr(detect, "read_mem_available_mb", lambda: 300)
+    monkeypatch.setattr(detect, "read_gpu_temp_c", lambda: 81.5)
+    monkeypatch.setattr(detect, "_host_uptime_s", lambda: 90.0)
+
+    result = detect.precision_preflight()
+
+    assert result["safe"] is False
+    assert result["memory_mb"] == 300
+    assert result["gpu_temp_c"] == 81.5
+    assert result["reasons"] == [
+        "only 300 MB memory available",
+        "GPU temperature is 81.5 C",
+        "Jetson is still settling after boot",
+    ]
+
+
+def test_precision_preflight_accepts_measured_headroom(monkeypatch):
+    monkeypatch.setattr(detect, "read_mem_available_mb", lambda: 800)
+    monkeypatch.setattr(detect, "read_gpu_temp_c", lambda: 55.0)
+    monkeypatch.setattr(detect, "_host_uptime_s", lambda: 600.0)
+
+    assert detect.precision_preflight()["safe"] is True
+
+
+def test_focus_start_does_not_mutate_pipeline_when_preflight_blocks(
+    tmp_path, monkeypatch
+):
+    marker = tmp_path / "focus-mode"
+    monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
+    monkeypatch.setattr(
+        detect,
+        "precision_preflight",
+        lambda: {"safe": False, "reasons": ["only 200 MB memory available"]},
+    )
+    restart = MagicMock()
+    monkeypatch.setattr(detect, "_restart_camera_pipeline_for_focus", restart)
+
+    result = detect.start_focus_mode()
+
+    assert result["blocked"] is True
+    assert marker.exists() is False
+    restart.assert_not_called()
 
 
 def test_privacy_pipeline_file_is_atomic_and_restart_only_on_change(tmp_path):

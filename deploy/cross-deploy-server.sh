@@ -92,11 +92,16 @@ load_image_retry() {
 }
 
 cd "$ROOT"
+SOURCE_FINGERPRINT="$(bash scripts/source-fingerprint.sh)"
+BUILD_EPOCH="$(date +%s)"
 
 echo "==> cross-building $IMAGE for linux/arm64 (prebuilt aarch64 wheels)…"
 docker buildx build --platform linux/arm64 \
+  --build-arg "HOMECAM_SOURCE_FINGERPRINT=$SOURCE_FINGERPRINT" \
+  --build-arg "HOMECAM_BUILD_EPOCH=$BUILD_EPOCH" \
   -f deploy/Dockerfile.server -t "$IMAGE" \
   -o "type=docker,dest=$TAR" .
+echo "==> source fingerprint $SOURCE_FINGERPRINT (build epoch $BUILD_EPOCH)"
 
 echo "==> shipping image to $HOST ($(du -h "$TAR" | cut -f1))…"
 load_image_retry

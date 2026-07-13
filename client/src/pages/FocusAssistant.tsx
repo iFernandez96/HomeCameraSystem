@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { DEFAULT_CAMERA_PATH, whepUrlForPath } from '../lib/streamQuality'
 import { errFields, log } from '../lib/log'
+import { usePrecisionSession } from '../lib/usePrecisionSession'
 
 type Point = { x: number; y: number }
 type StreamState = 'connecting' | 'live' | 'error'
@@ -50,6 +51,7 @@ export function FocusAssistant() {
   const [trend, setTrend] = useState<'Improving' | 'Getting worse' | 'Hold steady'>('Hold steady')
   const [frozen, setFrozen] = useState(false)
   const frozenRef = useRef(frozen)
+  const precision = usePrecisionSession()
 
   useEffect(() => {
     targetRef.current = target
@@ -61,6 +63,7 @@ export function FocusAssistant() {
   const finishAndBack = () => navigate('/settings')
 
   useEffect(() => {
+    if (precision.state !== 'ready') return
     const video = videoRef.current
     if (!video) return
     const controller = new AbortController()
@@ -87,7 +90,7 @@ export function FocusAssistant() {
       video.removeEventListener('loadeddata', onPlaying)
       connection?.close()
     }
-  }, [retry])
+  }, [precision.state, retry])
 
   useEffect(() => {
     const video = videoRef.current
@@ -190,9 +193,9 @@ export function FocusAssistant() {
       </header>
 
       <div className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <p className="font-semibold text-[var(--color-text-primary)]">1440p30 precision preview</p>
+        <p className="font-semibold text-[var(--color-text-primary)]">{precision.state === 'ready' ? '1440p30 precision preview' : 'Precision preview'}</p>
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-          Focus analysis uses a larger 320×320 sample on this phone. Detection remains on its separate 720p stream.
+          {precision.detail} Focus analysis uses a 320×320 sample on this phone; detection remains on its separate 720p stream.
         </p>
       </div>
 
@@ -208,9 +211,16 @@ export function FocusAssistant() {
             className="pointer-events-none absolute h-[22%] w-[22%] -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 border-[var(--color-accent-default)] shadow-[0_0_0_9999px_rgba(0,0,0,.15)]"
             style={{ left: `${target.x * 100}%`, top: `${target.y * 100}%` }}
           />
-          {streamState !== 'live' && (
+          {(precision.state !== 'ready' || streamState !== 'live') && (
             <div className="absolute inset-0 grid place-items-center bg-black/65 text-center text-white">
-              {streamState === 'connecting' ? (
+              {precision.state === 'starting' ? (
+                <p>Preparing the guarded precision preview…</p>
+              ) : precision.state === 'blocked' ? (
+                <div className="max-w-sm px-5">
+                  <p className="mb-3">{precision.detail}</p>
+                  <button type="button" onClick={precision.retry} className="min-h-11 rounded-full bg-white px-5 font-semibold text-black">Check again</button>
+                </div>
+              ) : streamState === 'connecting' ? (
                 <p>Connecting to the camera…</p>
               ) : (
                 <div>

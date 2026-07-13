@@ -41,6 +41,14 @@ vi.mock('./lib/api', () => {
     triggerDeterrence: vi.fn().mockResolvedValue({ ok: true }),
     listVisitStories: vi.fn().mockResolvedValue({ items: [] }),
     getUnreadCount: vi.fn().mockResolvedValue(0),
+    getServerVersion: vi.fn().mockResolvedValue({
+      v: 1,
+      version: 'test',
+      source_fingerprint: 'test',
+      build_epoch: null,
+      api_compat: 1,
+      minimum_client_compat: 1,
+    }),
     // W2 scroll-reset test navigates to the real Events page, which
     // pulls in the rest of the events API surface at module scope —
     // stub the lot with quiet resolved values.

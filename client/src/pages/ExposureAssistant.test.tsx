@@ -9,6 +9,7 @@ const connectWhep = vi.fn()
 const listCameraExposurePresets = vi.fn()
 const createCameraExposurePreset = vi.fn()
 const deleteCameraExposurePreset = vi.fn()
+const setCameraFocusMode = vi.fn()
 
 vi.mock('../lib/api', () => ({
   getCameraExposure: (...args: unknown[]) => getCameraExposure(...args),
@@ -17,6 +18,7 @@ vi.mock('../lib/api', () => ({
   listCameraExposurePresets: (...args: unknown[]) => listCameraExposurePresets(...args),
   createCameraExposurePreset: (...args: unknown[]) => createCameraExposurePreset(...args),
   deleteCameraExposurePreset: (...args: unknown[]) => deleteCameraExposurePreset(...args),
+  setCameraFocusMode: (...args: unknown[]) => setCameraFocusMode(...args),
 }))
 
 vi.mock('../lib/webrtc', () => ({
@@ -45,6 +47,9 @@ describe('ExposureAssistant', () => {
     listCameraExposurePresets.mockReset().mockResolvedValue({ presets: [] })
     createCameraExposurePreset.mockReset()
     deleteCameraExposurePreset.mockReset()
+    setCameraFocusMode.mockReset().mockImplementation(async (enabled: boolean) => ({
+      request_id: enabled ? 'focus-start' : 'focus-stop',
+    }))
   })
 
   afterEach(() => {
@@ -60,6 +65,7 @@ describe('ExposureAssistant', () => {
     )
     const video = container.querySelector('video')
     expect(video).not.toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(1))
     fireEvent.loadedData(video!)
 
@@ -84,6 +90,7 @@ describe('ExposureAssistant', () => {
         <ExposureAssistant />
       </MemoryRouter>,
     )
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     const retry = await screen.findByRole('button', { name: 'Retry' })
 
     // act
@@ -112,6 +119,7 @@ describe('ExposureAssistant', () => {
       </MemoryRouter>,
     )
     const video = container.querySelector('video')!
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     await waitFor(() => expect(connectWhep).toHaveBeenCalledTimes(1))
     fireEvent.loadedData(video)
 

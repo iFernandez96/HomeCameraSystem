@@ -91,6 +91,10 @@ public final class MainActivity extends Activity {
         settings.setUserAgentString(
             settings.getUserAgentString() + " HomeCamNative/" + BuildConfig.VERSION_NAME
         );
+        webView.addJavascriptInterface(
+            new NativeStatusBridge(getApplicationContext()),
+            "HomeCamNative"
+        );
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override

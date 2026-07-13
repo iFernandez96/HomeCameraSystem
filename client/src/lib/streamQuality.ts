@@ -1,7 +1,7 @@
 // Cellular-adaptive streaming quality (2026-06-16 design).
 //
 // The Jetson's MediaMTX publishes four WHEP paths for the same camera:
-//   - `cam_uhq` — UHQ (2560x1440 at 30 fps, NVENC bitstream)
+//   - `cam_uhq` — precision path (stable-mode 720p; guarded Focus 1440p30)
 //   - `cam`     — HQ  (1280x720 NVENC bitstream; detection source)
 //   - `cam_lq`  — SD  (data-saver transcode)
 //   - `cam_uq`  — XS  (ultra-low / minimum bitrate)

@@ -45,8 +45,10 @@ def test_recording_integrity_route_and_manual_test_are_owner_gated_and_durable(
     _event(client, "evt_integrity")
     integrity = client.get("/api/security/operations/recording-integrity")
     assert integrity.status_code == 200
-    assert integrity.json()["v"] == 1
+    assert integrity.json()["v"] == 2
     assert "objectives" in integrity.json()
+    assert set(integrity.json()["windows"]) == {"24h", "7d", "release", "all"}
+    assert "alerts" in integrity.json()
     assert "storage" in integrity.json()
 
     monkeypatch.setattr(

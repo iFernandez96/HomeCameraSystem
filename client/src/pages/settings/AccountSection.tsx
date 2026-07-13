@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { getServerVersion } from '../../lib/api'
+import { getServerVersion, type SystemVersion } from '../../lib/api'
 import { log, errFields } from '../../lib/log'
 import { useAuth } from '../../lib/auth'
 import { useConfirm } from '../../lib/confirm'
-import { isOwner } from '../../lib/roles'
+import { isGodModeUser, isOwner } from '../../lib/roles'
 import { Mono, Row, Section } from './parts'
 import { ChangePasswordRow, ManageUsersPanel } from './UserMgmt'
 import { MfaControls } from './MfaControls'
@@ -38,7 +38,7 @@ export function AccountSection() {
   // iter-234 (Feature #12 OTA slice 3b): server version pulled from
   // the iter-232 GET route. null = not loaded yet OR error fetching;
   // UI shows em-dash so the row never appears empty.
-  const [serverVersion, setServerVersion] = useState<string | null>(null)
+  const [serverVersion, setServerVersion] = useState<SystemVersion | null>(null)
   // iter-356.10 (Frank #5): per-device toggle for the ambient cat
   // layer. Default on; flipping persists to localStorage and
   // immediately hides/shows the layer in App.tsx.
@@ -47,7 +47,7 @@ export function AccountSection() {
     getServerVersion()
       .then((r) => {
         if (cancelled) return
-        setServerVersion(r.version)
+        setServerVersion(r)
       })
       .catch((e) => {
         // docs/logging_plan.md §2: version is informational and stays
@@ -83,8 +83,17 @@ export function AccountSection() {
         // version they see IS the running server build, but mapping
         // it to "App version" is closer to what they expect.
         label="App version"
-        right={<Mono>{serverVersion ?? '—'}</Mono>}
+        right={<Mono>{serverVersion?.version ?? '—'}</Mono>}
       />
+      <Row label="Client bundle" right={<Mono>{typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev'}</Mono>} />
+      <Row label="Server build" right={<Mono>{serverVersion?.source_fingerprint ?? '—'}</Mono>} />
+      <Row label="Android wrapper" right={<Mono>{navigator.userAgent.match(/HomeCamNative\/([^\s]+)/)?.[1] ?? 'Browser'}</Mono>} />
+      {isGodModeUser(user) ? (
+        <div className="flex flex-wrap gap-2 border-t border-[var(--color-border-subtle)] p-3">
+          <a href="/control" className="inline-flex min-h-11 items-center rounded-full px-3 font-semibold text-[var(--color-accent-deep)]">Control Center</a>
+          <a href="/god" className="inline-flex min-h-11 items-center rounded-full px-3 font-semibold text-[var(--color-accent-deep)]">God View</a>
+        </div>
+      ) : null}
       <ChangePasswordRow />
       {canManageUsers ? <MfaControls /> : null}
       {/* Bug sweep (2026-07-02): the "Show ambient cats" toggle was

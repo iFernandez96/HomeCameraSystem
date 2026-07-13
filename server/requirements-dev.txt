@@ -2,3 +2,6 @@
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 httpx>=0.27.0
+# Starlette 1.x TestClient uses the renamed transport package. Keeping
+# legacy httpx above is intentional: several direct ASGI harnesses import it.
+httpx2>=2.5.0,<3

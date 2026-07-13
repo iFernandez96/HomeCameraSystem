@@ -401,6 +401,22 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     )
   })
 
+  it('Given recording storage is unsafe, Then Home shows the exact durable warning', async () => {
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      recording_assurance: {
+        state: 'failed',
+        reason: 'USB recordings mount is read-only',
+        storage: { writable: false, read_only: true, mountpoint: '/srv/homecam-media' },
+      },
+    })
+
+    renderWatch()
+
+    expect(await screen.findByRole('button', { name: /recording safety needs attention/i }))
+      .toHaveTextContent('USB recordings mount is read-only')
+  })
+
   it('Given no events yet today, When the timeline loads, Then the cat empty state explains the quiet', async () => {
     // arrange / act
     renderWatch()
@@ -429,9 +445,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     })
   })
 
-  it('Given the docked live tile, When rendered, Then camera actions remain available below video and Expand is the only over-video corner button', () => {
+  it('Given the docked live tile, When camera controls are expanded, Then actions appear below video and Expand remains the only over-video corner button', async () => {
     // arrange / act
+    const user = userEvent.setup()
     renderWatch()
+    expect(screen.queryByRole('button', { name: 'Snapshot' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Camera controls' }))
 
     // assert — Snapshot and expand are children of the row VideoTile
     // renders `actions` into (single owner of the docked corner), not
@@ -783,6 +802,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     const user = userEvent.setup()
     renderWatch()
     const scene = screen.getByTestId('live-scene')
+    await user.click(screen.getByRole('button', { name: 'Camera controls' }))
 
     expect(screen.getByRole('button', { name: 'Full screen live view' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Snapshot' })).toBeInTheDocument()

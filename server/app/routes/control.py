@@ -495,6 +495,11 @@ async def camera_focus_mode(
     """Confirm or end a session on the shared 1440p precision stream."""
     kind = "focus_start" if body.enabled else "focus_stop"
     rec = host_bridge.enqueue(kind, {}, requested_by=user, now=time.time())
+    if rec.get("kind") != kind:
+        raise HTTPException(
+            status_code=409,
+            detail="another camera operation is still running; try again shortly",
+        )
     # The audit schema intentionally has a closed action vocabulary. Record
     # this as its underlying mediamtx lifecycle action and keep the mode in
     # detail rather than weakening that constraint.
@@ -1233,8 +1238,15 @@ async def list_backups() -> dict[str, object]:
 @router.get("/system/version")
 async def system_version(
     _user: str = Depends(get_current_user),
-) -> dict[str, str]:
-    return {"version": settings.version}
+) -> dict[str, object]:
+    return {
+        "v": 1,
+        "version": settings.version,
+        "source_fingerprint": settings.source_fingerprint,
+        "build_epoch": settings.build_epoch or None,
+        "api_compat": settings.api_compat,
+        "minimum_client_compat": settings.minimum_client_compat,
+    }
 
 
 @router.get(

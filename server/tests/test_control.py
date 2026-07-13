@@ -4,6 +4,8 @@ import json
 import tarfile
 import time
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 
@@ -1070,8 +1072,19 @@ def test_system_version_reflects_settings_override(
     from app.config import settings
 
     monkeypatch.setattr(settings, "version", "9.9.9-test")
+    monkeypatch.setattr(settings, "source_fingerprint", "abc123-dirty")
+    monkeypatch.setattr(settings, "build_epoch", 1234567890)
+    monkeypatch.setattr(settings, "api_compat", 1)
+    monkeypatch.setattr(settings, "minimum_client_compat", 1)
     r = client.get("/api/system/version")
-    assert r.json() == {"version": "9.9.9-test"}
+    assert r.json() == {
+        "v": 1,
+        "version": "9.9.9-test",
+        "source_fingerprint": "abc123-dirty",
+        "build_epoch": 1234567890,
+        "api_compat": 1,
+        "minimum_client_compat": 1,
+    }
 
 
 def test_system_version_anon_returns_401(client_anon: TestClient):
@@ -1079,6 +1092,29 @@ def test_system_version_anon_returns_401(client_anon: TestClient):
     unauthenticated callers is unnecessary attack surface."""
     r = client_anon.get("/api/system/version")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_focus_mode_rejects_an_unrelated_inflight_host_action(monkeypatch):
+    from app.routes import control
+    from app.services import host_bridge
+
+    monkeypatch.setattr(
+        host_bridge,
+        "enqueue",
+        lambda kind, args, requested_by, now: {
+            "id": "busy-1",
+            "kind": "recording_canary",
+            "status": "running",
+        },
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        await control.camera_focus_mode(
+            control._FocusModeBody(enabled=True), user="admin"
+        )
+
+    assert raised.value.status_code == 409
 
 
 def test_list_timelapses_filters_non_matching_files(

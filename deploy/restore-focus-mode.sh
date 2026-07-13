@@ -11,7 +11,7 @@ fi
 # A timer from an older session must never terminate a newer session.
 if [ -n "$expected" ] && [ "$current" = "$expected" ]; then
     rm -f "$MARKER"
-    # Focus and Exposure Assistant now share the always-on 1440p UHQ path.
-    # Expiry only closes the logical session; restarting the camera here would
-    # create an avoidable recording and detection gap.
+    # Precision is intentionally temporary. Use the same bounded deep recovery
+    # path as camera repair so Argus is released before the stable graph starts.
+    exec /home/israel/HomeCameraSystem/deploy/recover-camera.sh
 fi

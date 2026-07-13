@@ -83,6 +83,7 @@ def _run_camera_script_with_privacy(
     exposure_content: str | None = None,
     *,
     precision: bool = True,
+    uptime_s: int = 3600,
 ) -> str:
     """Run the shell wrapper against a fake gst-launch and return its argv."""
     # arrange
@@ -103,12 +104,15 @@ def _run_camera_script_with_privacy(
     focus_marker = tmp_path / "focus-mode-expires"
     if precision:
         focus_marker.write_text(str(int(time.time()) + 3600) + "\n", encoding="utf-8")
+    uptime = tmp_path / "uptime"
+    uptime.write_text("{}.00 0.00\n".format(uptime_s), encoding="utf-8")
     env = os.environ.copy()
     env.update({
         "PATH": "{}:{}".format(fake_bin, env.get("PATH", "")),
         "HOMECAM_PRIVACY_CONFIG": str(privacy),
         "HOMECAM_EXPOSURE_CONFIG": str(exposure),
         "HOMECAM_FOCUS_MARKER": str(focus_marker),
+        "HOMECAM_UPTIME_PATH": str(uptime),
     })
 
     # act
@@ -137,6 +141,18 @@ def test_Given_no_precision_session_When_camera_starts_Then_one_bounded_encode_f
     assert "tee name=encoded" in output
     assert "rtsp://localhost:8554/cam " in output
     assert "rtsp://localhost:8554/cam_uhq" in output
+
+
+def test_Given_a_stale_precision_marker_after_boot_When_camera_starts_Then_stable_mode_wins(tmp_path):
+    output = _run_camera_script_with_privacy(
+        tmp_path,
+        "PRIVACY_RECTS=''\n",
+        precision=True,
+        uptime_s=45,
+    )
+
+    assert "stable 1080p30 sensor -> one 720p30 encode" in output
+    assert "temporary 4K-to-1440p precision mode" not in output
 
 
 @pytest.mark.parametrize("rung", ["cam_lq", "cam_uq"])

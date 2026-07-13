@@ -20,6 +20,10 @@ class Settings:
     # this value when cutting a new release; CI could automate via
     # sed-on-tag if a release pipeline lands.
     version: str = os.getenv("HOMECAM_VERSION", "0.1.0")
+    source_fingerprint: str = os.getenv("HOMECAM_SOURCE_FINGERPRINT", "unknown")
+    build_epoch: int = int(os.getenv("HOMECAM_BUILD_EPOCH", "0"))
+    api_compat: int = 1
+    minimum_client_compat: int = 1
 
     vapid_private_key_path: Path = Path(
         os.getenv("VAPID_PRIVATE_KEY_PATH", "./vapid_private.pem")

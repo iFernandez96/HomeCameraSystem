@@ -290,6 +290,7 @@ export function VideoTile({
   const [boxes, setBoxes] = useState<DetectionEvent['boxes']>([])
   const [personName, setPersonName] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
+  const [decodedResolution, setDecodedResolution] = useState<{ width: number; height: number } | null>(null)
   // Cellular-adaptive streaming (2026-06-16): the user picks a stream
   // tier (Auto / HQ / Data-saver / Ultra-low). `auto` reads
   // navigator.connection and downshifts on cellular/metered links. The
@@ -384,6 +385,7 @@ export function VideoTile({
     if (!video) return
     let conn: WhepConnection | null = null
     let cancelled = false
+    setDecodedResolution(null)
     // Defect-1 fix (WebRTC lifecycle audit): a per-attempt AbortController
     // so cleanup can actually close an in-flight connectWhep — the old
     // `cancelled` flag alone left a hung WHEP POST's RTCPeerConnection open
@@ -492,6 +494,13 @@ export function VideoTile({
       // Frames are flowing again — re-arm the one-shot silent reconnect
       // for the next mid-stream drop (see pcStateChange below).
       silentRetryUsedRef.current = false
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setDecodedResolution((current) =>
+          current?.width === video.videoWidth && current.height === video.videoHeight
+            ? current
+            : { width: video.videoWidth, height: video.videoHeight },
+        )
+      }
       setStatus('live')
     }
     const onPlaying = () => {
@@ -957,7 +966,7 @@ export function VideoTile({
       >
         {showQualityMenu && (
           <div className={controlsTarget ? 'flex flex-1 justify-center pointer-events-auto' : 'pointer-events-auto'}>
-            <QualityMenu quality={quality} onSelect={onSelectQuality} />
+            <QualityMenu quality={quality} onSelect={onSelectQuality} decodedResolution={decodedResolution} />
           </div>
         )}
         <div className={`flex items-center gap-2 pointer-events-auto ${controlsTarget ? 'flex-[2] justify-around' : ''}`}>

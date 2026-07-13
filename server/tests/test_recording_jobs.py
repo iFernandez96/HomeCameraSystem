@@ -45,6 +45,10 @@ def test_given_published_clip_when_reconciled_then_ready_latency_is_durable(
     # assert
     assert result == {"examined": 1, "validated": 1, "transitions": 1}
     assert first["counts"]["available"] == 1
+    assert first["v"] == 2
+    assert first["default_window"] == "24h"
+    assert first["windows"]["24h"]["counts"]["available"] == 1
+    assert first["windows"]["all"]["latency_samples"] == 1
     assert first["median_ready_s"] == 7.0
     assert second["median_ready_s"] == 7.0
 
