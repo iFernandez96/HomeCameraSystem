@@ -996,6 +996,33 @@ def test_system_update_wires_real_orchestrator_and_records_parity_ledger(
     assert rows[-1]["metadata"]["host_commands"] == body["host_commands"]
 
 
+def test_system_update_returns_typed_disabled_result_when_kill_switch_is_set(
+    tmp_path, monkeypatch
+):
+    from app.config import settings
+    from app.routes.control import SystemUpdateRequest, system_update
+    from app.services.ota_ledger import read_events
+
+    ota_root = _patch_ota_paths(tmp_path, monkeypatch)
+    _write_ota_artifact_bundle(ota_root)
+    monkeypatch.setenv("HOMECAM_OTA_DISABLED", "1")
+
+    body = asyncio.run(system_update(SystemUpdateRequest(version="1.2.4")))
+
+    assert body["status"] == "rejected"
+    assert body["applied"] is False
+    assert body["reason"] == "kill_switch_disabled"
+    assert body["phase"] == "manifest_gate"
+    assert body["restart_required"] is False
+    assert settings.ota_active_pointer.read_text(encoding="utf-8") == "1.2.3\n"
+    assert settings.ota_client_dist_target.joinpath("index.html").read_text(
+        encoding="utf-8"
+    ) == "old client\n"
+
+    rows = read_events(settings.ota_ledger_path)
+    assert [row["status"] for row in rows] == ["requested", "rejected"]
+
+
 # iter-238 (Feature #10/12 follow-up): /api/system/backups listing.
 # Mirrors iter-213 timelapse listing tests.
 

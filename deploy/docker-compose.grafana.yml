@@ -7,10 +7,9 @@
 #
 # Adds Prometheus (scrapes the homecam-server's /metrics every 15 s)
 # and Grafana (auto-loads two provisioned dashboards: Overview +
-# Detection worker). Operator opens http://jetson:3000 and logs in
-# (anonymous viewer access by default; admin/admin if they need
-# editing power, which they shouldn't since dashboards are
-# provisioned read-only).
+# Detection worker). PR-001 keeps Grafana on Jetson loopback and disables
+# anonymous access. Operators must use an authenticated tunnel or a local SSH
+# forward; no dashboard port is exposed directly to LAN or tailnet peers.
 #
 # RAM cost on the Nano 2GB: ~30 MB Prometheus + ~50 MB Grafana
 # (roughly). The mediamtx + detection worker + server already eat
@@ -54,19 +53,14 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - homecam-grafana-data:/var/lib/grafana
     environment:
-      # Anonymous viewer access — anyone on the LAN with the URL
-      # sees dashboards without logging in. Operator-side fronting
-      # (Tailscale, Caddy basic-auth, firewall rule) is the
-      # exposure-control tier — same reasoning as the iter-189
-      # /metrics endpoint and iter-195 /healthz. If the operator
-      # wants per-user auth in Grafana itself, flip
-      # GF_AUTH_ANONYMOUS_ENABLED=false and set a strong admin
-      # password via GF_SECURITY_ADMIN_PASSWORD.
-      - GF_AUTH_ANONYMOUS_ENABLED=true
+      # Grafana's own login remains mandatory even when an operator reaches it
+      # through an authenticated tunnel. Credential lifecycle hardening is a
+      # separate roadmap item; PR-001 only removes anonymous/direct access.
+      - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_USERS_ALLOW_SIGN_UP=false
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
 
 volumes:
   homecam-prom-data:

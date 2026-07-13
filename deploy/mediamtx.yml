@@ -23,10 +23,16 @@ hls: no
 srt: no
 
 # RTSP is used internally as the ingest transport from GStreamer → MediaMTX.
-rtspAddress: :8554
+rtspAddress: 127.0.0.1:8554
+# Every in-repo publisher and reader explicitly uses RTSP-over-TCP. Disabling
+# UDP prevents MediaMTX's default RTP/RTCP listeners from reopening host ports
+# 8000/8001 alongside FastAPI's loopback-only TCP 8000 listener.
+rtspTransports: [tcp]
 
-# WebRTC is what the browser pulls from.
-webrtcAddress: :8889
+# WebRTC signaling is reached remotely only through Tailscale Serve's /whep
+# proxy.  ICE media remains on :8189 below so WebRTC can still establish its
+# direct UDP/TCP media path after authenticated signaling.
+webrtcAddress: 127.0.0.1:8889
 # iter cellular-ice (2026-06-17): offer an ICE-over-TCP candidate alongside
 # the default UDP one (:8189). On cellular over Tailscale the WHEP control
 # plane (HTTPS/443 via `tailscale serve`) connects fine, but the WebRTC media

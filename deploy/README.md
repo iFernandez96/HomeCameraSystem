@@ -4,9 +4,9 @@ Four processes run on the Jetson:
 
 | Process            | Where                | Port                                 | Role |
 | ------------------ | -------------------- | ------------------------------------ | ---- |
-| MediaMTX           | host                 | 8554 (RTSP, internal), 8889 (WebRTC) | Camera ingest + WebRTC egress |
+| MediaMTX           | host                 | 127.0.0.1:8554 (RTSP), 127.0.0.1:8889 (WHEP); 8189 (ICE media) | Camera ingest + WebRTC egress |
 | GStreamer pipeline | spawned by MediaMTX  | n/a                                  | RPi camera → `nvarguscamerasrc` → `nvv4l2h264enc` (NVENC) → `rtspclientsink` |
-| FastAPI server     | Docker container     | 8000                                 | Control + events + push, serves the PWA |
+| FastAPI server     | Docker container     | 127.0.0.1:8000                       | Control + events + push, serves the PWA through HTTPS |
 | Detection worker   | host                 | n/a                                  | jetson-utils `videoSource` reads MediaMTX RTSP via NVDEC, jetson-inference detects, POSTs events to FastAPI |
 
 The server lives in a container because JetPack 4.x ships only Python 3.6 — FastAPI / Pydantic v2 need 3.8+. Detection lives on the host because jetson-inference depends on the host's CUDA/TensorRT/libargus stack.
@@ -103,7 +103,28 @@ ss -ltn | grep -E '8000|8554|8889'
 journalctl -u mediamtx -u homecam-detect -f
 ```
 
-Open `http://jetson.local:8000` (or the Jetson's LAN IP) from a phone or laptop on the same LAN. Add to home screen on Android.
+Open the operator Tailscale HTTPS URL from a phone or laptop. Direct LAN and
+tailnet access to ports 8000, 8554, and 8889 is intentionally unavailable; the
+HTTPS proxy is the supported application and WHEP signaling boundary.
+
+### PR-001 tailnet containment
+
+The loopback bindings above are mandatory host-side enforcement. In the
+centrally managed Tailscale policy, grant trusted operators access to the
+Jetson's HTTPS service on TCP 443 only. Do not add broad grants to TCP 8000,
+8554, 8889, 3000, or 9090. The tailnet policy lives in the Tailscale admin
+plane, not this repository, so record its review separately without copying
+identity details or policy contents into version control.
+
+From a separate LAN/tailnet client, verify the direct ports are denied while
+HTTPS health remains reachable:
+
+```bash
+HOMECAM_LAN_HOST=<jetson-lan-host> \
+HOMECAM_TAILSCALE_HOST=<jetson-tailnet-host> \
+HOMECAM_HTTPS_URL=https://<operator-app-host> \
+  bash deploy/verify-pr001-containment.sh
+```
 
 ### Repeatable phone verification
 
@@ -179,8 +200,10 @@ A pre-provisioned Prometheus + Grafana setup ships in `deploy/`. The `homecam-se
 docker compose -f deploy/docker-compose.yml \
                -f deploy/docker-compose.grafana.yml up -d
 
-# Open Grafana (anonymous Viewer access by default):
-#   http://<jetson>:3000
+# Grafana is loopback-only and requires its own login. If it is enabled, reach
+# it with an authenticated operator tunnel such as an SSH local forward:
+#   ssh -L 3000:127.0.0.1:3000 jetson
+# Then open http://127.0.0.1:3000.
 #
 # Two dashboards are auto-loaded:
 #   • Home Camera — Overview        (worker alive / detection active /
@@ -194,15 +217,10 @@ docker compose -f deploy/docker-compose.grafana.yml down
 
 **RAM cost on the Nano 2GB:** ~30 MB Prometheus + ~50 MB Grafana ≈ 4% of the 2 GB total. The mediamtx + detection worker + server already eat 1.4-1.7 GB; observability is a small additional load. Run only if you want the dashboards — the rest of the stack has zero functional dependency on these two containers.
 
-**Auth:** Grafana ships in anonymous-Viewer mode. To require login (and lock down dashboard editing), edit `deploy/docker-compose.grafana.yml`:
-
-```yaml
-environment:
-  - GF_AUTH_ANONYMOUS_ENABLED=false
-  - GF_SECURITY_ADMIN_PASSWORD=<strong-password-here>
-```
-
-Then `docker compose ... up -d --force-recreate grafana`.
+**Auth:** Anonymous viewing and sign-up are disabled. Grafana is published on
+Jetson loopback only. Provision its admin credential through the operator's
+secret-management process before enabling the optional stack; do not commit it
+to Compose or the repository.
 
 ## Troubleshooting
 

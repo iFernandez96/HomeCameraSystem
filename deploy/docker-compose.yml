@@ -39,7 +39,10 @@ services:
     mem_limit: 512m
     mem_reservation: 256m
     ports:
-      - "8000:8000"
+      # PR-001 containment: FastAPI is reached remotely only through the
+      # authenticated Tailscale Serve HTTPS proxy.  Keep the direct listener
+      # on loopback so LAN and tailnet peers cannot bypass that boundary.
+      - "127.0.0.1:8000:8000"
     volumes:
       - homecam-secrets:/app/secrets
       # Bind-mount the snapshots dir so the host-side detection worker can
@@ -117,6 +120,10 @@ services:
       # artifact, byte backups, rollback). Was :ro pre-OTA.
       - ../client/dist:/app/client_dist
     environment:
+      # PR-001 temporary containment.  This literal value is intentionally
+      # not operator-overridable: OTA stays fail-closed until its later
+      # hardening work is completed and separately released.
+      - HOMECAM_OTA_DISABLED=1
       - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
       # iter-256: 1-month clip retention. Sweep runs daily and
       # deletes recordings older than N days. Disk math at 720p30

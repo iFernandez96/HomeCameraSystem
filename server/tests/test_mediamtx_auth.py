@@ -233,6 +233,9 @@ def test_mediamtx_v118_security_config_is_fail_closed():
     )
     assert config["authHTTPExclude"] == []
     assert config["webrtcTrustedProxies"] == ["127.0.0.1/32", "::1/128"]
+    assert config["rtspAddress"] == "127.0.0.1:8554"
+    assert config["rtspTransports"] == ["tcp"]
+    assert config["webrtcAddress"] == "127.0.0.1:8889"
     assert config["paths"]["talk"]["runOnReadyRestart"] is False
     service = (root / "deploy" / "systemd" / "mediamtx.service").read_text()
     assert "EnvironmentFile=-/etc/homecam/mediamtx.env" in service
