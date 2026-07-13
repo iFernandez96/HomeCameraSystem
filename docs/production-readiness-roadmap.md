@@ -11,8 +11,10 @@ that item or phase.
 | Field | Value |
 |---|---|
 | Last reviewed | 2026-07-13 |
-| Repository baseline | `266fe7e` on `agent/camera-reliability-and-mobile-release` |
-| Baseline cleanliness | Dirty working tree; release source has not been frozen |
+| Assessment baseline | `266fe7e` on `agent/camera-reliability-and-mobile-release` |
+| Assessment checkout | Dirty working tree preserved in place; it is not a release source |
+| Release baseline | `release/pr-000-clean-baseline` at tag `pr-000-verified-20260713` |
+| Release baseline cleanliness | Clean isolated worktree; release builds reject tracked or untracked changes |
 | Target | One household, one Jetson, Android/browser clients, Tailscale-only remote access |
 | Initial release model | Signed, laptop-built artifacts and operator-driven deployment; OTA disabled |
 | Out of initial launch | Direct Internet exposure, cloud relay, high availability, experimental hardware, unproven named-face recognition |
@@ -76,7 +78,7 @@ baseline.
 
 | ID | Minimum necessary change | Pri | Status | Owner | Dependencies | Acceptance criteria | Estimate | Relevant code/docs |
 |---|---|---:|---|---|---|---|---:|---|
-| PR-000 | Create a clean, intentional release branch/worktree containing only reviewed changes. Make release builds refuse dirty input. | P0 | Not started | Release engineering (unassigned) | None | `git status --porcelain` is empty; the release manifest identifies the Git SHA and source fingerprint and says `dirty:false`; unrelated current changes are preserved. | 0.5–1 d | [`scripts/source-fingerprint.sh`](../scripts/source-fingerprint.sh), [`deploy/build-ota-artifact.sh`](../deploy/build-ota-artifact.sh) |
+| PR-000 | Create a clean, intentional release branch/worktree containing only reviewed changes. Make release builds refuse dirty input. | P0 | Done | Release engineering (Codex) | None | `git status --porcelain` is empty; the release manifest identifies the Git SHA and source fingerprint and says `dirty:false`; unrelated current changes are preserved. | 0.5–1 d | [`scripts/source-fingerprint.sh`](../scripts/source-fingerprint.sh), [`deploy/build-ota-artifact.sh`](../deploy/build-ota-artifact.sh) |
 | PR-001 | Apply temporary containment: configure `HOMECAM_OTA_DISABLED=1`, restrict ports 8000/8889/3000 and metrics to loopback/internal networks, constrain Tailscale ACLs, and disable unprotected Grafana. | P0 | Partially implemented | Engineering (unassigned) + Operator | None | A separate LAN/tailnet client cannot reach direct FastAPI, MediaMTX, Grafana, metrics, or internal-worker surfaces; the HTTPS application remains reachable; OTA returns a typed disabled result. | 0.5 d | [`server/app/services/ota_kill_switch.py`](../server/app/services/ota_kill_switch.py), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml) |
 | PR-002 | Freeze the initial launch feature set and mark excluded features unavailable/beta in operator-facing documentation and UI where necessary. | P0 | Not started | Product owner (unassigned) + Engineering (unassigned) | PR-000 | OTA, optional hardware, and named-face recognition cannot be mistaken for production-supported capabilities; no launch claim exceeds collected evidence. | 0.25–0.5 d | [`CLAUDE.md`](../CLAUDE.md), [`docs/standalone_proof_plan.md`](standalone_proof_plan.md), [`README.md`](../README.md) |
 
@@ -264,3 +266,4 @@ recordings.
 | Date | Item | Artifact/revision | Evidence | Result |
 |---|---|---|---|---|
 | 2026-07-13 | Roadmap baseline | `266fe7e` plus dirty working tree | Static repository assessment; no implementation or live activation performed | Roadmap created |
+| 2026-07-13 | PR-000 | `release/pr-000-clean-baseline`; tag `pr-000-verified-20260713`; `pr000-verification/manifest.json` | Clean/dirty regression gate; 55 OTA tests passed with 2 expected skips; manifest Git SHA, source fingerprint, `dirty:false`, and artifact checksum verified; original dirty checkout preserved | Done |
