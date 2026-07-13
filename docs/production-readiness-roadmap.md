@@ -16,7 +16,7 @@ that item or phase.
 | Release baseline | `release/pr-000-clean-baseline` at tag `pr-000-verified-20260713` |
 | Release baseline cleanliness | Clean isolated worktree; release builds reject tracked or untracked changes |
 | Target | One household, one Jetson, Android/browser clients, Tailscale-only remote access |
-| Initial release model | Signed, laptop-built artifacts and operator-driven deployment; OTA disabled |
+| Initial release model | Versioned, laptop-built artifacts and operator-driven deployment; OTA disabled; signing pending PR-302 |
 | Out of initial launch | Direct Internet exposure, cloud relay, high availability, experimental hardware, unproven named-face recognition |
 | Parallel plan revision | 2026-07-13; six workstreams, five execution waves, five milestone gates |
 
@@ -80,7 +80,7 @@ baseline.
 |---|---|---:|---|---|---|---|---:|---|
 | PR-000 | Create a clean, intentional release branch/worktree containing only reviewed changes. Make release builds refuse dirty input. | P0 | Done | Release engineering (Codex) | None | `git status --porcelain` is empty; the release manifest identifies the Git SHA and source fingerprint and says `dirty:false`; unrelated current changes are preserved. | 0.5–1 d | [`scripts/source-fingerprint.sh`](../scripts/source-fingerprint.sh), [`deploy/build-ota-artifact.sh`](../deploy/build-ota-artifact.sh) |
 | PR-001 | Apply temporary containment: configure `HOMECAM_OTA_DISABLED=1`, restrict ports 8000/8889/3000 and metrics to loopback/internal networks, constrain Tailscale ACLs, and disable unprotected Grafana. | P0 | Done | Engineering (Codex) + Operator | None | A separate LAN/tailnet client cannot reach direct FastAPI, MediaMTX, Grafana, metrics, or internal-worker surfaces; the HTTPS application remains reachable; OTA returns a typed disabled result. | 0.5 d | [`server/app/services/ota_kill_switch.py`](../server/app/services/ota_kill_switch.py), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml), [`deploy/verify-pr001-containment.sh`](../deploy/verify-pr001-containment.sh) |
-| PR-002 | Freeze the initial launch feature set and mark excluded features unavailable/beta in operator-facing documentation and UI where necessary. | P0 | Not started | Product owner (unassigned) + Engineering (unassigned) | PR-000 | OTA, optional hardware, and named-face recognition cannot be mistaken for production-supported capabilities; no launch claim exceeds collected evidence. | 0.25–0.5 d | [`CLAUDE.md`](../CLAUDE.md), [`docs/standalone_proof_plan.md`](standalone_proof_plan.md), [`README.md`](../README.md) |
+| PR-002 | Freeze the initial launch feature set and mark excluded features unavailable/beta in operator-facing documentation and UI where necessary. | P0 | Done | Product owner (Israel) + Engineering (Codex) | PR-000 | OTA, optional hardware, and named-face recognition cannot be mistaken for production-supported capabilities; no launch claim exceeds collected evidence. | 0.25–0.5 d | [`CLAUDE.md`](../CLAUDE.md), [`docs/standalone_proof_plan.md`](standalone_proof_plan.md), [`README.md`](../README.md), [`client/src/pages/People.tsx`](../client/src/pages/People.tsx), [`client/src/pages/Training.tsx`](../client/src/pages/Training.tsx), [`client/src/pages/settings/DangerZone.tsx`](../client/src/pages/settings/DangerZone.tsx) |
 
 PR-001 completion note (2026-07-13): loopback bindings and TCP-only RTSP are
 the host-enforced containment boundary, so direct ports remain denied even if a
@@ -90,6 +90,13 @@ to this repository; its operator rule is documented in
 [`deploy/README.md`](../deploy/README.md) and must not grant the direct service
 ports. No central policy contents or identity details were captured as
 evidence.
+
+PR-002 completion note (2026-07-13): the initial one-household/one-Jetson
+launch candidate is documented separately from beta and unavailable features.
+Named-person recognition is visibly beta on People and Training, OTA controls
+are disabled with the laptop-driven deployment path stated, and optional
+hardware remains fail-closed behind existing capability gates. Release signing
+is explicitly pending PR-302 rather than claimed by this scope freeze.
 
 ## Phase 1 — Close security boundaries
 
@@ -277,3 +284,4 @@ recordings.
 | 2026-07-13 | Roadmap baseline | `266fe7e` plus dirty working tree | Static repository assessment; no implementation or live activation performed | Roadmap created |
 | 2026-07-13 | PR-000 | `release/pr-000-clean-baseline`; tag `pr-000-verified-20260713`; `pr000-verification/manifest.json` | Clean/dirty regression gate; 55 OTA tests passed with 2 expected skips; manifest Git SHA, source fingerprint, `dirty:false`, and artifact checksum verified; original dirty checkout preserved | Done |
 | 2026-07-13 | PR-001 | `release/pr-001-containment`; `67c8e5f` | Compose topology and containment regressions passed; 55 OTA tests passed with 2 documented skips; Prometheus config and 5 alerts validated; separate LAN/tailnet probes denied every direct service port while HTTPS health passed; live Jetson decoded one RTSP and one WHEP 1280x720 frame; OTA environment and typed rejection verified; original dirty checkout preserved | Done |
+| 2026-07-13 | PR-002 | `release/pr-002-launch-scope`; `d3d774c` | Focused People, Training, Danger Zone, Settings, and optional-hardware suites passed (199 tests); full client suite passed serially (1,613 tests), plus lint, typecheck, and production build; server OTA containment/typed-disabled checks passed (6 selected tests); direct claim audit found no supported-feature overclaim; no phone install or Jetson activation was required or performed | Done |
