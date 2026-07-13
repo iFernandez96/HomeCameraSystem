@@ -644,18 +644,19 @@ app.include_router(sessions.router, prefix="/api")
 app.include_router(_internal.mediamtx_router, prefix="/api")
 app.include_router(_internal.router, prefix="/api")
 app.include_router(client_log.router, prefix="/api")
-# iter-189 (Feature #11): Prometheus /metrics at root, NOT under
-# /api/*. Scrapers don't speak browser cookies; operator-side
-# fronting controls exposure. Registered BEFORE the SPA catch-all
-# below so the route resolves first.
+# iter-189 / PR-105: Prometheus /metrics at root, NOT under /api/*.
+# Scrapers don't speak browser cookies, so the route source-gates loopback and
+# the fixed internal Compose network instead. Remote callers get the same 404
+# as an unknown route. Registered BEFORE the SPA catch-all below so internal
+# scrapes resolve first.
 app.include_router(metrics_prom.router)
 # iter-195 (iter-169 healthcheck-no-actor closure): /healthz at
 # root, NOT under /api/*. Docker / K8s liveness probes don't
 # speak browser cookies; iter-184 silently broke the previous
 # `/api/status`-based healthcheck by gating /api/*. /healthz is
-# unauthenticated by design — same operator-side-fronting tier as
-# /metrics. Update `deploy/docker-compose.yml` healthcheck to
-# point here.
+# unauthenticated and remotely reachable by design. Unlike `/metrics`, this is
+# the deliberately public liveness surface. Update `deploy/docker-compose.yml`
+# healthcheck to point here.
 app.include_router(healthz.router)
 
 

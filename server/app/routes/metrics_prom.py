@@ -1,4 +1,4 @@
-"""Prometheus /metrics endpoint (iter-189, Feature #11).
+"""Internal Prometheus /metrics endpoint (iter-189, PR-105).
 
 Hand-written exposition-format renderer rather than a
 `prometheus_client` dependency:
@@ -12,12 +12,12 @@ Hand-written exposition-format renderer rather than a
   what's effectively a string concat.
 
 The route is mounted at the **app root** (`/metrics`), NOT under
-`/api/*`, so the iter-184 auth gate doesn't apply. Prometheus
-scrapers don't speak browser cookies; they're typically
-IP-allowlisted or run on the same host. Operator-side fronting
-(Tailscale / Caddy / firewall rule) is the right tier for
-exposure control here, mirroring the Charter's stance on
-``/api/_internal/*``.
+`/api/*`, because Prometheus does not use browser sessions. PR-105 keeps it out
+of the remote application surface with a source boundary instead: only
+loopback and the fixed HomeCam Compose network may scrape. Uvicorn has already
+resolved trusted proxy headers before this route sees ``request.client``;
+remote Tailscale Serve clients therefore retain their tailnet address and get
+the same 404 as an unknown public route.
 
 The handler reads from the same in-memory state ``/api/status``
 exposes, so the two endpoints stay consistent without a second
@@ -28,13 +28,63 @@ imports the other direction would deadlock.
 """
 from __future__ import annotations
 
+import ipaddress
+import logging
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+
+from ..log import RateLimitedLog
+from ..services.internal_peer import normalize_ip
 
 
 router = APIRouter()
+log = logging.getLogger(__name__)
+
+
+_INTERNAL_METRICS_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("172.30.0.0/24"),
+)
+_metrics_reject_log_gate = RateLimitedLog(60.0)
+
+
+def _trusted_metrics_peer(host: str | None) -> bool:
+    normalized = normalize_ip(host or "")
+    if normalized is None:
+        return False
+    address = ipaddress.ip_address(normalized)
+    return any(address in network for network in _INTERNAL_METRICS_NETWORKS)
+
+
+def _metrics_peer_class(host: str | None) -> str:
+    normalized = normalize_ip(host or "")
+    if normalized is None:
+        return "missing"
+    address = ipaddress.ip_address(normalized)
+    if address.is_loopback:
+        return "loopback"
+    if address in _INTERNAL_METRICS_NETWORKS[-1]:
+        return "compose"
+    return "remote"
+
+
+def _require_internal_metrics(request: Request) -> None:
+    host = request.client.host if request.client is not None else None
+    if _trusted_metrics_peer(host):
+        return
+    if _metrics_reject_log_gate.should_log():
+        log.warning(
+            "metrics access rejected: method=%s route=%s source=%s",
+            request.method,
+            request.url.path,
+            _metrics_peer_class(host),
+        )
+    # Match Starlette's unknown-route response so the public application
+    # surface does not disclose whether observability is enabled.
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 def _line(
@@ -58,8 +108,14 @@ def _line(
     ).format(name=name, help=help_text, mtype=mtype, value=value)
 
 
+@router.get(
+    "/metrics/",
+    response_class=PlainTextResponse,
+    include_in_schema=False,
+)
 @router.get("/metrics", response_class=PlainTextResponse)
-async def metrics_prom() -> str:
+async def metrics_prom(request: Request) -> str:
+    _require_internal_metrics(request)
     # Lazy imports to avoid the circular `app.main → app.routes →
     # app.routes.metrics_prom → app.main` chain at module load.
     from ..main import (

@@ -49,3 +49,20 @@ def test_observability_has_no_anonymous_or_direct_remote_listener():
     environment = _environment(grafana)
     assert "GF_AUTH_ANONYMOUS_ENABLED=false" in environment
     assert "GF_USERS_ALLOW_SIGN_UP=false" in environment
+
+
+def test_prometheus_scrapes_server_only_over_the_internal_compose_network():
+    prometheus = _compose("deploy/prometheus/prometheus.yml")
+    jobs = prometheus["scrape_configs"]
+    homecam = next(job for job in jobs if job["job_name"] == "homecam")
+    targets = homecam["static_configs"][0]["targets"]
+
+    assert homecam["metrics_path"] == "/metrics"
+    assert targets == ["server:8000"]
+    assert all("127.0.0.1" not in target for target in targets)
+
+    network = _compose("deploy/docker-compose.yml")["networks"]["default"]
+    assert network["name"] == "homecam-net"
+    assert network["ipam"]["config"] == [
+        {"subnet": "172.30.0.0/24", "gateway": "172.30.0.1"}
+    ]

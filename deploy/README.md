@@ -251,7 +251,12 @@ async def system_reboot():
 
 ## Observability stack (opt-in, iter-199)
 
-A pre-provisioned Prometheus + Grafana setup ships in `deploy/`. The `homecam-server` container exposes `/metrics` (iter-189) at root — same exposure tier as `/healthz`, ungated by design. The opt-in compose extension scrapes it every 15 s and renders two dashboards.
+A pre-provisioned Prometheus + Grafana setup ships in `deploy/`. The
+`homecam-server` container exposes `/metrics` at root, but PR-105 source-gates
+it to loopback and the fixed `172.30.0.0/24` HomeCam Compose network. Remote
+LAN/tailnet requests receive the same 404 as an unknown route; `/healthz`
+remains the intentionally public liveness probe. The opt-in Compose extension
+scrapes metrics internally every 15 s and renders two dashboards.
 
 ```bash
 # Bring up the observability stack alongside the camera stack:
@@ -279,6 +284,21 @@ docker compose -f deploy/docker-compose.grafana.yml down
 Jetson loopback only. Provision its admin credential through the operator's
 secret-management process before enabling the optional stack; do not commit it
 to Compose or the repository.
+
+Verify the access boundary after deployment:
+
+```bash
+# On the Jetson/inside homecam-net: 200 + Prometheus text exposition.
+curl -f http://127.0.0.1:8000/metrics
+
+# From a tailnet client through the production HTTPS origin: 404.
+curl -o /dev/null -w '%{http_code}\n' \
+  https://homecam.tail4a6525.ts.net/metrics
+
+# If the optional stack is running, target health must be 1.
+docker exec homecam-prometheus wget -qO- \
+  'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22homecam%22%7D'
+```
 
 ## Troubleshooting
 

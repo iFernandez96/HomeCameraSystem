@@ -1,22 +1,66 @@
-"""Prometheus /metrics endpoint (iter-189, Feature #11).
+"""Internal Prometheus /metrics endpoint (iter-189, PR-105).
 
 The endpoint is mounted at the **app root** (/metrics, NOT
-/api/metrics), so the iter-184 auth gate doesn't apply — Prometheus
-scrapers don't speak browser cookies. We pin that the route is
-anonymously accessible and that the exposition format conforms to
-the Prometheus text-based spec.
+/api/metrics), so the iter-184 browser auth gate does not apply. PR-105 allows
+anonymous scrapes only from loopback/the fixed Compose network and returns an
+unknown-route 404 to remote callers. The remaining tests pin the Prometheus
+exposition contract.
 """
 from __future__ import annotations
 
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 
-def test_metrics_endpoint_returns_200_anonymously(client_anon: TestClient):
-    """No cookie required — root-level route, NOT gated."""
+def test_given_loopback_scraper_when_requesting_metrics_then_it_returns_200(
+    client_anon: TestClient,
+):
+    """No cookie is required from the internal loopback boundary."""
     r = client_anon.get("/metrics")
     assert r.status_code == 200
+
+
+def test_given_compose_scraper_when_requesting_metrics_then_it_returns_200(
+    client_anon: TestClient,
+):
+    # arrange
+    internal = TestClient(client_anon.app, client=("172.30.0.23", 50000))
+
+    try:
+        # act
+        response = internal.get("/metrics")
+    finally:
+        internal.close()
+
+    # assert
+    assert response.status_code == 200
+    assert "homecam_worker_alive" in response.text
+
+
+@pytest.mark.parametrize("path", ["/metrics", "/metrics/"])
+def test_given_remote_caller_when_requesting_metrics_then_public_surface_is_hidden(
+    client_anon: TestClient,
+    path: str,
+):
+    # arrange
+    remote = TestClient(client_anon.app, client=("100.88.133.22", 50000))
+
+    try:
+        # act
+        response = remote.get(
+            path,
+            headers={"X-Forwarded-For": "172.30.0.23"},
+        )
+    finally:
+        remote.close()
+
+    # assert — application code never trusts caller-supplied forwarding
+    # headers, and the denial matches Starlette's ordinary unknown-route shape.
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
+    assert "homecam_" not in response.text
 
 
 def test_metrics_endpoint_returns_text_plain(client_anon: TestClient):

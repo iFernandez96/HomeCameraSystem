@@ -123,7 +123,8 @@ trace of the deployed Watch screen and real WebRTC session.
 
 The optional stack is defined by `deploy/docker-compose.grafana.yml`:
 
-- Prometheus scrapes the server's unauthenticated root `/metrics` endpoint.
+- Prometheus scrapes the server's source-gated root `/metrics` endpoint over
+  the fixed internal HomeCam Compose network; remote callers receive 404.
 - Grafana provisions the overview and detection dashboards.
 - `deploy/prometheus/alerts.yml` detects a dead worker, stale camera frames,
   sustained Jetson heat, low disk space, and repeated camera recovery.

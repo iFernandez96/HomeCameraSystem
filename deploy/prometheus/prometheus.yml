@@ -5,10 +5,10 @@
 # 15 s — fast enough that the heartbeat-derived metrics (FPS, infer ms,
 # thumb ms) reflect within a single scrape window of an actual change.
 #
-# The server's /metrics route is at root (NOT /api/*), unauthenticated by
-# design (Charter sharp edge: scrapers don't speak browser cookies). On the
-# Compose internal network the homecam-server container is reachable as
-# host=`server`, port=8000.
+# The server's /metrics route is at root (NOT /api/*) and does not use browser
+# cookies. PR-105 source-gates it to loopback plus the fixed 172.30.0.0/24
+# HomeCam Compose network. Prometheus reaches the server internally as
+# host=`server`, port=8000; remote Tailscale/LAN callers receive 404.
 
 global:
   scrape_interval: 15s

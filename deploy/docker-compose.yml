@@ -191,7 +191,7 @@ services:
     # gate covers /api/*, so a cookie-less curl probe would 401
     # forever and the container would report permanently unhealthy
     # after the auth-track deploy. /healthz is root-level + ungated
-    # by design (same exposure-tier as /metrics).
+    # by design. PR-105 restricts /metrics separately to internal callers.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 30s

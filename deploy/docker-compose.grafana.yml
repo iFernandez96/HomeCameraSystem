@@ -5,7 +5,7 @@
 #   docker compose -f deploy/docker-compose.yml \
 #                  -f deploy/docker-compose.grafana.yml up -d
 #
-# Adds Prometheus (scrapes the homecam-server's /metrics every 15 s)
+# Adds Prometheus (scrapes the homecam-server's internal-only /metrics every 15 s)
 # and Grafana (auto-loads two provisioned dashboards: Overview +
 # Detection worker). PR-001 keeps Grafana on Jetson loopback and disables
 # anonymous access. Operators must use an authenticated tunnel or a local SSH
@@ -36,9 +36,9 @@ services:
       - --storage.tsdb.retention.time=14d
       - --web.console.libraries=/usr/share/prometheus/console_libraries
       - --web.console.templates=/usr/share/prometheus/consoles
-    # No public port — Grafana scrapes via the internal compose
-    # network. Expose only if the operator runs an external
-    # Prometheus federation setup.
+    # No public port — Grafana reads Prometheus and Prometheus scrapes the
+    # server over the internal homecam-net network. Do not publish this port;
+    # PR-105's server boundary deliberately rejects remote metrics callers.
     expose:
       - "9090"
 
