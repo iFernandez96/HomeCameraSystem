@@ -110,7 +110,7 @@ authorization path once.
 | PR-102 | Separate and authenticate worker-only internal routes. Preserve the exact-peer MediaMTX callback and move the bounded public client-log sink out of the worker trust surface. Provision a root-readable worker secret and add loopback/proxy denial as defense in depth. | P0 | Done | Engineering (Codex) + Operator | PR-000 | Remote requests to config, heartbeat, event, signal, finalized-event, and host-action endpoints fail; the real worker remains healthy; credential failures are bounded and safely logged; no credential bytes enter logs or artifacts. | 1.5–2.5 d | [`server/app/routes/_internal.py`](../server/app/routes/_internal.py), [`detection/detect.py`](../detection/detect.py), [`detection/host_action.py`](../detection/host_action.py), [`deploy/systemd/homecam-detect.service`](../deploy/systemd/homecam-detect.service), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) |
 | PR-103 | Remove authenticated LAN HTTP fallback and Android cleartext exceptions. Route the app and WHEP through Tailscale HTTPS; bind or firewall direct media/control ports. | P0 | Done | Engineering (Codex) + Operator | PR-101 | Android rejects HTTP and contains no cleartext exception; no mixed-content path remains; live view works on Wi-Fi and cellular through HTTPS; direct ports are unreachable remotely; exact development and production origins pass. | 1–1.5 d | [`android-wrapper/build.gradle`](../android-wrapper/build.gradle), [`android-wrapper/src/main/res/xml/network_security_config.xml`](../android-wrapper/src/main/res/xml/network_security_config.xml), [`client/src/lib/streamQuality.ts`](../client/src/lib/streamQuality.ts), [`client/src/lib/twoWayAudio.ts`](../client/src/lib/twoWayAudio.ts), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml) |
 | PR-104 | Add persistent, endpoint-specific progressive login backoff keyed by normalized account and trusted source address. Do not add global rate-limit middleware or whole-house lockout. | P1 | Done | Engineering (Codex) | PR-000; trusted-proxy policy (resolved) | Repeated failures trigger bounded 429/backoff and survive restart; a correct login clears only the intended bucket; another legitimate account remains usable; unknown-user and bad-password wire responses remain indistinguishable. | 1–1.5 d | [`server/app/routes/auth.py`](../server/app/routes/auth.py), [`server/app/services/login_backoff.py`](../server/app/services/login_backoff.py), [`server/app/services/audit_db.py`](../server/app/services/audit_db.py), [`server/tests/test_login_backoff.py`](../server/tests/test_login_backoff.py), [`server/tests/test_auth_routes.py`](../server/tests/test_auth_routes.py), [`docs/decisions/pr-104-trusted-client-address.md`](decisions/pr-104-trusted-client-address.md), [`CLAUDE.md`](../CLAUDE.md) |
-| PR-105 | Make metrics and dashboards internal or authenticated; remove anonymous Grafana viewing. | P1 | Partially implemented | Engineering (unassigned) + Operator | PR-001 | Remote unauthenticated metrics/dashboard requests fail; Prometheus still scrapes internally; Grafana has explicit credentials or is loopback-only; no sensitive operational identifiers leak publicly. | 0.5 d | [`server/app/routes/metrics_prom.py`](../server/app/routes/metrics_prom.py), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml), [`deploy/prometheus/prometheus.yml`](../deploy/prometheus/prometheus.yml) |
+| PR-105 | Make metrics and dashboards internal or authenticated; remove anonymous Grafana viewing. | P1 | Done | Engineering (Codex) + Operator | PR-001 | Remote unauthenticated metrics/dashboard requests fail; Prometheus still scrapes internally; Grafana has explicit credentials or is loopback-only; no sensitive operational identifiers leak publicly. | 0.5 d | [`server/app/routes/metrics_prom.py`](../server/app/routes/metrics_prom.py), [`server/tests/test_metrics_prom.py`](../server/tests/test_metrics_prom.py), [`server/tests/test_deploy_containment.py`](../server/tests/test_deploy_containment.py), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml), [`deploy/prometheus/prometheus.yml`](../deploy/prometheus/prometheus.yml) |
 
 PR-102 completion note (2026-07-13): implementation commit `c076d64` passed the
 full client, server, detection, Android build, browser, Lighthouse, contract,
@@ -152,6 +152,20 @@ account remained outside the blocked bucket, while the route suite proved a
 second legitimate account could still log in. The deployed browser rendered
 the matching countdown, the connected-phone smoke passed, and the synthetic
 backoff rows were removed.
+
+PR-105 completion note (2026-07-13): implementation commit `640f834`
+source-gated `/metrics` to loopback and the fixed `172.30.0.0/24` HomeCam
+Compose network, while both exact and trailing-slash remote forms return the
+ordinary unknown-route 404 without metric names. Prometheus remains unexposed
+and targets `server:8000` internally; Grafana remains loopback-only with
+anonymous viewing and sign-up disabled. Focused observability checks passed
+(31 tests), the full contract/server gate passed (1,376 passed, 85 expected
+hardware/fixture skips), layered Compose and all five Prometheus alert rules
+validated, and clean-source checks passed. The server tier was activated on
+the Jetson: public HTTPS `/metrics` and `/metrics/` returned 404, while both a
+host-local scrape and a transient container on `homecam-net` returned 200;
+`/healthz`, MediaMTX, and detection remained healthy. The optional
+Prometheus/Grafana stack was not enabled solely for verification.
 
 ## Phase 2 — Make state, recovery, and alerting trustworthy
 
