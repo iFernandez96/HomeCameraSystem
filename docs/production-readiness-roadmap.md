@@ -79,8 +79,17 @@ baseline.
 | ID | Minimum necessary change | Pri | Status | Owner | Dependencies | Acceptance criteria | Estimate | Relevant code/docs |
 |---|---|---:|---|---|---|---|---:|---|
 | PR-000 | Create a clean, intentional release branch/worktree containing only reviewed changes. Make release builds refuse dirty input. | P0 | Done | Release engineering (Codex) | None | `git status --porcelain` is empty; the release manifest identifies the Git SHA and source fingerprint and says `dirty:false`; unrelated current changes are preserved. | 0.5–1 d | [`scripts/source-fingerprint.sh`](../scripts/source-fingerprint.sh), [`deploy/build-ota-artifact.sh`](../deploy/build-ota-artifact.sh) |
-| PR-001 | Apply temporary containment: configure `HOMECAM_OTA_DISABLED=1`, restrict ports 8000/8889/3000 and metrics to loopback/internal networks, constrain Tailscale ACLs, and disable unprotected Grafana. | P0 | Partially implemented | Engineering (unassigned) + Operator | None | A separate LAN/tailnet client cannot reach direct FastAPI, MediaMTX, Grafana, metrics, or internal-worker surfaces; the HTTPS application remains reachable; OTA returns a typed disabled result. | 0.5 d | [`server/app/services/ota_kill_switch.py`](../server/app/services/ota_kill_switch.py), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml) |
+| PR-001 | Apply temporary containment: configure `HOMECAM_OTA_DISABLED=1`, restrict ports 8000/8889/3000 and metrics to loopback/internal networks, constrain Tailscale ACLs, and disable unprotected Grafana. | P0 | Done | Engineering (Codex) + Operator | None | A separate LAN/tailnet client cannot reach direct FastAPI, MediaMTX, Grafana, metrics, or internal-worker surfaces; the HTTPS application remains reachable; OTA returns a typed disabled result. | 0.5 d | [`server/app/services/ota_kill_switch.py`](../server/app/services/ota_kill_switch.py), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml), [`deploy/verify-pr001-containment.sh`](../deploy/verify-pr001-containment.sh) |
 | PR-002 | Freeze the initial launch feature set and mark excluded features unavailable/beta in operator-facing documentation and UI where necessary. | P0 | Not started | Product owner (unassigned) + Engineering (unassigned) | PR-000 | OTA, optional hardware, and named-face recognition cannot be mistaken for production-supported capabilities; no launch claim exceeds collected evidence. | 0.25–0.5 d | [`CLAUDE.md`](../CLAUDE.md), [`docs/standalone_proof_plan.md`](standalone_proof_plan.md), [`README.md`](../README.md) |
+
+PR-001 completion note (2026-07-13): loopback bindings and TCP-only RTSP are
+the host-enforced containment boundary, so direct ports remain denied even if a
+future tailnet policy is accidentally broadened. Tailscale Serve remains
+tailnet-only on HTTPS 443. The centrally managed tailnet policy is not exported
+to this repository; its operator rule is documented in
+[`deploy/README.md`](../deploy/README.md) and must not grant the direct service
+ports. No central policy contents or identity details were captured as
+evidence.
 
 ## Phase 1 — Close security boundaries
 
@@ -267,3 +276,4 @@ recordings.
 |---|---|---|---|---|
 | 2026-07-13 | Roadmap baseline | `266fe7e` plus dirty working tree | Static repository assessment; no implementation or live activation performed | Roadmap created |
 | 2026-07-13 | PR-000 | `release/pr-000-clean-baseline`; tag `pr-000-verified-20260713`; `pr000-verification/manifest.json` | Clean/dirty regression gate; 55 OTA tests passed with 2 expected skips; manifest Git SHA, source fingerprint, `dirty:false`, and artifact checksum verified; original dirty checkout preserved | Done |
+| 2026-07-13 | PR-001 | `release/pr-001-containment`; `67c8e5f` | Compose topology and containment regressions passed; 55 OTA tests passed with 2 documented skips; Prometheus config and 5 alerts validated; separate LAN/tailnet probes denied every direct service port while HTTPS health passed; live Jetson decoded one RTSP and one WHEP 1280x720 frame; OTA environment and typed rejection verified; original dirty checkout preserved | Done |
