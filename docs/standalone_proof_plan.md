@@ -548,9 +548,12 @@ must happen before any "proof" can claim the features work.
       app version, include list, file size, sha256, mode, and logical role;
       invariant: manifest validates without touching live files.
 - [x] B3 include inventory: enumerate persisted state roots from settings
-      (users.db, jwt secret, VAPID keys, push_subs, detection_config, face
-      consent/capture state as policy decides, zones within config); invariant:
-      every included path is under an allowed root.
+      (`users.db`, `events.db`, and `audit.db` via the SQLite online backup
+      API; VAPID keys, push subscriptions, detection config/zones, share/digest,
+      exposure, and security state as stable files). JWT/session state is
+      deliberately excluded and media/capture state is explicitly outside the
+      bounded system-state archive; invariant: every included path is under an
+      allowed root and every path-valued setting has an include/exclude policy.
 - [x] B4 missing-file policy: classify required vs optional persisted files;
       invariant: missing required file blocks backup, missing optional file is
       recorded.
@@ -582,9 +585,11 @@ must happen before any "proof" can claim the features work.
 - [x] B15 atomic replace: swap staged files into the scratch persisted roots
       with backups of overwritten files; invariant: partial failure rolls back
       to pre-restore bytes.
-- [x] B16 post-restore validation: init/read users_db, detection_config,
-      push_subs/VAPID, jwt secret, and any included state; invariant: invalid
-      restored state rolls back.
+- [x] B16 post-restore validation: integrity-check all restored SQLite
+      databases and init/read users, detection config, push/VAPID, and every
+      included JSON state file; then rotate JWT state and clear sessions so all
+      pre-restore access and refresh tokens require login; invariant: invalid
+      restored state cannot report success.
 - [x] B17 restart handoff seam: injected command runner records the restart
       command; invariant: tests never require sudo and never shell interpolate
       archive names.
@@ -595,9 +600,9 @@ must happen before any "proof" can claim the features work.
       dry-run failure, restored, and rolled back; invariant: no success toast
       on stub/blocked/fail/rollback.
 - [x] B20 offline round-trip harness: backup scratch state, mutate scratch
-      state, restore archive, and diff exact bytes/rows; invariant: users,
-      detection config/zones, push subscriptions, keys/secrets policy, and
-      selected capture/consent state match the pre-backup source.
+      state, restore archive, and diff exact bytes/rows; invariant: included
+      users/application state matches the source while the intentional
+      JWT/session policy forces reauthentication.
 - [x] B21 PARITY prep: production backup/restore records ledger lines with
       source file manifest, archive digest, included paths, compatibility
       decision, changed files, restart/health result, and rollback status.

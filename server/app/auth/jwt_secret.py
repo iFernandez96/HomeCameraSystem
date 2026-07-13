@@ -82,6 +82,23 @@ def load_or_generate(path: Path) -> bytes:
     return _generate_and_write(path)
 
 
+def rotate(path: Path) -> bytes:
+    """Persist a fresh secret or fail instead of claiming invalidation.
+
+    Restore uses this stricter seam: an in-memory-only key would invalidate
+    tokens for one process but silently change again on restart, so successful
+    recovery requires the new key bytes to be durable before it returns.
+    """
+    new_secret = _generate_and_write(path)
+    try:
+        persisted = path.read_bytes()
+    except OSError as exc:
+        raise OSError("rotated JWT secret could not be read back") from exc
+    if persisted != new_secret or len(persisted) != _SECRET_LEN:
+        raise OSError("rotated JWT secret did not persist atomically")
+    return new_secret
+
+
 def _generate_and_write(path: Path) -> bytes:
     """Mint a fresh 32-byte secret, atomically write it 0o600.
     Returns the bytes regardless of whether the write succeeded — a

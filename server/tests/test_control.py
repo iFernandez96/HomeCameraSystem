@@ -563,7 +563,16 @@ def test_system_backup_wires_real_chain_and_records_parity_ledger(
     assert len(body["archive_digest"]) == 64
     assert body["ledger_id"].startswith("route-")
     assert (settings.backup_target_dir / body["filename"]).is_file()
-    assert (settings.backup_target_dir / f"{body['filename']}.manifest.json").is_file()
+    manifest_path = settings.backup_target_dir / f"{body['filename']}.manifest.json"
+    assert manifest_path.is_file()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    roles = {item["role"] for item in manifest["files"]}
+    assert {"users_db", "events_db", "audit_db"} <= roles
+    assert "jwt_secret" not in roles
+    assert "sessions_db" not in roles
+    assert {
+        item["kind"] for item in manifest["files"] if item["role"].endswith("_db")
+    } == {"sqlite"}
 
     rows = read_attempts(settings.backup_ledger_path)
     assert len(rows) == 1
@@ -612,6 +621,9 @@ def test_system_restore_wires_real_chain_and_records_parity_ledger(
     assert body["changed_file_count"] >= 4
     assert body["restart_required"] is False
     assert body["ledger_id"].startswith("route-")
+    # The restore response itself is delivered, then the cookie used to invoke
+    # it is invalid because production restore rotates the signing key.
+    assert client.get("/api/auth/me").status_code == 401
 
     rows = read_attempts(settings.backup_ledger_path)
     assert [row["operation"] for row in rows] == ["backup", "restore"]

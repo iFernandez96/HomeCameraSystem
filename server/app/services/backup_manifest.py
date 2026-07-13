@@ -30,17 +30,62 @@ class BackupInventoryEntry:
     path: Path
     allowed_root: Path
     required: bool
+    kind: str = "file"
 
 
-_PERSISTED_FILE_SPECS: tuple[tuple[str, str, bool], ...] = (
-    ("users_db_path", "users_db", True),
-    ("jwt_secret_path", "jwt_secret", True),
-    ("vapid_private_key_path", "vapid_private_key", True),
-    ("vapid_public_key_path", "vapid_public_key", True),
-    ("push_subs_path", "push_subs", False),
-    ("detection_config_path", "detection_config", False),
-    ("security_state_path", "security_state", False),
+_PERSISTED_FILE_SPECS: tuple[tuple[str, str, bool, str], ...] = (
+    ("users_db_path", "users_db", True, "sqlite"),
+    ("events_db_path", "events_db", True, "sqlite"),
+    ("audit_db_path", "audit_db", True, "sqlite"),
+    ("vapid_private_key_path", "vapid_private_key", True, "file"),
+    ("vapid_public_key_path", "vapid_public_key", True, "file"),
+    ("push_subs_path", "push_subs", False, "file"),
+    ("detection_config_path", "detection_config", False, "file"),
+    ("clip_shares_path", "clip_shares", False, "file"),
+    ("digest_state_path", "digest_state", False, "file"),
+    ("camera_exposure_path", "camera_exposure", False, "file"),
+    ("security_state_path", "security_state", False, "file"),
 )
+
+# PR-201 recovery inventory. Every path-valued Settings field is classified so
+# a new durable location cannot be silently mistaken for protected backup data.
+# The detailed rationale and operator consequences live in
+# docs/decisions/pr-201-recovery-inventory.md.
+PERSISTENCE_POLICY: dict[str, str] = {
+    "vapid_private_key_path": "included",
+    "vapid_public_key_path": "included",
+    "client_dist": "excluded_release_artifact",
+    "snapshots_dir": "excluded_media",
+    "recordings_dir": "excluded_media",
+    "continuous_recordings_dir": "excluded_media",
+    "face_captures_dir": "excluded_media",
+    "person_captures_dir": "excluded_media",
+    "push_subs_path": "included",
+    "detection_config_path": "included",
+    "users_db_path": "included_sqlite",
+    "jwt_secret_path": "excluded_rotate_on_restore",
+    "backup_target_dir": "excluded_backup_output",
+    "backup_ledger_path": "excluded_current_evidence",
+    "timelapses_dir": "excluded_media",
+    "events_db_path": "included_sqlite",
+    "clip_shares_path": "included",
+    "digest_state_path": "included",
+    "audit_db_path": "included_sqlite",
+    "sessions_db_path": "excluded_clear_on_restore",
+    "host_action_state_path": "excluded_inflight_state",
+    "camera_exposure_path": "included",
+    "security_state_path": "included",
+    "security_exports_dir": "excluded_ephemeral",
+    "worker_auth_secret_path": "excluded_host_provisioned_secret",
+    "deterrence_driver_path": "excluded_host_provisioned_adapter",
+    "ota_root": "excluded_deferred_ota_state",
+    "ota_manifest_path": "excluded_deferred_ota_state",
+    "ota_artifacts_dir": "excluded_deferred_ota_state",
+    "ota_staging_root": "excluded_deferred_ota_state",
+    "ota_active_pointer": "excluded_deferred_ota_state",
+    "ota_ledger_path": "excluded_deferred_ota_state",
+    "ota_client_dist_target": "excluded_release_artifact",
+}
 
 
 def utc_timestamp() -> str:
@@ -92,7 +137,7 @@ def build_persisted_state_inventory(
 ) -> list[BackupInventoryEntry]:
     roots = tuple(Path(root).resolve() for root in allowed_roots or ())
     entries: list[BackupInventoryEntry] = []
-    for setting_name, role, required in _PERSISTED_FILE_SPECS:
+    for setting_name, role, required, kind in _PERSISTED_FILE_SPECS:
         raw_value = getattr(settings_obj, setting_name, None)
         # Small test/fake Settings objects from older integrations may omit a
         # newly-added optional role. Real Settings always supplies it; skipping
@@ -108,6 +153,20 @@ def build_persisted_state_inventory(
                 path=resolved_path,
                 allowed_root=allowed_root,
                 required=required,
+                kind=kind,
+            )
+        )
+    exposure_path = getattr(settings_obj, "camera_exposure_path", None)
+    if exposure_path is not None:
+        presets_path = Path(exposure_path).with_name(
+            Path(exposure_path).stem + "_presets.json"
+        ).resolve()
+        entries.append(
+            BackupInventoryEntry(
+                role="camera_exposure_presets",
+                path=presets_path,
+                allowed_root=_select_allowed_root(presets_path, roots),
+                required=False,
             )
         )
     return entries
@@ -155,6 +214,9 @@ def _validate_manifest_file(item: dict[str, Any], index: int) -> None:
         if item["size"] is not None or item["sha256"] is not None or item["mode"] is not None:
             raise ValueError(f"files[{index}] absent file metadata must be null")
         return
+    kind = item.get("kind", "file")
+    if kind not in {"file", "sqlite"}:
+        raise ValueError(f"files[{index}].kind is unsupported")
     if not isinstance(item["size"], int) or item["size"] < 0:
         raise ValueError(f"files[{index}].size must be a non-negative int")
     if not isinstance(item["sha256"], str) or len(item["sha256"]) != 64:
@@ -210,6 +272,7 @@ def _manifest_file_from_entry(entry: BackupInventoryEntry) -> dict[str, Any]:
             "mode": None,
             "required": entry.required,
             "absent": True,
+            "kind": entry.kind,
         }
     if not entry.path.is_file():
         raise BackupBlocked(
@@ -217,13 +280,21 @@ def _manifest_file_from_entry(entry: BackupInventoryEntry) -> dict[str, Any]:
             role=entry.role,
             path=entry.path,
         )
-    data = entry.path.read_bytes()
     return {
         "path": manifest_path,
         "role": entry.role,
-        "size": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
+        "size": entry.path.stat().st_size,
+        "sha256": _sha256_file(entry.path),
         "mode": entry.path.stat().st_mode & 0o777,
         "required": entry.required,
         "absent": False,
+        "kind": entry.kind,
     }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

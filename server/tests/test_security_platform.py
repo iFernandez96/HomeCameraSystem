@@ -546,7 +546,8 @@ def test_security_state_is_in_optional_backup_inventory(tmp_path):
 
     names = {
         "users_db_path": "users.db",
-        "jwt_secret_path": "jwt.bin",
+        "events_db_path": "events.db",
+        "audit_db_path": "audit.db",
         "vapid_private_key_path": "private.pem",
         "vapid_public_key_path": "public.pem",
         "push_subs_path": "push.json",

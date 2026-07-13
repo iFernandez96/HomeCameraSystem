@@ -17,6 +17,7 @@ from app.services.backup_manifest import (
     build_persisted_state_inventory,
 )
 from app.services.backup_restore import MaintenanceConflict, MaintenanceLock
+from app.services.backup_snapshot import materialize_consistent_inventory
 
 
 @dataclass(frozen=True)
@@ -49,18 +50,22 @@ def orchestrate_backup(
             inventory = build_persisted_state_inventory(
                 settings_obj=request.settings_obj
             )
-            manifest = build_manifest_from_inventory(
-                inventory,
-                app_version=request.app_version,
-            )
             stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             final_name = f"homecam-backup-{stamp}.tar.gz"
-            draft = write_archive_to_temp(
-                target_dir=request.target_dir,
-                manifest=manifest,
-                inventory=inventory,
-                temp_stem=f"homecam-backup-{stamp}",
-            )
+            with materialize_consistent_inventory(
+                inventory,
+                staging_parent=request.target_dir,
+            ) as stable_inventory:
+                manifest = build_manifest_from_inventory(
+                    stable_inventory,
+                    app_version=request.app_version,
+                )
+                draft = write_archive_to_temp(
+                    target_dir=request.target_dir,
+                    manifest=manifest,
+                    inventory=stable_inventory,
+                    temp_stem=f"homecam-backup-{stamp}",
+                )
             published = publish_backup_atomically(
                 draft=draft,
                 target_dir=request.target_dir,

@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +83,8 @@ class RestoreOrchestratorRequest:
     ledger_id: str
     restart_command: Iterable[str] | None = None
     ledger_path: Path | None = None
+    reauth_jwt_secret_path: Path | None = None
+    reauth_sessions_db_path: Path | None = None
 
 
 class MaintenanceLock:
@@ -209,6 +212,20 @@ def restore_api_response_from_orchestrator(
                 backup_parent=request.backup_parent,
                 validators=[validate_restored_state],
             )
+
+            if (
+                request.reauth_jwt_secret_path is not None
+                or request.reauth_sessions_db_path is not None
+            ):
+                if (
+                    request.reauth_jwt_secret_path is None
+                    or request.reauth_sessions_db_path is None
+                ):
+                    raise RestoreBlocked("incomplete restore reauthentication policy")
+                force_reauthentication(
+                    jwt_secret_path=request.reauth_jwt_secret_path,
+                    sessions_db_path=request.reauth_sessions_db_path,
+                )
 
             restart_required = request.restart_command is not None
             restart_applied = False
@@ -498,10 +515,16 @@ def validate_restored_state(staging: RestoreStaging) -> None:
 
     users_db_path = role_paths.get("users_db")
     if users_db_path is not None:
+        _validate_sqlite_integrity(users_db_path, "users_db")
         from app.auth import users_db
 
         users_db.init_db(users_db_path)
         users_db.count_users(users_db_path)
+
+    for role in ("events_db", "audit_db"):
+        sqlite_path = role_paths.get(role)
+        if sqlite_path is not None:
+            _validate_sqlite_integrity(sqlite_path, role)
 
     detection_config_path = role_paths.get("detection_config")
     if detection_config_path is not None:
@@ -530,6 +553,16 @@ def validate_restored_state(staging: RestoreStaging) -> None:
 
         PushService(persist_path=push_subs_path)
 
+    for role, expected_type in (
+        ("clip_shares", dict),
+        ("digest_state", dict),
+        ("camera_exposure", dict),
+        ("camera_exposure_presets", list),
+    ):
+        state_path = role_paths.get(role)
+        if state_path is not None:
+            _require_json_type(state_path, expected_type)
+
     jwt_secret_path = role_paths.get("jwt_secret")
     if jwt_secret_path is not None:
         from app.auth import jwt_secret
@@ -543,6 +576,38 @@ def validate_restored_state(staging: RestoreStaging) -> None:
         role_paths.get("vapid_private_key"),
         role_paths.get("vapid_public_key"),
     )
+
+
+def force_reauthentication(*, jwt_secret_path: Path, sessions_db_path: Path) -> None:
+    """Invalidate every pre-restore token and discard stale session metadata."""
+    from app.auth import jwt_secret
+    from app.sessions import sessions_db
+
+    try:
+        # Rotate first. If the process stops before the metadata cleanup, every
+        # old access/refresh token is already cryptographically invalid.
+        jwt_secret.rotate(jwt_secret_path)
+        sessions_db.clear_all(sessions_db_path)
+    except (OSError, sqlite3.Error) as exc:
+        raise RestoreBlocked("restore could not force reauthentication") from exc
+
+
+def _validate_sqlite_integrity(path: Path, role: str) -> None:
+    try:
+        with sqlite3.connect(str(path), timeout=30.0) as conn:
+            rows = [str(row[0]) for row in conn.execute("PRAGMA integrity_check")]
+    except sqlite3.Error as exc:
+        raise RestoreBlocked(
+            "invalid restored SQLite database",
+            path=path,
+            role=role,
+        ) from exc
+    if rows != ["ok"]:
+        raise RestoreBlocked(
+            "restored SQLite integrity_check failed",
+            path=path,
+            role=role,
+        )
 
 
 def run_restart_handoff(

@@ -7,17 +7,23 @@ import pytest
 def _settings(root: Path) -> SimpleNamespace:
     return SimpleNamespace(
         users_db_path=root / "users.db",
-        jwt_secret_path=root / "jwt_secret.bin",
+        events_db_path=root / "events.db",
+        audit_db_path=root / "audit.db",
         vapid_private_key_path=root / "vapid_private.pem",
         vapid_public_key_path=root / "vapid_public.pem",
         push_subs_path=root / "push_subs.json",
         detection_config_path=root / "detection_config.json",
+        clip_shares_path=root / "clip_shares.json",
+        digest_state_path=root / "daily_digest_state.json",
+        camera_exposure_path=root / "camera_exposure.json",
+        security_state_path=root / "security-state.json",
     )
 
 
 def _write_required_files(root: Path) -> None:
     (root / "users.db").write_bytes(b"sqlite")
-    (root / "jwt_secret.bin").write_bytes(b"secret")
+    (root / "events.db").write_bytes(b"sqlite")
+    (root / "audit.db").write_bytes(b"sqlite")
     (root / "vapid_private.pem").write_bytes(b"private")
     (root / "vapid_public.pem").write_bytes(b"public")
 

@@ -187,6 +187,16 @@ def get_session_by_refresh_jti(path: Path, refresh_jti: str) -> dict | None:
     return dict(row) if row is not None else None
 
 
+def clear_all(path: Path) -> int:
+    """Remove every session row as part of a restore reauthentication cut."""
+    init_db(path)
+    with _connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute("DELETE FROM sessions")
+        conn.commit()
+        return cur.rowcount
+
+
 def revoke_by_jti(path: Path, jti: str, now: float) -> bool:
     with _connect(path) as conn:
         cur = conn.execute(
