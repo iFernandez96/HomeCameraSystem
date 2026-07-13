@@ -166,8 +166,15 @@ deploy/
   install-jetson.sh idempotent installer
   systemd/          mediamtx, homecam-server, homecam-detect,
                     homecam-jetson-perf
+docs/production-readiness-roadmap.md
+                    Canonical launch blockers, gates, owners, and evidence
 CLAUDE.md           Architectural notes — read first when editing
 ```
+
+Production-readiness work is tracked in
+[`docs/production-readiness-roadmap.md`](docs/production-readiness-roadmap.md).
+The roadmap records scope and evidence; it does not authorize implementation or
+deployment of its items.
 
 ## Status
 

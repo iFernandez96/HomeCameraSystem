@@ -7,7 +7,8 @@ usage() {
 Usage: deploy/build-ota-artifact.sh [--with-server-image] [--output-root DIR] [version]
 
 Builds dist-ota/<version>/ by default. The version may be provided as the first
-positional argument or via HOMECAM_VERSION.
+positional argument or via HOMECAM_VERSION. Release artifacts are built only
+from a clean Git worktree; there is no dirty-source override.
 
 Environment:
   HOMECAM_VERSION          Version when no positional version is provided.
@@ -88,6 +89,14 @@ require_command rsync
 require_command sha256sum
 require_command tar
 
+# Capture source identity before touching any output. This intentionally checks
+# tracked and untracked files and has no bypass: a release artifact must always
+# name a committed, reproducible source state.
+SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)" \
+  || die "unable to resolve source Git revision"
+SOURCE_FINGERPRINT="$(bash "$ROOT/scripts/source-fingerprint.sh" --require-clean)" \
+  || die "release artifact requires a clean source worktree"
+
 [[ -d "$CLIENT_DIST" ]] || die "client/dist is missing. Run the client build before building the OTA artifact; this script does not run npm build."
 [[ -d "$DETECTION_DIR" ]] || die "detection directory is missing: $DETECTION_DIR"
 
@@ -117,11 +126,18 @@ echo "==> creating $ARTIFACT_PATH"
 tar --dereference -C "$PAYLOAD_DIR" -czf "$ARTIFACT_PATH" client detection
 
 SHA256="$(sha256sum "$ARTIFACT_PATH" | awk '{print $1}')"
-SOURCE_FINGERPRINT="$("$ROOT/scripts/source-fingerprint.sh")"
-SOURCE_DIRTY=false
-if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]]; then
-  SOURCE_DIRTY=true
+
+# Refuse a mixed-source artifact if the revision or worktree changed while the
+# payload was being assembled. Ignored build output does not affect this check.
+FINAL_SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)" \
+  || die "unable to re-check source Git revision"
+FINAL_SOURCE_FINGERPRINT="$(bash "$ROOT/scripts/source-fingerprint.sh" --require-clean)" \
+  || die "source changed or became dirty while building the release artifact"
+if [[ "$FINAL_SOURCE_REVISION" != "$SOURCE_REVISION" ||
+      "$FINAL_SOURCE_FINGERPRINT" != "$SOURCE_FINGERPRINT" ]]; then
+  die "source identity changed while building the release artifact"
 fi
+
 ESCAPED_VERSION="$(json_escape "$VERSION")"
 ESCAPED_ARTIFACT_NAME="$(json_escape "$ARTIFACT_NAME")"
 
@@ -129,8 +145,9 @@ cat >"$MANIFEST_PATH" <<EOF
 {
   "version": "$ESCAPED_VERSION",
   "source": {
+    "git_sha": "$SOURCE_REVISION",
     "fingerprint": "$SOURCE_FINGERPRINT",
-    "dirty": $SOURCE_DIRTY
+    "dirty": false
   },
   "artifact": {
     "name": "$ESCAPED_ARTIFACT_NAME",
@@ -141,7 +158,8 @@ EOF
 
 echo "==> wrote $MANIFEST_PATH"
 echo "==> artifact sha256 $SHA256"
-echo "==> source fingerprint $SOURCE_FINGERPRINT (dirty=$SOURCE_DIRTY)"
+echo "==> source revision $SOURCE_REVISION"
+echo "==> source fingerprint $SOURCE_FINGERPRINT (dirty=false)"
 echo
 echo "To ship this artifact, run:"
 printf 'rsync -av --delete %q %q\n' "$OUT_DIR/" "$RSYNC_TARGET$VERSION/"

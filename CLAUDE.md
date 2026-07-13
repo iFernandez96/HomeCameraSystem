@@ -8,6 +8,7 @@ Self-hosted Ring-style camera. Jetson Nano 2GB is the **server** (camera attache
 - `server/` — FastAPI in Docker. JetPack ships Python 3.6, FastAPI wants 3.8+, hence the container. REST + WebSocket events + Web Push. pytest + TestClient.
 - `detection/` — **Python 3.6** worker on the Jetson host (NOT in the container — needs libargus / TensorRT / NVDEC). Reads RTSP from MediaMTX via jetson-utils, runs SSD-MobileNet-v2 (TensorRT FP16), POSTs to `/api/_internal/event`.
 - `deploy/` — Dockerfile + compose + `mediamtx.yml` + systemd units (`mediamtx`, `homecam-server`, `homecam-detect`, plus the deliberately disabled optional `homecam-audio-detect`).
+- `docs/production-readiness-roadmap.md` — canonical production launch blockers, priorities, owners, dependencies, acceptance criteria, status, and evidence. The roadmap records work; it does not authorize implementation or deployment.
 
 Pipeline outside full Privacy: camera → MediaMTX (`nvarguscamerasrc → nvv4l2h264enc → rtspclientsink`) → detection re-decodes via NVDEC. Full-frame Privacy publishes generated black NV12 streams without opening the physical camera. Browser pulls WebRTC from MediaMTX. MediaMTX also stream-copies `cam` to a bounded fMP4 archive under `recordings/continuous/`; the authenticated FastAPI timeline serves it directly.
 
