@@ -109,7 +109,7 @@ authorization path once.
 | PR-101 | Require a short-lived, one-use authenticated media grant for every registered video WHEP read. Extend the existing audio grant store and send grants in `Authorization`, never URLs. Restrict MediaMTX origins. | P0 | Done | Engineering (Codex) | PR-000 | Missing, wrong-scope, expired, and replayed grants fail; one correct grant receives a real frame; grants never enter URLs, logs, state, telemetry, or evidence; all quality rungs and reconnects work on the phone. | 1.5–2.5 d | [`server/app/services/mediamtx_auth.py`](../server/app/services/mediamtx_auth.py), [`server/app/services/media_tokens.py`](../server/app/services/media_tokens.py), [`server/app/routes/security.py`](../server/app/routes/security.py), [`client/src/lib/webrtc.ts`](../client/src/lib/webrtc.ts), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml) |
 | PR-102 | Separate and authenticate worker-only internal routes. Preserve the exact-peer MediaMTX callback and move the bounded public client-log sink out of the worker trust surface. Provision a root-readable worker secret and add loopback/proxy denial as defense in depth. | P0 | Done | Engineering (Codex) + Operator | PR-000 | Remote requests to config, heartbeat, event, signal, finalized-event, and host-action endpoints fail; the real worker remains healthy; credential failures are bounded and safely logged; no credential bytes enter logs or artifacts. | 1.5–2.5 d | [`server/app/routes/_internal.py`](../server/app/routes/_internal.py), [`detection/detect.py`](../detection/detect.py), [`detection/host_action.py`](../detection/host_action.py), [`deploy/systemd/homecam-detect.service`](../deploy/systemd/homecam-detect.service), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) |
 | PR-103 | Remove authenticated LAN HTTP fallback and Android cleartext exceptions. Route the app and WHEP through Tailscale HTTPS; bind or firewall direct media/control ports. | P0 | Done | Engineering (Codex) + Operator | PR-101 | Android rejects HTTP and contains no cleartext exception; no mixed-content path remains; live view works on Wi-Fi and cellular through HTTPS; direct ports are unreachable remotely; exact development and production origins pass. | 1–1.5 d | [`android-wrapper/build.gradle`](../android-wrapper/build.gradle), [`android-wrapper/src/main/res/xml/network_security_config.xml`](../android-wrapper/src/main/res/xml/network_security_config.xml), [`client/src/lib/streamQuality.ts`](../client/src/lib/streamQuality.ts), [`client/src/lib/twoWayAudio.ts`](../client/src/lib/twoWayAudio.ts), [`deploy/mediamtx.yml`](../deploy/mediamtx.yml) |
-| PR-104 | Add persistent, endpoint-specific progressive login backoff keyed by normalized account and trusted source address. Do not add global rate-limit middleware or whole-house lockout. | P1 | Not started | Engineering (unassigned) | PR-000; trusted-proxy policy | Repeated failures trigger bounded 429/backoff and survive restart; a correct login clears only the intended bucket; another legitimate account remains usable; unknown-user and bad-password wire responses remain indistinguishable. | 1–1.5 d | [`server/app/routes/auth.py`](../server/app/routes/auth.py), [`server/app/services/audit_db.py`](../server/app/services/audit_db.py), [`server/tests/test_auth_routes.py`](../server/tests/test_auth_routes.py), [`CLAUDE.md`](../CLAUDE.md) |
+| PR-104 | Add persistent, endpoint-specific progressive login backoff keyed by normalized account and trusted source address. Do not add global rate-limit middleware or whole-house lockout. | P1 | Done | Engineering (Codex) | PR-000; trusted-proxy policy (resolved) | Repeated failures trigger bounded 429/backoff and survive restart; a correct login clears only the intended bucket; another legitimate account remains usable; unknown-user and bad-password wire responses remain indistinguishable. | 1–1.5 d | [`server/app/routes/auth.py`](../server/app/routes/auth.py), [`server/app/services/login_backoff.py`](../server/app/services/login_backoff.py), [`server/app/services/audit_db.py`](../server/app/services/audit_db.py), [`server/tests/test_login_backoff.py`](../server/tests/test_login_backoff.py), [`server/tests/test_auth_routes.py`](../server/tests/test_auth_routes.py), [`docs/decisions/pr-104-trusted-client-address.md`](decisions/pr-104-trusted-client-address.md), [`CLAUDE.md`](../CLAUDE.md) |
 | PR-105 | Make metrics and dashboards internal or authenticated; remove anonymous Grafana viewing. | P1 | Partially implemented | Engineering (unassigned) + Operator | PR-001 | Remote unauthenticated metrics/dashboard requests fail; Prometheus still scrapes internally; Grafana has explicit credentials or is loopback-only; no sensitive operational identifiers leak publicly. | 0.5 d | [`server/app/routes/metrics_prom.py`](../server/app/routes/metrics_prom.py), [`deploy/docker-compose.grafana.yml`](../deploy/docker-compose.grafana.yml), [`deploy/prometheus/prometheus.yml`](../deploy/prometheus/prometheus.yml) |
 
 PR-102 completion note (2026-07-13): implementation commit `c076d64` passed the
@@ -134,6 +134,24 @@ both LAN and tailnet clients. The exact PR-103 debug wrapper decoded live frames
 over both Wi-Fi and cellular, after which the phone's newer pre-existing wrapper
 was restored without clearing app data. TCP/UDP 8189 remains the intentional
 WebRTC ICE media listener, not an alternate signaling or application endpoint.
+
+PR-104 completion note (2026-07-13): implementation commit `aba32ee` fixed the
+canonical address contract: application code consumes only normalized
+`request.client.host`, while Uvicorn accepts proxy headers solely from
+`127.0.0.1`, `::1`, and the fixed `172.30.0.1` HomeCam Docker gateway. The
+endpoint/account/source backoff migration is persistent, atomic, bounded, and
+fail-closed; no global middleware or whole-house lockout was added. Full client
+(1,620 passed), server (1,372 passed, 85 expected skips), detection (672 passed,
+23 expected skips), Android, desktop/mobile browser, three-run Lighthouse,
+Compose, contract, and release-source checks passed. The same server and PWA
+payload was activated on the Jetson. A synthetic HTTPS request carrying a
+spoofed leftmost `X-Forwarded-For` stored the real laptop Tailscale address,
+returned 401/401, survived a real server-container restart, then returned
+bounded 429 responses at the one- and two-second rungs; a different live probe
+account remained outside the blocked bucket, while the route suite proved a
+second legitimate account could still log in. The deployed browser rendered
+the matching countdown, the connected-phone smoke passed, and the synthetic
+backoff rows were removed.
 
 ## Phase 2 — Make state, recovery, and alerting trustworthy
 
