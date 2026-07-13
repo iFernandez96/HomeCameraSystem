@@ -30,10 +30,11 @@ The installer:
 2. Adds the current user to the `docker` group, ensures the daemon is running.
 3. Installs the Docker Compose v2 plugin to `~/.docker/cli-plugins/`.
 4. Downloads MediaMTX (current pin: `v1.18.0` arm64).
-5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
+5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, `homecam-backup.timer`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
 6. Idempotently provisions the shared worker credential at `/etc/homecam/worker-auth.secret` without displaying it.
-7. Requires the prebuilt ARM64 server image.
-8. Enables + starts the services and smoke-tests `/api/status` and `:8889`.
+7. Requires the off-Jetson-generated backup recipient public key at `/etc/homecam/backup-recipient.pem`; only the public half is allowed on the Jetson.
+8. Requires the prebuilt ARM64 server image.
+9. Enables + starts the services and smoke-tests `/api/status` and `:8889`.
 
 ## Prerequisites
 
@@ -67,10 +68,15 @@ curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/medi
 
 # 5. systemd
 sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
+sudo cp deploy/systemd/homecam-backup.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 
 # 5.5. Provision the shared worker credential before starting either side.
 bash deploy/provision-worker-secret.sh
+
+# 5.6. Provision only the off-Jetson-generated backup public key.
+# See deploy/RECOVERY_DRILLS.md; never copy the recovery private key here.
+sudo test -f /etc/homecam/backup-recipient.pem
 
 # 6. Cross-build + ship the server image from the development machine
 # (run this outside the Jetson shell)
@@ -78,8 +84,24 @@ deploy/cross-deploy-server.sh jetson
 
 # Back on the Jetson, start services without any native image build
 cd ~/HomeCameraSystem
-sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-jetson-perf
+sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-backup.timer homecam-jetson-perf
 ```
+
+## Encrypted backups
+
+The server publishes mode-0600 `.hcbk` artifacts to
+`/srv/homecam-media/backups`; no plaintext manifest sidecar is retained. The
+daily persistent timer creates local encrypted recovery points and records age
+plus `replication_status=deferred_off_device`. The default retention is the 14
+newest local backups and can be changed with `BACKUP_RETENTION_COUNT`. It does not provide genuine
+off-device replication or satisfy the deferred 24-hour off-device RPO.
+
+Generate and retain the recovery private key off the Jetson, provision only its
+public half before Compose startup, and run a clean-scratch restore drill using
+[`RECOVERY_DRILLS.md`](RECOVERY_DRILLS.md). Normal production Compose never
+mounts the private key, so an in-place restore correctly fails closed until an
+operator deliberately supplies recovery material for a bounded recovery
+session.
 
 ## Worker credential cutover and rotation
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -8,13 +9,15 @@ import re
 import shutil
 import sqlite3
 import tarfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import mkdtemp
 from threading import Lock
 from typing import Any, Callable, Iterable, Mapping
 
-from app.services.backup_archive import sha256_file
+from app.services.backup_archive import decrypt_encrypted_backup, sha256_file
+from app.services.backup_crypto import BackupCryptoError
 from app.services.backup_ledger import append_attempt, attempt_metadata
 from app.services.backup_manifest import MANIFEST_VERSION, validate_manifest
 
@@ -49,6 +52,8 @@ class RestoreBackup:
     archive_path: Path
     manifest_path: Path
     manifest: dict[str, Any]
+    source_path: Path
+    cleanup_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,7 @@ class RestoreOrchestratorRequest:
     ledger_path: Path | None = None
     reauth_jwt_secret_path: Path | None = None
     reauth_sessions_db_path: Path | None = None
+    recovery_private_key_path: Path | None = None
 
 
 class MaintenanceLock:
@@ -123,7 +129,31 @@ class _MaintenanceLease:
         self.lock._release(self.operation)
 
 
-def open_restore_backup(*, backup_target_dir: Path, filename: str) -> RestoreBackup:
+@contextmanager
+def cross_process_maintenance_lease(lock_path: Path, operation: str):
+    """Serialize backup/restore maintenance across API and timer processes."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise MaintenanceConflict("cross_process_maintenance", operation) from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def open_restore_backup(
+    *,
+    backup_target_dir: Path,
+    filename: str,
+    recovery_private_key_path: Path | None = None,
+    staging_parent: Path | None = None,
+) -> RestoreBackup:
     """Open a published backup and its manifest after listBackups-equivalent filtering."""
     if not _is_list_backups_safe_name(filename):
         log.warning("restore rejected unsafe backup filename: %r", filename)
@@ -137,9 +167,31 @@ def open_restore_backup(*, backup_target_dir: Path, filename: str) -> RestoreBac
         log.warning("restore rejected path escaping backup target: %s", archive_path)
         raise RestoreBlocked("backup filename escapes target root", path=archive_path) from exc
 
-    manifest_path = archive_path.with_name(f"{archive_path.name}.manifest.json")
     if not archive_path.is_file():
         raise RestoreBlocked("backup archive not found", path=archive_path)
+    if archive_path.name.endswith(".hcbk"):
+        if recovery_private_key_path is None:
+            raise RestoreBlocked("backup recovery key is not mounted")
+        try:
+            bundle = decrypt_encrypted_backup(
+                encrypted_path=archive_path,
+                recovery_private_key_path=recovery_private_key_path,
+                staging_parent=staging_parent or backup_target_dir / ".restore-decrypt",
+            )
+        except (BackupCryptoError, OSError, ValueError, json.JSONDecodeError) as exc:
+            raise RestoreBlocked(
+                "encrypted backup authentication failed",
+                path=archive_path,
+            ) from exc
+        return RestoreBackup(
+            archive_path=bundle.archive_path,
+            manifest_path=bundle.manifest_path,
+            manifest=bundle.manifest,
+            source_path=archive_path,
+            cleanup_paths=bundle.cleanup_paths,
+        )
+
+    manifest_path = archive_path.with_name(f"{archive_path.name}.manifest.json")
     if not manifest_path.is_file():
         raise RestoreBlocked("backup manifest not found", path=manifest_path)
 
@@ -158,6 +210,7 @@ def open_restore_backup(*, backup_target_dir: Path, filename: str) -> RestoreBac
         archive_path=archive_path,
         manifest_path=manifest_path,
         manifest=validate_manifest(manifest),
+        source_path=archive_path,
     )
 
 
@@ -182,70 +235,76 @@ def restore_api_response_from_orchestrator(
             else _NullLease()
         )
         with lease:
-            restore = open_restore_backup(
-                backup_target_dir=request.backup_target_dir,
-                filename=request.filename,
-            )
-            compatibility = check_restore_compatibility(
-                restore.manifest,
-                current_app_version=request.current_app_version,
-                current_schema_version=request.current_schema_version,
-            )
-            if not compatibility.compatible:
-                reason = compatibility.reason or "incompatible_backup"
-                response = _restore_not_restored(
-                    reason=compatibility.reason or "incompatible_backup",
-                    phase="compatibility",
-                    detail=compatibility.detail,
-                )
-                return response
-
-            staging = stage_restore_archive(
-                restore,
-                restore_roots=request.restore_roots,
-                required_roles=request.required_roles,
-                staging_parent=request.staging_parent,
-            )
-            apply_started = True
-            apply_result = apply_staged_restore(
-                staging,
-                backup_parent=request.backup_parent,
-                validators=[validate_restored_state],
-            )
-
-            if (
-                request.reauth_jwt_secret_path is not None
-                or request.reauth_sessions_db_path is not None
+            with cross_process_maintenance_lease(
+                request.backup_target_dir / ".maintenance.lock",
+                "restore",
             ):
-                if (
-                    request.reauth_jwt_secret_path is None
-                    or request.reauth_sessions_db_path is None
-                ):
-                    raise RestoreBlocked("incomplete restore reauthentication policy")
-                force_reauthentication(
-                    jwt_secret_path=request.reauth_jwt_secret_path,
-                    sessions_db_path=request.reauth_sessions_db_path,
+                restore = open_restore_backup(
+                    backup_target_dir=request.backup_target_dir,
+                    filename=request.filename,
+                    recovery_private_key_path=request.recovery_private_key_path,
+                    staging_parent=request.staging_parent,
+                )
+                compatibility = check_restore_compatibility(
+                    restore.manifest,
+                    current_app_version=request.current_app_version,
+                    current_schema_version=request.current_schema_version,
+                )
+                if not compatibility.compatible:
+                    reason = compatibility.reason or "incompatible_backup"
+                    response = _restore_not_restored(
+                        reason=compatibility.reason or "incompatible_backup",
+                        phase="compatibility",
+                        detail=compatibility.detail,
+                    )
+                    return response
+
+                staging = stage_restore_archive(
+                    restore,
+                    restore_roots=request.restore_roots,
+                    required_roles=request.required_roles,
+                    staging_parent=request.staging_parent,
+                )
+                apply_started = True
+                apply_result = apply_staged_restore(
+                    staging,
+                    backup_parent=request.backup_parent,
+                    validators=[validate_restored_state],
                 )
 
-            restart_required = request.restart_command is not None
-            restart_applied = False
-            if request.restart_command is not None and restart_runner is not None:
-                run_restart_handoff(request.restart_command, runner=restart_runner)
-                restart_applied = True
+                if (
+                    request.reauth_jwt_secret_path is not None
+                    or request.reauth_sessions_db_path is not None
+                ):
+                    if (
+                        request.reauth_jwt_secret_path is None
+                        or request.reauth_sessions_db_path is None
+                    ):
+                        raise RestoreBlocked("incomplete restore reauthentication policy")
+                    force_reauthentication(
+                        jwt_secret_path=request.reauth_jwt_secret_path,
+                        sessions_db_path=request.reauth_sessions_db_path,
+                    )
 
-            response = {
-                "ok": True,
-                "restored": True,
-                "status": "restored",
-                "filename": restore.archive_path.name,
-                "manifest_id": sha256_file(restore.manifest_path),
-                "changed_file_count": apply_result.changed_count,
-                "restart_required": restart_required,
-                "restart_applied": restart_applied,
-                "ledger_id": request.ledger_id,
-            }
-            status = "restored"
-            return response
+                restart_required = request.restart_command is not None
+                restart_applied = False
+                if request.restart_command is not None and restart_runner is not None:
+                    run_restart_handoff(request.restart_command, runner=restart_runner)
+                    restart_applied = True
+
+                response = {
+                    "ok": True,
+                    "restored": True,
+                    "status": "restored",
+                    "filename": restore.source_path.name,
+                    "manifest_id": sha256_file(restore.manifest_path),
+                    "changed_file_count": apply_result.changed_count,
+                    "restart_required": restart_required,
+                    "restart_applied": restart_applied,
+                    "ledger_id": request.ledger_id,
+                }
+                status = "restored"
+                return response
     except MaintenanceConflict as exc:
         reason = "maintenance_conflict"
         response = _restore_not_restored(
@@ -274,9 +333,9 @@ def restore_api_response_from_orchestrator(
         if request.ledger_path is not None:
             manifest = restore.manifest if restore is not None else None
             archive_digest = None
-            if restore is not None and restore.archive_path.exists():
+            if restore is not None and restore.source_path.exists():
                 try:
-                    archive_digest = sha256_file(restore.archive_path)
+                    archive_digest = sha256_file(restore.source_path)
                 except OSError:
                     archive_digest = None
             changed_count = 0
@@ -310,6 +369,12 @@ def restore_api_response_from_orchestrator(
                     rollback_status=rollback_status,
                 ),
             )
+        if restore is not None:
+            for cleanup_path in restore.cleanup_paths:
+                try:
+                    cleanup_path.unlink()
+                except OSError:
+                    pass
 
 
 def check_restore_compatibility(
@@ -652,7 +717,9 @@ def _restore_not_restored(
 
 
 def _is_list_backups_safe_name(filename: str) -> bool:
-    return bool(re.fullmatch(LIST_BACKUPS_FILENAME_PATTERN, filename))
+    return bool(re.fullmatch(LIST_BACKUPS_FILENAME_PATTERN, filename)) and (
+        filename.endswith(".hcbk") or filename.endswith(".tar.gz")
+    )
 
 
 def _reject_unsafe_archive_name(name: str) -> None:

@@ -557,15 +557,27 @@ def test_system_backup_wires_real_chain_and_records_parity_ledger(
     assert body["ok"] is True
     assert "note" not in body
     assert body["filename"].startswith("homecam-backup-")
-    assert body["filename"].endswith(".tar.gz")
+    assert body["filename"].endswith(".hcbk")
+    assert body["encrypted"] is True
+    assert body["backup_age_s"] == 0.0
+    assert body["replication_status"] == "deferred_off_device"
     assert body["size"] > 0
     assert len(body["manifest_id"]) == 64
     assert len(body["archive_digest"]) == 64
     assert body["ledger_id"].startswith("route-")
     assert (settings.backup_target_dir / body["filename"]).is_file()
-    manifest_path = settings.backup_target_dir / f"{body['filename']}.manifest.json"
-    assert manifest_path.is_file()
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    archive_path = settings.backup_target_dir / body["filename"]
+    assert not archive_path.with_name(f"{body['filename']}.manifest.json").exists()
+    assert not list(settings.backup_target_dir.glob("*.tar.gz"))
+    assert not list(settings.backup_target_dir.glob("*.tmp~"))
+    from app.services.backup_archive import decrypt_encrypted_backup
+
+    bundle = decrypt_encrypted_backup(
+        encrypted_path=archive_path,
+        recovery_private_key_path=settings.backup_recovery_private_key_path,
+        staging_parent=settings.backup_target_dir / "inspection",
+    )
+    manifest = bundle.manifest
     roles = {item["role"] for item in manifest["files"]}
     assert {"users_db", "events_db", "audit_db"} <= roles
     assert "jwt_secret" not in roles
@@ -573,6 +585,8 @@ def test_system_backup_wires_real_chain_and_records_parity_ledger(
     assert {
         item["kind"] for item in manifest["files"] if item["role"].endswith("_db")
     } == {"sqlite"}
+    for path in bundle.cleanup_paths:
+        path.unlink()
 
     rows = read_attempts(settings.backup_ledger_path)
     assert len(rows) == 1
@@ -580,6 +594,58 @@ def test_system_backup_wires_real_chain_and_records_parity_ledger(
     assert rows[0]["operation"] == "backup"
     assert rows[0]["ok"] is True
     _assert_backup_ledger_metadata(rows[0]["metadata"])
+
+
+def test_system_backup_missing_recipient_key_fails_before_plaintext_snapshot(
+    client: TestClient,
+    tmp_path,
+    monkeypatch,
+):
+    from app.config import settings
+
+    _write_backup_route_state()
+    monkeypatch.setattr(
+        settings,
+        "backup_recipient_public_key_path",
+        tmp_path / "missing-recipient.pem",
+    )
+    settings.backup_target_dir.mkdir(parents=True, exist_ok=True)
+    stale_plaintext = (
+        settings.backup_target_dir
+        / "homecam-backup-20260713T000000Z.tar.gz.tmp~"
+    )
+    stale_plaintext.write_bytes(b"stale plaintext")
+
+    response = client.post("/api/system/backup")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["reason"] == "backup_encryption_failed"
+    assert not stale_plaintext.exists()
+    assert not list(settings.backup_target_dir.glob("*.tar.gz"))
+    assert not list(settings.backup_target_dir.glob("*.tmp~"))
+
+
+def test_system_backup_status_failure_does_not_leave_untracked_ciphertext(
+    client: TestClient,
+    monkeypatch,
+):
+    from app.config import settings
+    from app.services import backup_orchestrator
+
+    _write_backup_route_state()
+
+    def fail_status(*_args, **_kwargs):
+        raise OSError("injected status failure")
+
+    monkeypatch.setattr(backup_orchestrator, "record_backup_success", fail_status)
+    response = client.post("/api/system/backup")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert not list(settings.backup_target_dir.glob("*.hcbk"))
+    assert not list(settings.backup_target_dir.glob("*.tar.gz"))
+    assert not list(settings.backup_target_dir.glob("*.tmp~"))
 
 
 # iter-212 (Feature #10 slice 3): /api/system/restore. Stub-with-note
@@ -1069,7 +1135,10 @@ def test_list_backups_returns_empty_when_dir_missing(
     monkeypatch.setattr(settings, "backup_target_dir", tmp_path / "nonexistent")
     r = client.get("/api/system/backups")
     assert r.status_code == 200
-    assert r.json() == {"items": []}
+    body = r.json()
+    assert body["items"] == []
+    assert body["status"]["replication_status"] == "deferred_off_device"
+    assert body["status"]["backup_age_s"] is None
 
 
 def test_list_backups_filters_non_matching_files(

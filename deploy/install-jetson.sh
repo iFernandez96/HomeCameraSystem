@@ -120,6 +120,8 @@ chmod +x "$REPO/detection/run-detect.sh"
 sudo cp "$REPO/deploy/systemd/mediamtx.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-server.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-detect.service" /etc/systemd/system/
+sudo cp "$REPO/deploy/systemd/homecam-backup.service" /etc/systemd/system/
+sudo cp "$REPO/deploy/systemd/homecam-backup.timer" /etc/systemd/system/
 # Install the optional acoustic-event watcher definition, but deliberately do
 # not enable or start it below.  It must remain dormant until microphone
 # hardware is intentionally configured and the operator enables audio events.
@@ -137,6 +139,19 @@ ok "units installed"
 log "Provisioning host-worker authentication secret"
 bash "$REPO/deploy/provision-worker-secret.sh"
 ok "worker authentication secret ready"
+
+# 5.6. Backup recipient key ---------------------------------------------------
+# The private recovery key must never be generated or copied onto this host.
+# Refuse startup until the public half has been provisioned from the recovery
+# machine according to RECOVERY_DRILLS.md.
+if [ ! -f /etc/homecam/backup-recipient.pem ]; then
+    warn "Missing /etc/homecam/backup-recipient.pem; encrypted backup startup is fail-closed."
+    warn "    Generate the recovery pair off-Jetson and provision only its public key."
+    exit 1
+fi
+sudo chown root:root /etc/homecam/backup-recipient.pem
+sudo chmod 0644 /etc/homecam/backup-recipient.pem
+ok "backup recipient public key ready (private recovery key not present)"
 
 # 6. Verify the cross-built server image ---------------------------------------
 
@@ -161,6 +176,7 @@ sudo systemctl enable --now homecam-jetson-perf.service || true
 sudo systemctl enable --now mediamtx.service
 sudo systemctl enable --now homecam-server.service
 sudo systemctl enable --now homecam-detect.service
+sudo systemctl enable --now homecam-backup.timer
 
 # Brief settle.
 sleep 5

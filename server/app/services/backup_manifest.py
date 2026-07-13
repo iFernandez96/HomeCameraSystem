@@ -45,6 +45,7 @@ _PERSISTED_FILE_SPECS: tuple[tuple[str, str, bool, str], ...] = (
     ("digest_state_path", "digest_state", False, "file"),
     ("camera_exposure_path", "camera_exposure", False, "file"),
     ("security_state_path", "security_state", False, "file"),
+    ("backup_status_path", "backup_status", False, "file"),
 )
 
 # PR-201 recovery inventory. Every path-valued Settings field is classified so
@@ -66,6 +67,9 @@ PERSISTENCE_POLICY: dict[str, str] = {
     "jwt_secret_path": "excluded_rotate_on_restore",
     "backup_target_dir": "excluded_backup_output",
     "backup_ledger_path": "excluded_current_evidence",
+    "backup_status_path": "included",
+    "backup_recipient_public_key_path": "excluded_host_provisioned_public_key",
+    "backup_recovery_private_key_path": "excluded_off_device_recovery_key",
     "timelapses_dir": "excluded_media",
     "events_db_path": "included_sqlite",
     "clip_shares_path": "included",

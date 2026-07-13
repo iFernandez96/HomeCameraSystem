@@ -1,0 +1,12 @@
+[Unit]
+Description=Create a local encrypted HomeCameraSystem backup
+After=docker.service homecam-server.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/sh /home/israel/HomeCameraSystem/deploy/run-encrypted-backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

@@ -38,6 +38,7 @@ def _auth_setup(tmp_path, monkeypatch):
     """
     from app.auth import passwords, users_db
     from app.config import settings
+    from app.services.backup_crypto import generate_recovery_keypair
 
     monkeypatch.setattr(settings, "users_db_path", tmp_path / "users.db")
     monkeypatch.setattr(settings, "jwt_secret_path", tmp_path / "jwt.bin")
@@ -58,6 +59,23 @@ def _auth_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "sessions_db_path", tmp_path / "sessions.db")
     monkeypatch.setattr(settings, "backup_target_dir", tmp_path / "backups")
     monkeypatch.setattr(settings, "backup_ledger_path", tmp_path / "backup-ledger.jsonl")
+    backup_private_key = tmp_path / "backup-recovery-private.pem"
+    backup_public_key = tmp_path / "backup-recipient-public.pem"
+    generate_recovery_keypair(
+        private_key_path=backup_private_key,
+        public_key_path=backup_public_key,
+    )
+    monkeypatch.setattr(
+        settings,
+        "backup_recipient_public_key_path",
+        backup_public_key,
+    )
+    monkeypatch.setattr(
+        settings,
+        "backup_recovery_private_key_path",
+        backup_private_key,
+    )
+    monkeypatch.setattr(settings, "backup_status_path", tmp_path / "backup-status.json")
     # TestClient runs over HTTP; Secure cookies wouldn't propagate.
     monkeypatch.setattr(settings, "cookie_secure", False)
     # OTA paths default to container-only /app/secrets — the update route

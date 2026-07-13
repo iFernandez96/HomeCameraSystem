@@ -135,6 +135,24 @@ class Settings:
     backup_ledger_path: Path = Path(
         os.getenv("BACKUP_LEDGER_PATH", "/app/secrets/backup-ledger.jsonl")
     )
+    backup_status_path: Path = Path(
+        os.getenv("BACKUP_STATUS_PATH", "/app/secrets/backup-status.json")
+    )
+    backup_retention_count: int = int(os.getenv("BACKUP_RETENTION_COUNT", "14"))
+    backup_recipient_public_key_path: Path = Path(
+        os.getenv(
+            "BACKUP_RECIPIENT_PUBLIC_KEY_PATH",
+            "/run/secrets/homecam-backup-recipient.pem",
+        )
+    )
+    # Empty in normal operation: the recovery private key is intentionally
+    # kept off the Jetson. An operator may mount it read-only for a controlled
+    # restore, while offline recovery tools pass an explicit scratch path.
+    backup_recovery_private_key_path: Path | None = (
+        Path(os.environ["BACKUP_RECOVERY_PRIVATE_KEY_PATH"])
+        if os.getenv("BACKUP_RECOVERY_PRIVATE_KEY_PATH")
+        else None
+    )
 
     # iter-213 (Feature #8 slice 1): the dir that daily-timelapse
     # MP4s land in. iter-213 ships the route + listing + stub; the

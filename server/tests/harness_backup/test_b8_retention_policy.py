@@ -56,3 +56,20 @@ def test_given_just_created_backup_outside_keep_window_when_retention_runs_then_
     assert deleted == []
     assert just_created.exists()
     assert newer.exists()
+
+
+def test_given_encrypted_backups_when_retention_runs_then_old_ciphertext_is_deleted(tmp_path):
+    from app.services.backup_archive import apply_backup_retention
+
+    target_dir = tmp_path / "backups"
+    target_dir.mkdir()
+    oldest = _write_file(target_dir / "homecam-backup-20260708T120000Z.hcbk")
+    newest = _write_file(target_dir / "homecam-backup-20260708T120001Z.hcbk")
+    os.utime(oldest, (100, 100))
+    os.utime(newest, (200, 200))
+
+    deleted = apply_backup_retention(target_dir=target_dir, keep_newest=1)
+
+    assert deleted == [oldest]
+    assert not oldest.exists()
+    assert newest.exists()

@@ -54,6 +54,14 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # PR-202 encrypted backups. Only the X25519 recipient public key is
+      # present on the Jetson; the recovery private key stays off-device.
+      - type: bind
+        source: /etc/homecam/backup-recipient.pem
+        target: /run/secrets/homecam-backup-recipient.pem
+        read_only: true
+        bind:
+          create_host_path: false
       # Bind-mount the snapshots dir so the host-side detection worker can
       # write thumbnails into the same location the server serves from.
       # (Docker named volumes can't be written from outside the container.)
@@ -164,6 +172,9 @@ services:
       # Adjacent containers such as 172.30.0.2 remain denied.
       - MEDIAMTX_AUTH_TRUSTED_CALLERS=${MEDIAMTX_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.30.0.1}
       - HOMECAM_WORKER_AUTH_FILE=/run/secrets/homecam-worker-auth
+      - BACKUP_RECIPIENT_PUBLIC_KEY_PATH=/run/secrets/homecam-backup-recipient.pem
+      - BACKUP_STATUS_PATH=/app/secrets/backup-status.json
+      - BACKUP_RETENTION_COUNT=${BACKUP_RETENTION_COUNT:-14}
       - HOMECAM_WORKER_AUTH_TRUSTED_CALLERS=${HOMECAM_WORKER_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.30.0.1}
       - AUTOMATION_WEBHOOK_TIMEOUT_S=${AUTOMATION_WEBHOOK_TIMEOUT_S:-5}
       # Optional automation adapters. Empty values keep MQTT and physical

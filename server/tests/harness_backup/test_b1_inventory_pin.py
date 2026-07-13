@@ -15,12 +15,21 @@ def _post_endpoint_for(path: str):
 
 async def test_given_backup_post_without_required_files_when_called_then_no_success_is_claimed(tmp_path, monkeypatch):
     from app.config import settings
+    from app.services.backup_crypto import generate_recovery_keypair
     from app.services.backup_ledger import read_attempts
 
     backup_root = tmp_path / "backups"
     backup_root.mkdir()
     monkeypatch.setattr(settings, "backup_target_dir", backup_root)
     monkeypatch.setattr(settings, "backup_ledger_path", tmp_path / "backup-ledger.jsonl")
+    private_key = tmp_path / "recovery-private.pem"
+    public_key = tmp_path / "recipient-public.pem"
+    generate_recovery_keypair(
+        private_key_path=private_key,
+        public_key_path=public_key,
+    )
+    monkeypatch.setattr(settings, "backup_recipient_public_key_path", public_key)
+    monkeypatch.setattr(settings, "backup_status_path", tmp_path / "backup-status.json")
     endpoint = _post_endpoint_for("/api/system/backup")
 
     body = await endpoint()
@@ -29,7 +38,7 @@ async def test_given_backup_post_without_required_files_when_called_then_no_succ
     assert body["status"] == "not_backed_up"
     assert body["reason"] == "required persisted file is missing"
     assert "note" not in body
-    assert list(backup_root.iterdir()) == []
+    assert [path.name for path in backup_root.iterdir()] == [".maintenance.lock"]
     rows = read_attempts(settings.backup_ledger_path)
     assert len(rows) == 1
     assert rows[0]["operation"] == "backup"

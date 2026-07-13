@@ -66,3 +66,46 @@ def test_prometheus_scrapes_server_only_over_the_internal_compose_network():
     assert network["ipam"]["config"] == [
         {"subnet": "172.30.0.0/24", "gateway": "172.30.0.1"}
     ]
+
+
+def test_backup_container_gets_only_the_read_only_recipient_public_key():
+    server = _compose("deploy/docker-compose.yml")["services"]["server"]
+    backup_key_mount = next(
+        volume
+        for volume in server["volumes"]
+        if isinstance(volume, dict)
+        and volume.get("target") == "/run/secrets/homecam-backup-recipient.pem"
+    )
+    assert backup_key_mount == {
+        "type": "bind",
+        "source": "/etc/homecam/backup-recipient.pem",
+        "target": "/run/secrets/homecam-backup-recipient.pem",
+        "read_only": True,
+        "bind": {"create_host_path": False},
+    }
+    environment = _environment(server)
+    assert (
+        "BACKUP_RECIPIENT_PUBLIC_KEY_PATH="
+        "/run/secrets/homecam-backup-recipient.pem"
+    ) in environment
+    assert "BACKUP_STATUS_PATH=/app/secrets/backup-status.json" in environment
+    assert "BACKUP_RETENTION_COUNT=${BACKUP_RETENTION_COUNT:-14}" in environment
+    assert not any("RECOVERY_PRIVATE" in value for value in environment)
+
+
+def test_local_encrypted_backup_timer_is_daily_and_persistent():
+    timer = (ROOT / "deploy/systemd/homecam-backup.timer").read_text(
+        encoding="utf-8"
+    )
+    service = (ROOT / "deploy/systemd/homecam-backup.service").read_text(
+        encoding="utf-8"
+    )
+
+    assert "OnCalendar=*-*-* 03:15:00" in timer
+    assert "Persistent=true" in timer
+    assert "RandomizedDelaySec=30m" in timer
+    assert "python -m app.scripts.run_backup" in (
+        ROOT / "deploy/run-encrypted-backup.sh"
+    ).read_text(encoding="utf-8")
+    assert "ExecStart=/bin/sh " in service
+    assert "replic" not in service.lower()

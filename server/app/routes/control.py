@@ -60,6 +60,7 @@ from ..services.backup_restore import (
     RestoreOrchestratorRequest,
     restore_api_response_from_orchestrator,
 )
+from ..services.backup_status import read_backup_status
 from ..services.ota_ledger import append_event
 from ..services.ota_manifest import read_local_manifest
 from ..services.ota_orchestrator import OtaApplyRequest, orchestrate_ota_apply
@@ -777,6 +778,7 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
             ledger_path=settings.backup_ledger_path,
             reauth_jwt_secret_path=settings.jwt_secret_path,
             reauth_sessions_db_path=settings.sessions_db_path,
+            recovery_private_key_path=settings.backup_recovery_private_key_path,
         ),
         maintenance_lock=_BACKUP_RESTORE_LOCK,
     )
@@ -1208,6 +1210,11 @@ async def list_backups() -> dict[str, object]:
             name = child.name
             if not _re.match(_BACKUP_FILENAME_PATTERN, name):
                 continue
+            if not (
+                name.endswith(".hcbk")
+                or name.endswith(".tar.gz")
+            ):
+                continue
             try:
                 stat = child.stat()
             except OSError:
@@ -1222,7 +1229,10 @@ async def list_backups() -> dict[str, object]:
     # default "rollback target" — matches the natural undo
     # affordance.
     items.sort(key=lambda x: x["mtime_s"], reverse=True)
-    return {"items": items}
+    return {
+        "items": items,
+        "status": read_backup_status(settings.backup_status_path),
+    }
 
 
 # iter-232 (Feature #12 OTA slice 3a): expose the server version so
