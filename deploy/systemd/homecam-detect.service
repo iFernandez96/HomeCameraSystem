@@ -56,6 +56,7 @@ WorkingDirectory=/home/israel/HomeCameraSystem
 # The FastAPI container runs as root and retains access through its bind mounts.
 UMask=0077
 Environment=EVENT_URL=http://127.0.0.1:8000/api/_internal/event
+Environment=HOMECAM_WORKER_AUTH_FILE=/etc/homecam/worker-auth.secret
 Environment=DETECT_SOURCE=rtsp://localhost:8554/cam
 Environment=DETECT_THRESHOLD=0.55
 Environment=DETECT_COOLDOWN_S=5.0

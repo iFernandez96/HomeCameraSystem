@@ -37,7 +37,7 @@ def _read_scratch_rows(db_path):
 
 
 async def test_given_real_payloads_when_posted_to_internal_route_then_rows_match_bus_replay(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, worker_auth_header,
 ):
     from app.config import settings
     from app.routes import _internal
@@ -58,6 +58,7 @@ async def test_given_real_payloads_when_posted_to_internal_route_then_rows_match
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://testserver",
+        headers={"Authorization": worker_auth_header},
     ) as client:
         for row in fixture_rows:
             monkeypatch.setattr(event_bus_module.time, "time", lambda ts=row["ts"]: ts)

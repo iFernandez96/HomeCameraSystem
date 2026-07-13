@@ -8,18 +8,20 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, security, sessions, shares, telemetry, training, training_admin
+from .routes import _internal, auth, cameras, client_log, clips, control, events, face, healthz, metrics_prom, push, security, sessions, shares, telemetry, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
 from .services.health import seconds_since_last_frame, worker_health
 from .services.push_service import push_service
+from .services import worker_auth
+from .services.worker_auth import WorkerAuthRejected
 
 # Level from HOMECAM_LOG_LEVEL (default INFO) so an operator can flip to
 # DEBUG during triage without a code change — every DEBUG breadcrumb added
@@ -56,6 +58,11 @@ class _SuppressNoisyAccess(logging.Filter):
         '"POST /api/_internal/live_detection ',
         '"GET /api/detection/config ',
     )
+    _internal_route = re.compile(
+        r'"\S+\s+/api/_internal/(?:detection/config|heartbeat|live_detection|'
+        r'event(?:/finalized)?|signal|host_action(?:/(?:claim|result))?|'
+        r'mediamtx-auth)(?:\?[^\s"]*)?\s+HTTP/'
+    )
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
@@ -63,6 +70,8 @@ class _SuppressNoisyAccess(logging.Filter):
         # (including malformed probes/404s), not only successful GETs, so the
         # token can never land in journald through Uvicorn's request line.
         if re.search(r'"\S+\s+/api/shared/[^\s?\"]+', msg):
+            return False
+        if self._internal_route.search(msg):
             return False
         return not any(needle in msg for needle in self._suppressed_lines)
 
@@ -78,6 +87,10 @@ async def lifespan(_app: FastAPI):
     digest_stop = asyncio.Event()
     digest_task = None
     resilience_task = None
+    # PR-102: an absent or malformed worker credential disables only the
+    # host-worker routes. Keep the authenticated UI and MediaMTX callback up so
+    # a provisioning mistake does not turn into a whole-camera outage.
+    worker_auth.load_secret()
     # Each boot step is wrapped with a NAMED error before re-raising so
     # the journal says WHICH step aborted the boot (pre-this-iter a
     # failing step surfaced only as a bare traceback with no operation
@@ -280,6 +293,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Home Camera System", lifespan=lifespan)
+
+
+@app.exception_handler(WorkerAuthRejected)
+async def _worker_auth_rejected(_request: Request, exc: WorkerAuthRejected) -> Response:
+    return Response(status_code=exc.status_code)
 
 # GZip for clients that opt in via `Accept-Encoding`. Sized to skip
 # tiny responses (status pings under ~1 KB add CPU overhead with
@@ -617,12 +635,15 @@ app.include_router(training_admin.router, prefix="/api")
 app.include_router(face.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
-# `/api/auth/*` gates itself (login is the way IN; me/refresh/logout
-# read cookies directly). `/api/_internal/*` is loopback-trusted —
-# Charter lock-in, NEVER gate.
+# `/api/auth/*` gates itself (login is the way IN; me/refresh/logout reads
+# cookies directly). PR-102 splits the stable `_internal` paths across an
+# exact-peer MediaMTX callback and a direct-peer + bearer-authenticated worker
+# router. Client diagnostics remain anonymous on their own bounded route.
 app.include_router(auth.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
+app.include_router(_internal.mediamtx_router, prefix="/api")
 app.include_router(_internal.router, prefix="/api")
+app.include_router(client_log.router, prefix="/api")
 # iter-189 (Feature #11): Prometheus /metrics at root, NOT under
 # /api/*. Scrapers don't speak browser cookies; operator-side
 # fronting controls exposure. Registered BEFORE the SPA catch-all

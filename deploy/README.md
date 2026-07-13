@@ -31,9 +31,9 @@ The installer:
 3. Installs the Docker Compose v2 plugin to `~/.docker/cli-plugins/`.
 4. Downloads MediaMTX (current pin: `v1.18.0` arm64).
 5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
-6. Builds the server container image.
-7. Enables + starts all three services.
-8. Smoke tests `/api/status` and `:8889`.
+6. Idempotently provisions the shared worker credential at `/etc/homecam/worker-auth.secret` without displaying it.
+7. Requires the prebuilt ARM64 server image.
+8. Enables + starts the services and smoke-tests `/api/status` and `:8889`.
 
 ## Prerequisites
 
@@ -69,6 +69,9 @@ curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/medi
 sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
+# 5.5. Provision the shared worker credential before starting either side.
+bash deploy/provision-worker-secret.sh
+
 # 6. Cross-build + ship the server image from the development machine
 # (run this outside the Jetson shell)
 deploy/cross-deploy-server.sh jetson
@@ -77,6 +80,46 @@ deploy/cross-deploy-server.sh jetson
 cd ~/HomeCameraSystem
 sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-jetson-perf
 ```
+
+## Worker credential cutover and rotation
+
+The host detection worker and FastAPI container read the same 32-byte random
+credential from `/etc/homecam/worker-auth.secret`. Only the file path appears in
+systemd and Compose configuration. The directory is `root:israel` `0750`, the
+file is `root:israel` `0640`, and the container receives a read-only bind mount
+at `/run/secrets/homecam-worker-auth`.
+
+Provisioning is idempotent and never prints the credential:
+
+```bash
+bash deploy/provision-worker-secret.sh
+```
+
+Rotation is a deliberate maintenance cutover because there is no dual-secret
+window. Stop both host workers, rotate, recreate the server so it loads the new
+file, then start the workers:
+
+```bash
+sudo systemctl stop homecam-detect homecam-audio-detect 2>/dev/null || true
+bash deploy/provision-worker-secret.sh --rotate
+sudo systemctl restart homecam-server
+sudo systemctl start homecam-detect
+# Start homecam-audio-detect only if it was intentionally enabled before.
+```
+
+Verify without printing file contents:
+
+```bash
+sudo stat -c 'owner=%U group=%G mode=%a bytes=%s' /etc/homecam/worker-auth.secret
+sudo systemctl is-active homecam-server homecam-detect
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/_internal/detection/config
+```
+
+The unauthenticated curl must return `401`; a missing/malformed server secret
+returns `503` only on worker routes. If cutover fails, stop the workers, restore
+the previously backed-up secret with the same owner/mode, restart the server,
+and then restart the workers. Do not copy credential bytes into tickets, logs,
+shell history, or verification artifacts.
 
 MediaMTX delegates every path action to the FastAPI callback on localhost. The
 container must therefore receive the observed host bridge source in

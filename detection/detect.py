@@ -193,6 +193,7 @@ from box_norm import normalize_box  # noqa: E402
 import camera_ident  # noqa: E402  (multicam: DETECT_CAMERA_ID resolution)
 from decision_ledger import DecisionLedger  # noqa: E402
 import host_action  # noqa: E402
+import worker_auth  # noqa: E402
 from mediamtx_watchdog import (  # noqa: E402
     ACTION_REBOOT,
     ACTION_RESTART_MEDIAMTX,
@@ -313,6 +314,13 @@ def _enforce_mem_floor(read_mem_fn, floor_mb):
         raise SystemExit(3)
 
 
+_WORKER_AUTH_SECRET = None
+
+
+def _authorize_worker_request(request):
+    return worker_auth.add_authorization(request, _WORKER_AUTH_SECRET)
+
+
 def post_event(url, payload, timeout=2.0, metrics=None):
     """POST one detection event to the server's internal endpoint.
 
@@ -336,6 +344,7 @@ def post_event(url, payload, timeout=2.0, metrics=None):
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
+    _authorize_worker_request(req)
     event_id = payload.get("id") if isinstance(payload, dict) else None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -580,6 +589,7 @@ def post_live_detection(url, boxes, camera_id, timeout=0.5):
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
+    _authorize_worker_request(req)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
@@ -600,6 +610,7 @@ def _request_json(url, method="GET", payload=None, timeout=2.0):
     req = urllib.request.Request(url, data=data, method=method)
     if payload is not None:
         req.add_header("Content-Type", "application/json")
+    _authorize_worker_request(req)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -1340,6 +1351,7 @@ def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0,
         while True:
             try:
                 req = urllib.request.Request(url, method="GET")
+                _authorize_worker_request(req)
                 with urllib.request.urlopen(req, timeout=2.0) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 # Apply field-by-field (pure helper). A bad single field
@@ -1469,6 +1481,7 @@ def start_heartbeat(url, liveness, metrics, interval_s=10.0, stale_threshold_s=3
                 body = json.dumps(metrics.snapshot()).encode("utf-8")
                 req = urllib.request.Request(url, data=body, method="POST")
                 req.add_header("Content-Type", "application/json")
+                _authorize_worker_request(req)
                 with urllib.request.urlopen(req, timeout=2.0) as resp:
                     resp.read()
                 backoff = 1.0
@@ -2696,6 +2709,17 @@ def main():
     # run BEFORE any worker thread (heartbeat / config-poll / preroll
     # watchdog) spawns so their first log line is already handled.
     applog.configure()
+    global _WORKER_AUTH_SECRET
+    try:
+        _WORKER_AUTH_SECRET = worker_auth.load_secret(
+            _env("HOMECAM_WORKER_AUTH_FILE", "/etc/homecam/worker-auth.secret")
+        )
+    except (OSError, ValueError, TypeError) as e:
+        log.error(
+            "worker authentication secret unavailable: %s (worker refuses to start)",
+            type(e).__name__,
+        )
+        raise SystemExit(5)
     signal.signal(signal.SIGTERM, _handle_worker_shutdown)
     signal.signal(signal.SIGINT, _handle_worker_shutdown)
     source_uri = _env("DETECT_SOURCE", "rtsp://localhost:8554/cam")
@@ -2950,7 +2974,9 @@ def main():
         package_state_path=package_state_path or None,
     )
     signal_url = event_url.rsplit("/event", 1)[0] + "/signal"
-    signal_emitter = SignalEmitter(signal_url, camera_id)
+    signal_emitter = SignalEmitter(
+        signal_url, camera_id, auth_secret=_WORKER_AUTH_SECRET,
+    )
     signal_emitter.start()
     metrics_known_names = (
         sorted(set(recognizer.names)) if recognizer is not None else []

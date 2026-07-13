@@ -1744,19 +1744,13 @@ def test_when_worker_polls_internal_detection_config_then_returns_canonical_shap
     assert "enabled" in body
 
 
-def test_when_anonymous_client_polls_internal_detection_config_then_carve_out_returns_200(
+def test_when_anonymous_client_polls_internal_detection_config_then_401(
     client_anon: TestClient,
 ):
-    # arrange
-    # client_anon carries no auth cookie; iter-184 gate would 401 on the
-    # user-facing /api/detection/config. The /api/_internal/* carve-out
-    # must keep this open for the worker (iter-244 fix-forward).
-
-    # act
     r = client_anon.get("/api/_internal/detection/config")
 
-    # assert
-    assert r.status_code == 200
+    assert r.status_code == 401
+    assert r.content == b""
 
 
 def test_given_user_patches_config_when_worker_polls_internal_then_new_threshold_observed(
@@ -1983,14 +1977,12 @@ def test_given_event_with_no_face_match_when_posted_then_both_fields_absent_or_n
 def test_given_anon_client_when_posting_client_log_then_accepted_unauthenticated(
     client_anon: TestClient,
 ):
-    """The PWA ships device-side error/warn logs to this sink. It lives
-    under the unauthenticated `_internal` router so it works on the
-    anon login screen (CLAUDE.md pin: `_internal` is never auth-gated)."""
+    """The public sink remains usable from the anonymous login screen."""
     # arrange
     body = {"level": "error", "event": "webrtc:whep-failed", "fields": {"status": 503}}
 
     # act
-    r = client_anon.post("/api/_internal/client_log", json=body)
+    r = client_anon.post("/api/client-log", json=body)
 
     # assert
     assert r.status_code == 200, r.text
@@ -2006,7 +1998,7 @@ def test_given_unknown_field_when_posting_client_log_then_422_forbid_extra(
     body = {"level": "warn", "event": "x", "endpoint": "https://evil.example"}
 
     # act
-    r = client_anon.post("/api/_internal/client_log", json=body)
+    r = client_anon.post("/api/client-log", json=body)
 
     # assert
     assert r.status_code == 422, r.text
@@ -2018,7 +2010,7 @@ def test_given_bad_level_when_posting_client_log_then_422(client_anon: TestClien
     body = {"level": "fatal", "event": "x"}
 
     # act
-    r = client_anon.post("/api/_internal/client_log", json=body)
+    r = client_anon.post("/api/client-log", json=body)
 
     # assert
     assert r.status_code == 422, r.text
@@ -2031,29 +2023,29 @@ def test_given_burst_over_cap_when_posting_client_log_then_excess_dropped(
     so a looping client can't flood. Past the cap the route returns
     `{ok: False, dropped: 'rate'}` instead of logging."""
     # arrange — reset the module-global bucket so the count is deterministic.
-    from app.routes import _internal
+    from app.routes import client_log
 
-    _internal._client_log_bucket["ts"] = 0.0
-    _internal._client_log_bucket["count"] = 0
+    client_log._client_log_bucket["ts"] = 0.0
+    client_log._client_log_bucket["count"] = 0
     body = {"level": "info", "event": "spam"}
 
     # act — fire one past the per-window cap.
     accepted = 0
     dropped = 0
-    for _ in range(_internal._CLIENT_LOG_MAX_PER_WINDOW + 5):
-        resp = client_anon.post("/api/_internal/client_log", json=body).json()
+    for _ in range(client_log._CLIENT_LOG_MAX_PER_WINDOW + 5):
+        resp = client_anon.post("/api/client-log", json=body).json()
         if resp.get("ok"):
             accepted += 1
         elif resp.get("dropped") == "rate":
             dropped += 1
 
     # assert — exactly the cap is accepted, the rest are shed.
-    assert accepted == _internal._CLIENT_LOG_MAX_PER_WINDOW
+    assert accepted == client_log._CLIENT_LOG_MAX_PER_WINDOW
     assert dropped == 5
 
     # cleanup — leave the bucket clear for any later test in this process.
-    _internal._client_log_bucket["ts"] = 0.0
-    _internal._client_log_bucket["count"] = 0
+    client_log._client_log_bucket["ts"] = 0.0
+    client_log._client_log_bucket["count"] = 0
 
 
 # --- docs/multicam_contract.md (2026-07-07): camera_id dimension -----
@@ -2177,8 +2169,8 @@ async def test_given_multi_camera_registry_when_push_sent_then_body_names_the_ca
     assert payload["body"] == "Back Yard · 91%"
 
 
-def test_given_anon_worker_when_poll_claim_result_then_host_action_loop_is_unauthenticated(
-    client_anon: TestClient,
+def test_given_authenticated_worker_when_poll_claim_result_then_host_action_loop_succeeds(
+    client: TestClient,
 ):
     import time
 
@@ -2188,18 +2180,18 @@ def test_given_anon_worker_when_poll_claim_result_then_host_action_loop_is_unaut
     # check (max_pending_age_s=120) doesn't instantly expire a now=100.0 record
     rec = host_bridge.enqueue("mediamtx", {}, "owner", now=time.time())
 
-    polled = client_anon.get("/api/_internal/host_action")
+    polled = client.get("/api/_internal/host_action")
     assert polled.status_code == 200, polled.text
     assert polled.json()["action"]["id"] == rec["id"]
 
-    claimed = client_anon.post(
+    claimed = client.post(
         "/api/_internal/host_action/claim",
         json={"id": rec["id"]},
     )
     assert claimed.status_code == 200, claimed.text
     assert claimed.json() == {"result": "claimed"}
 
-    result = client_anon.post(
+    result = client.post(
         "/api/_internal/host_action/result",
         json={
             "id": rec["id"],
@@ -2214,9 +2206,9 @@ def test_given_anon_worker_when_poll_claim_result_then_host_action_loop_is_unaut
 
 
 def test_given_extra_field_when_claiming_host_action_then_rejected(
-    client_anon: TestClient,
+    client: TestClient,
 ):
-    r = client_anon.post(
+    r = client.post(
         "/api/_internal/host_action/claim",
         json={"id": "req", "extra": True},
     )
@@ -2224,9 +2216,9 @@ def test_given_extra_field_when_claiming_host_action_then_rejected(
 
 
 def test_given_oversized_result_when_posting_host_action_result_then_rejected(
-    client_anon: TestClient,
+    client: TestClient,
 ):
-    r = client_anon.post(
+    r = client.post(
         "/api/_internal/host_action/result",
         json={
             "id": "req",

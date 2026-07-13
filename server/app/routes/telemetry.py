@@ -85,7 +85,9 @@ def record_successful_action(request: Request) -> None:
     path = request.url.path
     if method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return
-    if path.startswith(("/api/auth/", "/api/telemetry/", "/api/_internal/")):
+    if path.startswith(
+        ("/api/auth/", "/api/telemetry/", "/api/_internal/", "/api/client-log")
+    ):
         return
     access_cookie = request.cookies.get(COOKIE_ACCESS)
     if not access_cookie:

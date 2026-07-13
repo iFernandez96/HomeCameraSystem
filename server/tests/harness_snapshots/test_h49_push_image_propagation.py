@@ -48,7 +48,7 @@ def _detection_event(thumb_url: str) -> dict:
 
 
 async def test_given_valid_event_with_fixture_thumb_url_when_send_matching_spied_then_payload_image_is_exact_url(
-    client_anon: TestClient, monkeypatch
+    client: TestClient, monkeypatch
 ):
     from app.services.push_service import PushService
 
@@ -61,7 +61,7 @@ async def test_given_valid_event_with_fixture_thumb_url_when_send_matching_spied
 
     monkeypatch.setattr(PushService, "send_matching", spy_send_matching)
 
-    response = client_anon.post(
+    response = client.post(
         "/api/_internal/event",
         json=_detection_event(thumb_url),
     )

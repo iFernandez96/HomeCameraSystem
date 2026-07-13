@@ -22,7 +22,7 @@ def _canonical_detection_event() -> dict:
 
 
 async def test_given_canonical_event_with_thumb_when_push_payload_built_then_send_matching_receives_contract_payload(
-    client_anon,
+    client,
     monkeypatch,
 ):
     # given
@@ -37,7 +37,7 @@ async def test_given_canonical_event_with_thumb_when_push_payload_built_then_sen
     monkeypatch.setattr(PushService, "send_matching", spy_send_matching)
 
     # when
-    response = client_anon.post(
+    response = client.post(
         "/api/_internal/event",
         json=_canonical_detection_event(),
     )

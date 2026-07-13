@@ -951,14 +951,14 @@ def test_given_disk_load_with_out_of_range_retention_when_loaded_then_clamped(
 
 
 def test_given_internal_config_endpoint_when_get_then_face_capture_fields_present(
-    client_anon: TestClient,
+    client: TestClient,
 ):
-    """The worker polls /api/_internal/detection/config (unauth) for
+    """The authenticated worker polls /api/_internal/detection/config for
     config every 30s. Slice 1 (worker hot path, parallel worktree)
     will read face_capture_enabled here to gate the JPEG write —
     surface it on the wire."""
     # arrange / act
-    r = client_anon.get("/api/_internal/detection/config")
+    r = client.get("/api/_internal/detection/config")
 
     # assert
     assert r.status_code == 200, r.text
@@ -1093,14 +1093,14 @@ def test_given_disk_load_with_out_of_range_visit_fields_when_loaded_then_clamped
 
 
 def test_given_internal_config_endpoint_when_get_then_visit_fields_present(
-    client_anon: TestClient,
+    client: TestClient,
 ):
-    """The worker polls /api/_internal/detection/config (unauth) for the
+    """The authenticated worker polls /api/_internal/detection/config for the
     continuous-capture knobs (resolve_continuous_config reads
     continuous_capture / max_visit_s / absence_finalize_s verbatim).
     Surface them on the worker-mirror wire."""
     # arrange / act
-    r = client_anon.get("/api/_internal/detection/config")
+    r = client.get("/api/_internal/detection/config")
 
     # assert
     assert r.status_code == 200, r.text

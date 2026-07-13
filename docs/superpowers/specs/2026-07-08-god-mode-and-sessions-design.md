@@ -20,7 +20,7 @@ The single most valuable thing god-mode can do here is give the operator a place
 - **Watchdog escalation state is invisible to the server.** Only cumulative restart *counters* cross the heartbeat wire. `level`/`last_action_at`/`last_reboot_at` and the `_capture_wedge_diagnostics` blob live only in `<recordings_dir>/.watchdog_state.json` on the host (`detection/detect.py`).
 - **JWTs are fully stateless** (`server/app/auth/tokens.py`): HS256 access+refresh cookies, claims `sub/kind/role/iat/exp`. **No jti, no session store, no device id, no blocklist.** The only historical record is `audit_db.auth_events(ts, username, action, ua)`. "Live sessions" + "revoke" have **zero backing data today**.
 - **Recovery is a stub.** `/api/system/reboot` (`routes/control.py:197`) returns a fake `{ok, note:"stubbed"}`. No mediamtx/nvargus restart route. The FastAPI server runs **in a container**; the **detection worker runs on the host with NOPASSWD sudo** and already restarts these services via the watchdog ladder.
-- **No log read-back.** `POST /api/_internal/client_log` re-emits into journald; logs are write-only. Reading them means SSH + `journalctl`.
+- **No log read-back.** `POST /api/client-log` re-emits into journald; logs are write-only. Reading them means SSH + `journalctl`.
 - **Gating inconsistency.** `/god` gates on `username === 'admin'` (`GodView.tsx:64`, `SideRail.tsx:79`, `BottomNav.tsx:42`) — a *different, stricter* check than the `owner`-role gating used everywhere else (`Settings.tsx`, `ClipModal.tsx`, etc.), and there is no shared `isOwner` helper (it's copy-pasted 4×).
 
 ## 3. Decomposition (each slice = its own spec → plan → codex cycle)

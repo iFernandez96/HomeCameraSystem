@@ -298,7 +298,7 @@ describe('reportPushReceived', () => {
     )
 
     // assert
-    expect(fetchMock).toHaveBeenCalledWith('/api/_internal/client_log', {
+    expect(fetchMock).toHaveBeenCalledWith('/api/client-log', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

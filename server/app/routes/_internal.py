@@ -1,8 +1,7 @@
-"""Internal endpoints used by host-side helpers (the detection worker today).
+"""Authenticated endpoints used by host-side detection workers.
 
-Mounted under /api/_internal/*. There is no auth — same single-host LAN-trusted
-model as the rest of the server. If you ever expose the server to the internet,
-front this prefix with a firewall rule or middleware that rejects external IPs.
+The MediaMTX callback keeps its exact-peer policy on a separate router even
+though its stable URL remains below ``/api/_internal``.
 """
 from __future__ import annotations
 
@@ -13,7 +12,7 @@ import math
 import time
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from dataclasses import asdict
@@ -28,10 +27,17 @@ from ..config import settings
 from ..services.push_service import push_service
 from ..services.alert_policy import decide_alert
 from ..services import mediamtx_auth
+from ..services.internal_peer import has_proxy_marker
+from ..services.worker_auth import require_worker
 from ..log import RateLimitedLog
 from ..services.camera_exposure import CameraExposureConfig, camera_exposure
 
-router = APIRouter(prefix="/_internal", tags=["internal"])
+router = APIRouter(
+    prefix="/_internal",
+    tags=["internal-worker"],
+    dependencies=[Depends(require_worker)],
+)
+mediamtx_router = APIRouter(prefix="/_internal", tags=["internal-mediamtx"])
 log = logging.getLogger(__name__)
 
 # iter-176: strong-reference set for fire-and-forget asyncio tasks.
@@ -173,26 +179,15 @@ _FACE_RECOG_NAME_LEN_MAX = 64
 # restart — a single line is enough to point the operator at the worker.
 _heartbeat_drop_warned = False
 
-# logging-plan (docs/logging_plan.md §1.3): server sink for client-side
-# logs. The PWA's `lib/log.ts` ships error+warn lines here so a failure
-# on a phone the operator can't physically inspect lands in the same
-# journald stream as the server. Mounted under the unauthenticated
-# `_internal` router (CLAUDE.md pin: `_internal` is never auth-gated) so
-# it works on the anon login screen too. App-level rate cap (NOT a
-# middleware — CLAUDE.md anti-rec stands) so a looping client can't
-# flood the journal / SD card.
-_CLIENT_LOG_WINDOW_S = 10.0
-_CLIENT_LOG_MAX_PER_WINDOW = 50
-_client_log_bucket = {"ts": 0.0, "count": 0}
-_CLIENT_LOG_LEVELS = {
-    "error": logging.ERROR,
-    "warn": logging.WARNING,
-    "info": logging.INFO,
-    "debug": logging.DEBUG,
-}
 _MEDIAMTX_AUTH_LOG_GATES = {
     category: RateLimitedLog(60.0)
-    for category in ("untrusted_peer", "malformed", "denied", "internal_error")
+    for category in (
+        "untrusted_peer",
+        "proxied",
+        "malformed",
+        "denied",
+        "internal_error",
+    )
 }
 
 
@@ -234,10 +229,13 @@ async def _bounded_auth_json(request: Request) -> object:
     return json.loads(body.decode("utf-8"))
 
 
-@router.post("/mediamtx-auth")
+@mediamtx_router.post("/mediamtx-auth")
 async def mediamtx_http_auth(request: Request) -> Response:
     """Authorize MediaMTX without ever reflecting credentials in errors."""
     peer = request.client.host if request.client is not None else ""
+    if has_proxy_marker(request.headers):
+        _mediamtx_auth_rejected(peer, "proxied")
+        return Response(status_code=403)
     if not mediamtx_auth.trusted_callback_host(peer):
         _mediamtx_auth_rejected(peer, "untrusted_peer")
         return Response(status_code=403)
@@ -256,28 +254,6 @@ async def mediamtx_http_auth(request: Request) -> Response:
     if not allowed:
         _mediamtx_auth_rejected(peer, "denied")
     return Response(status_code=204 if allowed else 401)
-
-
-class ClientLog(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    level: str = Field(pattern=r"^(error|warn|info|debug)$")
-    event: str = Field(min_length=1, max_length=120)
-    fields: dict | None = Field(default=None)
-    online: bool | None = None
-    ua: str | None = Field(default=None, max_length=256)
-
-    @model_validator(mode="after")
-    def _bound_fields(self) -> "ClientLog":
-        # Cap the serialized field payload so a buggy/malicious client
-        # can't pump megabytes into the journal. The client already
-        # bounds this; this is the server-side belt.
-        if self.fields is not None:
-            try:
-                if len(json.dumps(self.fields)) > 2048:
-                    object.__setattr__(self, "fields", {"_truncated": True})
-            except (TypeError, ValueError):
-                object.__setattr__(self, "fields", {"_unserializable": True})
-        return self
 
 
 class _ClaimBody(BaseModel):
@@ -794,48 +770,6 @@ async def worker_heartbeat(request: Request) -> dict[str, bool]:
             if picked:
                 metrics = picked
     worker_health.heartbeat(metrics)
-    return {"ok": True}
-
-
-@router.post("/client_log")
-async def client_log(entry: ClientLog) -> dict:
-    """Sink for PWA-side logs (docs/logging_plan.md §1.3).
-
-    The browser logger (`client/src/lib/log.ts`) POSTs error+warn lines
-    here so device-side failures the operator can't physically inspect
-    land in the Jetson journald stream with a `client_log:` prefix.
-
-    Unauthenticated by design (mounted on `_internal`) so it works on
-    the anon login screen. App-level rate cap drops past
-    `_CLIENT_LOG_MAX_PER_WINDOW` lines per `_CLIENT_LOG_WINDOW_S` so a
-    looping client can't flood the journal — the cap-hit itself is
-    logged once per window so the throttling is visible.
-    """
-    import time as _t
-
-    now = _t.monotonic()
-    if now - _client_log_bucket["ts"] >= _CLIENT_LOG_WINDOW_S:
-        _client_log_bucket["ts"] = now
-        _client_log_bucket["count"] = 0
-    _client_log_bucket["count"] += 1
-    if _client_log_bucket["count"] > _CLIENT_LOG_MAX_PER_WINDOW:
-        if _client_log_bucket["count"] == _CLIENT_LOG_MAX_PER_WINDOW + 1:
-            log.warning(
-                "client_log rate cap hit (%d/%.0fs) — dropping further "
-                "client logs this window",
-                _CLIENT_LOG_MAX_PER_WINDOW,
-                _CLIENT_LOG_WINDOW_S,
-            )
-        return {"ok": False, "dropped": "rate"}
-    level = _CLIENT_LOG_LEVELS.get(entry.level, logging.INFO)
-    log.log(
-        level,
-        "client_log:%s fields=%s online=%s ua=%s",
-        entry.event,
-        entry.fields or {},
-        entry.online,
-        (entry.ua or "")[:120],
-    )
     return {"ok": True}
 
 

@@ -5,8 +5,7 @@ protected `/api/*` surface and the carve-outs that MUST stay open:
 
 - `/api/auth/*` gates itself (login is the way IN; the route is
   unauthenticated by definition).
-- `/api/_internal/*` is loopback-trusted (Charter lock-in,
-  worker writes events here without auth).
+- `/api/_internal/*` uses a separate direct-peer worker credential.
 - `/api/events/ws` (WS) is NOT gated yet — Phase 6 (iter-185)
   adds the cookie precondition inside the handshake. The REST
   sibling `/api/events?limit=...` IS gated this iter.
@@ -108,14 +107,7 @@ def test_api_auth_login_remains_anon_accessible(client_anon):
     )
 
 
-def test_api_internal_event_anon_accessible(client_anon):
-    """Loopback-trusted carve-out — the host-side detection worker
-    posts events here without auth. Charter lock-in: NEVER gate.
-
-    We deliberately POST a body that may or may not satisfy the
-    endpoint's Pydantic schema — what we're pinning here is that
-    NO 401 comes back. A 422 (validation) or 200 (ok) both prove
-    the auth gate didn't fire on this prefix."""
+def test_api_internal_event_requires_worker_credential(client_anon):
     res = client_anon.post(
         "/api/_internal/event",
         json={
@@ -124,18 +116,17 @@ def test_api_internal_event_anon_accessible(client_anon):
             "boxes": [{"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}],
         },
     )
-    assert res.status_code != 401, (
-        "auth gate fired on /api/_internal/event (carve-out broken)"
-    )
+    assert res.status_code == 401
+    assert res.content == b""
 
 
-def test_api_internal_heartbeat_anon_accessible(client_anon):
-    """Worker heartbeats also bypass auth. Same carve-out."""
+def test_api_internal_heartbeat_requires_worker_credential(client_anon):
     res = client_anon.post(
         "/api/_internal/heartbeat",
         json={"metrics": {"fps": 5}},
     )
-    assert res.status_code == 200
+    assert res.status_code == 401
+    assert res.content == b""
 
 
 # --- iter-197 (Feature #3 slice 3): role gates on destructive routes ---

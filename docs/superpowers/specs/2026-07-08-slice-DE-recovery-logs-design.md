@@ -68,7 +68,7 @@ Pure, in-process, single-writer store with a bounded history. Persisted to a JSO
 - **Staleness (server):** `max_pending_age_s = 120.0`. A queued action older than that is `expired`, never handed to the worker (guards the "owner clicked reboot, worker was offline for an hour, comes back and reboots unexpectedly" footgun).
 - Load-on-import restores `_current`/`_history` from the sidecar (best-effort; corrupt file → empty).
 
-### 1.3 Server↔worker routes — add to `server/app/routes/_internal.py` (UNAUTH, per CLAUDE.md pin "`/api/_internal/*` is never auth-gated"; do **not** add `dependencies=[...]`)
+### 1.3 Server↔worker routes — historical design (authentication superseded by PR-102)
 
 ```
 GET  /api/_internal/host_action
@@ -159,7 +159,7 @@ Loop per tick:
   - Idempotency: two sequential executes of the same id (seen set carried) → second is SKIP_SEEN, `do_reboot` called at most once.
 - **Worker `detection/tests/test_py36_compat.py`** auto-covers `host_action.py` via the AST scanner (it globs `detection/*.py`). Just confirm it's picked up.
 - **Server `server/tests/test_host_bridge.py`**: `enqueue` de-dupes onto a live pending record; `peek` hides a stale pending and transitions it to `expired`; `claim` is compare-and-set (pending→running once, second claim → `conflict`, wrong id → `unknown`); `record_result` sets terminal + pushes history + ignores unknown ids; persistence round-trips through the JSON sidecar; corrupt sidecar → empty store. Inject `now` — never monkeypatch `time`.
-- **Server `server/tests/test_internal.py`**: the three new routes are reachable **without auth** (use `client_anon`); `claim`/`result` bodies are `extra='forbid'`; oversized `result` payload rejected.
+- **Historical test direction, superseded by PR-102:** the three host-action routes now require the worker credential; `claim`/`result` bodies remain `extra='forbid'`, and oversized `result` payloads remain rejected after authentication.
 
 ---
 

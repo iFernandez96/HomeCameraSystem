@@ -32,7 +32,7 @@ def _person_event_payload(**overrides):
 
 
 async def test_given_person_names_only_when_ingested_then_legacy_name_derives_and_search_round_trips(
-    monkeypatch,
+    monkeypatch, worker_auth_header,
 ):
     from app.config import settings
     from app.routes import _internal, events
@@ -48,6 +48,7 @@ async def test_given_person_names_only_when_ingested_then_legacy_name_derives_an
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://testserver",
+        headers={"Authorization": worker_auth_header},
     ) as client:
         post = await client.post(
             "/api/_internal/event",

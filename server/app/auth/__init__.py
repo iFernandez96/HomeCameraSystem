@@ -14,6 +14,7 @@ Phase 3 (iter-181): `tokens.py` + the 4 auth routes.
 Lock-ins from the user (don't propose alternatives):
 - Per-user accounts. JWT. sqlite via stdlib `sqlite3`.
 - Full-page `/login` route on the client (Phase 4).
-- `/api/_internal/*` STAYS unauthenticated (loopback-trusted carve-out).
+- `/api/_internal/*` worker routes use their own direct-peer bearer credential;
+  they do not use browser JWT cookies.
 - Bootstrap via env-var seed; day-2 admin via `gen_admin` script.
 """

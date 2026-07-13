@@ -58,7 +58,7 @@ const SW_BUILD_ID = manifestBuildId(precacheManifest)
 
 function sendSwActivatedLog(buildId: string): void {
   try {
-    void fetch('/api/_internal/client_log', {
+    void fetch('/api/client-log', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

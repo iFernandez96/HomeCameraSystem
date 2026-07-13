@@ -14,6 +14,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+import worker_auth
+
 
 log = logging.getLogger("signal_retry")
 
@@ -36,10 +38,11 @@ def build_signal_payload(source, label, camera_id, observed_at, score=1.0,
     }
 
 
-def post_signal(url, payload, timeout=2.0):
+def post_signal(url, payload, timeout=2.0, auth_secret=None):
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
+    worker_auth.add_authorization(request, auth_secret)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         response.read()
 
@@ -68,7 +71,7 @@ class SignalRetryQueue(object):
         with self._lock:
             self.pending = []
 
-    def flush_one(self, url, now, sender=post_signal):
+    def flush_one(self, url, now, sender=post_signal, auth_secret=None):
         with self._lock:
             now_value = float(now)
             self.pending = [
@@ -89,7 +92,10 @@ class SignalRetryQueue(object):
         # Never hold the queue lock across network I/O: emitters run on the
         # frame/GPIO paths and must remain nonblocking while loopback is down.
         try:
-            sender(url, payload)
+            if sender is post_signal:
+                sender(url, payload, auth_secret=auth_secret)
+            else:
+                sender(url, payload)
         except Exception as error:
             permanent = (
                 isinstance(error, urllib.error.HTTPError)
@@ -128,10 +134,11 @@ class SignalRetryQueue(object):
 class SignalEmitter(object):
     """Daemon sender for the detection worker's sparse metadata signals."""
     def __init__(self, url, camera_id, sender=post_signal, max_pending=8,
-                 interval_s=0.5):
+                 interval_s=0.5, auth_secret=None):
         self.url = url
         self.camera_id = camera_id
         self.sender = sender
+        self.auth_secret = auth_secret
         self.queue = SignalRetryQueue(max_pending=max_pending)
         self.interval_s = max(0.1, float(interval_s))
         self._thread = None
@@ -164,6 +171,7 @@ class SignalEmitter(object):
         while True:
             result = self.queue.flush_one(
                 self.url, time.time(), sender=self.sender,
+                auth_secret=self.auth_secret,
             )
             if result is False and not warned:
                 log.warning("signal delivery failed; retrying bounded metadata queue")

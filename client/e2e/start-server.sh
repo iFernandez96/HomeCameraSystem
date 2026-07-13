@@ -19,6 +19,10 @@ set -e
 
 DIR="$(mktemp -d /tmp/homecam-e2e-XXXXXX)"
 echo "[e2e] fixture dir: $DIR" >&2
+cleanup() {
+  rm -rf "$DIR"
+}
+trap cleanup EXIT
 
 cd ../server
 
@@ -26,6 +30,12 @@ cd ../server
 VAPID_PRIVATE_KEY_PATH="$DIR/vapid_private.pem" \
 VAPID_PUBLIC_KEY_PATH="$DIR/vapid_public.pem" \
   /tmp/homecam-venv/bin/python -m app.scripts.gen_vapid >/dev/null
+
+# Generate the worker credential fixture without exposing its value. Browser
+# journeys deliberately do not receive it; they can therefore prove that the
+# worker surface is not part of the authenticated UI/API surface.
+umask 077
+openssl rand -hex 32 >"$DIR/worker-auth.secret"
 
 # Generate argon2 hash for "admin" via the gen_admin --hash-only
 # path. Pipes the password twice on stdin to satisfy getpass's
@@ -68,10 +78,25 @@ export OTA_CLIENT_DIST_TARGET="$DIR/client-dist"
 export COOKIE_SECURE=false
 export HOMECAM_ADMIN_USER=admin
 export HOMECAM_ADMIN_PASSWORD_HASH="$ADMIN_HASH"
+export HOMECAM_WORKER_AUTH_FILE="$DIR/worker-auth.secret"
+export HOMECAM_WORKER_AUTH_TRUSTED_CALLERS="127.0.0.1,::1"
 
 mkdir -p "$SNAPSHOTS_DIR" "$RECORDINGS_DIR" "$TIMELAPSES_DIR" \
   "$BACKUP_TARGET_DIR" "$OTA_ARTIFACTS_DIR" "$OTA_STAGING_ROOT" \
   "$OTA_CLIENT_DIST_TARGET"
 
-exec /tmp/homecam-venv/bin/python -m uvicorn app.main:app \
-  --host 127.0.0.1 --port 8000 --log-level warning
+/tmp/homecam-venv/bin/python -m uvicorn app.main:app \
+  --host 127.0.0.1 --port 8000 --log-level warning &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' HUP INT TERM
+# The server retains only the in-memory credential after lifespan startup.
+# Remove the fixture file as soon as health proves startup completed, because
+# Playwright may hard-kill its webServer process without allowing EXIT traps.
+for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+    rm -f "$DIR/worker-auth.secret"
+    break
+  fi
+  sleep 0.25
+done
+wait "$SERVER_PID"

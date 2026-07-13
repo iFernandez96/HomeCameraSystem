@@ -130,6 +130,14 @@ sudo cp "$REPO/deploy/systemd/homecam-jetson-perf.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 ok "units installed"
 
+# 5.5. Shared worker credential -----------------------------------------------
+# Provision before either the server container or host worker starts. Re-runs
+# preserve the existing valid value; rotation is an explicit maintenance task
+# so the two processes can never be switched independently by accident.
+log "Provisioning host-worker authentication secret"
+bash "$REPO/deploy/provision-worker-secret.sh"
+ok "worker authentication secret ready"
+
 # 6. Verify the cross-built server image ---------------------------------------
 
 # Never compile the server image on the 2 GB Nano. Native dependency builds

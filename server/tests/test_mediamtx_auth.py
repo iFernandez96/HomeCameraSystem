@@ -33,7 +33,7 @@ def _payload(
     }
 
 
-async def _callback(monkeypatch, payload, *, peer="172.18.0.1"):
+async def _callback(monkeypatch, payload, *, peer="172.18.0.1", headers=None):
     from app.config import settings
     from app.main import app
 
@@ -46,7 +46,9 @@ async def _callback(monkeypatch, payload, *, peer="172.18.0.1"):
     async with httpx.AsyncClient(
         transport=transport, base_url="http://homecam.test"
     ) as client:
-        return await client.post("/api/_internal/mediamtx-auth", json=payload)
+        return await client.post(
+            "/api/_internal/mediamtx-auth", json=payload, headers=headers
+        )
 
 
 def test_token_is_opaque_scoped_one_time_and_expires():
@@ -92,6 +94,17 @@ def test_callback_trust_is_exact_and_normalizes_ipv4_mapped_ipv6(monkeypatch):
     assert trusted_callback_host("::1")
     assert not trusted_callback_host("172.18.0.3")
     assert not trusted_callback_host("172.18.0.1.attacker.invalid")
+
+
+@pytest.mark.anyio
+async def test_callback_rejects_proxy_markers_before_payload_auth(monkeypatch):
+    response = await _callback(
+        monkeypatch,
+        _payload(),
+        headers={"X-Forwarded-For": "127.0.0.1"},
+    )
+    assert response.status_code == 403
+    assert response.content == b""
 
 
 def test_policy_allows_only_exact_video_and_loopback_rtsp_paths():

@@ -12,6 +12,7 @@ WorkingDirectory=/home/israel/HomeCameraSystem
 Environment=AUDIO_LISTEN_URL=rtsp://127.0.0.1:8554/listen
 Environment=AUDIO_SIGNAL_URL=http://127.0.0.1:8000/api/_internal/signal
 Environment=AUDIO_CONFIG_URL=http://127.0.0.1:8000/api/_internal/detection/config
+Environment=HOMECAM_WORKER_AUTH_FILE=/etc/homecam/worker-auth.secret
 ExecStart=/usr/bin/python3 /home/israel/HomeCameraSystem/detection/audio_watch.py
 Restart=on-failure
 RestartSec=10

@@ -8,7 +8,7 @@ Pre-iter-314 the function parsed `event_id` out of the DB-stored
 suffix on the candidate filename was the accidental traversal
 guard. A worker-compromise threat actor (4) could write a malformed
 `clip_url` like `/api/events/../../etc/passwd/clip` to events_db
-via the unauthenticated `/api/_internal/event` endpoint; the
+via the worker-authenticated `/api/_internal/event` endpoint; the
 candidate path became `recordings_dir/"../../etc/passwd.mp4"`.
 The `.mp4` suffix meant `.exists()` returned False on the current
 filesystem, so the bug was latent — but a future iter that

@@ -3,10 +3,11 @@
 per sample to the output file. Python 3.6 compatible (runs on the JetPack
 4.x Jetson Nano host where the worker also runs).
 
-The /api/_internal/heartbeat endpoint is unauthenticated by design (worker
-is loopback-trusted; CLAUDE.md sharp edge). It returns the most recent
-heartbeat snapshot stored on the server side, so we don't need to read the
-worker's in-memory metrics directly.
+PR-102 made /api/_internal/heartbeat worker-authenticated. This historical soak
+helper does not yet load that credential and is therefore not a valid PR-102
+health proof; updating its request behavior is intentionally tracked outside
+PR-102. It was originally intended to return the most recent heartbeat
+snapshot stored on the server side.
 
 Usage:
     heartbeat_log.py --url http://127.0.0.1:8000/api/_internal/heartbeat \\

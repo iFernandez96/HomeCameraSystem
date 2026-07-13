@@ -92,11 +92,11 @@ function emit(level, event, fields) {
   console[level === 'debug' ? 'log' : level](`[${event}]`, fields)
   if (level === 'error' || level === 'warn') void ship(level, event, fields) // best-effort
 }
-// ship(): fire-and-forget POST to /api/_internal/client_log (NEVER awaited,
+// ship(): fire-and-forget POST to /api/client-log (NEVER awaited,
 // NEVER throws, swallows its own failure — must not recurse into log.error).
 ```
 
-**Server sink — new route `POST /api/_internal/client_log`** (mounts under the existing unauthenticated `_internal.router`; CLAUDE.md pin: `_internal` is never auth-gated, so this works on the anon login screen). Apply: `extra='forbid'` Pydantic body, a small field-size cap, and rate-limit per source so a looping client can't flood. Logs at the requested level with a `client_log:` prefix so device-side failures land in the same journald stream as the server.
+**Server sink — route `POST /api/client-log`** (moved out of the authenticated worker router by PR-102 so it still works on the anon login screen). Apply: `extra='forbid'` Pydantic body, a small field-size cap, and the existing global app-level rate cap so a looping client can't flood. Logs at the requested level with a `client_log:` prefix so device-side failures land in the same journald stream as the server.
 
 **Client conventions:**
 - Every message states the **express reason**: HTTP status + server detail (`HttpError.status`/`.path`/`detail`), WS `close.code`+`reason`, ICE `gatheringState`+candidate count, `errName:errMessage`. Always include `navigator.onLine` on network-edge failures so "server down" vs "request rejected" vs "client offline" are distinguishable.
@@ -255,7 +255,7 @@ Files: `detection/recording.py`, `detection/preroll.py`, `detection/detect.py`, 
 2. Recorder: `_reap` returncode inspection (recording.py:76-89), all atomic-rename OSErrors → ERROR (507/523/570), ffmpeg-spawn + makedirs ERROR (283/262), capacity-drop caller log (detect.py:1570), bounded-stderr-temp tail. preroll: spawn (129), `run_concat` PIPE switch (391), `write_concat_list` guard (344), watchdog counter (176).
 3. Worker: event-POST fail ERROR + `event_post_failures` counter (detect.py:245); detectNet load + net.Detect + box_norm guards (869/1166/box_norm:37).
 4. Server: lifespan step-wrap + `HOMECAM_LOG_LEVEL` knob (main.py:22,60); `events_db` shared `_connect` wrap; `event_bus` persist add-id + 60s re-log.
-5. Client: `lib/log.ts` + `/api/_internal/client_log` sink; centralize `api.ts` req/getCachedJSON throw + network-reject; ErrorBoundary durable capture; webrtc PC-leak fix + ICE-timeout WARN + WHEP status.
+5. Client: `lib/log.ts` + `/api/client-log` sink; centralize `api.ts` req/getCachedJSON throw + network-reject; ErrorBoundary durable capture; webrtc PC-leak fix + ICE-timeout WARN + WHEP status.
 
 ### P1 — degraded / empty-result masking (looks-healthy-but-broken)
 Files: `server/app/services/recording_service.py`, `timelapse.py`, `push_service.py`, `face_capture_sweeper.py`, `training_export.py`; `server/app/routes/events.py`, `clips.py`, `control.py`, `push.py`, `face.py`, `training.py`, `training_admin.py`; worker gear-transition + zone-gate + empty-class logs; client `Events.tsx`, `TimelapsesSection.tsx`, `NotificationsSection.tsx`, `auth.tsx`.
@@ -288,7 +288,7 @@ Files: `server/app/auth/*`, `server/app/routes/auth.py`, `events.py` WS gates, `
 **CLAUDE.md pin interactions:**
 - **DEVNULL → bounded temp file, not PIPE.** recording.py post-roll stderr and preroll `run_concat`: the deadlock pin forbids blind PIPE on the *async long-lived* post-roll; use a bounded per-event temp file there. `run_concat` is a **synchronous `subprocess.run` with a timeout** — PIPE is deadlock-safe (run drains it) and explicitly allowed (the iter-350 DEVNULL was over-cautious for the bounded case). Pin the distinction in tests.
 - **Metric whitelist:** new heartbeat counters (`clips_dropped_capacity`, `face_recog_failures`, etc.) MUST be added to `_internal.py::_ALLOWED_METRIC_FIELDS` or they're silently dropped server-side (the exact gap at detect.py:455-461).
-- **`_internal` never auth-gated** — the new `/api/_internal/client_log` sink fits here (works on the anon login screen). Keep `extra='forbid'` + size cap + rate-limit consistent with the existing `_internal` body discipline.
+- **Worker `_internal` routes use a direct-peer bearer credential** — PR-102 moved the anonymous diagnostic sink to `/api/client-log`. Keep its `extra='forbid'` + size cap + global rate cap while keeping it outside the worker trust surface.
 - **Py3.6 AST scanner** (`tests/test_py36_compat.py`) over `detection/*.py`: `applog.py` and all new worker lines must use `.format()`/`%`, no f-strings/walrus/PEP-604/PEP-585/annotations. `log.exception()` is 3.6-safe and encouraged.
 - **`text-white` / theme pins** — irrelevant to logging; no client UI copy changes beyond `reportError` plumbing.
 
@@ -297,7 +297,7 @@ Files: `server/app/auth/*`, `server/app/routes/auth.py`, `events.py` WS gates, `
 ## 5. Test impact
 
 **Existing tests that may break / need updates:**
-- `client/src/lib/api.test.ts` + `server/tests/test_*.py` pin wire shape — adding a `/api/_internal/client_log` route requires a new server test and must not change existing payloads. The body-cap/security-header middleware tests (main.py:123-230) assert response shape; adding a `call_next` try/except must re-raise so the 500 path is unchanged.
+- `client/src/lib/api.test.ts` + `server/tests/test_*.py` pin wire shape — the `/api/client-log` route must not change existing payloads. The body-cap/security-header middleware tests (main.py:123-230) assert response shape; adding a `call_next` try/except must re-raise so the 500 path is unchanged.
 - `push_service` tests set `private_pem=b"fake-pem"` and mock `pywebpush.webpush` — new `send_one` log lines must NOT assume a real response object (use `urlparse(endpoint).netloc`, `code`, `msg[:200]` only).
 - `recording.py`/`preroll.py` unit tests mock subprocess — adding `applog.emit` prints is fine, but any assert-on-stdout test needs the new line shapes. `run_concat` switching DEVNULL→PIPE changes the mocked `subprocess.run` call kwargs — update those mocks.
 - `tests/test_py36_compat.py` AST scanner will reject any f-string/walrus in `applog.py` or new worker lines — run it as the gate.
@@ -315,9 +315,9 @@ Files: `server/app/auth/*`, `server/app/routes/auth.py`, `events.py` WS gates, `
 9. **lifespan step-wrap** — patch `events_init_db` to raise; assert the named ERROR fires before propagation (main.py:82).
 10. **Client: `api.ts` central log fires once per failure** — mock fetch non-2xx + network-reject; assert `log.error` called with `{path,status}` / network fields; assert `bootstrapFace` 413 logs. Assert `Login.tsx` failed-submit logs username but a `caplog`/spy confirms the password var is absent.
 11. **Client: WHEP PC not leaked** — mock fetch reject on `connectWhep`; assert `pc.close()` was called (regression for the try/finally fix) + the ERROR line.
-12. **`/api/_internal/client_log` sink** — anon POST accepted (no auth), `extra='forbid'` rejects unknown fields, oversize body capped, rate-limit returns without flooding the server log.
+12. **`/api/client-log` sink** — anon POST accepted (no auth), `extra='forbid'` rejects unknown fields, oversize body capped, rate-limit returns without flooding the server log.
 13. **`training_export` ValueError caught** — feed a zero-dim image; assert it's skipped+logged, not a 500 (training_export.py:163).
 
 ---
 
-Files referenced are absolute under `/media/israel/Drive/Projects/Android/HomeCameraSystem/`. New modules to create: `server/app/log.py` (optional sugar), `detection/applog.py` (required baseline), `client/src/lib/log.ts` (required baseline), plus the `POST /api/_internal/client_log` route in `server/app/routes/_internal.py`. The single highest-leverage change is `detection/applog.py` + `applog.configure()` (un-drops the entire face-recog leaf-log layer) paired with the `_reap` returncode inspection (the structural reason clip failures are invisible today).
+Files referenced are absolute under `/media/israel/Drive/Projects/Android/HomeCameraSystem/`. The client diagnostic route now lives at `POST /api/client-log` in `server/app/routes/client_log.py`; PR-102 removed its old worker-router path. The single highest-leverage logging change remains `detection/applog.py` + `applog.configure()` (un-drops the entire face-recog leaf-log layer) paired with the `_reap` returncode inspection (the structural reason clip failures are invisible today).

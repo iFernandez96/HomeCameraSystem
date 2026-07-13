@@ -3,7 +3,7 @@
  *
  * Two sinks:
  *  - `console` for the developer who has the device's devtools open.
- *  - a best-effort fire-and-forget POST to `/api/_internal/client_log`
+ *  - a best-effort fire-and-forget POST to `/api/client-log`
  *    (error + warn only) so a failure on a phone the operator can't
  *    physically inspect still lands in the Jetson journald stream
  *    alongside the server logs.
@@ -52,7 +52,7 @@ function safeFields(fields: LogFields): LogFields {
 function ship(level: LogLevel, event: string, fields: LogFields): void {
   if (!SHIP_ENABLED) return
   try {
-    void fetch('/api/_internal/client_log', {
+    void fetch('/api/client-log', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

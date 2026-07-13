@@ -38,7 +38,7 @@ def _read_scratch_rows(db_path):
 
 
 async def test_given_all_events_tonight_rows_when_replayed_through_internal_route_then_scratch_rows_match_json_and_source_sqlite(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, worker_auth_header,
 ):
     from app.config import settings
     from app.routes import _internal
@@ -63,6 +63,7 @@ async def test_given_all_events_tonight_rows_when_replayed_through_internal_rout
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://testserver",
+        headers={"Authorization": worker_auth_header},
     ) as client:
         for row in json_rows:
             monkeypatch.setattr(event_bus_module.time, "time", lambda ts=row["ts"]: ts)

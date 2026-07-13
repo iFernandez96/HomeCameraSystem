@@ -61,15 +61,15 @@ def test_metrics_endpoint_skips_worker_block_when_dead(client_anon: TestClient):
 
 
 def test_metrics_endpoint_includes_worker_block_after_heartbeat(
-    client_anon: TestClient,
+    client: TestClient,
 ):
     """After the worker heartbeats, the worker_* block appears."""
-    r = client_anon.post(
+    r = client.post(
         "/api/_internal/heartbeat",
         json={"fps": 5.0, "infer_ms_recent": 42.5},
     )
     assert r.status_code == 200
-    r = client_anon.get("/metrics")
+    r = client.get("/metrics")
     body = r.text
     assert "homecam_worker_alive 1" in body
     assert "homecam_worker_fps 5.0" in body
@@ -77,16 +77,16 @@ def test_metrics_endpoint_includes_worker_block_after_heartbeat(
 
 
 def test_metrics_endpoint_uses_counter_type_for_cumulative_fields(
-    client_anon: TestClient,
+    client: TestClient,
 ):
     """Worker `dropped` and `mediamtx_restarts` are monotonic
     counters, not gauges. Prometheus' rate() requires the TYPE
     declaration to differ from gauge."""
-    client_anon.post(
+    client.post(
         "/api/_internal/heartbeat",
         json={"dropped": 7, "mediamtx_restarts": 2},
     )
-    r = client_anon.get("/metrics")
+    r = client.get("/metrics")
     body = r.text
     assert "# TYPE homecam_worker_dropped_total counter" in body
     assert "# TYPE homecam_worker_mediamtx_restarts_total counter" in body
@@ -94,24 +94,24 @@ def test_metrics_endpoint_uses_counter_type_for_cumulative_fields(
     assert "homecam_worker_mediamtx_restarts_total 2" in body
 
 
-def test_metrics_endpoint_includes_thumb_ms_when_set(client_anon: TestClient):
+def test_metrics_endpoint_includes_thumb_ms_when_set(client: TestClient):
     """iter-187's `thumb_ms_recent` flows through to the Prometheus
     exposition — operator sees it in their dashboard alongside the
     inference latencies."""
-    client_anon.post(
+    client.post(
         "/api/_internal/heartbeat",
         json={"thumb_ms_recent": 78.9},
     )
-    r = client_anon.get("/metrics")
+    r = client.get("/metrics")
     body = r.text
     assert "homecam_worker_thumb_ms_recent 78.9" in body
 
 
-def test_metrics_endpoint_exposes_only_fresh_real_power_samples(client_anon: TestClient):
+def test_metrics_endpoint_exposes_only_fresh_real_power_samples(client: TestClient):
     """Power history is scrapeable, but a stale value must disappear rather
     than continuing to look like the Jetson's current draw."""
     now = time.time()
-    client_anon.post(
+    client.post(
         "/api/_internal/heartbeat",
         json={
             "power_sensor_status": 1,
@@ -122,17 +122,17 @@ def test_metrics_endpoint_exposes_only_fresh_real_power_samples(client_anon: Tes
             "power_read_failures": 0,
         },
     )
-    body = client_anon.get("/metrics").text
+    body = client.get("/metrics").text
     assert "homecam_input_power_watts 6.287" in body
     assert "homecam_input_voltage_volts 5.03" in body
     assert "homecam_input_current_amps 1.25" in body
     assert "# TYPE homecam_power_read_failures_total counter" in body
 
-    client_anon.post(
+    client.post(
         "/api/_internal/heartbeat",
         json={"power_sensor_status": 1, "power_sample_ts": now - 30.0},
     )
-    stale_body = client_anon.get("/metrics").text
+    stale_body = client.get("/metrics").text
     assert "homecam_input_power_watts" not in stale_body
 
 

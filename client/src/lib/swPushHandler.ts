@@ -115,7 +115,7 @@ function sendPushReceivedLog(fields: PushReceiptFields): void {
       navigator?: { onLine?: boolean; userAgent?: string }
     }
     if (!sw.fetch) return
-    void sw.fetch('/api/_internal/client_log', {
+    void sw.fetch('/api/client-log', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

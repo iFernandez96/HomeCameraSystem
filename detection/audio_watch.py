@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import camera_ident
 from audio_events import AUDIO_LABELS, AudioEventGate, classify_pcm16le
 from signal_retry import SignalRetryQueue, build_signal_payload, post_signal
+import worker_auth
 
 
 log = logging.getLogger("audio_watch")
@@ -105,8 +106,9 @@ def should_reset_audio_state(previous, runtime):
     return False
 
 
-def fetch_config(url, runtime, timeout=2.0):
+def fetch_config(url, runtime, timeout=2.0, auth_secret=None):
     request = urllib.request.Request(url, method="GET")
+    worker_auth.add_authorization(request, auth_secret)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         data = json.loads(response.read().decode("utf-8"))
     return apply_audio_config(runtime, data)
@@ -181,6 +183,19 @@ def run():
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    try:
+        auth_secret = worker_auth.load_secret(
+            os.getenv(
+                "HOMECAM_WORKER_AUTH_FILE",
+                "/etc/homecam/worker-auth.secret",
+            )
+        )
+    except (OSError, ValueError, TypeError) as error:
+        log.error(
+            "worker authentication secret unavailable: %s (audio watcher refuses to start)",
+            type(error).__name__,
+        )
+        raise SystemExit(5)
     listen_url = os.getenv("AUDIO_LISTEN_URL", "rtsp://127.0.0.1:8554/listen")
     signal_url = _require_loopback(
         os.getenv(
@@ -214,7 +229,9 @@ def run():
         now = time.time()
         if now >= next_poll:
             try:
-                warnings = fetch_config(config_url, runtime)
+                warnings = fetch_config(
+                    config_url, runtime, auth_secret=auth_secret,
+                )
                 if warnings:
                     log.warning("audio config ignored invalid field(s): %s", ", ".join(warnings))
                 if should_reset_audio_state(previous_config_state, runtime):
@@ -252,7 +269,7 @@ def run():
             time.sleep(min(1.0, max(0.1, next_poll - time.time())))
             continue
 
-        retries.flush_one(signal_url, now)
+        retries.flush_one(signal_url, now, auth_secret=auth_secret)
         if process is None or process.poll() is not None:
             stop_decoder(process)
             try:
@@ -282,7 +299,9 @@ def run():
         if event is not None:
             payload = build_signal(event, camera_id, now)
             retries.add(payload, now)
-            result = retries.flush_one(signal_url, now)
+            result = retries.flush_one(
+                signal_url, now, auth_secret=auth_secret,
+            )
             if result is True:
                 log.info("audio event metadata sent label=%s", event["label"])
 

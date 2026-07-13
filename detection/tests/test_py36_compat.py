@@ -75,6 +75,7 @@ _GUARDED_MODULES = (
     "detection/visit.py",
     "detection/visit_runtime.py",
     "detection/wedge_diagnostics.py",
+    "detection/worker_auth.py",
     "detection/sdnotify.py",
     "detection/signal_retry.py",
     "detection/face_recog/recognizer.py",

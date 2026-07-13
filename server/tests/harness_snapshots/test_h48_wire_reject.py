@@ -33,9 +33,9 @@ def _detection_event(thumb_url: str) -> dict:
     ],
 )
 def test_given_invalid_thumb_url_when_internal_event_posts_then_rejected_with_422(
-    client_anon: TestClient, thumb_url: str
+    client: TestClient, thumb_url: str
 ):
-    response = client_anon.post(
+    response = client.post(
         "/api/_internal/event",
         json=_detection_event(thumb_url),
     )

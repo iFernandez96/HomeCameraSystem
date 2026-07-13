@@ -47,11 +47,11 @@ def _detection_event(thumb_url: str) -> dict:
 
 
 def test_given_real_fixture_thumb_url_when_internal_event_posts_then_stored_event_carries_exact_url(
-    client_anon: TestClient, client: TestClient
+    client: TestClient,
 ):
     thumb_url = f"/snapshots/{THUMB_FIXTURES[0].name}"
 
-    response = client_anon.post(
+    response = client.post(
         "/api/_internal/event",
         json=_detection_event(thumb_url),
     )

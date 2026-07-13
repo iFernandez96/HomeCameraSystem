@@ -92,7 +92,7 @@ def test_timeline_maps_registry_id_to_mediamtx_path_and_reports_gaps(
     ]
 
 
-def test_signal_is_strict_unauthed_and_retry_deduplicated(client_anon):
+def test_signal_is_strict_worker_authed_and_retry_deduplicated(client):
     from app.config import settings
     from app.services import events_db
     from app.services.detection_config import detection_config
@@ -109,8 +109,8 @@ def test_signal_is_strict_unauthed_and_retry_deduplicated(client_anon):
         "duration_s": 2.5,
         "correlation_id": "audio-correlation-1",
     }
-    first = client_anon.post("/api/_internal/signal", json=payload)
-    second = client_anon.post("/api/_internal/signal", json=payload)
+    first = client.post("/api/_internal/signal", json=payload)
+    second = client.post("/api/_internal/signal", json=payload)
     assert first.status_code == 200 and first.json()["duplicate"] is False
     assert second.status_code == 200 and second.json()["duplicate"] is True
     rows = events_db.get_by_ids(settings.events_db_path, ["audio-1"])
@@ -118,7 +118,7 @@ def test_signal_is_strict_unauthed_and_retry_deduplicated(client_anon):
     assert rows[0]["source"] == "audio"
     assert rows[0]["boxes"] == []
     assert rows[0]["ts"] == payload["observed_at"]
-    assert client_anon.post(
+    assert client.post(
         "/api/_internal/signal", json={**payload, "observed_at": "2026-07-10T00:00:00Z"}
     ).status_code == 422
 
@@ -496,16 +496,16 @@ def test_face_merge_moves_sidecar_and_renames_historical_event(
     assert response.json()["retrain_required"] is True
 
 
-def test_doorbell_and_tamper_signal_strict_labels_and_retry_gate(client_anon):
+def test_doorbell_and_tamper_signal_strict_labels_and_retry_gate(client):
     now = time.time()
     doorbell = {
         "id": "door-1", "source": "doorbell", "label": "doorbell",
         "score": 1.0, "camera_id": "front_door", "observed_at": now,
         "duration_s": 0.0, "correlation_id": "door-corr",
     }
-    assert client_anon.post("/api/_internal/signal", json=doorbell).status_code == 200
-    assert client_anon.post("/api/_internal/signal", json=doorbell).json()["duplicate"] is True
-    assert client_anon.post(
+    assert client.post("/api/_internal/signal", json=doorbell).status_code == 200
+    assert client.post("/api/_internal/signal", json=doorbell).json()["duplicate"] is True
+    assert client.post(
         "/api/_internal/signal",
         json={**doorbell, "id": "bad-door", "label": "doorbell_press"},
     ).status_code == 422
@@ -516,7 +516,7 @@ def test_doorbell_and_tamper_signal_strict_labels_and_retry_gate(client_anon):
         "label": "camera_covered",
         "correlation_id": "tamper-corr",
     }
-    assert client_anon.post("/api/_internal/signal", json=tamper).status_code == 200
+    assert client.post("/api/_internal/signal", json=tamper).status_code == 200
 
 
 def test_rich_notification_actions_are_event_aware_and_never_deter(client):

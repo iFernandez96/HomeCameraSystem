@@ -23,6 +23,8 @@ blast radius. Documented in `loop_audit_log.md` iter-184 entry.
 """
 from __future__ import annotations
 
+import secrets
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -98,14 +100,43 @@ def _auth_setup(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _worker_auth_setup(tmp_path, monkeypatch):
+    """Load an isolated worker secret and trust TestClient's loopback peer."""
+    from app.config import settings
+    from app.services import worker_auth
+
+    secret = secrets.token_hex(32)
+    secret_path = tmp_path / "worker-auth.secret"
+    secret_path.write_text(secret + "\n", encoding="ascii")
+    monkeypatch.setattr(settings, "worker_auth_secret_path", secret_path)
+    monkeypatch.setattr(
+        settings,
+        "worker_auth_trusted_callers",
+        "127.0.0.1,::1,172.30.0.1",
+    )
+    assert worker_auth.load_secret(secret_path)
+    yield secret
+    worker_auth.reset_for_tests()
+
+
 @pytest.fixture
-def client(_auth_setup) -> TestClient:
+def worker_auth_header(_worker_auth_setup) -> str:
+    return "Bearer " + _worker_auth_setup
+
+
+@pytest.fixture
+def client(_auth_setup, worker_auth_header) -> TestClient:
     """Default test client: AUTHENTICATED as testuser/admin (iter-184).
     Tests that need to verify the gate's 401-on-anonymous behavior
     should explicitly use the `client_anon` fixture instead."""
     from app.main import app
 
-    with TestClient(app) as c:
+    with TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        headers={"Authorization": worker_auth_header},
+    ) as c:
         login = c.post(
             "/api/auth/login",
             json={"username": "testuser", "password": "testpass"},
@@ -122,14 +153,14 @@ def client(_auth_setup) -> TestClient:
 
 
 @pytest.fixture
-def client_anon(_auth_setup) -> TestClient:
+def client_anon(_auth_setup, _worker_auth_setup) -> TestClient:
     """Explicitly anonymous test client (iter-184). Use for tests
     that pin the gate's behavior on unauthenticated requests, or
-    that exercise public surface (`/api/_internal/*`,
+    that exercise public surface (`/api/client-log`,
     `/api/auth/login`, middleware that runs before the gate)."""
     from app.main import app
 
-    with TestClient(app) as c:
+    with TestClient(app, client=("127.0.0.1", 50000)) as c:
         yield c
 
 

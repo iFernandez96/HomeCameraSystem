@@ -45,6 +45,15 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - homecam-secrets:/app/secrets
+      # PR-102 worker authentication. The host worker and container read the
+      # same root-owned file; only the path is configuration, never the secret
+      # bytes. Read-only + no implicit host-path creation keeps failures closed.
+      - type: bind
+        source: /etc/homecam/worker-auth.secret
+        target: /run/secrets/homecam-worker-auth
+        read_only: true
+        bind:
+          create_host_path: false
       # Bind-mount the snapshots dir so the host-side detection worker can
       # write thumbnails into the same location the server serves from.
       # (Docker named volumes can't be written from outside the container.)
@@ -148,6 +157,8 @@ services:
       # Compose recreate cannot silently rotate this exact-address allowlist.
       # Adjacent containers such as 172.30.0.2 remain denied.
       - MEDIAMTX_AUTH_TRUSTED_CALLERS=${MEDIAMTX_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.30.0.1}
+      - HOMECAM_WORKER_AUTH_FILE=/run/secrets/homecam-worker-auth
+      - HOMECAM_WORKER_AUTH_TRUSTED_CALLERS=${HOMECAM_WORKER_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.30.0.1}
       - AUTOMATION_WEBHOOK_TIMEOUT_S=${AUTOMATION_WEBHOOK_TIMEOUT_S:-5}
       # Optional automation adapters. Empty values keep MQTT and physical
       # deterrence explicitly unavailable. A deterrence executable also needs

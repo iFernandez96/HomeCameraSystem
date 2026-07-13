@@ -203,6 +203,12 @@ class Settings:
     mediamtx_auth_trusted_callers: str = os.getenv(
         "MEDIAMTX_AUTH_TRUSTED_CALLERS", "127.0.0.1,::1"
     )
+    worker_auth_secret_path: Path = Path(
+        os.getenv("HOMECAM_WORKER_AUTH_FILE", "/run/secrets/homecam-worker-auth")
+    )
+    worker_auth_trusted_callers: str = os.getenv(
+        "HOMECAM_WORKER_AUTH_TRUSTED_CALLERS", "127.0.0.1,::1"
+    )
     automation_webhook_timeout_s: float = float(
         os.getenv("AUTOMATION_WEBHOOK_TIMEOUT_S", "5")
     )

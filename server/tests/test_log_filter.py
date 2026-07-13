@@ -34,10 +34,10 @@ def test_drops_heartbeat_post():
     assert f.filter(rec) is False
 
 
-def test_keeps_event_post():
+def test_suppresses_worker_event_post():
     f = _SuppressNoisyAccess()
     rec = _make_record('172.18.0.1:5678 - "POST /api/_internal/event HTTP/1.1" 200 OK')
-    assert f.filter(rec) is True
+    assert f.filter(rec) is False
 
 
 def test_drops_detection_config_get_polling():
