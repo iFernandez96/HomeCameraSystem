@@ -75,26 +75,27 @@ describe('DangerZone confirm bodies (iter-356.C)', () => {
     expect(body).toMatch(/saved logins.*push notification setup are preserved/i)
   })
 
-  it('given the operator clicks Update, when confirm opens, then body mirrors the Reboot disruption context', async () => {
+  it('Given PR-002 launch scope, When maintenance renders, Then OTA is disabled and explains the laptop deployment path', async () => {
     // arrange
     const user = userEvent.setup()
 
-    // act — premium-launch slice (Frank top-3 #2): button label
-    // de-IT-ified to "Install camera updates" (was "Update
-    // server software (~30 s outage)"). Confirm body still
-    // explains the disruption.
+    // act
     render(<DangerZone />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
+    const updateButton = screen.getByRole('button', {
+      name: /install camera updates/i,
+    })
+    await user.click(updateButton)
 
     // assert
-    expect(confirmFn).toHaveBeenCalled()
-    const body = (confirmFn.mock.calls[0][0] as { body: string }).body
-    expect(body).toMatch(/installs the new version/i)
-    expect(body).toMatch(/clip currently being recorded will be lost/i)
-    expect(body).toMatch(/reconnect/i)
-    expect(body).toMatch(/preserved/i)
+    expect(updateButton).toBeDisabled()
+    expect(updateButton).toHaveAttribute('aria-describedby', 'ota-launch-status')
+    expect(confirmFn).not.toHaveBeenCalled()
+    expect(triggerUpdate).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(
+        /unavailable for this release.*versioned builds.*laptop.*signing is not production-supported/i,
+      ),
+    ).toHaveAttribute('role', 'status')
   })
 })
 
@@ -141,25 +142,17 @@ describe('DangerZone copy de-IT-ification (premium-launch slice — Frank top-3)
     expect(args.title).not.toMatch(/jetson/i)
   })
 
-  it('Given the user taps Install camera updates, When the confirm dialog opens, Then the title says "Install camera updates?" — matching the button vocabulary', async () => {
-    // arrange
-    const user = userEvent.setup()
-
-    // act
+  it('Given the maintenance controls render, When OTA is inspected, Then it remains visible but unavailable rather than implying support', () => {
+    // arrange / act
     render(<DangerZone />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
 
     // assert
-    expect(confirmFn).toHaveBeenCalled()
-    const args = confirmFn.mock.calls[0][0] as {
-      title: string
-      confirmLabel: string
-    }
-    expect(args.title).toBe('Install camera updates?')
-    expect(args.confirmLabel).toBe('Install')
-    expect(args.title).not.toMatch(/server software/i)
+    expect(
+      screen.getByRole('button', { name: /install camera updates/i }),
+    ).toBeDisabled()
+    expect(
+      screen.getByText(/release signing is not production-supported yet/i),
+    ).toHaveAttribute('role', 'status')
   })
 
   it('Given the section renders, When the user reads the section header, Then it says "Camera maintenance" (not just "Maintenance" — datacenter-eyebrow language)', () => {

@@ -56,6 +56,25 @@ describe('People page', () => {
     vi.clearAllMocks()
   })
 
+  it('Given PR-002 launch scope, When Faces renders, Then named recognition is visibly and accessibly marked beta', () => {
+    // arrange
+    listPeople.mockReturnValue(new Promise(() => {}))
+
+    // act
+    renderPeople()
+
+    // assert
+    const heading = screen.getByRole('heading', {
+      name: /named face recognition is still being proven/i,
+    })
+    const notice = heading.closest('section')
+    expect(notice).not.toBeNull()
+    expect(notice).toHaveTextContent(/beta/i)
+    expect(notice).toHaveTextContent(/sorting and training preparation are available/i)
+    expect(notice).toHaveTextContent(/not production-supported yet/i)
+    expect(notice).toHaveTextContent(/may not identify someone on their next visit/i)
+  })
+
   it('given listPeople is in-flight, when the page mounts, then a role=status Loading cue is announced (iter-326b: NVDA needs role=status)', () => {
     // arrange
     listPeople.mockReturnValue(new Promise(() => {}))
@@ -129,6 +148,12 @@ describe('People page', () => {
     ).not.toBeInTheDocument()
     expect(
       screen.getByText(/face recognition/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/will recognize them on their next visit/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/live named-person recognition is still beta/i),
     ).toBeInTheDocument()
   })
 

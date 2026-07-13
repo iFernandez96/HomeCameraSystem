@@ -158,6 +158,28 @@ These 13 are the standing way to work in this repo — derived from the codebase
 
 ## Out of scope
 
+### Initial launch classifications
+
+- **Launch candidate, not yet production-ready:** one household and one
+  Jetson/camera, reached through an operator-controlled Tailscale tailnet and
+  HTTPS; live view, upstream Privacy masking, visual detection/events,
+  recordings, bounded playback/export, and established operator controls. Each
+  still depends on the remaining production-readiness roadmap gates.
+- **Beta:** named-face recognition until a fresh consented snapshot closes
+  `docs/standalone_proof_plan.md` R15; package-area tracking remains an
+  experimental calibrated scene-change heuristic and is never a semantic
+  parcel-recognition claim.
+- **Unavailable for the initial launch:** in-app OTA installation, bundled or
+  unproven audio/doorbell/sound/deterrence hardware, cloud relay, direct Internet
+  exposure, high availability, and immediate offline reporting without an
+  independently powered observer. OTA remains kill-switched; the operator
+  installs versioned laptop-built artifacts. Release signing is not claimed
+  until its later roadmap gate passes.
+
+Training-photo capture, sorting, consent, and export are available preparation
+workflows; they do not prove that live named-person matching will succeed. Keep
+README and operator-facing UI claims synchronized with these classifications.
+
 - Bundled microphone, speaker, siren, or GPIO hardware. The audio/doorbell/deterrence software paths stay disabled or unavailable until an operator deliberately provisions devices.
 - Self-reporting while the Jetson is fully powered off or totally disconnected. The in-process resilience view may infer and summarize a recovery gap; immediate offline notification requires an independently powered observer or UPS integration.
 - Cloud relay — assume Tailscale/LAN. Don't expose Jetson directly.

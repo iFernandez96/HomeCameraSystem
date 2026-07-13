@@ -323,9 +323,24 @@ export function DangerZone() {
         <Button variant="secondary" size="lg" fullWidth onClick={onBackup}>
           Back up camera settings
         </Button>
-        <Button variant="secondary" size="lg" fullWidth onClick={onUpdate}>
+        <Button
+          variant="secondary"
+          size="lg"
+          fullWidth
+          onClick={onUpdate}
+          disabled
+          aria-describedby="ota-launch-status"
+        >
           Install camera updates
         </Button>
+        <p
+          id="ota-launch-status"
+          role="status"
+          className="text-xs font-semibold text-[var(--color-warning)]"
+        >
+          Unavailable for this release. The operator installs versioned builds
+          from a laptop; release signing is not production-supported yet.
+        </p>
       </div>
       {/* Playroom Modern (Task 8 sweep): same card-grammar migration as
           the maintenance card above (1.5px border, `--radius-xl`, no

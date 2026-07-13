@@ -7,6 +7,27 @@ reimplementations), pin the full lifecycle, fix what the harness catches,
 only then trust production. Claude plans and reviews; codex (gpt-5.5)
 writes the harness code; brainstorm rounds recorded here.
 
+## Current launch-status reconciliation (2026-07-13, PR-002)
+
+This document is an append-only proof-program audit trail: early inventory and
+"stub/missing" statements below describe the state when each harness was
+designed and are preserved as history. Current launch claims are:
+
+- OTA U2-U19 now provide an offline scratch-deploy harness and typed outcomes,
+  but production apply remains kill-switched by PR-001. In-app OTA is
+  unavailable for the initial launch; operators install versioned laptop-built
+  artifacts. Release signing is not claimed yet.
+- Face capture, sorting, consent, export, null-name propagation, and the
+  training/review contracts are implemented. Named-person recognition remains
+  beta because R15 still lacks fresh consented live parity evidence.
+- Optional microphone, speaker, doorbell, acoustic-classifier, light, siren,
+  and GPIO paths remain unavailable unless separately provisioned and proven.
+  They are not life-safety capabilities.
+
+Nothing in a completed offline harness promotes a feature to
+production-supported status by itself. The canonical launch gates and evidence
+remain in `docs/production-readiness-roadmap.md`.
+
 ## Inventory — feature → risky core → current proof state
 
 ### Already proven offline (keep, extend on touch)

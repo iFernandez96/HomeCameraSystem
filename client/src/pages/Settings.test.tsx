@@ -1327,149 +1327,22 @@ describe('Settings page', () => {
     expect(link).toHaveAttribute('download')
   })
 
-  // iter-231 (Feature #12 OTA slice 2): Update button mirrors the
-  // iter-211 Backup + iter-197 Reboot button UX. Confirm-gated;
-  // surfaces server's `note` when stubbed instead of pretending
-  // success.
-
-  it('update button asks for confirmation and aborts on cancel (iter-231)', async () => {
-    confirmFn.mockReset().mockResolvedValue(false)
+  it('Given an owner opens Settings, When launch scope is rendered, Then OTA is visibly unavailable and cannot call the API', async () => {
     const user = userEvent.setup()
     render(<Settings />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
-    await waitFor(() => expect(confirmFn).toHaveBeenCalled())
-    expect(confirmFn.mock.calls[0][0]).toMatchObject({
-      title: expect.stringMatching(/update/i),
-      destructive: true,
+    const updateButton = screen.getByRole('button', {
+      name: /install camera updates/i,
     })
+
+    await user.click(updateButton)
+
+    expect(updateButton).toBeDisabled()
+    expect(updateButton).toHaveAttribute('aria-describedby', 'ota-launch-status')
+    expect(confirmFn).not.toHaveBeenCalled()
     expect(triggerUpdate).not.toHaveBeenCalled()
-  })
-
-  it('update proceeds when confirmed and emits a toast (iter-231)', async () => {
-    confirmFn.mockReset().mockResolvedValue(true)
-    triggerUpdate.mockResolvedValue({ ok: true })
-    const user = userEvent.setup()
-    render(<Settings />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
-    await waitFor(() => expect(triggerUpdate).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/update requested/i),
-        'success',
-      ),
-    )
-  })
-
-  it('update honestly reports the stubbed-server case (iter-231)', async () => {
-    confirmFn.mockReset().mockResolvedValue(true)
-    triggerUpdate.mockResolvedValue({
-      ok: true,
-      note: 'scaffold: update is stubbed',
-    })
-    const user = userEvent.setup()
-    render(<Settings />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
-    await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/isn't set up yet/i),
-        'info',
-      ),
-    )
-  })
-
-  it.each([
-    {
-      status: 'unavailable',
-      message: /isn't set up yet/i,
-      variant: 'info',
-    },
-    {
-      status: 'blocked',
-      message: /blocked right now/i,
-      variant: 'error',
-    },
-    {
-      status: 'staged',
-      message: /staged, but it has not been applied yet/i,
-      variant: 'info',
-    },
-    {
-      status: 'applied',
-      message: /update applied/i,
-      variant: 'success',
-    },
-    {
-      status: 'rolled_back',
-      message: /rolled back/i,
-      variant: 'error',
-    },
-  ])(
-    'update maps future status "$status" to honest toast copy (U16)',
-    async ({ status, message, variant }) => {
-      confirmFn.mockReset().mockResolvedValue(true)
-      triggerUpdate.mockResolvedValue({ ok: true, status })
-      const user = userEvent.setup()
-      render(<Settings />)
-      await user.click(
-        screen.getByRole('button', { name: /install camera updates/i }),
-      )
-      await waitFor(() => expect(triggerUpdate).toHaveBeenCalledTimes(1))
-      await waitFor(() =>
-        expect(showToast).toHaveBeenCalledWith(
-          expect.stringMatching(message),
-          variant,
-        ),
-      )
-      if (status !== 'applied') {
-        expect(showToast).not.toHaveBeenCalledWith(
-          expect.any(String),
-          'success',
-        )
-      }
-    },
-  )
-
-  it('update note wins over a future status while the endpoint is scaffolded (U16)', async () => {
-    confirmFn.mockReset().mockResolvedValue(true)
-    triggerUpdate.mockResolvedValue({
-      ok: true,
-      note: 'scaffold: update is stubbed',
-      status: 'applied',
-    })
-    const user = userEvent.setup()
-    render(<Settings />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
-    await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/isn't set up yet/i),
-        'info',
-      ),
-    )
-    expect(showToast).not.toHaveBeenCalledWith(expect.any(String), 'success')
-  })
-
-  it('update toasts an error when triggerUpdate rejects (iter-231)', async () => {
-    confirmFn.mockReset().mockResolvedValue(true)
-    triggerUpdate.mockRejectedValue(new Error('boom'))
-    const user = userEvent.setup()
-    render(<Settings />)
-    await user.click(
-      screen.getByRole('button', { name: /install camera updates/i }),
-    )
-    await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith(
-        expect.stringMatching(/update failed/i),
-        'error',
-      ),
-    )
+    expect(
+      screen.getByText(/unavailable for this release.*versioned builds.*laptop/i),
+    ).toHaveAttribute('role', 'status')
   })
 
   it('update button hidden for viewer role (iter-231, mirrors iter-198)', async () => {
@@ -1481,12 +1354,12 @@ describe('Settings page', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('update button visible for legacy admin role (iter-231 carve-out)', async () => {
+  it('update button is visible but disabled for legacy admin role (iter-231 carve-out)', async () => {
     _authUser = { username: 'alice', role: 'admin' }
     render(<Settings />)
     expect(
       await screen.findByRole('button', { name: /install camera updates/i }),
-    ).toBeInTheDocument()
+    ).toBeDisabled()
   })
 
   // iter-234 (Feature #12 OTA slice 3b): server version display in

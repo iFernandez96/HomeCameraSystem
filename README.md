@@ -15,8 +15,8 @@ Self-hosted, Ring-style camera viewer + controller for an Nvidia Jetson Nano 2GB
 - Face-quality filtering, identity correction/merge tools, and per-person alert preferences
 - Owner-configured push, webhook, and MQTT automations with masked credentials
 - Protected clips, storage-runway forecasting, and expiring revocable share links
-- Software-ready two-way Opus audio, physical doorbell input, and optional acoustic-event watcher
-- Guarded deterrence adapter with foreground confirmation, arming, cooldown, and audit history
+- Fail-closed software paths for optional audio, doorbell, and sound-event hardware; unavailable until separately provisioned and proven
+- Guarded deterrence adapter infrastructure; physical actions are unavailable until a compatible device is separately provisioned and proven
 - Recovery-derived outage history with an explicit external-monitor limitation
 - Push notifications to phone when something is detected
 - Remote control of the Jetson: capture photo, reboot, toggle detection, view stats
@@ -176,9 +176,30 @@ Production-readiness work is tracked in
 The roadmap records scope and evidence; it does not authorize implementation or
 deployment of its items.
 
+## Initial production launch scope
+
+HomeCameraSystem remains an operator-grade beta until every launch gate in the
+production-readiness roadmap passes. The intended initial release is deliberately
+narrow:
+
+| Classification | Initial-launch treatment |
+|---|---|
+| Launch candidate | One household and one Jetson/camera; authenticated browser/Android access through an operator-controlled Tailscale tailnet and HTTPS; live view; upstream Privacy masking; visual detection, events, clips, bounded playback/export, and established operator controls. Each capability still depends on its remaining roadmap verification gate. |
+| Beta | Named-face recognition remains unproven against fresh live named-person parity. The package-area rule is an experimental calibrated scene-change heuristic, not semantic parcel recognition. |
+| Unavailable | In-app OTA installation; bundled or unproven microphone, speaker, doorbell, sound-classifier, light, siren, and GPIO hardware; cloud relay; direct Internet exposure; high availability; and immediate offline reporting without an independently powered observer. |
+| Deployment model | The operator installs versioned, laptop-built artifacts. OTA remains disabled. Release signing is a later roadmap gate and is not claimed yet. |
+
+Training-photo capture, sorting, consent, and export can prepare future named-face
+recognition, but they do not prove that a name will match on a later live visit.
+
 ## Status
 
-Working end-to-end on the Jetson Nano 2GB. Live video (WebRTC, ~200 ms LAN), detection events (SSD-MobileNet-v2 at FP16 with idle-gear thermal management), per-person face recognition (when `encodings.pkl` is present and dlib is unblocked), Web Push with VAPID, persisted detection config, and a Settings page surfacing per-component health (CPU/GPU temp, dropped frames, p95 inference latency, mediamtx-watchdog restart count, etc).
+Operator-grade beta running end-to-end on the Jetson Nano 2GB. Proven runtime
+paths include live video, Privacy masking, visual detection events, persisted
+configuration, and component health reporting. This is not yet a
+production-ready release. Named-face recognition remains beta pending fresh
+named-person parity evidence, and optional hardware plus OTA remain unavailable
+under the launch classifications above.
 
 Privileged camera recovery and reboot commands are handed to the host-side worker instead of granting the FastAPI container host control.
 

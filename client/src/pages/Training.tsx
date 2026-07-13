@@ -82,6 +82,28 @@ export function Training() {
         )}
       </header>
 
+      <section
+        aria-labelledby="training-beta-heading"
+        className="card-paper p-4 space-y-1 border-[var(--color-warning-border)]"
+      >
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-[var(--color-warning-bg)] px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-[var(--color-warning)]">
+            Beta
+          </span>
+          <h2
+            id="training-beta-heading"
+            className="text-sm font-semibold text-[var(--color-text-primary)]"
+          >
+            Training prepares recognition; it does not prove it
+          </h2>
+        </div>
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          Capturing, sorting, and exporting visitor photos are available.
+          Live named-person matching remains beta until real Jetson parity
+          evidence passes.
+        </p>
+      </section>
+
       {activeName ? (
         <GalleryView
           name={activeName}

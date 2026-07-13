@@ -149,6 +149,27 @@ export function People() {
     // iter-342 desktop A1: max-w-3xl (mobile) + lg:max-w-4xl (desktop).
     // iter-262 grid layout pairs at lg.
     <div className="p-4 space-y-4 max-w-3xl lg:max-w-4xl mx-auto">
+      <section
+        aria-labelledby="named-face-beta-heading"
+        className="card-paper p-4 space-y-1 border-[var(--color-warning-border)]"
+      >
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-[var(--color-warning-bg)] px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-[var(--color-warning)]">
+            Beta
+          </span>
+          <h2
+            id="named-face-beta-heading"
+            className="text-sm font-semibold text-[var(--color-text-primary)]"
+          >
+            Named face recognition is still being proven
+          </h2>
+        </div>
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          Face sorting and training preparation are available, but live
+          named-person matching is not production-supported yet and may not
+          identify someone on their next visit.
+        </p>
+      </section>
       <FaceCaptureBanner />
       <header className="flex items-start justify-between gap-3">
         {/* iter-356.58 (LAYOUT REBUILD): dropped the page-title
@@ -225,8 +246,8 @@ export function People() {
         <CatEmptyState
           mood="curious"
           heading="Mushu doesn't know anyone yet."
-          body="Add a face from the Training queue and the camera will recognize them on their next visit."
-          hint="Make sure face recognition is turned on in Settings."
+          body="Sort unfamiliar visitor photos in Training to prepare future name matching."
+          hint="Live named-person recognition is still beta and may not identify someone on their next visit."
         />
       ) : (
         <>

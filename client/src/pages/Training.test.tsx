@@ -128,6 +128,25 @@ describe('Training page', () => {
     vi.clearAllMocks()
   })
 
+  it('Given PR-002 launch scope, When Training renders, Then preparation is distinguished from beta live matching', () => {
+    // arrange
+    listFaceCaptureDirs.mockReturnValue(new Promise(() => {}))
+
+    // act
+    renderTraining()
+
+    // assert
+    const heading = screen.getByRole('heading', {
+      name: /training prepares recognition; it does not prove it/i,
+    })
+    const notice = heading.closest('section')
+    expect(notice).not.toBeNull()
+    expect(notice).toHaveTextContent(/beta/i)
+    expect(notice).toHaveTextContent(/capturing, sorting, and exporting visitor photos are available/i)
+    expect(notice).toHaveTextContent(/live named-person matching remains beta/i)
+    expect(notice).toHaveTextContent(/real Jetson parity evidence passes/i)
+  })
+
   it('given listFaceCaptureDirs is in-flight, when the page mounts, then a role=status loading indicator is announced', () => {
     // arrange
     listFaceCaptureDirs.mockReturnValue(new Promise(() => {}))
