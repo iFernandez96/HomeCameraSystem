@@ -78,9 +78,9 @@ afterEach(() => {
 })
 
 describe('talk WHIP routing', () => {
-  it('uses direct MediaMTX on LAN HTTP', () => {
+  it('never bypasses the same-origin media proxy for an HTTP origin', () => {
     expect(talkWhipUrlForTests({ protocol: 'http:', hostname: 'jetson', origin: 'http://jetson:8000' }))
-      .toBe('http://jetson:8889/talk/whip')
+      .toBe('http://jetson:8000/whep/talk/whip')
   })
 
   it('uses the existing secure MediaMTX path proxy on HTTPS', () => {

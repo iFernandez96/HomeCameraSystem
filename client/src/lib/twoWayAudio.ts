@@ -48,15 +48,10 @@ function connectionGuard(
 }
 
 function whipUrl(location: Pick<Location, 'protocol' | 'hostname' | 'origin'>): string {
-  if (
-    location.protocol === 'http:' &&
-    location.hostname !== 'localhost' &&
-    location.hostname !== '127.0.0.1'
-  ) {
-    return `http://${location.hostname}:8889/talk/whip`
-  }
-  // Tailscale Serve already proxies /whep to MediaMTX. The upstream suffix
-  // can still be /whip, allowing ingress without another public listener.
+  // Production reaches MediaMTX only through the same-origin Tailscale HTTPS
+  // proxy. The upstream suffix can still be /whip, allowing ingress without
+  // another remotely reachable signaling listener. Local Vite development
+  // uses the matching same-origin proxy.
   return `${location.origin}/whep/talk/whip`
 }
 
@@ -145,9 +140,7 @@ export async function startListenSession(
     await peer.setLocalDescription(await peer.createOffer())
     await waitForIce(peer)
     const { token } = await getMediaToken('read', 'listen')
-    const path = location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(location.hostname)
-      ? `http://${location.hostname}:8889/listen/whep`
-      : `${location.origin}/whep/listen/whep`
+    const path = `${location.origin}/whep/listen/whep`
     const response = await fetch(path, {
       method: 'POST',
       headers: {

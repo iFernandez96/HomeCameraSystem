@@ -2,7 +2,7 @@
 # Home Camera System — MediaMTX config
 #
 # Pulls H.264 from the RPi camera via GStreamer (libargus / nvarguscamerasrc),
-# republishes as WebRTC at http://<jetson>:8889/cam/whep for the PWA.
+# republishes as WebRTC on loopback :8889 for the Tailscale HTTPS proxy.
 ###############################################
 
 logLevel: info
@@ -43,8 +43,8 @@ webrtcAddress: 127.0.0.1:8889
 # preferred path for clients where it works (LAN, wifi).
 webrtcLocalTCPAddress: :8189
 webrtcLocalUDPAddress: :8189
-# Plain HTTP is fine for LAN. Flip to yes + serverCert/serverKey for TLS,
-# or front MediaMTX with Caddy/Nginx.
+# Tailscale Serve terminates remote HTTPS and proxies to this loopback-only
+# listener. Do not expose this plaintext signaling listener directly.
 webrtcEncryption: no
 # Allow the PWA's origin to issue WHEP requests. (key was webrtcAllowOrigin
 # pre-v1.18 — current MediaMTX uses webrtcAllowOrigins, plural.)

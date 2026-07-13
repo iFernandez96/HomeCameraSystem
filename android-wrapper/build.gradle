@@ -22,6 +22,5 @@ android {
         versionCode 35
         versionName "2.24"
         buildConfigField "String", "HOMECAM_URL", "\"https://homecam.tail4a6525.ts.net/\""
-        buildConfigField "String", "HOMECAM_LAN_URL", "\"http://10.0.0.9:8000/\""
     }
 }

@@ -154,12 +154,12 @@ describe('whepUrlForPath', () => {
     expect(whepUrlForPath('cam_uq')).toBe(`${origin}/whep/cam_uq/whep`)
   })
 
-  it('uses MediaMTX directly for a LAN HTTP app origin', () => {
+  it('never bypasses the same-origin media proxy for an HTTP origin', () => {
     expect(whepUrlForPath('cam', {
       protocol: 'http:',
       hostname: '10.0.0.9',
       origin: 'http://10.0.0.9:8000',
-    })).toBe('http://10.0.0.9:8889/cam/whep')
+    })).toBe('http://10.0.0.9:8000/whep/cam/whep')
   })
 })
 

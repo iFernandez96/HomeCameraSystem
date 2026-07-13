@@ -36,8 +36,6 @@ public final class MainActivity extends Activity {
     private FrameLayout rootView;
     private View fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
-    private String activeUrl = BuildConfig.HOMECAM_URL;
-    private boolean triedLanFallback = false;
     private boolean tailscaleLaunchPending = false;
     private boolean showingRecovery = false;
     private final android.os.Handler mainHandler =
@@ -83,7 +81,7 @@ public final class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setUserAgentString(
             settings.getUserAgentString() + " HomeCamNative/" + BuildConfig.VERSION_NAME
         );
@@ -131,7 +129,6 @@ public final class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                activeUrl = url;
                 refreshWebAppCaches(view);
             }
 
@@ -197,25 +194,11 @@ public final class MainActivity extends Activity {
     }
 
     private void loadTailnet() {
-        triedLanFallback = false;
-        activeUrl = BuildConfig.HOMECAM_URL;
         showWebView();
         webView.loadUrl(BuildConfig.HOMECAM_URL);
     }
 
-    private void loadLan() {
-        triedLanFallback = true;
-        activeUrl = BuildConfig.HOMECAM_LAN_URL;
-        showWebView();
-        webView.loadUrl(BuildConfig.HOMECAM_LAN_URL);
-    }
-
     private void handleMainFrameLoadFailure() {
-        String url = activeUrl == null ? "" : activeUrl;
-        if (!triedLanFallback && url.startsWith("https://")) {
-            loadLan();
-            return;
-        }
         showingRecovery = true;
         setContentView(recoveryView);
     }
@@ -338,7 +321,7 @@ public final class MainActivity extends Activity {
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
 
         TextView body = new TextView(this);
-        body.setText("I tried Tailscale first, then your home network. Open Tailscale if you're away from home, or try again when you're back on Wi-Fi.");
+        body.setText("HomeCam requires its private Tailscale connection. Open Tailscale, confirm it is connected, then try again.");
         body.setTextColor(Color.rgb(188, 181, 166));
         body.setTextSize(16);
         body.setGravity(android.view.Gravity.CENTER);

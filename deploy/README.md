@@ -186,27 +186,25 @@ The first time `homecam-detect.service` starts, jetson-inference compiles a Tens
 
 While the engine is compiling, the worker's logs say `[TRT] Tactic: ...` repeatedly. Don't kill it — that wipes the partial compile and you'll start over. Watch progress with `journalctl -u homecam-detect -f`.
 
-## TLS — required for Web Push on phones
+## Tailscale HTTPS — required production transport
 
-Service workers (and therefore Web Push) only register on `https://` or `localhost`. On a phone, you'll be hitting `http://10.0.0.9:8000` — the SW won't install and push won't work. Two practical options:
-
-### Option A — Tailscale (recommended)
+The Android wrapper and production PWA intentionally have no LAN HTTP
+fallback. Tailscale Serve is the only supported remote application and media
+signaling boundary; it terminates HTTPS on 443 and forwards to the loopback-only
+FastAPI and MediaMTX listeners:
 
 ```bash
-# On the Jetson:
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-sudo tailscale cert jetson.<your-tailnet>.ts.net
+# On the Jetson after `tailscale up`:
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8000
+sudo tailscale serve --bg --https=443 --set-path=/whep http://127.0.0.1:8889
+sudo tailscale serve status
 ```
 
-Front the services with Caddy using the issued cert, or pass `--ssl-keyfile/--ssl-certfile` to uvicorn and configure MediaMTX `webrtcEncryption: yes` with the same cert. Install Tailscale on your phone; the Jetson is reachable at `https://jetson.<tailnet>.ts.net` from anywhere with proper TLS.
-
-### Option B — Caddy + LAN domain
-
-Run Caddy in front of FastAPI (port 8000) and MediaMTX (port 8889). Either:
-
-- A real public domain pointed at your home (with port forwarding) — Caddy auto-issues from Let's Encrypt.
-- A LAN-only `.local` cert via mkcert installed in your phone's trust store.
+Install and connect Tailscale on the phone before opening HomeCam. Keep the
+tailnet policy restricted to HTTPS TCP 443 as described above. Ports 8000,
+8554, and 8889 remain loopback-only; TCP/UDP 8189 is the intentional WebRTC ICE
+media listener and is not an alternate HTTP signaling path. Local browser
+development continues through Vite's localhost `/api` and `/whep` proxies.
 
 ## Reboot wiring
 

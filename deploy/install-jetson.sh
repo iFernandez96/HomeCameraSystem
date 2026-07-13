@@ -180,6 +180,5 @@ else
     warn "MediaMTX :8889 not listening — \`journalctl -u mediamtx -n 50\` may help"
 fi
 
-ip=$(ip -4 -br addr show scope global | awk '{split($3,a,"/"); print a[1]; exit}')
 echo
-log "Done. Open http://${ip}:8000 from the LAN. Live page pulls WebRTC from :8889."
+log "Done. Open the operator Tailscale HTTPS URL. Direct LAN HTTP is unsupported."

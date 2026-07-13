@@ -86,17 +86,11 @@ export function pathForQuality(
 /**
  * Compose the same-origin WHEP URL for a MediaMTX path.
  *
- * iter-244b: same-origin path-based WHEP. Pre-iter-244b this composed
- * `<proto>//<host>:8889/cam/whep` directly — fine on LAN where the
- * browser can hit the Jetson's :8889 port over HTTP, broken over the
- * iter-244 Tailscale Serve HTTPS proxy because (a) the proxy only
- * forwards :443 not :8889, and (b) browsers refuse mixed-content
- * (HTTPS page → HTTP MediaMTX).
- *
- * Fix: route WHEP through the Tailscale Serve path proxy at
+ * Route WHEP through the Tailscale Serve path proxy at
  * `/whep/*` (configured `tailscale serve --bg --https=443
  * --set-path=/whep http://localhost:8889`). Same origin as the page,
- * so HTTPS preserved, no mixed content, no extra port. Vite dev
+ * so production stays on HTTPS with no mixed content or direct signaling
+ * port. Vite dev
  * server proxies `/whep` → `http://localhost:8889` for parity (see
  * vite.config.ts).
  */
@@ -104,18 +98,6 @@ export function whepUrlForPath(
   path: string,
   location: Pick<Location, 'protocol' | 'hostname' | 'origin'> = window.location,
 ): string {
-  // The native Android wrapper falls back to the Jetson's LAN HTTP origin
-  // when Tailscale/MagicDNS is unavailable. FastAPI on :8000 does not proxy
-  // WHEP; MediaMTX serves it directly on :8889. HTTPS must stay same-origin
-  // through Tailscale Serve to avoid mixed content. Keep localhost on the
-  // same-origin Vite proxy used by development and tests.
-  if (
-    location.protocol === 'http:' &&
-    location.hostname !== 'localhost' &&
-    location.hostname !== '127.0.0.1'
-  ) {
-    return `http://${location.hostname}:8889/${path}/whep`
-  }
   return `${location.origin}/whep/${path}/whep`
 }
 
