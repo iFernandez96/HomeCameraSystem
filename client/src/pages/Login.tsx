@@ -93,6 +93,13 @@ export function Login() {
       if (err instanceof HttpError && err.status === 401) {
         // iter-356.1: human voice + recovery action in the copy itself.
         setError('Wrong username or password — try again.')
+      } else if (err instanceof HttpError && err.status === 429) {
+        const wait = err.retryAfterSeconds
+        setError(
+          wait
+            ? `Too many attempts — wait ${wait} ${wait === 1 ? 'second' : 'seconds'} and try again.`
+            : 'Too many attempts — wait a moment and try again.',
+        )
       } else if (err instanceof Error) {
         // iter-356.1: don't leak internal err.message strings.
         setError('Could not sign in. Check your connection and try again.')

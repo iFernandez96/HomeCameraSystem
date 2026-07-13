@@ -129,6 +129,12 @@ services:
       # artifact, byte backups, rollback). Was :ro pre-OTA.
       - ../client/dist:/app/client_dist
     environment:
+      # PR-104 canonical client-address boundary. Tailscale Serve connects on
+      # the host, Docker forwards that loopback connection from the fixed
+      # 172.30.0.1 gateway, and Uvicorn alone consumes X-Forwarded-For. Keep
+      # this literal allowlist narrow; never use '*'. Direct container peers
+      # and caller-supplied forwarding headers remain untrusted.
+      - FORWARDED_ALLOW_IPS=127.0.0.1,::1,172.30.0.1
       # PR-001 temporary containment.  This literal value is intentionally
       # not operator-overridable: OTA stays fail-closed until its later
       # hardening work is completed and separately released.

@@ -25,21 +25,39 @@ test.describe('Auth — login flow', () => {
     await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toBeVisible()
   })
 
-  test('given a wrong password, when login submitted, then stays on /login with an error', async ({
+  test('given repeated wrong passwords, when backoff expires and valid credentials are submitted, then the UI recovers', async ({
     page,
   }) => {
     // arrange
     await page.goto('/login')
-
-    // act
     await page.getByLabel(/username/i).fill('admin')
-    await page.locator('input[type="password"]').fill('not-the-right-one')
-    await page.getByRole('button', { name: /sign in|log in|login/i }).click()
+    const password = page.locator('input[type="password"]')
+    const submit = page.getByRole('button', { name: /sign in|log in|login/i })
 
-    // assert
-    await expect(page).toHaveURL(/\/login$/)
+    // act/assert: the first two failures remain deliberately indistinguishable.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await password.fill('not-the-right-one')
+      await submit.click()
+      await expect(page).toHaveURL(/\/login$/)
+      await expect(
+        page.getByRole('alert').filter({ hasText: /wrong username or password/i }),
+      ).toBeVisible()
+    }
+
+    // The third failure exposes only the bounded retry interval.
+    await password.fill('not-the-right-one')
+    await submit.click()
     await expect(
-      page.getByRole('alert').filter({ hasText: /wrong username or password/i }),
+      page.getByRole('alert').filter({
+        hasText: /too many attempts.*wait 1 second and try again/i,
+      }),
     ).toBeVisible()
+
+    // Once the interval expires, a successful login clears this exact bucket.
+    await page.waitForTimeout(1_100)
+    await password.fill('admin')
+    await submit.click()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
   })
 })

@@ -1056,6 +1056,25 @@ describe('lib/api', () => {
     expect(asMock().mock.calls[0][1].credentials).toBe('include')
   })
 
+  it('given login backoff, when server returns 429, then Retry-After is typed', async () => {
+    // arrange
+    asMock().mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'too many login attempts' }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '8',
+        },
+      }),
+    )
+
+    // act / assert
+    await expect(login({ username: 'alice', password: 'wrong' })).rejects.toMatchObject({
+      status: 429,
+      retryAfterSeconds: 8,
+    })
+  })
+
   it('logout POSTs /api/auth/logout and returns ok', async () => {
     mockJson({ ok: true })
     const r = await logout()

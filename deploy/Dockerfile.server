@@ -57,4 +57,7 @@ RUN chmod +x /entrypoint.sh
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Proxy headers are useful only together with the deployment-specific literal
+# FORWARDED_ALLOW_IPS value in docker-compose.yml. Uvicorn ignores forwarded
+# values from every non-allowlisted immediate peer.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

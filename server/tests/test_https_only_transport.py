@@ -56,3 +56,8 @@ def test_deployment_keeps_exact_origins_and_control_planes_on_loopback():
     assert mediamtx["webrtcLocalTCPAddress"] == ":8189"
     assert mediamtx["webrtcLocalUDPAddress"] == ":8189"
     assert compose["services"]["server"]["ports"] == ["127.0.0.1:8000:8000"]
+    assert "FORWARDED_ALLOW_IPS=127.0.0.1,::1,172.30.0.1" in compose[
+        "services"
+    ]["server"]["environment"]
+    assert "--proxy-headers" in _read("deploy/Dockerfile.server")
+    assert "FORWARDED_ALLOW_IPS=*" not in _read("deploy/docker-compose.yml")

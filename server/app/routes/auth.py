@@ -51,12 +51,17 @@ from ..auth.dependencies import (
     require_role,
 )
 from ..config import settings
-from ..log import auth_rejected
-from ..services import audit_db
+from ..log import RateLimitedLog, auth_rejected
+from ..services import audit_db, login_backoff
 from ..sessions import device_parse, ip_class as ip_class_mod, revocation, sessions_db
 
 
 log = logging.getLogger(__name__)
+
+
+_backoff_reject_log_gate = RateLimitedLog(60.0)
+_backoff_storage_log_gate = RateLimitedLog(60.0)
+_login_clock = time.time
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -67,8 +72,49 @@ def _ua(request: Request) -> str:
 
 
 def _remote_addr(request: Request) -> str | None:
+    """Return Uvicorn's canonical peer; never parse forwarding headers here.
+
+    Production Uvicorn trusts proxy headers only from the fixed loopback and
+    HomeCam Docker-gateway hops.  Direct/untrusted callers therefore cannot
+    influence ``request.client.host`` with a caller-supplied header.
+    """
     client = request.client
     return client.host if client else None
+
+
+def _login_backoff_key(request: Request, username: str) -> tuple[str, str]:
+    return (
+        login_backoff.normalize_account(username),
+        login_backoff.canonical_source_address(_remote_addr(request)),
+    )
+
+
+def _backoff_storage_unavailable(operation: str) -> HTTPException:
+    if _backoff_storage_log_gate.should_log():
+        log.error(
+            "login backoff storage failed during %s at %s — refusing login",
+            operation,
+            settings.audit_db_path,
+            exc_info=True,
+        )
+    return HTTPException(
+        status_code=503,
+        detail="authentication temporarily unavailable",
+    )
+
+
+def _raise_login_backoff(retry_after_s: int) -> None:
+    if _backoff_reject_log_gate.should_log():
+        log.warning(
+            "login backoff active on %s retry_after_s=%d",
+            login_backoff.LOGIN_ENDPOINT,
+            retry_after_s,
+        )
+    raise HTTPException(
+        status_code=429,
+        detail="too many login attempts",
+        headers={"Retry-After": str(retry_after_s)},
+    )
 
 
 def _record_auth_event(
@@ -144,11 +190,9 @@ def _set_session_cookies(
     refresh_jti = uuid.uuid4().hex
     access = tokens.issue(username, "access", role=role, jti=access_jti)
     refresh = tokens.issue(username, "refresh", role=role, jti=refresh_jti)
-    # The native wrapper intentionally falls back from the Tailscale HTTPS URL
-    # to the Jetson's LAN HTTP URL when the phone's VPN/MagicDNS is offline.
-    # A Secure cookie is silently discarded on that HTTP fallback (login 200,
-    # immediately followed by an unauthenticated /api/status). Preserve Secure
-    # on real HTTPS while allowing the explicitly-supported LAN transport.
+    # PR-103 removed the production LAN fallback. Uvicorn accepts
+    # X-Forwarded-Proto only from the fixed Tailscale/Docker proxy hops, so the
+    # HTTPS Serve path remains Secure while localhost development can use HTTP.
     cookie_secure = settings.cookie_secure and request.url.scheme == "https"
     response.set_cookie(
         COOKIE_ACCESS,
@@ -231,6 +275,21 @@ def _clear_session_cookies(response: Response) -> None:
 
 @router.post("/login", response_model=LoginOut)
 async def login(body: LoginIn, response: Response, request: Request) -> LoginOut:
+    account_key, source_addr = _login_backoff_key(request, body.username)
+    now = _login_clock()
+    try:
+        retry_after_s = login_backoff.retry_after(
+            settings.audit_db_path,
+            endpoint=login_backoff.LOGIN_ENDPOINT,
+            account_key=account_key,
+            source_addr=source_addr,
+            now=now,
+        )
+    except Exception:
+        raise _backoff_storage_unavailable("precheck")
+    if retry_after_s:
+        _raise_login_backoff(retry_after_s)
+
     user = users_db.get_user(settings.users_db_path, body.username)
     if user is None:
         # Timing-oracle defense: spend the same ~120 ms verifying
@@ -246,6 +305,18 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
             sub=body.username, cookie_present=False,
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        try:
+            retry_after_s = login_backoff.record_failure(
+                settings.audit_db_path,
+                endpoint=login_backoff.LOGIN_ENDPOINT,
+                account_key=account_key,
+                source_addr=source_addr,
+                now=now,
+            )
+        except Exception:
+            raise _backoff_storage_unavailable("unknown-user failure")
+        if retry_after_s:
+            _raise_login_backoff(retry_after_s)
         raise HTTPException(status_code=401, detail="invalid credentials")
     if not passwords.verify_password(body.password, user["password_hash"]):
         auth_rejected(
@@ -253,8 +324,28 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
             sub=body.username, cookie_present=False,
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        try:
+            retry_after_s = login_backoff.record_failure(
+                settings.audit_db_path,
+                endpoint=login_backoff.LOGIN_ENDPOINT,
+                account_key=account_key,
+                source_addr=source_addr,
+                now=now,
+            )
+        except Exception:
+            raise _backoff_storage_unavailable("bad-password failure")
+        if retry_after_s:
+            _raise_login_backoff(retry_after_s)
         raise HTTPException(status_code=401, detail="invalid credentials")
-    now = time.time()
+    try:
+        login_backoff.clear(
+            settings.audit_db_path,
+            endpoint=login_backoff.LOGIN_ENDPOINT,
+            account_key=account_key,
+            source_addr=source_addr,
+        )
+    except Exception:
+        raise _backoff_storage_unavailable("successful-login clear")
     access_jti, refresh_jti = _set_session_cookies(
         response, request, user["username"], user["role"]
     )

@@ -206,6 +206,23 @@ tailnet policy restricted to HTTPS TCP 443 as described above. Ports 8000,
 media listener and is not an alternate HTTP signaling path. Local browser
 development continues through Vite's localhost `/api` and `/whep` proxies.
 
+### Canonical client address behind Serve
+
+Tailscale Serve adds the original client address in `X-Forwarded-For` before
+proxying to the loopback FastAPI listener. Docker then presents that host-local
+connection to the server container through the fixed `172.30.0.1` HomeCam
+gateway. Compose pins Uvicorn's `FORWARDED_ALLOW_IPS` to
+`127.0.0.1,::1,172.30.0.1`, so only those immediate proxy hops may replace the
+ASGI client/scheme. Do not broaden the value to `*`, `172.30.0.0/24`, or a
+tailnet range.
+
+FastAPI routes use only `request.client.host`; they never parse forwarding
+headers. A non-allowlisted peer that sends its own `X-Forwarded-For` therefore
+retains its real socket address. MediaMTX runs directly on the host, so its
+`webrtcTrustedProxies` remains loopback-only. The full contract and backoff
+semantics are recorded in
+[`docs/decisions/pr-104-trusted-client-address.md`](../docs/decisions/pr-104-trusted-client-address.md).
+
 ## Reboot wiring
 
 `/api/system/reboot` is stubbed. To enable it:

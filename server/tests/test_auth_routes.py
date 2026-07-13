@@ -22,6 +22,8 @@ import pytest
 
 from app.auth import passwords, tokens, users_db
 from app.config import settings
+from app.routes import auth as auth_routes
+from app.services import login_backoff
 from app.sessions import sessions_db
 
 
@@ -106,6 +108,166 @@ def test_login_unknown_user_returns_401(client, auth_env):
     )
     assert res.status_code == 401
     assert "homecam_access" not in res.cookies
+
+
+def test_given_repeated_bad_password_when_threshold_reached_then_bounded_429(
+    client_anon, seeded_user, monkeypatch
+):
+    # arrange
+    now = [1000.0]
+    monkeypatch.setattr(auth_routes, "_login_clock", lambda: now[0])
+
+    # act
+    first = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "wrong"}
+    )
+    second = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "wrong"}
+    )
+    third = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "wrong"}
+    )
+    still_blocked = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "hunter2"}
+    )
+
+    # assert
+    assert [first.status_code, second.status_code, third.status_code] == [401, 401, 429]
+    assert third.json() == {"detail": "too many login attempts"}
+    assert third.headers["Retry-After"] == "1"
+    assert still_blocked.status_code == 429
+    assert int(still_blocked.headers["Retry-After"]) <= login_backoff.MAX_BACKOFF_S
+
+
+def test_given_unknown_and_bad_password_when_throttled_then_wire_shapes_match(
+    client_anon, seeded_user, monkeypatch
+):
+    # arrange
+    monkeypatch.setattr(auth_routes, "_login_clock", lambda: 2000.0)
+
+    def third_failure(username: str):
+        responses = [
+            client_anon.post(
+                "/api/auth/login",
+                json={"username": username, "password": "wrong"},
+            )
+            for _ in range(3)
+        ]
+        return responses[-1]
+
+    # act
+    bad_password = third_failure("alice")
+    login_backoff.reset(settings.audit_db_path)
+    unknown_user = third_failure("ghost")
+
+    # assert
+    assert bad_password.status_code == unknown_user.status_code == 429
+    assert bad_password.content == unknown_user.content
+    assert bad_password.headers["content-type"] == unknown_user.headers["content-type"]
+    assert bad_password.headers["Retry-After"] == unknown_user.headers["Retry-After"]
+    assert "homecam_access" not in bad_password.cookies
+    assert "homecam_access" not in unknown_user.cookies
+
+
+def test_given_expired_backoff_when_correct_login_succeeds_then_bucket_clears(
+    client_anon, seeded_user, monkeypatch
+):
+    # arrange
+    now = [3000.0]
+    monkeypatch.setattr(auth_routes, "_login_clock", lambda: now[0])
+    for _ in range(3):
+        blocked = client_anon.post(
+            "/api/auth/login", json={"username": "alice", "password": "wrong"}
+        )
+    assert blocked.status_code == 429
+    now[0] += 1.1
+
+    # act
+    success = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "hunter2"}
+    )
+    next_failure = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "wrong"}
+    )
+
+    # assert
+    assert success.status_code == 200
+    assert next_failure.status_code == 401
+
+
+def test_given_one_account_is_blocked_when_another_logs_in_then_it_remains_usable(
+    client_anon, seeded_user, auth_env, monkeypatch
+):
+    # arrange
+    users_db.create_user(
+        auth_env / "users.db",
+        "bob",
+        passwords.hash_password("bobpass"),
+        role="family",
+    )
+    monkeypatch.setattr(auth_routes, "_login_clock", lambda: 4000.0)
+    for _ in range(3):
+        blocked = client_anon.post(
+            "/api/auth/login", json={"username": "alice", "password": "wrong"}
+        )
+
+    # act
+    bob = client_anon.post(
+        "/api/auth/login", json={"username": "bob", "password": "bobpass"}
+    )
+
+    # assert
+    assert blocked.status_code == 429
+    assert bob.status_code == 200
+
+
+def test_given_one_source_is_blocked_when_same_account_uses_another_then_it_can_login(
+    client_anon, seeded_user, monkeypatch
+):
+    # arrange
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(auth_routes, "_login_clock", lambda: 5000.0)
+    for _ in range(3):
+        blocked = client_anon.post(
+            "/api/auth/login", json={"username": "alice", "password": "wrong"}
+        )
+    other_source = TestClient(
+        client_anon.app,
+        client=("100.64.0.22", 50000),
+    )
+    try:
+        # act
+        success = other_source.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "hunter2"},
+        )
+    finally:
+        other_source.close()
+
+    # assert
+    assert blocked.status_code == 429
+    assert success.status_code == 200
+
+
+def test_given_backoff_storage_failure_when_login_attempted_then_auth_fails_closed(
+    client_anon, seeded_user, monkeypatch
+):
+    # arrange
+    def unavailable(*args, **kwargs):
+        raise sqlite3.OperationalError("disk unavailable")
+
+    monkeypatch.setattr(login_backoff, "retry_after", unavailable)
+
+    # act
+    response = client_anon.post(
+        "/api/auth/login", json={"username": "alice", "password": "hunter2"}
+    )
+
+    # assert
+    assert response.status_code == 503
+    assert response.json() == {"detail": "authentication temporarily unavailable"}
+    assert "homecam_access" not in response.cookies
 
 
 def test_login_extra_field_rejected_as_422(client, seeded_user):

@@ -108,6 +108,12 @@ def init_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
+        # PR-104: endpoint/account/source login backoff shares this private,
+        # persistent auth-audit database.  Keep its schema owned by the focused
+        # service while applying the migration in the canonical DB initializer.
+        from . import login_backoff
+
+        login_backoff.init_schema(conn)
         view_columns = {
             str(row[1]) for row in conn.execute("PRAGMA table_info(view_events)")
         }
@@ -358,4 +364,5 @@ def reset(path: Path) -> None:
         conn.execute("DELETE FROM view_events")
         conn.execute("DELETE FROM host_action_events")
         conn.execute("DELETE FROM action_events")
+        conn.execute("DELETE FROM login_backoff")
         conn.commit()

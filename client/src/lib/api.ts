@@ -22,13 +22,28 @@ const BASE = ''
 export class HttpError extends Error {
   readonly status: number
   readonly path: string
+  readonly retryAfterSeconds: number | null
 
-  constructor(path: string, status: number, detail: string) {
+  constructor(
+    path: string,
+    status: number,
+    detail: string,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(`${path} ${status}${detail}`)
     this.name = 'HttpError'
     this.path = path
     this.status = status
+    this.retryAfterSeconds = retryAfterSeconds
   }
+}
+
+function retryAfterSeconds(response: Response): number | null {
+  const raw = response.headers.get('Retry-After')
+  if (!raw || !/^\d+$/.test(raw.trim())) return null
+  const seconds = Number(raw)
+  if (!Number.isSafeInteger(seconds) || seconds < 1) return null
+  return seconds
 }
 
 // iter-181 (Auth Plan Phase 3): one inflight refresh promise so
@@ -137,7 +152,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       status: res.status,
       detail: detail ? detail.slice(0, 200) : '',
     })
-    throw new HttpError(path, res.status, detail)
+    throw new HttpError(path, res.status, detail, retryAfterSeconds(res))
   }
   try {
     return (await res.json()) as T

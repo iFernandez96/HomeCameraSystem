@@ -145,6 +145,12 @@ terminates at the host), so `request.client.host` is correct. Do **not** trust
 `X-Forwarded-For` unless `settings` gains an explicit trusted-proxy flag —
 spoofable. State this in the docstring.
 
+> **Superseded by PR-104 (2026-07-13):** production now explicitly configures
+> Uvicorn to trust proxy headers only from loopback and the fixed HomeCam
+> Docker gateway. Application code still reads only `request.client.host`.
+> See `docs/decisions/pr-104-trusted-client-address.md` for the canonical
+> deployed contract. This historical paragraph is retained as design history.
+
 **Fixtures:** `server/tests/fixtures/ip_samples.json`
 (`[{"ip": "100.101.102.103", "expect": "tailscale"}, {"ip": "192.168.1.5",
 "expect": "lan"}, {"ip": "8.8.8.8", "expect": "cellular"}, {"ip": "", "expect":
@@ -560,6 +566,8 @@ Mirror on the server in `server/tests/test_sessions_routes.py`
    pinned). The jti addition must not touch that branch.
 7. **Do not trust `X-Forwarded-For`** for `ip_class` unless a trusted-proxy flag
    is added to settings — spoofable; default to `request.client.host`.
+   **PR-104 resolution:** the deployment now provides that narrow Uvicorn
+   allowlist; application code continues to use only `request.client.host`.
 8. **Revocation must bite on BOTH surfaces** — REST deps AND the WS handshake —
    or a revoked session keeps streaming live detections for up to the access TTL.
 9. **DoS bound:** `list_sessions` + `prune` keep the table small; the

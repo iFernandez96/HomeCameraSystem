@@ -4,10 +4,10 @@ The ``cellular`` bucket means "globally-routable public internet". At layer 3
 we cannot distinguish a mobile carrier from any other public source, so UI copy
 should surface this as "Cellular / public".
 
-Callers should pass ``request.client.host`` after honoring a trusted proxy
-header only when an explicit trusted-proxy setting exists. Do not trust
-``X-Forwarded-For`` by default; it is spoofable, and this deployment normally
-has no reverse proxy in front of uvicorn because Tailscale terminates on-host.
+Callers pass ``request.client.host`` after Uvicorn has honored proxy headers
+only from the explicit production allowlist.  Tailscale Serve terminates HTTPS
+on the host and Docker forwards its loopback request through the fixed HomeCam
+gateway; application code must never parse ``X-Forwarded-For`` itself.
 """
 from __future__ import annotations
 
@@ -32,4 +32,3 @@ def ip_class(remote_addr: str | None) -> str:
     if addr.is_global:
         return "cellular"
     return "other"
-

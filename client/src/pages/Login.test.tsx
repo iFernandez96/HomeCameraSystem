@@ -178,6 +178,31 @@ describe('Login page', () => {
     })
   })
 
+  it('given a bounded login backoff, then it shows the server wait instead of a network error', async () => {
+    // arrange
+    loginFn.mockRejectedValueOnce(
+      new HttpError('/api/auth/login', 429, '', 8),
+    )
+    renderLogin()
+    fireEvent.change(screen.getByLabelText(/username/i), {
+      target: { value: 'alice' },
+    })
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: 'wrong' },
+    })
+
+    // act
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /too many attempts.*wait 8 seconds/i,
+      )
+    })
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/check your connection/i)
+  })
+
   // iter-356.1a (Maya Major): show-password toggle.
   it('given the show-password button is clicked, then the password input type flips text/password (iter-356.1a)', () => {
     // arrange
