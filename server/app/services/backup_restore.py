@@ -46,6 +46,29 @@ class MaintenanceConflict(RuntimeError):
         self.active_operation = active_operation
         self.requested_operation = requested_operation
 
+    def response(self) -> dict[str, object]:
+        """Return the stable wire shape shared by routes and middleware."""
+        return {
+            "code": "maintenance_conflict",
+            "active_operation": self.active_operation,
+            "requested_operation": self.requested_operation,
+            "retryable": True,
+        }
+
+
+@dataclass(frozen=True)
+class MaintenanceState:
+    active: bool
+    operation: str | None
+    blocks_mutations: bool
+
+    def response(self) -> dict[str, object]:
+        return {
+            "active": self.active,
+            "operation": self.operation,
+            "blocks_mutations": self.blocks_mutations,
+        }
+
 
 @dataclass(frozen=True)
 class RestoreBackup:
@@ -94,27 +117,60 @@ class RestoreOrchestratorRequest:
 
 
 class MaintenanceLock:
-    """Small in-process lock seam for backup/restore/update harness tests."""
+    """Coordinate restore maintenance with ordinary in-process mutations."""
 
     def __init__(self) -> None:
         self._lock = Lock()
         self._active_operation: str | None = None
+        self._active_mutations = 0
 
     @property
     def active_operation(self) -> str | None:
-        return self._active_operation
+        return self.snapshot().operation
+
+    def snapshot(self) -> MaintenanceState:
+        with self._lock:
+            operation = self._active_operation
+            return MaintenanceState(
+                active=operation is not None,
+                operation=operation,
+                # Online backup is designed to coexist with writes. Restore is
+                # the destructive replacement/validation window.
+                blocks_mutations=operation == "restore",
+            )
 
     def acquire(self, operation: str) -> "_MaintenanceLease":
         with self._lock:
             if self._active_operation is not None:
                 raise MaintenanceConflict(self._active_operation, operation)
+            if operation == "restore" and self._active_mutations:
+                raise MaintenanceConflict("ordinary_mutation", operation)
             self._active_operation = operation
         return _MaintenanceLease(self, operation)
+
+    def acquire_mutation(self, operation: str) -> "_MutationLease":
+        """Admit a normal mutation unless restore has closed the gate."""
+        with self._lock:
+            if self._active_operation == "restore":
+                raise MaintenanceConflict("restore", operation)
+            self._active_mutations += 1
+        return _MutationLease(self)
+
+    def reset_for_startup(self) -> None:
+        """Clear process-local state whenever a new app lifespan starts."""
+        with self._lock:
+            self._active_operation = None
+            self._active_mutations = 0
 
     def _release(self, operation: str) -> None:
         with self._lock:
             if self._active_operation == operation:
                 self._active_operation = None
+
+    def _release_mutation(self) -> None:
+        with self._lock:
+            if self._active_mutations:
+                self._active_mutations -= 1
 
 
 @dataclass(frozen=True)
@@ -127,6 +183,17 @@ class _MaintenanceLease:
 
     def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
         self.lock._release(self.operation)
+
+
+@dataclass(frozen=True)
+class _MutationLease:
+    lock: MaintenanceLock
+
+    def __enter__(self) -> "_MutationLease":
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        self.lock._release_mutation()
 
 
 @contextmanager
@@ -312,6 +379,7 @@ def restore_api_response_from_orchestrator(
             phase="maintenance_lock",
             detail=str(exc),
         )
+        response["maintenance"] = exc.response()
         return response
     except RestoreBlocked as exc:
         reason = exc.reason

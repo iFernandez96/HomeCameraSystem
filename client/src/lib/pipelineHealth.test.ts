@@ -5,6 +5,7 @@ import type { ServerStatus } from './types'
 function status(overrides: Partial<ServerStatus> = {}): ServerStatus {
   return {
     ok: true,
+    maintenance: { active: false, operation: null, blocks_mutations: false },
     uptime_s: 100,
     camera: 'ok',
     detection_active: true,

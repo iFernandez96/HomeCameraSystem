@@ -9,7 +9,9 @@ from uuid import uuid4
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from starlette.concurrency import run_in_threadpool
 
 from pathlib import Path
 
@@ -662,10 +664,12 @@ async def system_logs_result(
 @router.post(
     "/system/backup",
     dependencies=[Depends(require_role("owner"))],
+    response_model=None,
 )
-async def system_backup() -> dict[str, object]:
+async def system_backup() -> dict[str, object] | JSONResponse:
     attempt_id = f"route-{uuid4()}"
-    return orchestrate_backup(
+    result = await run_in_threadpool(
+        orchestrate_backup,
         BackupOrchestratorRequest(
             attempt_id=attempt_id,
             target_dir=settings.backup_target_dir,
@@ -675,6 +679,9 @@ async def system_backup() -> dict[str, object]:
         ),
         maintenance_lock=_BACKUP_RESTORE_LOCK,
     )
+    if result.get("reason") == "maintenance_conflict":
+        return JSONResponse(result, status_code=409, headers={"Retry-After": "1"})
+    return result
 
 
 # iter-212 (Feature #10 slice 3): restore from a backup archive.
@@ -688,9 +695,9 @@ async def system_backup() -> dict[str, object]:
 #      symlinks under target_root). The resolve+relative_to pair
 #      is the security-critical check; the regex is the friendlier
 #      422 for the common typo case.
-# The eventual host-helper (slice 4) does the actual file restoration
-# under maintenance mode (server stops accepting requests, atomic
-# replace, restart). For now: stub-with-note like backup.
+# Restore runs in FastAPI's worker thread so the event loop can continue to
+# serve reads and reject concurrent mutations while atomic replacement and
+# validation hold the application-wide maintenance gate.
 _BACKUP_PATH_PATTERN = r"^[A-Za-z0-9_./-]+$"
 
 
@@ -709,8 +716,9 @@ class _RestoreBody(BaseModel):
 @router.post(
     "/system/restore",
     dependencies=[Depends(require_role("owner"))],
+    response_model=None,
 )
-async def system_restore(body: _RestoreBody) -> dict[str, object]:
+async def system_restore(body: _RestoreBody) -> dict[str, object] | JSONResponse:
     # Belt-and-braces tier 2: even with the regex passing, resolve
     # the path against the configured target dir and require it to
     # land UNDER that root. Catches `..` smuggled in via symlinks,
@@ -743,7 +751,8 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
         )
     log.warning("restore requested for %s", candidate)
     attempt_id = f"route-{uuid4()}"
-    return restore_api_response_from_orchestrator(
+    result = await run_in_threadpool(
+        restore_api_response_from_orchestrator,
         RestoreOrchestratorRequest(
             filename=str(Path(body.backup_path)),
             backup_target_dir=settings.backup_target_dir,
@@ -782,6 +791,9 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
         ),
         maintenance_lock=_BACKUP_RESTORE_LOCK,
     )
+    if result.get("reason") == "maintenance_conflict":
+        return JSONResponse(result, status_code=409, headers={"Retry-After": "1"})
+    return result
 
 
 # iter-213 (Feature #8 slice 1): daily-timelapse trigger + listing.

@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -21,6 +21,7 @@ from .services.detection_config import detection_config
 from .services.health import seconds_since_last_frame, worker_health
 from .services.push_service import push_service
 from .services import worker_auth
+from .services.backup_restore import MaintenanceConflict
 from .services.worker_auth import WorkerAuthRejected
 
 # Level from HOMECAM_LOG_LEVEL (default INFO) so an operator can flip to
@@ -84,6 +85,9 @@ START_TIME = time.time()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Process-local maintenance state must never survive an application
+    # lifespan restart (including test/in-process server restarts).
+    control._BACKUP_RESTORE_LOCK.reset_for_startup()
     digest_stop = asyncio.Event()
     digest_task = None
     resilience_task = None
@@ -327,6 +331,35 @@ def _client_ip(request: Request) -> str:
     under some ASGI test transports, so tolerate that."""
     client = request.client
     return client.host if client else "?"
+
+
+_MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@app.middleware("http")
+async def _restore_maintenance_gate(request: Request, call_next):
+    """Keep ordinary HTTP mutations outside the restore replacement window."""
+    if request.method not in _MUTATING_HTTP_METHODS:
+        return await call_next(request)
+    # The restore route acquires the exclusive lease itself. Counting it as an
+    # ordinary mutation would make every restore conflict with its own lease.
+    if request.url.path == "/api/system/restore":
+        return await call_next(request)
+    operation = "{} {}".format(request.method, request.url.path)
+    try:
+        lease = control._BACKUP_RESTORE_LOCK.acquire_mutation(operation)
+    except MaintenanceConflict as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "status": "maintenance",
+                "maintenance": exc.response(),
+            },
+            headers={"Retry-After": "1"},
+        )
+    with lease:
+        return await call_next(request)
 
 
 @app.middleware("http")
@@ -590,6 +623,7 @@ def _build_status() -> dict[str, object]:
         # still hits the full /api/detection/config GET for editing.
         "camera_label": detection_config.get().camera_label,
         "audio_enabled": detection_config.get().audio_enabled,
+        "maintenance": control._BACKUP_RESTORE_LOCK.snapshot().response(),
     }
 
 

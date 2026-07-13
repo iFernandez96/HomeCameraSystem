@@ -127,7 +127,9 @@ def orchestrate_backup(
             return response
     except MaintenanceConflict as exc:
         reason = "maintenance_conflict"
-        return _backup_failed(reason, str(exc), request.attempt_id)
+        response = _backup_failed(reason, str(exc), request.attempt_id)
+        response["maintenance"] = exc.response()
+        return response
     except BackupBlocked as exc:
         reason = exc.reason
         detail = str(exc.path) if exc.path is not None else exc.role

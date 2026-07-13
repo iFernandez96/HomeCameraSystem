@@ -157,6 +157,7 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
     body = client.get("/api/status").json()
     assert set(body.keys()) == {
         "ok",
+        "maintenance",
         "uptime_s",
         "host_uptime_s",
         "camera",

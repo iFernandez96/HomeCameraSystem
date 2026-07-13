@@ -549,8 +549,16 @@ export type MeResponse = {
   user: User
 }
 
+export type MaintenanceState = {
+  active: boolean
+  operation: string | null
+  blocks_mutations: boolean
+}
+
 export type ServerStatus = {
   ok: boolean
+  /** Restore maintenance state; reads remain available while writes pause. */
+  maintenance: MaintenanceState
   /** FastAPI process uptime. */
   uptime_s: number
   camera: 'ok' | 'missing' | 'error'
