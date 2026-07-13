@@ -408,6 +408,8 @@ export const test = base.extend<
       PORT: String(port),
       CLIENT_DIST: clientDist,
       USERS_DB_PATH: path.join(root, 'users.db'),
+      AUDIT_DB_PATH: path.join(root, 'audit.db'),
+      SESSIONS_DB_PATH: path.join(root, 'sessions.db'),
       JWT_SECRET_PATH: path.join(root, 'jwt_secret.bin'),
       ACCESS_TOKEN_TTL_S: '30',
       REFRESH_TOKEN_TTL_S: '120',

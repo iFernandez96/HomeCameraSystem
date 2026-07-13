@@ -44,7 +44,7 @@ from ..services.security_deterrence import (
 from ..services.security_resilience import PACKAGE_OVERDUE_S, public_outages
 from ..services.security_store import security_store
 from ..services import security_timeline
-from ..services import media_tokens
+from ..services import media_tokens, mediamtx_auth
 
 router = APIRouter(prefix="/security", tags=["security"])
 identity_router = APIRouter(tags=["identity-feedback"])
@@ -73,41 +73,46 @@ def _event(event_id: str) -> dict[str, Any]:
 class MediaTokenBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     action: Literal["publish", "read"]
-    path: Literal["talk", "listen"]
+    path: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 @router.post("/media-token")
 async def create_media_token(
     body: MediaTokenBody,
+    response: Response,
     user_and_role: tuple[str, str] = Depends(get_current_user_role),
 ) -> dict[str, Any]:
-    expected = {("publish", "talk"), ("read", "listen")}
-    if (body.action, body.path) not in expected:
+    audio_expected = {("publish", "talk"), ("read", "listen")}
+    is_audio = (body.action, body.path) in audio_expected
+    is_video_read = body.action == "read" and body.path in mediamtx_auth.video_paths()
+    if not is_audio and not is_video_read:
         raise HTTPException(
             status_code=422,
             detail="unsupported media action and path combination",
         )
     _username, role = user_and_role
-    if body.action == "publish" and role not in {"owner", "admin"}:
+    if is_audio and body.action == "publish" and role not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="owner role required for talk")
-    config = detection_config.get()
-    if config.operating_mode == "privacy":
-        raise HTTPException(
-            status_code=409,
-            detail="Audio is unavailable while Privacy mode is active.",
-        )
-    if not config.audio_enabled:
-        raise HTTPException(
-            status_code=409,
-            detail="Audio is disabled; enable configured audio hardware first.",
-        )
+    if is_audio:
+        config = detection_config.get()
+        if config.operating_mode == "privacy":
+            raise HTTPException(
+                status_code=409,
+                detail="Audio is unavailable while Privacy mode is active.",
+            )
+        if not config.audio_enabled:
+            raise HTTPException(
+                status_code=409,
+                detail="Audio is disabled; enable configured audio hardware first.",
+            )
     try:
         token, expires_ts = media_tokens.issue(body.action, body.path)
     except media_tokens.MediaTokenUnavailable:
         raise HTTPException(
             status_code=503,
-            detail="Too many audio sessions are starting; wait and retry.",
+            detail="Too many media sessions are starting; wait and retry.",
         )
+    response.headers["Cache-Control"] = "private, no-store"
     return {"token": token, "expires_ts": expires_ts}
 
 

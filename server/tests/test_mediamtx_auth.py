@@ -95,9 +95,24 @@ def test_callback_trust_is_exact_and_normalizes_ipv4_mapped_ipv6(monkeypatch):
 
 
 def test_policy_allows_only_exact_video_and_loopback_rtsp_paths():
+    from app.services import media_tokens
     from app.services.mediamtx_auth import authorize
 
-    assert authorize(_payload(action="read", path="cam", protocol="webrtc"))
+    for path in ("cam", "cam_uhq", "cam_lq", "cam_uq"):
+        assert not authorize(
+            _payload(action="read", path=path, protocol="webrtc")
+        )
+        token, _ = media_tokens.issue("read", path)
+        assert authorize(
+            _payload(
+                action="read", path=path, protocol="webrtc", token=token
+            )
+        )
+        assert not authorize(
+            _payload(
+                action="read", path=path, protocol="webrtc", token=token
+            )
+        )
     assert not authorize(
         _payload(action="read", path="cam_extra", protocol="webrtc")
     )
@@ -128,6 +143,21 @@ def test_policy_allows_only_exact_video_and_loopback_rtsp_paths():
     )
 
 
+def test_video_grant_rejects_wrong_scope_and_expiry_without_leaking_raw_token():
+    from app.services import media_tokens
+    from app.services.mediamtx_auth import authorize
+
+    token, _ = media_tokens.issue("read", "cam")
+    assert token not in repr(media_tokens._GRANTS)
+    assert not authorize(
+        _payload(action="read", path="cam_lq", token=token)
+    )
+    assert media_tokens.consume(token, "read", "cam")
+
+    expired, _ = media_tokens.issue("read", "cam_uq", now=200.0)
+    assert not media_tokens.consume(expired, "read", "cam_uq", now=260.0)
+
+
 @pytest.mark.asyncio
 async def test_callback_consumes_audio_token_once(monkeypatch):
     from app.services import media_tokens
@@ -140,6 +170,23 @@ async def test_callback_consumes_audio_token_once(monkeypatch):
     second = await _callback(monkeypatch, payload)
     assert first.status_code == 204 and first.content == b""
     assert second.status_code == 401 and second.content == b""
+
+
+@pytest.mark.asyncio
+async def test_callback_requires_and_consumes_video_token_once(monkeypatch):
+    from app.services import media_tokens
+
+    missing = await _callback(
+        monkeypatch,
+        _payload(action="read", path="cam"),
+    )
+    token, _ = media_tokens.issue("read", "cam")
+    payload = _payload(action="read", path="cam", token=token)
+    first = await _callback(monkeypatch, payload)
+    replay = await _callback(monkeypatch, payload)
+    assert missing.status_code == 401 and missing.content == b""
+    assert first.status_code == 204 and first.content == b""
+    assert replay.status_code == 401 and replay.content == b""
 
 
 @pytest.mark.asyncio
@@ -224,6 +271,66 @@ def test_media_token_endpoint_gates_audio_privacy_and_owner_talk(client):
     assert family_listen.status_code == 200
 
 
+def test_media_token_endpoint_issues_registered_video_grants_when_audio_is_disabled(
+    client,
+):
+    from app.services.detection_config import detection_config
+
+    detection_config.config.audio_enabled = False
+    detection_config.config.operating_mode = "privacy"
+    for path in ("cam", "cam_uhq", "cam_lq", "cam_uq"):
+        issued = client.post(
+            "/api/security/media-token",
+            json={"action": "read", "path": path},
+        )
+        assert issued.status_code == 200
+        assert set(issued.json()) == {"token", "expires_ts"}
+        assert issued.headers["cache-control"] == "private, no-store"
+
+
+def test_media_token_endpoint_rejects_anonymous_unregistered_and_video_publish(
+    client, client_anon
+):
+    anonymous = client_anon.post(
+        "/api/security/media-token",
+        json={"action": "read", "path": "cam"},
+    )
+    unknown = client.post(
+        "/api/security/media-token",
+        json={"action": "read", "path": "cam_extra"},
+    )
+    publish = client.post(
+        "/api/security/media-token",
+        json={"action": "publish", "path": "cam"},
+    )
+    assert anonymous.status_code == 401
+    assert unknown.status_code == 422
+    assert publish.status_code == 422
+
+
+def test_media_token_endpoint_uses_dynamic_registered_camera_paths(
+    client, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "cameras_json",
+        '[{"id":"back_yard","name":"Back Yard","path":"yard"}]',
+    )
+    for path in ("yard", "yard_uhq", "yard_lq", "yard_uq"):
+        issued = client.post(
+            "/api/security/media-token",
+            json={"action": "read", "path": path},
+        )
+        assert issued.status_code == 200
+    rejected_default = client.post(
+        "/api/security/media-token",
+        json={"action": "read", "path": "cam"},
+    )
+    assert rejected_default.status_code == 422
+
+
 def test_mediamtx_v118_security_config_is_fail_closed():
     root = Path(__file__).resolve().parents[2]
     config = yaml.safe_load((root / "deploy" / "mediamtx.yml").read_text())
@@ -236,6 +343,12 @@ def test_mediamtx_v118_security_config_is_fail_closed():
     assert config["rtspAddress"] == "127.0.0.1:8554"
     assert config["rtspTransports"] == ["tcp"]
     assert config["webrtcAddress"] == "127.0.0.1:8889"
+    assert config["webrtcAllowOrigins"] == [
+        "https://homecam.tail4a6525.ts.net",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    assert "*" not in config["webrtcAllowOrigins"]
     assert config["paths"]["talk"]["runOnReadyRestart"] is False
     service = (root / "deploy" / "systemd" / "mediamtx.service").read_text()
     assert "EnvironmentFile=-/etc/homecam/mediamtx.env" in service

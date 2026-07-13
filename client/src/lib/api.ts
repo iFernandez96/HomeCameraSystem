@@ -1571,7 +1571,7 @@ export const getCurrentPackages = () =>
 
 export const getMediaToken = (
   action: 'publish' | 'read',
-  path: 'talk' | 'listen',
+  path: string,
 ) =>
   req<{ token: string; expires_ts: number }>('/api/security/media-token', {
     method: 'POST',

@@ -73,10 +73,12 @@ def authorize(payload: dict[str, Any]) -> bool:
     ):
         return True
 
-    # Video remains anonymously readable over WebRTC so the existing WHEP
-    # live view is unchanged. Exact paths prevent regex/path confusion.
+    # Every remote video read requires a fresh, exact-path one-use grant.
+    # The server-owned registry is authoritative, so a token can never open
+    # an arbitrary MediaMTX path even if a client asks for one.
     if protocol == "webrtc" and action == "read" and path in paths:
-        return True
+        token = payload.get("token")
+        return isinstance(token, str) and consume(token, action, path)
 
     # Browser audio is the only remote publication/read surface. Re-check the
     # live privacy boundary here so an unused grant is revoked immediately if

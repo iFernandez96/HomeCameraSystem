@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { log } from './log'
+
+const { getMediaTokenM } = vi.hoisted(() => ({
+  getMediaTokenM: vi.fn(),
+}))
+
+vi.mock('./api', () => ({
+  getMediaToken: (...args: unknown[]) => getMediaTokenM(...args),
+}))
+
 import {
   _resetWhepAttemptLedgerForTests,
   _resetWhepWarmupForTests,
@@ -67,6 +76,11 @@ function makeVideo(): HTMLVideoElement {
 
 describe('lib/webrtc.connectWhep', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    getMediaTokenM.mockResolvedValue({
+      token: 'fresh-video-grant',
+      expires_ts: 2000,
+    })
     MockRTCPeerConnection.instances = []
     _resetWhepAttemptLedgerForTests()
     vi.stubGlobal('RTCPeerConnection', MockRTCPeerConnection as unknown as typeof RTCPeerConnection)
@@ -98,16 +112,99 @@ describe('lib/webrtc.connectWhep', () => {
     expect(urls).toContain('stun:stun.l.google.com:19302')
   })
 
-  it('POSTs the local SDP to the WHEP URL with application/sdp', async () => {
+  it('requests a path-scoped grant and POSTs the local SDP with bearer authorization', async () => {
     await connectWhep('http://example/cam/whep', makeVideo())
+    expect(getMediaTokenM).toHaveBeenCalledWith('read', 'cam')
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'http://example/cam/whep',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
+        headers: {
+          'Content-Type': 'application/sdp',
+          Authorization: 'Bearer fresh-video-grant',
+        },
         body: 'OFFER_SDP',
       }),
     )
+  })
+
+  it('derives the exact registered rung from a same-origin proxy URL', async () => {
+    await connectWhep('/whep/cam_uhq/whep', makeVideo())
+    expect(getMediaTokenM).toHaveBeenCalledWith('read', 'cam_uhq')
+  })
+
+  it('obtains a fresh one-use grant for every reconnect attempt', async () => {
+    getMediaTokenM
+      .mockResolvedValueOnce({ token: 'video-grant-one', expires_ts: 2000 })
+      .mockResolvedValueOnce({ token: 'video-grant-two', expires_ts: 2001 })
+    ;(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => Promise.resolve(new Response('ANSWER_SDP', { status: 200 })),
+    )
+
+    await connectWhep('http://example/cam_lq/whep', makeVideo())
+    await connectWhep('http://example/cam_lq/whep', makeVideo())
+
+    expect(getMediaTokenM).toHaveBeenCalledTimes(2)
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://example/cam_lq/whep',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer video-grant-one',
+        }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://example/cam_lq/whep',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer video-grant-two',
+        }),
+      }),
+    )
+  })
+
+  it('keeps the raw grant out of URLs, browser storage, telemetry, and the WHEP ledger', async () => {
+    const rawGrant = 'raw-video-grant-must-stay-transient'
+    getMediaTokenM.mockResolvedValueOnce({ token: rawGrant, expires_ts: 2000 })
+    const storageSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+
+    await connectWhep('https://homecam.test/whep/cam/whep', makeVideo())
+    const pc = MockRTCPeerConnection.instances[0]
+    pc.ontrack?.({ streams: [{ id: 'inbound' } as unknown as MediaStream] })
+    pc.connectionState = 'connected'
+    pc.dispatchEventType('connectionstatechange')
+
+    const [whepUrl] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    const nonTransportEvidence = JSON.stringify({
+      url: whepUrl,
+      ledger: getWhepAttemptLedger(),
+      logs: [infoSpy.mock.calls, warnSpy.mock.calls, errorSpy.mock.calls],
+    })
+    expect(nonTransportEvidence).not.toContain(rawGrant)
+    expect(storageSpy).not.toHaveBeenCalled()
+    expect(window.localStorage.getItem(rawGrant)).toBeNull()
+    expect(window.sessionStorage.getItem(rawGrant)).toBeNull()
+
+    storageSpy.mockRestore()
+    infoSpy.mockRestore()
+    warnSpy.mockRestore()
+    errorSpy.mockRestore()
+  })
+
+  it('fails closed before WHEP and closes the peer when grant issuance fails', async () => {
+    getMediaTokenM.mockRejectedValueOnce(new Error('grant unavailable'))
+
+    await expect(
+      connectWhep('http://example/cam_uq/whep', makeVideo()),
+    ).rejects.toThrow('grant unavailable')
+
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(MockRTCPeerConnection.instances[0].closed).toBe(true)
   })
 
   it('applies the WHEP answer as the remote description', async () => {
@@ -234,7 +331,7 @@ describe('lib/webrtc.connectWhep', () => {
     const video = makeVideo()
 
     // act
-    await connectWhep('http://192.168.1.10:8889/cam/whep?token=secret', video)
+    await connectWhep('http://192.168.1.10:8889/cam/whep?diagnostic=redacted', video)
     expect(getWhepAttemptLedger()[0]).toEqual(
       expect.objectContaining({
         attemptId: 1,
@@ -482,6 +579,11 @@ describe('lib/webrtc.summarizeCandidates', () => {
 
 describe('lib/webrtc.warmWhepConnection', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    getMediaTokenM.mockResolvedValue({
+      token: 'fresh-video-grant',
+      expires_ts: 2000,
+    })
     MockRTCPeerConnection.instances = []
     _resetWhepAttemptLedgerForTests()
     vi.stubGlobal('RTCPeerConnection', MockRTCPeerConnection as unknown as typeof RTCPeerConnection)
@@ -600,6 +702,7 @@ describe('lib/webrtc.warmWhepConnection', () => {
 
     // assert — fetch was never called during warmup.
     expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(getMediaTokenM).not.toHaveBeenCalled()
   })
 
   it('Given warmup is called, When the work runs, Then no MediaStream is bound to a video element (the user has not chosen one yet)', async () => {

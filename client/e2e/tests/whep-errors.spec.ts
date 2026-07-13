@@ -25,7 +25,7 @@ test.describe('WHEP local error harness', () => {
   }
 
   async function expectOfflineRetry(page: Page): Promise<void> {
-    await expect(page.getByTestId('live-viewport').getByText('Camera offline')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('live-scene').getByText('Camera offline')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByRole('button', { name: /retry/i })).toBeVisible()
   }
 

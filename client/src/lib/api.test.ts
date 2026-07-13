@@ -1990,6 +1990,21 @@ describe('lib/api', () => {
     expect(result.token).toBe('secret-token')
   })
 
+  it('Given a registered video rung, When a grant is requested, Then the exact read path is sent without URL credentials', async () => {
+    mockJson({ token: 'video-token', expires_ts: 1234 })
+    const { getMediaToken } = await import('./api')
+
+    await getMediaToken('read', 'back_yard_uq')
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/media-token')
+    expect(path).not.toContain('video-token')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      action: 'read',
+      path: 'back_yard_uq',
+    })
+  })
+
   it('Given a server outage, When probeEventClip gets a 500, Then it throws HttpError (outage must not read as "no clip")', async () => {
     // arrange
     mockStatus(500)

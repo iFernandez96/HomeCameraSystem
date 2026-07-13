@@ -1,4 +1,5 @@
 import { log, errFields } from './log'
+import { getMediaToken } from './api'
 
 export type WhepConnection = {
   pc: RTCPeerConnection
@@ -37,6 +38,19 @@ function whepRungPath(url: string): string {
   } catch {
     return '<invalid-url>'
   }
+}
+
+function mediaPathFromWhepUrl(url: string): string {
+  const base = typeof window !== 'undefined' ? window.location.href : 'http://local.invalid/'
+  const parts = new URL(url, base).pathname.split('/').filter(Boolean)
+  if (parts.length < 2 || parts[parts.length - 1] !== 'whep') {
+    throw new Error('Invalid WHEP URL')
+  }
+  const path = parts[parts.length - 2]
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(path)) {
+    throw new Error('Invalid WHEP media path')
+  }
+  return path
 }
 
 function appendWhepAttempt(entry: WhepAttemptLedgerEntry): void {
@@ -283,6 +297,7 @@ export async function connectWhep(
   opts?: { signal?: AbortSignal },
 ): Promise<WhepConnection> {
   const signal = opts?.signal
+  const mediaPath = mediaPathFromWhepUrl(url)
   const attemptId = _nextWhepAttemptId++
   const attempt: WhepAttemptLedgerEntry = {
     attemptId,
@@ -429,11 +444,16 @@ export async function connectWhep(
     }
     throwIfAborted()
 
+    const { token } = await getMediaToken('read', mediaPath)
+    throwIfAborted()
     let res: Response
     try {
       res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
+        headers: {
+          'Content-Type': 'application/sdp',
+          Authorization: `Bearer ${token}`,
+        },
         body: pc.localDescription!.sdp,
         signal,
       })

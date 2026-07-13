@@ -48,7 +48,10 @@ webrtcLocalUDPAddress: :8189
 webrtcEncryption: no
 # Allow the PWA's origin to issue WHEP requests. (key was webrtcAllowOrigin
 # pre-v1.18 — current MediaMTX uses webrtcAllowOrigins, plural.)
-webrtcAllowOrigins: ['*']
+webrtcAllowOrigins:
+  - 'https://homecam.tail4a6525.ts.net'
+  - 'http://localhost:5173'
+  - 'http://127.0.0.1:5173'
 # Tailscale Serve / the local reverse proxy forwards the original client in
 # X-Forwarded-For. Trust only loopback proxy hops so auth decisions never use a
 # caller-supplied forwarding header from a direct remote connection.

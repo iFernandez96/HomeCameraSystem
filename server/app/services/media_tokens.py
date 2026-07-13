@@ -1,4 +1,4 @@
-"""Short-lived, one-use grants for MediaMTX WebRTC audio sessions.
+"""Short-lived, one-use grants for MediaMTX WebRTC sessions.
 
 Only SHA-256 digests are retained in memory. Raw bearer values are returned to
 the authenticated caller once and are never persisted or logged.
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 MediaAction = Literal["publish", "read"]
-MediaPath = Literal["talk", "listen"]
+MediaPath = str
 
 TOKEN_TTL_S = 60.0
 MAX_OUTSTANDING_TOKENS = 128

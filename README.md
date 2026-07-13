@@ -89,11 +89,12 @@ detection worker at its GPIO value file with
 `DETECT_DOORBELL_GPIO_VALUE_PATH`; `DETECT_DOORBELL_ACTIVE_LOW=1` is the
 default. These are host-process variables, not FastAPI container settings.
 
-Browser talk/listen sessions use scoped, one-time FastAPI media grants that
-expire after 60 seconds. MediaMTX's HTTP callback allows anonymous WebRTC reads
-only for exact video paths, allows host-only RTSP publishers/readers, and
-requires those grants for remote `talk` publication or `listen` reads. Grant
-issuance and consumption both fail while audio is disabled or Privacy is active.
+Browser video, talk, and listen sessions use exact-path, one-time FastAPI media
+grants that expire after 60 seconds and travel only in `Authorization` headers.
+MediaMTX's HTTP callback requires a grant for every remote WebRTC video read,
+remote `talk` publication, or remote `listen` read while preserving host-only
+RTSP publishers/readers. Audio grant issuance and consumption both fail while
+audio is disabled or Privacy is active; masked live video remains available.
 
 Secure clip-share links are time-limited bearer URLs. The server stores only a
 hash, marks both link creation and clip delivery `private, no-store`, suppresses
