@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CAT_ANIM_SEQUENCES,
   gaitVelocityPxPerMs,
@@ -45,6 +45,10 @@ function ctxFor(cats: readonly PlayCat[], random: () => number = () => 0.5): Bea
 
 beforeEach(() => {
   resetToyLayer()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('stepPlayground anti-teleport property (USER REPORT: no instant position changes)', () => {
@@ -283,6 +287,10 @@ describe('stepPlayground trio desync (no lockstep)', () => {
   it('Given a 2-minute seeded autonomous run, When activity-change stamps are collected, Then the three cats never all switch within the same 500ms window', () => {
     // arrange
     const random = lcg(23)
+    // Weighted autonomous decisions currently use the shared engine helper,
+    // which consumes global Math.random. Seed that remaining source too so
+    // this simulation is deterministic on every runner.
+    vi.spyOn(Math, 'random').mockImplementation(lcg(2301))
     let now = START
     let state = initialPlaygroundState(now, W, H, random)
     const changes: Record<string, number[]> = { panther: [], mushu: [], coco: [] }
