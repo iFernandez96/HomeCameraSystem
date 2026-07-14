@@ -218,6 +218,8 @@ def test_given_server_drill_when_inspected_then_it_kills_server_and_pins_camera_
 
     # act / assert
     assert "docker kill homecam-server" in server_block
+    assert 'server_id=$(docker inspect -f "{{.Id}}" homecam-server)' in server_block
+    assert '"$new_id" != "$server_id"' in server_block
     assert "SECONDS + 120" in server_block
     assert "mediamtx_pid=" in server_block
     assert "detect_pid=" in server_block

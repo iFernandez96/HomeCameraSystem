@@ -26,21 +26,34 @@ run() {
 server() {
   show "[server supervision] kill only the API container; require bounded recovery while camera services stay up"
   run env BASE_URL="$BASE_URL" bash -lc 'set -euo pipefail
+    fail() { echo "server supervision drill failed: $*" >&2; exit 1; }
     mediamtx_pid=$(systemctl show -p MainPID --value mediamtx.service)
     detect_pid=$(systemctl show -p MainPID --value homecam-detect.service)
+    server_id=$(docker inspect -f "{{.Id}}" homecam-server)
     timeout 8 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
-      -show_entries stream=codec_name -of csv=p=0 rtsp://127.0.0.1:8554/cam >/dev/null
+      -show_entries stream=codec_name -of csv=p=0 \
+      rtsp://127.0.0.1:8554/cam >/dev/null || fail "camera publisher absent before kill"
     docker kill homecam-server >/dev/null
     deadline=$((SECONDS + 120))
-    until curl --fail --silent --max-time 2 "$BASE_URL/healthz" >/dev/null; do
-      (( SECONDS < deadline )) || { echo "server did not recover within 120 seconds" >&2; exit 1; }
+    while true; do
+      new_id=$(docker inspect -f "{{.Id}}" homecam-server 2>/dev/null || true)
+      running=$(docker inspect -f "{{.State.Running}}" homecam-server 2>/dev/null || true)
+      if [[ -n "$new_id" && "$new_id" != "$server_id" && "$running" == "true" ]] \
+          && curl --fail --silent --max-time 2 "$BASE_URL/healthz" >/dev/null; then
+        break
+      fi
+      (( SECONDS < deadline )) || fail "server did not recover within 120 seconds"
       sleep 2
     done
-    test "$(systemctl show -p MainPID --value mediamtx.service)" = "$mediamtx_pid"
-    test "$(systemctl show -p MainPID --value homecam-detect.service)" = "$detect_pid"
-    systemctl is-active --quiet mediamtx.service homecam-detect.service
+    [[ "$(systemctl show -p MainPID --value mediamtx.service)" == "$mediamtx_pid" ]] \
+      || fail "MediaMTX PID changed"
+    [[ "$(systemctl show -p MainPID --value homecam-detect.service)" == "$detect_pid" ]] \
+      || fail "detection PID changed"
+    systemctl is-active --quiet mediamtx.service homecam-detect.service \
+      || fail "camera service became inactive"
     timeout 8 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
-      -show_entries stream=codec_name -of csv=p=0 rtsp://127.0.0.1:8554/cam >/dev/null
+      -show_entries stream=codec_name -of csv=p=0 \
+      rtsp://127.0.0.1:8554/cam >/dev/null || fail "camera publisher absent after recovery"
     echo "server recovered; camera publisher and worker PIDs remained unchanged"'
 }
 
