@@ -236,6 +236,9 @@ class _GstWhepSession(object):
         if self.webrtc is None:
             raise RuntimeError("webrtcbin unavailable")
         self.pipeline.add(self.webrtc)
+        self.bus = self.pipeline.get_bus()
+        self.bus.add_signal_watch()
+        self.bus.connect("message::error", self._on_bus_error)
         self.webrtc.connect("on-negotiation-needed", self._on_negotiate)
         self.webrtc.connect("notify::ice-gathering-state", self._on_ice_state)
         self.webrtc.connect("notify::ice-connection-state", self._on_ice_connection)
@@ -263,6 +266,7 @@ class _GstWhepSession(object):
             self.loop.run()
         finally:
             self.pipeline.set_state(self.Gst.State.NULL)
+            self.bus.remove_signal_watch()
             self._delete_resource()
         if self.result is not None:
             return ProbeResult(
@@ -368,11 +372,39 @@ class _GstWhepSession(object):
         description = self.GstWebRTC.WebRTCSessionDescription.new(
             self.GstWebRTC.WebRTCSDPType.ANSWER, message
         )
-        self.webrtc.emit(
-            "set-remote-description", description, self.Gst.Promise.new()
+        promise = self.Gst.Promise.new_with_change_func(
+            self._on_remote_description_set, None
         )
-        self.signaling_ok = True
+        self.webrtc.emit("set-remote-description", description, promise)
         return False
+
+    def _on_remote_description_set(self, promise, _unused):
+        reply = promise.get_reply()
+        if reply is not None and reply.has_field("error"):
+            self.GLib.idle_add(
+                self._finish_failure,
+                "signaling_failure",
+                "remote_description_rejected",
+                True,
+            )
+            return
+        self.GLib.idle_add(self._remote_description_ready)
+
+    def _remote_description_ready(self):
+        self.signaling_ok = True
+        state = self.webrtc.get_property("ice-connection-state")
+        log.info(
+            "whep_probe remote_description=applied ice_connection_state=%s",
+            getattr(state, "value_nick", str(state)),
+        )
+        return False
+
+    def _on_bus_error(self, _bus, message):
+        error, _debug = message.parse_error()
+        log.warning(
+            "whep_probe gstreamer_error=%s", type(error).__name__
+        )
+        self._finish_failure("transport_failure", "gstreamer_error", True)
 
     def _on_pad_added(self, _element, pad):
         if pad.get_direction() != self.Gst.PadDirection.SRC:
