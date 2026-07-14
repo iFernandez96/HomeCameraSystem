@@ -39,6 +39,7 @@ _PERSISTED_FILE_SPECS: tuple[tuple[str, str, bool], ...] = (
     ("vapid_public_key_path", "vapid_public_key", True),
     ("push_subs_path", "push_subs", False),
     ("detection_config_path", "detection_config", False),
+    ("security_state_path", "security_state", False),
 )
 
 
@@ -92,7 +93,13 @@ def build_persisted_state_inventory(
     roots = tuple(Path(root).resolve() for root in allowed_roots or ())
     entries: list[BackupInventoryEntry] = []
     for setting_name, role, required in _PERSISTED_FILE_SPECS:
-        raw_path = Path(getattr(settings_obj, setting_name))
+        raw_value = getattr(settings_obj, setting_name, None)
+        # Small test/fake Settings objects from older integrations may omit a
+        # newly-added optional role. Real Settings always supplies it; skipping
+        # only absent optional attributes keeps the inventory API additive.
+        if raw_value is None and not required:
+            continue
+        raw_path = Path(raw_value)
         resolved_path = raw_path.resolve()
         allowed_root = _select_allowed_root(resolved_path, roots)
         entries.append(

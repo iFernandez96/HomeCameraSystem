@@ -1,13 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
+import { DailyDigestCard } from '../components/DailyDigestCard'
 // iter-356-E (Slice E): EventHeatmap lazy-split. The component pulls
 // in ~6 KB gzip of date math + SVG cells and is below-the-fold on
 // mobile (the calendar is opened via the header button OR sits in the
 // lg+ right rail). Deferring it cuts the Events route's first paint.
 const EventHeatmap = lazy(() => import('../components/EventHeatmap.lazy'))
-import { EventList } from '../components/EventList'
+import { EventList, type EventListViewMode } from '../components/EventList'
 import { HourBand } from '../components/HourBand'
 import { EventListSkeleton, HeatmapSkeleton } from '../components/Skeleton'
 import { ErrorState } from '../components/states/ErrorState'
@@ -55,6 +56,70 @@ const _LOAD_MORE_PAGE = 50
 // the natural browse window and well before the React render cliff.
 const _LOAD_MORE_CAP = 500
 
+const _EVENTS_VIEW_MODE_KEY = 'homecam:eventsViewMode'
+const _EVENTS_VIEW_MODES: Array<{ id: EventListViewMode; label: string }> = [
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'thumbs', label: 'Thumbs' },
+  { id: 'compact', label: 'Compact' },
+]
+
+function isEventsViewMode(value: string | null): value is EventListViewMode {
+  return value === 'timeline' || value === 'thumbs' || value === 'compact'
+}
+
+function readEventsViewMode(): EventListViewMode {
+  if (typeof window === 'undefined') return 'timeline'
+  try {
+    const stored = window.localStorage.getItem(_EVENTS_VIEW_MODE_KEY)
+    return isEventsViewMode(stored) ? stored : 'timeline'
+  } catch {
+    return 'timeline'
+  }
+}
+
+function rememberEventsViewMode(mode: EventListViewMode) {
+  try {
+    window.localStorage.setItem(_EVENTS_VIEW_MODE_KEY, mode)
+  } catch {
+    // Best-effort; mode selection still works for the current tab.
+  }
+}
+
+function EventsViewSwitcher({
+  mode,
+  onChange,
+}: {
+  mode: EventListViewMode
+  onChange: (mode: EventListViewMode) => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Event list view"
+      className="flex rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-0.5"
+    >
+      {_EVENTS_VIEW_MODES.map((option) => {
+        const active = mode === option.id
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.id)}
+            className={`min-h-9 rounded-[var(--radius-sm)] px-2.5 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 sm:px-3 ${
+              active
+                ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+            }`}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /** Filter token: 'all' = no filter, '__unknown__' = events without a face
  * match, any other string = exact person_name match. */
 type PersonFilter = 'all' | '__unknown__' | string
@@ -83,6 +148,12 @@ export function Events() {
   // no flash of unfiltered list.
   const [searchParams] = useSearchParams()
   const [events, setEvents] = useState<DetectionEvent[]>([])
+  const activeVideoRef = useRef(false)
+  useEffect(() => {
+    activeVideoRef.current = events.some(
+      (event) => event.video_status === 'recording' || event.video_status === 'finalizing',
+    )
+  }, [events])
   const [loading, setLoading] = useState(true)
   // Store the raw thrown value so a future render can branch on
   // `error instanceof HttpError && error.status === N` (the iter-122
@@ -141,6 +212,13 @@ export function Events() {
   // optional — leaving end null means "from start to end of day".
   const [dayStartTime, setDayStartTime] = useState<string | null>(null)
   const [dayEndTime, setDayEndTime] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<EventListViewMode>(() =>
+    readEventsViewMode(),
+  )
+  const chooseViewMode = useCallback((mode: EventListViewMode) => {
+    setViewMode(mode)
+    rememberEventsViewMode(mode)
+  }, [])
 
   // iter-251: calendar collapsed by default. The heatmap takes ~120
   // px of vertical space — for the typical "I just want to see the
@@ -342,7 +420,10 @@ export function Events() {
   const _seededFilterRef = useRef<PersonFilter>(filter)
   useEffect(() => {
     let cancelled = false
+    let refreshInFlight = false
     const refresh = () => {
+      if (refreshInFlight) return
+      refreshInFlight = true
       // iter-326b: when a deep-linked person filter is set on mount
       // (?person=NAME from the People page), use the iter-219 search
       // route instead of plain fetchEvents — that way Alice's
@@ -374,6 +455,7 @@ export function Events() {
           if (!cancelled) setError(e)
         })
         .finally(() => {
+          refreshInFlight = false
           if (!cancelled) setLoading(false)
         })
     }
@@ -413,9 +495,15 @@ export function Events() {
       if (document.visibilityState === 'visible') refresh()
     }
     document.addEventListener('visibilitychange', onVisibility)
+    const statusPoll = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && activeVideoRef.current) {
+        refresh()
+      }
+    }, 2000)
     return () => {
       cancelled = true
       unsub()
+      window.clearInterval(statusPoll)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
@@ -534,7 +622,17 @@ export function Events() {
   // worker happens to have emitted recently.
   const labels = useMemo(() => {
     if (configClasses !== null) {
-      return [...configClasses].sort((a, b) => a.localeCompare(b))
+      const configuredAndSystem = new Set(configClasses)
+      for (const event of events) {
+        if (
+          (event.source != null && event.source !== 'vision') ||
+          event.package_state != null ||
+          event.rule_id != null
+        ) {
+          configuredAndSystem.add(event.label)
+        }
+      }
+      return Array.from(configuredAndSystem).sort((a, b) => a.localeCompare(b))
     }
     const set = new Set<string>()
     for (const e of events) {
@@ -1082,7 +1180,10 @@ export function Events() {
               Recent motion and clips
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            {!loading && !error && events.length > 0 && (
+              <EventsViewSwitcher mode={viewMode} onChange={chooseViewMode} />
+            )}
             {!loading && !error && events.length > 0 && !selectionMode && (
               // iter-356.49: "100 recent" reads as a noun-phrase
               // riddle — "100 recent what?" Now: "Last 100" /
@@ -1133,6 +1234,12 @@ export function Events() {
             </button>
           </div>
         </div>
+        <nav aria-label="Event tools" className="lg:max-w-6xl lg:mx-auto mt-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          <Link to="/events/playback" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Playback</Link>
+          <Link to="/events/search" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Search</Link>
+          <Link to="/events/visits" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Visits</Link>
+          <Link to="/events/incidents" className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]">Incidents</Link>
+        </nav>
         {showFilters && (
           // UI/UX overhaul 2026-07-07 (device run-through #7): on a
           // landscape phone the TYPE and WHO groups used to stack as
@@ -1453,6 +1560,7 @@ export function Events() {
           </div>
         ) : null}
       </header>
+      {selectedDay ? <DailyDigestCard day={selectedDay} /> : null}
       {/* iter-356.16 (Maya 10th + Priya 3rd CRITICAL): pulled
           EventHeatmap out of the sticky <header>. Pre-iter-356.16
           the heatmap lived inside the pin (iter-298) which made the
@@ -1569,6 +1677,7 @@ export function Events() {
               )}
               <EventList
                 events={filtered}
+                viewMode={viewMode}
                 // iter-307: per-row delete affordance for owners only.
                 // Family/viewer roles see the list without the ✕ buttons.
                 // iter-312: handler refs (`onDeleteOne`, `onSelectEvent`)
@@ -1656,15 +1765,6 @@ export function Events() {
         <ClipModal
           event={selectedEvent}
           onClose={() => setSelectedEvent(null)}
-          // Final whole-branch review fix batch #1: ClipModal's own
-          // Delete pill (owner-only) succeeds server-side but this
-          // page's `events` list is separate state — without pruning
-          // it here the just-deleted row kept rendering until the
-          // next unrelated refetch. Mirrors onDeleteOne's own
-          // `setEvents((cur) => cur.filter(...))` pruning step above.
-          onDeleted={(id) =>
-            setEvents((cur) => cur.filter((ev) => ev.id !== id))
-          }
         />
       )}
     </div>

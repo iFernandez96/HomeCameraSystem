@@ -72,11 +72,26 @@ def _deps(**overrides):
         calls.append(("logs", unit, since, lines))
         return ["line"]
 
+    def start_focus_mode():
+        calls.append("focus_start")
+        return {"expires_at": 400.0, "width": 1920, "height": 1080}
+
+    def stop_focus_mode():
+        calls.append("focus_stop")
+        return True
+
+    def apply_exposure(args):
+        calls.append(("exposure_apply", args))
+        return {"region": "480 270 1440 810 1", "compensation": 0.0, "locked": False}
+
     deps = SimpleNamespace(
         restart_mediamtx=restart_mediamtx,
         restart_nvargus=restart_nvargus,
         do_reboot=do_reboot,
         tail_journal=tail_journal,
+        start_focus_mode=start_focus_mode,
+        stop_focus_mode=stop_focus_mode,
+        apply_exposure=apply_exposure,
         allow_reboot=True,
         calls=calls,
     )
@@ -146,6 +161,39 @@ def test_given_logs_action_when_executed_then_tail_result_returned():
     assert (status, detail) == ("done", "logs fetched")
     assert result == {"lines": ["line"]}
     assert deps.calls == [("logs", "mediamtx", "1 hour", 5)]
+
+
+def test_given_focus_start_when_executed_then_mode_metadata_returned():
+    deps = _deps()
+    status, detail, result = host_action.execute_action(
+        _record(kind="focus_start"), deps
+    )
+    assert (status, detail) == ("done", "1080p focus mode started")
+    assert result == {"expires_at": 400.0, "width": 1920, "height": 1080}
+    assert deps.calls == ["focus_start"]
+
+
+def test_given_focus_stop_when_executed_then_normal_camera_restored():
+    deps = _deps()
+    status, detail, result = host_action.execute_action(
+        _record(kind="focus_stop"), deps
+    )
+    assert (status, detail, result) == (
+        "done", "720p camera restore requested", None
+    )
+    assert deps.calls == ["focus_stop"]
+
+
+def test_given_exposure_apply_when_executed_then_bounded_args_are_forwarded():
+    deps = _deps()
+    args = {"enabled": True, "x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5,
+            "compensation": 0.0, "locked": False}
+    status, detail, result = host_action.execute_action(
+        _record(kind="exposure_apply", args=args), deps
+    )
+    assert (status, detail) == ("done", "camera exposure applied")
+    assert result["region"] == "480 270 1440 810 1"
+    assert deps.calls == [("exposure_apply", args)]
 
 
 def test_given_seen_reboot_id_when_planned_twice_then_reboot_at_most_once():

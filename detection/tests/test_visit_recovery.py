@@ -279,20 +279,29 @@ def test_given_orphan_scratch_and_tmp_when_swept_then_reclaimed_preroll_kept(
     stray_tmp = os.path.join(rec_dir, "abc.mp4.tmp")
     with open(stray_tmp, "wb") as f:
         f.write(b"partial")
+    progress = os.path.join(rec_dir, "abc.mp4.tmp.decode.progress")
+    with open(progress, "wb") as f:
+        f.write(b"progress=end")
     # The pre-roll ring — MUST NOT be touched.
     preroll = os.path.join(rec_dir, "_preroll")
     os.makedirs(preroll, exist_ok=True)
     seg = os.path.join(preroll, "seg_001.mp4")
     with open(seg, "wb") as f:
         f.write(b"ring")
+    event_scratch = os.path.join(preroll, "event_dead")
+    os.makedirs(event_scratch, exist_ok=True)
+    with open(os.path.join(event_scratch, "seg_000.mp4"), "wb") as f:
+        f.write(b"partial")
 
     # act
     reclaimed = visit_runtime.sweep_orphans(rec_dir)
 
     # assert — orphan scratch + stray .tmp gone; live scratch + _preroll kept.
-    assert reclaimed == 2
+    assert reclaimed == 4
     assert not os.path.exists(orphan)
     assert not os.path.exists(stray_tmp)
+    assert not os.path.exists(progress)
+    assert not os.path.exists(event_scratch)
     assert os.path.exists(visit_runtime.scratch_dir_for(rec_dir, "alive"))
     assert os.path.exists(seg), "_preroll/seg_* must NEVER be swept"
 
@@ -306,8 +315,11 @@ def _make_runner(tmp_path, spawn=None):
     SYNCHRONOUSLY (spawn = call-immediately) so assertions are deterministic."""
     events = {"open": [], "copy": [], "finalize": []}
 
-    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0):
-        events["open"].append((visit_id, key, start_ts, boxes))
+    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0,
+                   root_visit_id=None, **_kwargs):
+        events["open"].append(
+            (visit_id, key, start_ts, boxes, root_visit_id)
+        )
 
     def copy_segments(visit_id, start_ts, until_ts, scratch, already):
         events["copy"].append((visit_id, start_ts, until_ts))
@@ -349,6 +361,38 @@ def test_given_observe_with_boxes_when_open_then_post_carries_those_boxes(tmp_pa
     posted_boxes = events["open"][0][3]
     assert posted_boxes == frame_boxes
     assert posted_boxes, "open POST must carry >=1 box or the server 422s"
+    assert events["open"][0][4] == "vid1"
+
+
+def test_given_cap_split_when_continuation_opens_then_root_survives_persistence(
+    tmp_path,
+):
+    # arrange — each capped segment keeps its own event/clip id.
+    ids = iter(["segment1", "segment2"])
+    runner, events = _make_runner(tmp_path)
+    runner.tracker = VisitTracker(id_factory=lambda: next(ids))
+    box = (0.0, 0.0, 0.2, 0.2)
+
+    # act — the second observation crosses the five-second hard cap.
+    runner.observe(
+        "person:cam1", box, now=100.0, pre_roll_s=0.0,
+        absence_finalize_s=10.0, max_visit_s=5.0,
+        boxes=[{"label": "person"}],
+    )
+    runner.observe(
+        "person:cam1", box, now=106.0, pre_roll_s=0.0,
+        absence_finalize_s=10.0, max_visit_s=5.0,
+        boxes=[{"label": "person"}],
+    )
+
+    # assert — segment1 finalized independently, while the crash-durable open
+    # table and both event callbacks retain one stable physical-story id.
+    assert [event[0] for event in events["open"]] == ["segment1", "segment2"]
+    assert [event[4] for event in events["open"]] == ["segment1", "segment1"]
+    assert events["finalize"][0][0] == "segment1"
+    table = visit_runtime.read_open_visits(str(tmp_path))
+    assert set(table) == {"segment2"}
+    assert table["segment2"]["root_visit_id"] == "segment1"
 
 
 def test_given_open_visit_when_all_absent_frames_tick_then_finalize_at_deadline(

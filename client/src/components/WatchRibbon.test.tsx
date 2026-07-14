@@ -111,13 +111,13 @@ describe('WatchRibbon a11y', () => {
     // `padding-left`) is required here — padding alone would still
     // let the ribbon's background extend behind the rail, only the
     // content would shift. Mirrors the exact calc App.tsx's <main>
-    // already reserves: `landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))]`.
+    // already reserves: `landscape-phone:ml-[calc(4rem+env(safe-area-inset-left))]`.
     renderRibbon()
     const banner = screen.getByRole('banner')
 
     // assert
     expect(banner.className).toMatch(
-      /landscape-phone:ml-\[calc\(5rem\+env\(safe-area-inset-left\)\)\]/,
+      /landscape-phone:ml-\[calc\(4rem\+env\(safe-area-inset-left\)\)\]/,
     )
   })
 })

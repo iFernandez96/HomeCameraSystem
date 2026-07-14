@@ -14,15 +14,15 @@ test.describe('Live tab — StatusPill correctness', () => {
     // arrange — log in once per test (cookies are per-context).
     await page.goto('/login')
     await page.getByLabel(/username/i).fill('admin')
-    await page.getByLabel(/password/i).fill('admin')
+    await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('given no MediaMTX is reachable, when the Live tab loads, then LIVE never appears (iter-244d false-LIVE bug)', async ({
     page,
   }) => {
-    // act — the Live tab mounts on /live; WHEP attempt fires.
+    // act — the Watch scene mounts on /; WHEP attempt fires.
     // FastAPI's SPA catch-all returns index.html for /whep/* so
     // connectWhep tries to parse HTML as SDP, throws, status flips
     // to error. No MediaMTX, no media flow.
@@ -40,10 +40,10 @@ test.describe('Live tab — StatusPill correctness', () => {
   test('given the Live tab is open, then a fullscreen button is rendered with the correct aria label', async ({
     page,
   }) => {
-    // arrange / act — landing on /live mounts VideoTile which
+    // arrange / act — landing on / mounts VideoTile which
     // unconditionally renders the fullscreen button (regardless
     // of camera-reachable state).
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
 
     // assert — button exists with correct ARIA label. Click is
     // not asserted because in headless Chromium without a real
@@ -51,7 +51,7 @@ test.describe('Live tab — StatusPill correctness', () => {
     // pointer events, which is a separate UX consideration tied
     // to error-state z-index — not the bug under test.
     await expect(
-      page.getByRole('button', { name: /enter fullscreen/i }),
+      page.getByRole('button', { name: /full screen live view/i }),
     ).toBeVisible()
   })
 })

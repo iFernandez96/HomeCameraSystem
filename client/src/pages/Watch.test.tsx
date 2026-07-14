@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import type { ReactNode } from 'react'
@@ -14,6 +14,19 @@ const getStatusM = vi.fn()
 // beforeEach so every pre-multicam test renders exactly as before
 // (no switcher); the multicam tests override.
 const getCamerasM = vi.fn()
+const getCurrentPackagesM = vi.fn()
+const triggerDeterrenceM = vi.fn()
+const setDetectionEnabledM = vi.fn()
+let authRole: 'owner' | 'family' = 'owner'
+
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({
+    state: 'authed',
+    user: { username: 'watch-user', role: authRole },
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}))
 
 vi.mock('../lib/api', () => {
   // Defined inside the factory — vi.mock hoists above imports, so a
@@ -30,6 +43,9 @@ vi.mock('../lib/api', () => {
     captureSnapshot: (...a: unknown[]) => captureSnapshot(...a),
     getStatus: (...a: unknown[]) => getStatusM(...a),
     getCameras: (...a: unknown[]) => getCamerasM(...a),
+    getCurrentPackages: (...a: unknown[]) => getCurrentPackagesM(...a),
+    triggerDeterrence: (...a: unknown[]) => triggerDeterrenceM(...a),
+    setDetectionEnabled: (...a: unknown[]) => setDetectionEnabledM(...a),
     HttpError,
   }
 })
@@ -46,6 +62,8 @@ vi.mock('../components/VideoTile', () => ({
     onPlayingChange,
     actions,
     showFullscreenButton,
+    showQualityMenu,
+    showBoxToggle,
     streamPath,
   }: {
     fit?: string
@@ -53,6 +71,8 @@ vi.mock('../components/VideoTile', () => ({
     onPlayingChange?: (playing: boolean) => void
     actions?: ReactNode
     showFullscreenButton?: boolean
+    showQualityMenu?: boolean
+    showBoxToggle?: boolean
     streamPath?: string
   }) => (
     <div
@@ -60,6 +80,8 @@ vi.mock('../components/VideoTile', () => ({
       data-fit={fit}
       data-show-status-pill={String(showStatusPill)}
       data-stream-path={streamPath}
+      data-show-quality-menu={String(showQualityMenu)}
+      data-show-box-toggle={String(showBoxToggle)}
     >
       {/* Status-truth fix test hooks: the real VideoTile fires
           onPlayingChange on confirmed 'live'/'error' transitions —
@@ -102,6 +124,7 @@ vi.mock('../components/SnapshotPreview', () => ({
 }))
 
 import { ToastProvider } from '../lib/toast'
+import { ConfirmProvider } from '../lib/confirm'
 import { registerCameraNames } from '../lib/eventLabel'
 import { Watch } from './Watch'
 
@@ -132,11 +155,13 @@ function ev(partial: Partial<DetectionEvent>): DetectionEvent {
   }
 }
 
-function renderWatch() {
+function renderWatch(initialEntry = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <ToastProvider>
-        <Watch />
+        <ConfirmProvider>
+          <Watch />
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>,
   )
@@ -144,6 +169,7 @@ function renderWatch() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  authRole = 'owner'
   getStatusM.mockResolvedValue(HEALTHY)
   searchEvents.mockResolvedValue({ items: [], next_cursor: null })
   // Multicam: single-camera registry default so pre-multicam tests
@@ -152,28 +178,71 @@ beforeEach(() => {
   getCamerasM.mockResolvedValue({
     cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
   })
+  getCurrentPackagesM.mockResolvedValue({ v: 1, items: [] })
+  triggerDeterrenceM.mockResolvedValue({
+    ok: true,
+    status: 'executed',
+    reason: 'executed',
+    action: 'siren',
+    duration_s: 20,
+    capabilities: {
+      available: true,
+      adapter: 'mounted_executable',
+      limitation: '',
+    },
+  })
+  setDetectionEnabledM.mockImplementation(async (enabled: boolean) => ({ active: enabled }))
   registerCameraNames([])
   window.localStorage.removeItem('homecam:cameraId')
 })
 
 describe('Watch — Home screen (Playroom Modern)', () => {
-  it('Given a healthy armed camera, When the page renders, Then the heading reads Home, the docked video shows only the camera-name pill, and the glance card owns the armed state in the shared ribbon vocabulary (overhaul W1 item 2)', async () => {
+  it('Given an owner taps the On watch panel, When they confirm, Then detection and classification pause explicitly', async () => {
+    const user = userEvent.setup()
+    renderWatch()
+
+    const watchPanel = await screen.findByRole('button', {
+      name: /pause detection and classification .* is on watch/i,
+    })
+    await user.click(watchPanel)
+    expect(await screen.findByText(/live video and continuous recording will stay on/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Pause detection' }))
+
+    await waitFor(() => {
+      expect(setDetectionEnabledM).toHaveBeenCalledWith(false)
+    })
+  })
+
+  it('Given a family user views Home, Then the On watch panel can pause detection too', async () => {
+    authRole = 'family'
+    renderWatch()
+    expect(await screen.findByRole('button', {
+      name: /pause detection and classification .* is on watch/i,
+    })).toBeInTheDocument()
+  })
+
+  it('Given a healthy single camera, When the page renders, Then docked video omits the redundant camera-name pill and the glance card owns armed state', async () => {
     // arrange / act
     renderWatch()
 
-    // assert — page heading + glance card copy carry the armed state.
-    // The glance headline now speaks the ONE shared vocabulary from
+    // assert — page heading + live bottom-card copy carry the armed state.
+    // The live summary headline now speaks the ONE shared vocabulary from
     // lib/watchState.ts ("On watch", same as the ribbon), replacing
     // the page-local "Watching" synonym.
     expect(screen.getByRole('heading', { name: 'Home', level: 1 })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('On watch')).toBeInTheDocument()
     })
-    expect(screen.getByText(/is on watch · alerts on/)).toBeInTheDocument()
+    expect(document.body).toHaveTextContent(/is watching/)
+    const strip = screen.getByTestId('live-glance-strip')
+    expect(screen.getByTestId('live-viewport')).toContainElement(strip)
+    expect(strip.className).toMatch(/border-t/)
+    expect(strip.className).toMatch(/bg-black\/88/)
+    expect(strip.className).not.toMatch(/absolute/)
     // Fuzz F3/F9/F13 still holds: the armed state renders exactly ONCE
     // docked (the glance card) — no duplicate pill over the video.
     expect(screen.getAllByText('On watch')).toHaveLength(1)
-    expect(screen.getByText('Front Door')).toBeInTheDocument()
+    expect(screen.queryByText('Front Door')).not.toBeInTheDocument()
   })
 
   it("Given events today, When the timeline loads, Then rows show who appeared and tapping one opens the clip", async () => {
@@ -195,7 +264,70 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.getByRole('dialog', { name: 'clip:k1' })).toBeInTheDocument()
   })
 
-  it('Given repeat sightings of one person today, When the glance card renders, Then the count reads as sightings not distinct people (painfix wave B #1)', async () => {
+  it.each([
+    ['available', 'Video available'],
+    ['recording', 'Recording video — person in scene, ETA paused'],
+    ['finalizing', 'Finalizing video'],
+    ['failed', 'Video unavailable'],
+    ['unknown', 'Video status unknown'],
+  ] as const)(
+    'Given Today at home receives video status %s, Then its leading icon truthfully says %s',
+    async (video_status, label) => {
+      // arrange — a clip URL is present for every state on purpose:
+      // Home must trust video_status rather than infer availability.
+      searchEvents.mockResolvedValue({
+        items: [ev({ id: `today-${video_status}`, clip_url: '/api/events/x/clip', video_status })],
+        next_cursor: null,
+      })
+
+      // act
+      renderWatch()
+
+      // assert
+      expect(await screen.findByRole('img', { name: label })).toHaveAttribute(
+        'data-video-status',
+        video_status,
+      )
+    },
+  )
+
+  it('Given detection is paused with an open recording, Then Today at home says Closing without a perpetual spinner', async () => {
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      detection_active: false,
+      worker_alive: true,
+    })
+    searchEvents.mockResolvedValue({
+      items: [ev({ id: 'today-paused', video_status: 'recording' })],
+      next_cursor: null,
+    })
+
+    const { container } = renderWatch()
+
+    expect(await screen.findByText('Closing…')).toBeInTheDocument()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  it('Given Today at home receives authoritative ETA bounds, Then the row shows their conservative range', async () => {
+    const nowTs = Date.now() / 1000
+    searchEvents.mockResolvedValue({
+      items: [
+        ev({
+          id: 'today-eta',
+          video_status: 'finalizing',
+          video_eta_min_ts: nowTs + 70,
+          video_eta_max_ts: nowTs + 110,
+        }),
+      ],
+      next_cursor: null,
+    })
+
+    renderWatch()
+
+    expect(await screen.findByText('~1–2 min')).toBeInTheDocument()
+  })
+
+  it('Given repeat sightings of one person today, When the live summary renders, Then the count reads as sightings not distinct people (painfix wave B #1)', async () => {
     // arrange — the same person crossing the porch many times in one
     // day used to read "50 people"; every row here is label 'person'
     // so the honest word is "sightings", not a head count.
@@ -210,8 +342,63 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('3 person sightings · 1 cat sighting')).toBeInTheDocument()
+      expect(screen.getByText('4 sightings today')).toBeInTheDocument()
     })
+    const today = screen.getByLabelText("Today's activity")
+    expect(within(today).getByTestId('today-sightings-summary')).toHaveTextContent(
+      '3 person sightings and 1 cat sighting',
+    )
+    expect(
+      within(screen.getByTestId('live-glance-strip')).queryByText(/sighting/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('Given On watch is actionable, Then it has a graceful Pause affordance without ellipsis or middot clutter', async () => {
+    // arrange / act
+    renderWatch()
+    const strip = screen.getByTestId('live-glance-strip')
+
+    // assert
+    expect(await within(strip).findByText('Pause')).toBeInTheDocument()
+    expect(strip).toHaveTextContent(/is watching/i)
+    expect(strip.textContent).not.toMatch(/[·…]/)
+  })
+
+  it('Given no power sensor is installed, Then Home keeps an honest ambient power placeholder', async () => {
+    // arrange / act
+    renderWatch()
+    const strip = screen.getByTestId('live-glance-strip')
+
+    // assert
+    await waitFor(() => {
+      expect(within(strip).getByText('Power —')).toHaveAttribute(
+        'aria-label',
+        'External power sensor needed',
+      )
+    })
+  })
+
+  it('Given a fresh sensor sample, Then Home shows the real watt draw at a glance', async () => {
+    // arrange
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      power_sample_age_s: 2,
+      worker_metrics: {
+        power_sensor_status: 1,
+        power_watts: 6.287,
+        power_volts: 5.03,
+        power_amps: 1.25,
+      },
+    })
+
+    // act
+    renderWatch()
+
+    // assert
+    expect(await screen.findByText('Power 6.3 W')).toHaveAttribute(
+      'aria-label',
+      '6.29 W · 5.03 V · 1.25 A',
+    )
   })
 
   it('Given no events yet today, When the timeline loads, Then the cat empty state explains the quiet', async () => {
@@ -229,6 +416,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     captureSnapshot.mockResolvedValue({ ok: true, url: '/snapshots/x.jpg' })
     const user = userEvent.setup()
     renderWatch()
+    await user.click(screen.getByRole('button', { name: 'Full screen live view' }))
 
     // act
     await user.click(screen.getByRole('button', { name: 'Snapshot' }))
@@ -241,7 +429,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     })
   })
 
-  it('Given the docked live tile, When rendered, Then Snapshot + expand are the ONLY corner buttons and sit inside VideoTile-owned single row, not a second Watch-owned overlay (control-overlap fix)', () => {
+  it('Given the docked live tile, When rendered, Then camera actions remain available below video and Expand is the only over-video corner button', () => {
     // arrange / act
     renderWatch()
 
@@ -253,7 +441,9 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     const snapshotBtn = screen.getByRole('button', { name: 'Snapshot' })
     const expandBtn = screen.getByRole('button', { name: 'Full screen live view' })
     expect(row).toContainElement(snapshotBtn)
-    expect(row).toContainElement(expandBtn)
+    expect(row).not.toContainElement(expandBtn)
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-quality-menu', 'true')
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-box-toggle', 'true')
     // VideoTile's own native-fullscreen button must be suppressed —
     // Watch's CSS docked/full toggle is the one canonical "make it
     // bigger" affordance; two competing fullscreen buttons was part
@@ -347,7 +537,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await waitFor(() => expect(viewport.className).toMatch(/relative/))
   })
 
-  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the glance card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled glance card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
+  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the live bottom card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled live card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -375,7 +565,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
   // -dead always wins regardless of video; status-unreachable +
   // video-confirmed-not-playing is a real "both channels dark" outage.
 
-  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the glance card shows the reconnecting copy, not Camera offline', async () => {
+  it('Given the status fetch fails, When the video tile confirms frames are playing, Then the live bottom card shows the reconnecting copy, not Camera offline', async () => {
     // arrange — /api/status errors on every poll (simulates the
     // server-restart window); the stubbed VideoTile drives its own
     // onPlayingChange signal via the test-hook button.
@@ -387,12 +577,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await user.click(screen.getByRole('button', { name: 'simulate-video-playing' }))
 
     // assert — headline is the low-alarm shared-vocabulary
-    // "Reconnecting…", sublabel is honest about the API, no danger
+    // "Reconnecting", sublabel is honest about the API, no danger
     // copy anywhere.
     await waitFor(() => {
-      expect(screen.getByText('Status reconnecting…')).toBeInTheDocument()
+      expect(screen.getByText('Status reconnecting')).toBeInTheDocument()
     })
-    expect(screen.getByText('Reconnecting…')).toBeInTheDocument()
+    expect(screen.getByText('Reconnecting')).toBeInTheDocument()
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
@@ -444,9 +634,9 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // act
     renderWatch()
 
-    // assert — neutral "Checking…" (shared vocabulary), no danger copy.
+    // assert — neutral "Checking" (shared vocabulary), no danger copy.
     await waitFor(() => {
-      expect(screen.getByText('Checking…')).toBeInTheDocument()
+      expect(screen.getByText('Checking')).toBeInTheDocument()
     })
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
@@ -520,6 +710,28 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     }
   })
 
+  it('Given docked mode on a landscape device, When rendered, Then the video uses object-contain so the camera aspect ratio stays honest', () => {
+    // arrange — matchMedia('(orientation: landscape)') reports landscape.
+    const originalMatchMedia = window.matchMedia
+    const mql = {
+      matches: true,
+      media: '(orientation: landscape)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    window.matchMedia = vi.fn().mockReturnValue(mql) as unknown as typeof window.matchMedia
+    try {
+      // act
+      renderWatch()
+
+      // assert
+      expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-fit', 'contain')
+    } finally {
+      window.matchMedia = originalMatchMedia
+    }
+  })
+
+
   it('Given the docked viewport, When rendered, Then VideoTile owns the ONE status pill (showStatusPill=true) and fullscreen turns it off in favor of the combined cluster (fuzz F3/F7/F13)', async () => {
     // arrange
     const user = userEvent.setup()
@@ -544,6 +756,24 @@ describe('Watch — Home screen (Playroom Modern)', () => {
         'false',
       ),
     )
+  })
+
+  it('Given docked live video, When the scene is tapped, Then over-video chrome hides and a second tap restores it without hiding the below-video toolbar', async () => {
+    const user = userEvent.setup()
+    renderWatch()
+    const scene = screen.getByTestId('live-scene')
+
+    expect(screen.getByRole('button', { name: 'Full screen live view' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Snapshot' })).toBeInTheDocument()
+
+    await user.click(scene)
+    expect(screen.queryByRole('button', { name: 'Full screen live view' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-status-pill', 'false')
+    expect(screen.getByRole('button', { name: 'Snapshot' })).toBeInTheDocument()
+
+    await user.click(scene)
+    expect(screen.getByRole('button', { name: 'Full screen live view' })).toBeInTheDocument()
+    expect(screen.getByTestId('video-tile-stub')).toHaveAttribute('data-show-status-pill', 'true')
   })
 
   // Fuzz F5: the fullscreen thumb rail (Snapshot) clipped under the
@@ -766,9 +996,94 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     // the contract, mirroring the proven landscape-phone pattern).
     const root = container.firstElementChild as HTMLElement
     expect(root.className).toMatch(/lg:grid /)
+    expect(root.className).toMatch(
+      /landscape-phone:grid-cols-\[minmax\(0,1fr\)_clamp\(22rem,32vw,29rem\)\]/,
+    )
+    expect(root.className).toMatch(/landscape-phone:gap-x-4/)
     expect(root.className).toMatch(/lg:grid-cols-\[minmax\(0,1fr\)_minmax\(20rem,26rem\)\]/)
     expect(root.className).toMatch(/lg:max-w-\[100rem\]/)
-    expect(root.className).toMatch(/lg:overflow-hidden/)
+    expect(root.className).toMatch(/overflow-hidden/)
+  })
+
+  it('Given Watch renders, Then only the Today at home section owns vertical scrolling', () => {
+    // arrange / act
+    const { container } = renderWatch()
+
+    // assert — root/page and lower pane are height-bounded; the
+    // timeline section itself is the scroll container so the live view
+    // stays anchored.
+    const root = container.firstElementChild as HTMLElement
+    expect(root.className).toMatch(/h-\[calc\(100dvh-var\(--ribbon-h,0px\)\)\]/)
+    expect(root.className).toMatch(/overflow-hidden/)
+
+    const timeline = screen.getByLabelText("Today's activity")
+    expect(timeline.className).toMatch(/flex/)
+    expect(timeline.className).toMatch(/min-h-0/)
+    expect(timeline.className).toMatch(/flex-1/)
+    expect(timeline.className).toMatch(/landscape-phone:order-2/)
+    expect(timeline.className).toMatch(/landscape-phone:pt-0/)
+    expect(timeline.className).toMatch(/landscape-phone:pb-2/)
+    expect(timeline.className).toMatch(/landscape-phone:scrollbar-hide/)
+    expect(timeline.className).toMatch(/pb-\[calc\(6rem\+env\(safe-area-inset-bottom\)\)\]/)
+    expect(timeline.className).toMatch(/overflow-y-auto/)
+    expect(timeline.className).toMatch(/overscroll-contain/)
+    expect(timeline.className).toMatch(/touch-pan-y/)
+
+    const list = timeline.querySelector('ol') as HTMLOListElement | null
+    expect(list).not.toBeNull()
+    expect(list!.className).not.toMatch(/overflow-y-auto/)
+  })
+
+  it('Given a landscape phone viewport, When Watch renders, Then the live bottom cards stay compact so Today at home remains visible', async () => {
+    // arrange / act
+    const { container } = renderWatch()
+
+    // assert — in the short landscape viewport the visible title/brand
+    // row is removed from the layout but the header itself can still
+    // host real controls such as the multicam switcher. The live
+    // video remains a true camera-aspect surface, and the status
+    // summary belongs to the live tile instead of consuming the event rail.
+    const header = container.querySelector('header') as HTMLElement | null
+    expect(header).not.toBeNull()
+    expect(header!.className).toMatch(/landscape-phone:col-span-2/)
+    expect(header!.className).toMatch(/landscape-phone:p-0/)
+    const titleRow = header!.querySelector('div') as HTMLElement | null
+    expect(titleRow).not.toBeNull()
+    expect(titleRow!.className).toMatch(/landscape-phone:sr-only/)
+
+    const live = screen.getByTestId('live-viewport')
+    expect(live.className).toMatch(/landscape-phone:m-0/)
+    expect(live.className).toMatch(/landscape-phone:ml-2/)
+    expect(live.className).toMatch(/landscape-phone:mt-12/)
+    expect(live.className).toMatch(/landscape-phone:self-start/)
+    expect(live.className).not.toMatch(/landscape-phone:self-center/)
+    expect(live.className).toMatch(/landscape-phone:w-full/)
+    expect(live.className).not.toMatch(/landscape-phone:h-full/)
+    expect(live.className).toMatch(/landscape-phone:rounded-\[var\(--radius-xl\)\]/)
+
+    const strip = screen.getByTestId('live-glance-strip')
+    expect(live).toContainElement(strip)
+    expect(strip.className).toMatch(/shrink-0/)
+    expect(strip.className).toMatch(/landscape-phone:py-1\.5/)
+    expect(strip.className).not.toMatch(/absolute/)
+    const stripRow = strip.firstElementChild as HTMLElement | null
+    expect(stripRow).not.toBeNull()
+    expect(stripRow!.className).toMatch(/flex/)
+    const watchButton = await within(strip).findByRole('button', {
+      name: /pause detection and classification/i,
+    })
+    expect(watchButton.className).toMatch(/w-full/)
+
+    const lowerPane = container.querySelector(
+      '.landscape-phone\\:col-start-2',
+    ) as HTMLElement | null
+    expect(lowerPane).not.toBeNull()
+    expect(lowerPane!.className).toMatch(/landscape-phone:pt-12/)
+    expect(lowerPane).not.toContainElement(strip)
+
+    const timeline = screen.getByLabelText("Today's activity")
+    expect(timeline.className).toMatch(/landscape-phone:order-2/)
+    expect(timeline.className).toMatch(/landscape-phone:scrollbar-hide/)
   })
 
   it('Given fullscreen, When the exit control renders, Then it meets the 44px touch floor (overhaul W1 item 4, frank#1 / hari REACH-2)', async () => {
@@ -874,5 +1189,91 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     } finally {
       registerCameraNames([])
     }
+  })
+
+  it('Given a siren push action, When Home opens, Then it requires foreground confirmation before sending the exact request', async () => {
+    // arrange
+    const user = userEvent.setup()
+    renderWatch('/?deterrence=siren&duration=20&event=evt-9')
+
+    // assert — merely opening the notification target does not actuate hardware.
+    expect(
+      await screen.findByText('Ready to sound the siren?'),
+    ).toBeInTheDocument()
+    expect(triggerDeterrenceM).not.toHaveBeenCalled()
+
+    // act — review, then explicitly confirm in the foreground dialog.
+    await user.click(screen.getByRole('button', { name: 'Review action' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Sound siren' }),
+    )
+
+    // assert
+    await waitFor(() => {
+      expect(triggerDeterrenceM).toHaveBeenCalledWith({
+        action: 'siren',
+        duration_s: 20,
+        confirm: true,
+        event_id: 'evt-9',
+      })
+    })
+  })
+
+  it('Given deterrence hardware is unavailable, When the foreground action is confirmed, Then Home reports the limitation and keeps the intent for retry', async () => {
+    // arrange
+    triggerDeterrenceM.mockResolvedValue({
+      ok: false,
+      status: 'unavailable',
+      reason: 'hardware adapter is not available',
+      action: 'warning',
+      duration_s: 60,
+      capabilities: {
+        available: false,
+        adapter: null,
+        limitation: 'Configure a supported speaker adapter first',
+      },
+    })
+    const user = userEvent.setup()
+    renderWatch('/?deterrence=warning&duration=600&event=evt-11')
+
+    // act
+    await user.click(await screen.findByRole('button', { name: 'Review action' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Start action' }))
+
+    // assert — hand-edited/push duration is capped to the server maximum.
+    await waitFor(() => {
+      expect(triggerDeterrenceM).toHaveBeenCalledWith({
+        action: 'warning',
+        duration_s: 60,
+        confirm: true,
+        event_id: 'evt-11',
+      })
+    })
+    expect(
+      await screen.findByText(
+        'Action unavailable: Configure a supported speaker adapter first',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Ready to play a warning?')).toBeInTheDocument()
+  })
+
+  it('Given a family account opens a Talk notification intent, Then Home explains owner permission and never offers microphone publish', async () => {
+    authRole = 'family'
+    getStatusM.mockResolvedValue({ ...HEALTHY, audio_enabled: true })
+
+    renderWatch('/?talk=1&event=evt-family')
+
+    expect(
+      await screen.findByText('Talk requires owner access'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/family and viewer accounts can listen, but only an owner can publish/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Start talk' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
   })
 })

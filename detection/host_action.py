@@ -14,7 +14,7 @@ PLAN_SKIP_STALE = "skip_stale"
 PLAN_SKIP_SEEN = "skip_seen"
 PLAN_SKIP_UNKNOWN = "skip_unknown"
 
-VALID_KINDS = ("mediamtx", "nvargus", "reboot", "logs")
+VALID_KINDS = ("mediamtx", "nvargus", "reboot", "logs", "focus_start", "focus_stop", "exposure_apply")
 LOG_UNITS = ("homecam-detect", "mediamtx", "nvargus-daemon", "homecam-server")
 
 _SINCE_RELATIVE_RE = re.compile(
@@ -99,6 +99,22 @@ def execute_action(record, deps):
             args.get("unit"), args.get("since"), args.get("lines")
         )
         return ("done", "logs fetched", {"lines": lines})
+
+    if kind == "focus_start":
+        result = deps.start_focus_mode()
+        if result:
+            return ("done", "1080p focus mode started", result)
+        return ("failed", "1080p focus mode failed to start", None)
+
+    if kind == "focus_stop":
+        ok = deps.stop_focus_mode()
+        return _status_from_bool(ok, "720p camera restore")
+
+    if kind == "exposure_apply":
+        result = deps.apply_exposure(record.get("args") or {})
+        if result:
+            return ("done", "camera exposure applied", result)
+        return ("failed", "camera exposure failed; previous settings restored", None)
 
     return ("failed", "unknown host action", None)
 

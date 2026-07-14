@@ -28,10 +28,21 @@ describe('VideoPlayer (native-controls wrapper)', () => {
     expect(video).toHaveAttribute('playsinline')
   })
 
-  it('Given the speed set, When offered, Then it is the eight rates .25×–4×', () => {
+  it('Given nativeControls is false, When the player renders, Then the <video> does not show browser media chrome', () => {
+    // arrange / act
+    renderPlayer({ nativeControls: false })
+
+    // assert
+    const video = screen.getByLabelText('Test clip') as HTMLVideoElement
+    expect(video).not.toHaveAttribute('controls')
+  })
+
+  it('Given the speed set, When offered, Then it is the eight rates .25×–4×', async () => {
     // arrange / act / assert
     expect(SPEED_RATES).toEqual([0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4])
     renderPlayer()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Playback settings' }))
     const select = screen.getByLabelText('Playback speed')
     expect(select.querySelectorAll('option')).toHaveLength(8)
   })
@@ -43,6 +54,7 @@ describe('VideoPlayer (native-controls wrapper)', () => {
     const video = screen.getByLabelText('Test clip') as HTMLVideoElement
 
     // act
+    await user.click(screen.getByRole('button', { name: 'Playback settings' }))
     await user.selectOptions(screen.getByLabelText('Playback speed'), '2')
 
     // assert
@@ -54,16 +66,40 @@ describe('VideoPlayer (native-controls wrapper)', () => {
     const user = userEvent.setup()
     renderPlayer()
     const video = screen.getByLabelText('Test clip') as HTMLVideoElement
-    const repeat = screen.getByRole('button', { name: 'Repeat' })
-    expect(repeat).toHaveAttribute('aria-pressed', 'false')
+    await user.click(screen.getByRole('button', { name: 'Playback settings' }))
+    const repeat = screen.getByRole('menuitemcheckbox', { name: 'Repeat' })
+    expect(repeat).toHaveAttribute('aria-checked', 'false')
     expect(video).not.toHaveAttribute('loop')
 
     // act
     await user.click(repeat)
 
     // assert
-    expect(repeat).toHaveAttribute('aria-pressed', 'true')
+    expect(repeat).toHaveAttribute('aria-checked', 'true')
     expect(video).toHaveAttribute('loop')
+  })
+
+  it('Given the fullscreen button, When clicked, Then it expands the player and requests fullscreen on the container', async () => {
+    // arrange
+    const user = userEvent.setup()
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    const original = HTMLElement.prototype.requestFullscreen
+    HTMLElement.prototype.requestFullscreen = requestFullscreen
+
+    try {
+      renderPlayer()
+
+      // act
+      await user.click(screen.getByRole('button', { name: /enter fullscreen/i }))
+
+      // assert
+      expect(requestFullscreen).toHaveBeenCalledWith({ navigationUI: 'hide' })
+      expect(screen.getByLabelText('Test clip').closest('[data-app-fullscreen="true"]')).not.toBeNull()
+      expect(screen.getByRole('button', { name: /exit fullscreen/i })).toBeInTheDocument()
+    } finally {
+      if (original) HTMLElement.prototype.requestFullscreen = original
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).requestFullscreen
+    }
   })
 
   it('Given an overlay, When rendered, Then it sits in a pointer-events-none layer (can never eat a control tap)', () => {
@@ -134,19 +170,18 @@ describe('VideoPlayer (native-controls wrapper)', () => {
     expect(video.parentElement?.className).not.toContain('flex-1')
   })
 
-  // UI/UX overhaul 2026-07-07 (portrait #3 / Frank A3): speed + repeat
-  // are the ONLY playback-speed controls on mobile and sat at 36px,
-  // below the 44px floor the rest of the app respects.
-  it('Given the speed select and Repeat button render, Then both carry the 44px touch-target floor (overhaul 2026-07-07)', () => {
+  it('Given playback settings are opened, Then settings controls carry the 44px touch-target floor', async () => {
     // arrange / act
+    const user = userEvent.setup()
     renderPlayer()
+    await user.click(screen.getByRole('button', { name: 'Playback settings' }))
 
     // assert
     expect(screen.getByLabelText('Playback speed').className).toMatch(
       /min-h-\[44px\]/,
     )
     expect(
-      screen.getByRole('button', { name: 'Repeat' }).className,
+      screen.getByRole('menuitemcheckbox', { name: 'Repeat' }).className,
     ).toMatch(/min-h-\[44px\]/)
   })
 })

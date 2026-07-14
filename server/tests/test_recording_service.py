@@ -7,6 +7,7 @@ storage/retention surface.
 from __future__ import annotations
 
 import time
+import json
 
 import pytest
 
@@ -64,6 +65,229 @@ def test_clip_exists_true_after_write(rec_dir):
 def test_clip_exists_false_for_invalid_id(rec_dir):
     """Invalid id → False (don't raise; clip_path catches it)."""
     assert recording_service.clip_exists("../etc/passwd") is False
+
+
+def test_clip_exists_rejects_zero_byte_placeholder(rec_dir):
+    rec_dir.mkdir()
+    (rec_dir / "evt-empty.mp4").write_bytes(b"")
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1, "events": {"evt-empty": {"state": "available"}},
+    }))
+
+    assert recording_service.clip_exists("evt-empty") is False
+    assert recording_service.clip_statuses(["evt-empty"])["evt-empty"] == "unknown"
+    state = recording_service.clip_state("evt-empty")
+    assert state["state"] == "failed"
+    assert state["failure_code"] == "empty_output"
+    assert not (rec_dir / "evt-empty.mp4").exists()
+
+
+def test_clip_state_reads_worker_ledger_when_clip_missing(rec_dir):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-001": {
+                "event_id": "evt-001",
+                "state": "recording",
+                "start_ts": 100.0,
+                "last_seen": 105.0,
+            },
+        },
+    }))
+
+    state = recording_service.clip_state("evt-001")
+
+    assert state["state"] == "recording"
+    assert state["source"] == "ledger"
+    assert state["last_seen"] == 105.0
+
+
+def test_clip_state_turns_abandoned_loading_into_safe_plain_failure(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-001": {
+                "state": "finalizing",
+                "updated_ts": 100.0,
+                "scratch_dir": "/private/scratch/path",
+                "error": "secret raw command output",
+            },
+        },
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 2000.0)
+
+    state = recording_service.clip_state("evt-001")
+
+    assert state["state"] == "failed"
+    assert state["failure_code"] == "worker_restarted"
+    assert "Waiting longer" in state["failure_detail"]
+    assert "scratch_dir" not in state
+    assert "error" not in state
+
+
+def test_batch_status_marks_abandoned_loading_failed(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"evt-old": {"state": "recording", "updated_ts": 1.0}},
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 2000.0)
+
+    assert recording_service.clip_statuses(["evt-old"])["evt-old"] == "failed"
+
+
+def test_clip_eta_ranges_only_returns_valid_active_bounds(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "active": {
+                "state": "finalizing", "updated_ts": 950.0,
+                "eta_point_ts": 1090.0,
+                "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+                "eta_model_samples": 156, "eta_backtest_median_error_s": 7.4,
+            },
+            "failed": {
+                "state": "failed", "updated_ts": 950.0,
+                "eta_point_ts": 1090.0,
+                "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+            },
+            "stale": {
+                "state": "recording", "updated_ts": 1.0,
+                "eta_point_ts": 1090.0,
+                "eta_min_ts": 1060.0, "eta_max_ts": 1120.0,
+            },
+            "bad-range": {
+                "state": "recording", "updated_ts": 950.0,
+                "eta_point_ts": 1150.0,
+                "eta_min_ts": 1200.0, "eta_max_ts": 1100.0,
+            },
+        },
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 1000.0)
+
+    assert recording_service.clip_eta_ranges(
+        ["active", "failed", "stale", "bad-range"],
+    ) == {"active": {
+        "point_ts": 1090.0,
+        "min_ts": 1060.0,
+        "max_ts": 1120.0,
+        "model_samples": 156,
+        "backtest_median_error_s": 7.4,
+        "live_progress": False,
+        "activity_present": None,
+        "finalize_if_clear_ts": None,
+    }}
+
+
+def test_recording_eta_exposes_reentry_aware_presence_deadlines(rec_dir, monkeypatch):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"active": {
+            "state": "recording", "updated_ts": 990.0,
+            "last_seen": 998.0, "absence_finalize_s": 30.0,
+            "eta_point_ts": 1100.0, "eta_min_ts": 1050.0,
+            "eta_max_ts": 1150.0,
+        }},
+    }))
+    monkeypatch.setattr(recording_service.time, "time", lambda: 1000.0)
+
+    eta = recording_service.clip_eta_ranges(["active"])["active"]
+
+    assert eta["activity_present"] is True
+    assert eta["finalize_if_clear_ts"] == 1028.0
+
+
+def test_clip_state_disk_available_wins_over_stale_ledger(rec_dir):
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {"evt-001": {"state": "recording"}},
+    }))
+    (rec_dir / "evt-001.mp4").write_bytes(b"fake")
+
+    state = recording_service.clip_state("evt-001")
+
+    assert state["state"] == "available"
+    assert state["source"] == "disk"
+    assert state["bytes"] == 4
+
+
+def test_clip_state_unknown_when_no_file_or_ledger_entry(rec_dir):
+    assert recording_service.clip_state("evt-ghost") == {
+        "event_id": "evt-ghost",
+        "state": "unknown",
+        "source": "missing",
+    }
+
+
+def test_given_mixed_clip_lifecycle_when_batch_read_then_disk_is_only_available_truth(
+    rec_dir,
+):
+    # arrange
+    rec_dir.mkdir()
+    (rec_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            "evt-recording": {"state": "recording"},
+            "evt-finalizing": {"state": "finalizing"},
+            "evt-failed": {"state": "failed"},
+            # Retention already removed this file; the stale ledger must not
+            # make the event claim a playable video still exists.
+            "evt-stale": {"state": "available"},
+            "evt-bad": {"state": "invented"},
+        },
+    }))
+    (rec_dir / "evt-recording.mp4").write_bytes(b"published")
+
+    # act
+    statuses = recording_service.clip_statuses([
+        "evt-recording",
+        "evt-finalizing",
+        "evt-failed",
+        "evt-stale",
+        "evt-bad",
+        "evt-missing",
+    ])
+
+    # assert
+    assert statuses == {
+        "evt-recording": "available",
+        "evt-finalizing": "finalizing",
+        "evt-failed": "failed",
+        "evt-stale": "unknown",
+        "evt-bad": "unknown",
+        "evt-missing": "unknown",
+    }
+
+
+def test_given_many_event_ids_when_batch_read_then_ledger_is_read_once(
+    rec_dir, monkeypatch
+):
+    # arrange
+    rec_dir.mkdir()
+    calls = 0
+    real_read = recording_service.read_clip_state_ledger
+
+    def _counted_read():
+        nonlocal calls
+        calls += 1
+        return real_read()
+
+    monkeypatch.setattr(recording_service, "read_clip_state_ledger", _counted_read)
+
+    # act
+    statuses = recording_service.clip_statuses(
+        ["evt-{}".format(index) for index in range(1000)]
+    )
+
+    # assert
+    assert calls == 1
+    assert len(statuses) == 1000
+    assert set(statuses.values()) == {"unknown"}
 
 
 def test_delete_clip_removes_existing(rec_dir):
@@ -293,6 +517,28 @@ def test_evict_ignores_non_mp4_files(rec_dir):
     # assert — clip gone, non-mp4 untouched.
     assert not clip.exists()
     assert log_file.exists()
+
+
+def test_evict_preserves_protected_clip(rec_dir):
+    from app.config import settings
+    from app.services import events_db, event_bus
+
+    rec_dir.mkdir()
+    protected = _write_clip_with_mtime(rec_dir, "keep.mp4", 100, age_s=300)
+    ordinary = _write_clip_with_mtime(rec_dir, "remove.mp4", 100, age_s=100)
+    event = event_bus.make_detection_event(
+        label="person", score=0.9, boxes=[], event_id="keep"
+    )
+    events_db.insert_event(settings.events_db_path, event)
+    events_db.set_protected(settings.events_db_path, "keep", True)
+
+    result = recording_service.evict_to_free_space(
+        min_free_bytes=10 ** 12, disk_usage=_fake_disk_usage(0)
+    )
+
+    assert protected.exists()
+    assert not ordinary.exists()
+    assert result["deleted"] == 1
 
 
 # --- sweep_and_evict (combined pass: time-sweep THEN byte-evict) ---

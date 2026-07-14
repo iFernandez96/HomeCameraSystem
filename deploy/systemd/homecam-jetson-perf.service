@@ -1,11 +1,9 @@
 [Unit]
-Description=Pin Jetson Nano performance knobs (MAXN + max clocks)
-# Tegra power management exposes nvpmodel / jetson_clocks via /sys; both
-# are ready by the time `multi-user.target` is reached. Don't run before
-# `local-fs.target` because /sys/devices node access requires
-# sysfs-mounted state.
+Description=Select Jetson Nano MAXN power envelope with dynamic clocks
+# Tegra power management exposes nvpmodel via /sys. It is ready by the time
+# `multi-user.target` is reached. Don't run before `local-fs.target` because
+# /sys/devices node access requires sysfs-mounted state.
 After=local-fs.target
-ConditionPathExists=/usr/bin/jetson_clocks
 ConditionPathExists=/usr/sbin/nvpmodel
 
 [Service]
@@ -15,11 +13,11 @@ RemainAfterExit=yes
 # /etc/nvpmodel.conf, so this is mostly a safety net — if someone
 # scripted a switch to mode 1 (5W) we put it back at boot.
 ExecStart=/usr/sbin/nvpmodel -m 0
-# `jetson_clocks` pins CPU/GPU/EMC at the MAXN ceilings and disables
-# DVFS for the duration. Does NOT persist across reboot — that's why
-# we run it from a boot-time unit. Without this you get ~50-150 ms of
-# variable encode warmup on the first frame after a quiet stretch.
-ExecStart=/usr/bin/jetson_clocks
+# Leave DVFS enabled instead of running `jetson_clocks`. The camera is an
+# always-on workload, so pinning an otherwise-idle GPU at its 921 MHz ceiling
+# wastes power and memory bandwidth. MAXN remains the available performance
+# envelope, and the encoder retains its own `maxperf-enable=true` low-latency
+# setting in mediamtx.yml.
 # If either tool is missing or fails (e.g. running on a board where
 # nvpmodel doesn't recognize mode 0), don't fail the boot — log it
 # and let the rest of the system come up.

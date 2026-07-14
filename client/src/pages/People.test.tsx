@@ -159,19 +159,19 @@ describe('People page', () => {
     renderPeople()
 
     // assert
-    const aliceBtn = await screen.findByRole('button', {
+    const aliceBtn = await screen.findByRole('link', {
       name: /alice/i,
     })
     expect(aliceBtn).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /bob/i }),
+      screen.getByRole('link', { name: /bob/i }),
     ).toBeInTheDocument()
     // visit-count copy uses singular "visit" for count==1, plural otherwise.
     expect(aliceBtn.getAttribute('aria-label')).toMatch(/3 visits/i)
     expect(aliceBtn.getAttribute('aria-label')).toMatch(/2 minutes? ago/i)
     expect(
       screen
-        .getByRole('button', { name: /bob/i })
+        .getByRole('link', { name: /bob/i })
         .getAttribute('aria-label'),
     ).toMatch(/1 visit\b/i)
   })
@@ -201,7 +201,7 @@ describe('People page', () => {
     )
   })
 
-  it('given the user clicks a person row, when onClick fires, then navigate is called with /events?person=NAME (iter-326b: deep-link wiring shipped)', async () => {
+  it('given a person card, when it renders, then it links to the person detail route', async () => {
     // arrange
     listPeople.mockResolvedValue({
       total: 1,
@@ -216,20 +216,15 @@ describe('People page', () => {
         },
       ],
     })
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
     // act
     renderPeople()
-    const row = await screen.findByRole('button', { name: /alice/i })
-    await user.click(row)
+    const row = await screen.findByRole('link', { name: /alice/i })
 
-    // assert: ?person= encoded so spaces / unicode don't break the
-    // round-trip through Events.tsx's URLSearchParams.get('person').
-    expect(navigate).toHaveBeenCalledWith('/events?person=Alice')
+    // assert
+    expect(row).toHaveAttribute('href', '/people/Alice')
   })
 
-  it('given a person with a space in the name, when the row is clicked, then the URL is properly URI-encoded (iter-326b)', async () => {
+  it('given a person with a space in the name, when the card renders, then the detail URL is properly URI-encoded', async () => {
     // arrange
     listPeople.mockResolvedValue({
       total: 1,
@@ -244,16 +239,12 @@ describe('People page', () => {
         },
       ],
     })
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
     // act
     renderPeople()
-    const row = await screen.findByRole('button', { name: /mary jane/i })
-    await user.click(row)
+    const row = await screen.findByRole('link', { name: /mary jane/i })
 
     // assert
-    expect(navigate).toHaveBeenCalledWith('/events?person=Mary%20Jane')
+    expect(row).toHaveAttribute('href', '/people/Mary%20Jane')
   })
 
   it('given total > items.length, when the page renders, then a "Showing N of M" callout informs the user (iter-328 R2)', async () => {
@@ -376,7 +367,7 @@ describe('People page', () => {
     renderPeople()
 
     // assert
-    await screen.findByRole('button', { name: /alice/i })
+    await screen.findByRole('link', { name: /alice/i })
     expect(
       screen.queryByRole('searchbox', { name: /search people/i }),
     ).not.toBeInTheDocument()
@@ -431,9 +422,9 @@ describe('People page', () => {
     await user.type(search, 'al')
 
     // assert — Alice matches; Bob/Carol/Dan/Eve do not.
-    expect(screen.getByRole('button', { name: /alice/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^bob/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^carol/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /alice/i })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^bob/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^carol/i })).not.toBeInTheDocument()
   })
 
   it('given a search with no matches, when the input has text, then a "No people match" status hint appears (iter-341)', async () => {
@@ -462,7 +453,7 @@ describe('People page', () => {
     // assert
     expect(screen.getByText(/no results for/i)).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: /alice/i }),
+      screen.queryByRole('link', { name: /alice/i }),
     ).not.toBeInTheDocument()
   })
 
@@ -481,7 +472,7 @@ describe('People page', () => {
     renderPeople()
 
     // assert
-    await screen.findByRole('button', { name: /alice/i })
+    await screen.findByRole('link', { name: /alice/i })
     // iter-356.19 (Maya 13th CRITICAL #1): heading vocabulary changed
     // — "Not recently" → "Earlier" (matches EventList vocabulary), and
     // count format went from " (2)" suffix to " · 2" separator.
@@ -506,7 +497,7 @@ describe('People page', () => {
     renderPeople()
 
     // assert — no Recent/Earlier headings; just the flat row list.
-    await screen.findByRole('button', { name: /alice/i })
+    await screen.findByRole('link', { name: /alice/i })
     expect(screen.queryByRole('heading', { name: /^recent/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /^not recently/i })).not.toBeInTheDocument()
   })
@@ -524,7 +515,7 @@ describe('People page', () => {
     // assert — month name appears in the visible row text. The
     // exact rendered string depends on the test runner's locale but
     // SHOULD NOT contain "N days ago".
-    const row = await screen.findByRole('button', { name: /carol/i })
+    const row = await screen.findByRole('link', { name: /carol/i })
     expect(row.textContent).not.toMatch(/\bdays? ago\b/i)
   })
 
@@ -582,7 +573,7 @@ describe('People page', () => {
     renderPeople()
 
     // assert
-    await screen.findByRole('button', { name: /alice/i })
+    await screen.findByRole('link', { name: /alice/i })
     expect(screen.queryByText(/showing.*of/i)).not.toBeInTheDocument()
   })
 
@@ -640,7 +631,7 @@ describe('People page', () => {
 
     // assert — WhoMark renders as an accessible img named after the
     // person (distinct from the button's own aria-label).
-    await screen.findByRole('button', { name: /alice: 1 visit/i })
+    await screen.findByRole('link', { name: /alice: 1 visit/i })
     expect(screen.getByRole('img', { name: 'Alice' })).toBeInTheDocument()
   })
 

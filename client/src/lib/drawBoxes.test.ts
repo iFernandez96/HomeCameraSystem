@@ -29,6 +29,11 @@ function fakeVideo(width = 100, height = 100): HTMLVideoElement {
   return video
 }
 
+function setIntrinsicVideoSize(video: HTMLVideoElement, width: number, height: number): void {
+  Object.defineProperty(video, 'videoWidth', { value: width, configurable: true })
+  Object.defineProperty(video, 'videoHeight', { value: height, configurable: true })
+}
+
 function box(overrides: Partial<DetectionBox> = {}): DetectionBox {
   return { x: 0.1, y: 0.1, w: 0.2, h: 0.2, label: 'person', score: 0.9, ...overrides }
 }
@@ -66,6 +71,53 @@ describe('drawBoxes — opts.color (identity-colored boxes)', () => {
     drawBoxes(ctx, canvas, video, [box({ label: 'cat' })], null)
     // assert
     expect(ctx.strokeStyle).toBe('#ef4444')
+  })
+})
+
+describe('drawBoxes — object-fit geometry', () => {
+  it('Given a 16:9 clip object-contained in a portrait event viewer, Then boxes map into the letterboxed video rect', () => {
+    // arrange
+    const calls: Array<[number, number, number, number]> = []
+    const ctx = {
+      ...fakeCtx(),
+      strokeRect: (x: number, y: number, w: number, h: number) => {
+        calls.push([x, y, w, h])
+      },
+    } as unknown as CanvasRenderingContext2D
+    const canvas = document.createElement('canvas')
+    const video = fakeVideo(400, 800)
+    setIntrinsicVideoSize(video, 1920, 1080)
+    video.style.objectFit = 'contain'
+
+    // act
+    drawBoxes(ctx, canvas, video, [box()], null)
+
+    // assert — 16:9 content inside 400x800 is 400x225, vertically centered.
+    expect(calls[0]).toEqual([40, 310, 80, 45])
+  })
+
+  it('Given a 16:9 clip object-covered in a portrait surface, Then boxes account for cropped media outside the element', () => {
+    // arrange
+    const calls: Array<[number, number, number, number]> = []
+    const ctx = {
+      ...fakeCtx(),
+      strokeRect: (x: number, y: number, w: number, h: number) => {
+        calls.push([x, y, w, h])
+      },
+    } as unknown as CanvasRenderingContext2D
+    const canvas = document.createElement('canvas')
+    const video = fakeVideo(400, 800)
+    setIntrinsicVideoSize(video, 1920, 1080)
+    video.style.objectFit = 'cover'
+
+    // act
+    drawBoxes(ctx, canvas, video, [box()], null)
+
+    // assert — cover scales to 1422.222px wide and crops both sides.
+    expect(calls[0][0]).toBeCloseTo(-368.889, 3)
+    expect(calls[0][1]).toBeCloseTo(80, 3)
+    expect(calls[0][2]).toBeCloseTo(284.444, 3)
+    expect(calls[0][3]).toBeCloseTo(160, 3)
   })
 })
 

@@ -57,6 +57,22 @@ export type DetectionEvent = {
   label: string
   score: number
   boxes: DetectionBox[]
+  /** Authoritative server-side clip lifecycle for list/search rows.
+   * Never infer availability from clip_url: that URL can exist before
+   * finalization and after retention removes the file. */
+  video_status?: 'recording' | 'finalizing' | 'available' | 'failed' | 'unknown'
+  /** Conservative Unix-second ready-time bounds supplied by the
+   * server for recording/finalizing clips. Both are required before
+   * the client presents a range; either may be absent when the worker
+   * cannot yet estimate completion. */
+  video_eta_point_ts?: number
+  video_eta_min_ts?: number
+  video_eta_max_ts?: number
+  video_eta_model_samples?: number
+  video_eta_backtest_median_error_s?: number | null
+  video_eta_live_progress?: boolean
+  video_activity_present?: boolean | null
+  video_finalize_if_clear_ts?: number | null
   /**
    * URL of the saved thumbnail captured at detection time. Server emits
    * the key always; value is null when no thumbnail was written (idle
@@ -102,6 +118,38 @@ export type DetectionEvent = {
    * fallback path on events known to lack clips.
    */
   clip_url?: string | null
+  /** Excluded from automatic age and disk-pressure eviction. */
+  protected?: boolean
+  /** Origin of this activity. Absent on events created before security events. */
+  source?: 'vision' | 'audio' | 'doorbell' | 'tamper' | 'system'
+  /** Optional automation rule that promoted or described this event. */
+  rule_id?: string | null
+  rule_name?: string | null
+  /** Stable id joining related lifecycle events, such as one package. */
+  correlation_id?: string | null
+  /** Direct link to the event this transition updates or resolves. */
+  related_event_id?: string | null
+  /** Camera-local visit id and its observed time window. */
+  visit_id?: string | null
+  start_ts?: number | null
+  end_ts?: number | null
+  /** Package lifecycle transition carried by package events. */
+  package_state?:
+    | 'delivered'
+    | 'present'
+    | 'collected'
+    | 'possible_theft'
+    | null
+}
+
+export type LiveDetectionEvent = {
+  v: 1
+  type: 'live_detection'
+  /** Unix epoch seconds (float), stamped by the server. */
+  ts: number
+  camera_id: string
+  /** Empty when inference ran but no valid box is currently present. */
+  boxes: DetectionBox[]
 }
 
 /**
@@ -114,12 +162,11 @@ export type DetectionEvent = {
  * `{type: 'status', ...}` on the bus. Status data is exposed via the
  * REST `/api/status` endpoint, polled by `useStatus`.
  *
- * If a future iter genuinely starts publishing a non-detection event
- * type, widen this back to a discriminated union and add the
- * server-side emitter + tests in the same iter (per CLAUDE.md "Tests
- * as a contract surface" rule).
+ * Live bbox samples are websocket-only and do not represent timeline
+ * events. They update the live canvas without touching event history,
+ * unread badges, or push notifications.
  */
-export type ServerEvent = DetectionEvent
+export type ServerEvent = DetectionEvent | LiveDetectionEvent
 
 /**
  * Push notification filters per the iter-205/iter-207 Feature #4
@@ -150,6 +197,19 @@ export type PushFilters = {
  */
 export type ZonePoint = [number, number]
 
+export type SmartRule = {
+  id: string
+  name: string
+  kind: 'line_crossing' | 'loitering' | 'package'
+  enabled: boolean
+  camera_id: string
+  points: ZonePoint[]
+  labels: string[]
+  direction: 'any' | 'forward' | 'reverse'
+  dwell_s: number
+  threshold: number
+}
+
 /**
  * Closed polygon = ordered list of points. iter-191 server bounds:
  * 3-32 vertices per polygon, up to 16 polygons total.
@@ -160,6 +220,8 @@ export type DetectionConfig = {
   threshold: number
   cooldown_s: number
   enabled: boolean
+  /** Persisted household mode. Privacy stops inference and event creation. */
+  operating_mode: 'home' | 'away' | 'night' | 'privacy'
   /** HH:MM (24h, local) — both must be set for the schedule to apply. */
   schedule_off_start: string | null
   schedule_off_end: string | null
@@ -173,6 +235,8 @@ export type DetectionConfig = {
    * iter-191c lands the client `<canvas>` editor in Settings.
    */
   zones: Zone[]
+  /** Permanently redacted areas for detections, thumbnails, and snapshots. */
+  privacy_masks: Zone[]
   /** iter-254: seconds AFTER detection the recorder keeps writing.
    * Live-tunable; takes effect on the next event without a worker
    * restart. */
@@ -216,6 +280,16 @@ export type DetectionConfig = {
    * the visit clip is finalized. NEW field (plan R3) — distinct from
    * the deprecated `clip_post_roll_s`. Server clamps to [3, 60]. */
   absence_finalize_s: number
+  daily_digest_enabled: boolean
+  daily_digest_time: string
+  smart_rules: SmartRule[]
+  package_change_threshold: number
+  package_stable_s: number
+  audio_event_enabled: boolean
+  audio_event_labels: string[]
+  deterrence_enabled: boolean
+  deterrence_action: 'light' | 'warning' | 'siren'
+  deterrence_duration_s: number
 }
 
 /** A curated pick-list of common COCO classes shown as chips in Settings. */
@@ -434,6 +508,16 @@ export type WorkerMetrics = {
   wedge_diag_gpu_temp_c?: number
   wedge_diag_mem_avail_mb?: number
   wedge_diag_argus_pending?: number
+  /** Input-power sensor state: 0 unavailable, 1 live, 2 read error. */
+  power_sensor_status?: number
+  /** Real electrical readings from an INA2xx input-power monitor. */
+  power_volts?: number
+  power_amps?: number
+  power_watts?: number
+  /** Unix epoch of the latest successful electrical sample. */
+  power_sample_ts?: number
+  /** Cumulative sensor read failures since worker start. */
+  power_read_failures?: number
 }
 
 /**
@@ -467,6 +551,7 @@ export type MeResponse = {
 
 export type ServerStatus = {
   ok: boolean
+  /** FastAPI process uptime. */
   uptime_s: number
   camera: 'ok' | 'missing' | 'error'
   detection_active: boolean
@@ -482,6 +567,8 @@ export type ServerStatus = {
    * the UI never shows stale telemetry.
    */
   worker_metrics: WorkerMetrics | null
+  /** Age of the latest real power sample, or null before one exists. */
+  power_sample_age_s?: number | null
   cpu_temp_c: number | null
   /**
    * GPU thermal zone (`GPU-therm` on Tegra). Distinct from
@@ -503,7 +590,16 @@ export type ServerStatus = {
   load_avg: [number, number, number] | null
   memory_used_mb: number | null
   memory_total_mb: number | null
+  /** Jetson host uptime from /proc/uptime. */
+  host_uptime_s?: number | null
+  /** Free space on the filesystem that stores recordings. */
   disk_free_gb: number | null
+  /** Free space on the Jetson SD/root filesystem. */
+  system_disk_free_gb?: number | null
+  /** Measured bytes created by clips during the previous 24 hours. */
+  recording_gb_per_day?: number
+  /** Clip storage currently excluded from automatic eviction. */
+  protected_recording_gb?: number
   fps: number
   /**
    * Live count of registered Web Push subscriptions on the server

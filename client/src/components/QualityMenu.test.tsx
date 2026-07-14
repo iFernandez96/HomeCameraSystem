@@ -26,8 +26,8 @@ describe('QualityMenu (fuzz F6 — themed replacement for the native select)', (
 
     // assert
     expect(screen.getByRole('listbox')).toBeInTheDocument()
-    expect(screen.getAllByRole('option')).toHaveLength(4)
-    expect(screen.getByRole('option', { name: /HQ/ })).toHaveAttribute(
+    expect(screen.getAllByRole('option')).toHaveLength(5)
+    expect(screen.getByRole('option', { name: /^HQ 720p/ })).toHaveAttribute(
       'aria-selected',
       'true',
     )
@@ -41,12 +41,12 @@ describe('QualityMenu (fuzz F6 — themed replacement for the native select)', (
     const trigger = screen.getByRole('button', { name: 'Stream quality' })
     await user.click(trigger)
 
-    // act — Auto is index 0; ArrowDown moves to HQ (index 1), Enter commits.
+    // act — Auto is index 0; ArrowDown moves to UHQ (index 1), Enter commits.
     await waitFor(() => expect(document.activeElement).not.toBe(trigger))
     await user.keyboard('{ArrowDown}{Enter}')
 
     // assert
-    expect(onSelect).toHaveBeenCalledWith('hq')
+    expect(onSelect).toHaveBeenCalledWith('uhq')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
@@ -93,7 +93,8 @@ describe('QualityMenu (fuzz F6 — themed replacement for the native select)', (
 
     // assert
     expect(screen.getByText('Adjusts to your connection')).toBeInTheDocument()
-    expect(screen.getByText('Sharpest picture, most data')).toBeInTheDocument()
+    expect(screen.getByText('1080p, maximum detail and data')).toBeInTheDocument()
+    expect(screen.getByText('720p, sharp with lower Jetson load')).toBeInTheDocument()
     expect(
       screen.getByText('Good picture, about a quarter of the data'),
     ).toBeInTheDocument()

@@ -16,6 +16,7 @@ display PTS (no backward jump) and a clean real-decode validate.
 BDD-lite: Given/When/Then names + arrange/act/assert bodies.
 """
 import os
+import json
 import shutil as _shutil
 import subprocess
 import sys
@@ -73,6 +74,22 @@ def test_given_empty_scratch_when_finalize_then_false_and_no_output(tmp_path):
     assert ok is False
     assert not (Path(rec.recordings_dir) / "abc.mp4").exists()
     assert not (Path(rec.recordings_dir) / "abc.mp4.tmp").exists()
+    ledger = json.loads((Path(rec.recordings_dir) / ".clip_state.json").read_text())
+    assert ledger["events"]["abc"]["state"] == "failed"
+    assert ledger["events"]["abc"]["reason"] == "no_segments"
+    assert ledger["events"]["abc"]["failure_stage"] == "capture"
+    assert ledger["events"]["abc"]["failure_summary"] == "No video pieces were captured."
+
+
+def test_decode_progress_parser_reads_jetson_ffmpeg_34_shape(tmp_path):
+    rec = _recorder(tmp_path)
+
+    out_time_s, speed = rec._parse_progress_text(
+        "frame=602\nout_time_ms=10271186\nspeed=1.83x\nprogress=continue\n"
+    )
+
+    assert out_time_s == pytest.approx(10.271186)
+    assert speed == pytest.approx(1.83)
 
 
 def test_given_missing_scratch_dir_when_finalize_then_false_no_crash(tmp_path):
@@ -142,6 +159,9 @@ def test_given_segments_when_finalize_then_concat_argv_is_copy_mp4(tmp_path):
     assert "concat" in concat_cmd and "-safe" in concat_cmd
     # output is the .tmp sidecar, NOT the final
     assert concat_cmd[-1].endswith("abc.mp4.tmp")
+    ledger = json.loads((Path(rec.recordings_dir) / ".clip_state.json").read_text())
+    assert ledger["events"]["abc"]["state"] == "available"
+    assert ledger["events"]["abc"]["bytes"] == 4096
 
 
 def test_given_concat_call_when_finalize_then_timeout_scales_with_bytes(tmp_path):
@@ -345,6 +365,37 @@ def test_given_failure_when_finalize_then_scratch_is_removed(tmp_path):
     # assert
     assert ok is False
     assert not scratch.exists()
+
+
+def test_given_failed_video_when_finalize_then_all_owned_artifacts_are_removed(tmp_path):
+    rec = _recorder(tmp_path)
+    scratch = _make_scratch(tmp_path, 1)
+    rec_dir = Path(rec.recordings_dir)
+    rec_dir.mkdir(parents=True, exist_ok=True)
+    final = rec_dir / "abc.mp4"
+    artifacts = [
+        final,
+        Path(str(final) + ".tmp"),
+        Path(str(final) + ".tmp.decode.progress"),
+        Path(str(final) + ".visit.concat.txt"),
+        Path(str(final) + ".concat.txt"),
+        Path(str(final) + ".postroll.tmp"),
+        Path(str(final) + ".postroll.tmp.stderr"),
+        Path(str(final) + ".stderr"),
+    ]
+    for artifact in artifacts:
+        artifact.write_bytes(b"partial")
+    legacy_scratch = rec_dir / "_preroll" / "event_abc"
+    legacy_scratch.mkdir(parents=True)
+    (legacy_scratch / "segment.mp4").write_bytes(b"partial")
+
+    with mock.patch.object(rec, "_filter_valid_segments", return_value=[]):
+        ok = rec.finalize_visit("abc", str(scratch), 100.0, 130.0)
+
+    assert ok is False
+    assert all(not artifact.exists() for artifact in artifacts)
+    assert not scratch.exists()
+    assert not legacy_scratch.exists()
 
 
 def test_given_success_when_finalize_then_scratch_is_removed(tmp_path):

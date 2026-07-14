@@ -12,9 +12,8 @@ of ``/api/*`` on the cookies these routes set.
 Cookies (per the plan's Section "Stack picks"):
 
 - HttpOnly: JS can't read them — XSS can't exfiltrate.
-- Secure (toggle via ``COOKIE_SECURE`` env): only sent over HTTPS
-  in prod; flipped to false for the dev vite server at
-  ``http://localhost:5173``.
+- Secure (toggle via ``COOKIE_SECURE`` env): always enabled in production;
+  explicitly flipped to false only in local/test configuration.
 - SameSite=Strict: browser refuses to send these on cross-site
   requests, so a malicious LAN page can't mint authenticated
   requests via the user's session. This is the project's CSRF
@@ -123,6 +122,7 @@ class MeOut(BaseModel):
 
 def _set_session_cookies(
     response: Response,
+    request: Request,
     username: str,
     role: str,
 ) -> tuple[str, str]:
@@ -249,7 +249,7 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
         raise HTTPException(status_code=401, detail="invalid credentials")
     now = time.time()
     access_jti, refresh_jti = _set_session_cookies(
-        response, user["username"], user["role"]
+        response, request, user["username"], user["role"]
     )
     _try_create_session_row(
         request=request,
@@ -348,7 +348,7 @@ async def refresh(
         )
         raise HTTPException(status_code=401, detail="session expired")
     access_jti, refresh_jti = _set_session_cookies(
-        response, user["username"], user["role"]
+        response, request, user["username"], user["role"]
     )
     if session_row is not None and isinstance(old_refresh_jti, str):
         try:

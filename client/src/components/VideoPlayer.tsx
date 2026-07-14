@@ -38,8 +38,12 @@ export function speedLabel(rate: number): string {
 // HTMLMediaElement.play() returns a promise in browsers (rejects on
 // autoplay block) but `undefined` under jsdom — guard the .catch.
 function safePlay(v: HTMLVideoElement): void {
-  const p = v.play()
-  if (p && typeof p.catch === 'function') p.catch(() => {})
+  try {
+    const p = v.play()
+    if (p && typeof p.catch === 'function') p.catch(() => {})
+  } catch {
+    // jsdom and some locked-down WebViews can throw synchronously.
+  }
 }
 
 export function VideoPlayer({
@@ -52,6 +56,11 @@ export function VideoPlayer({
   preload = 'metadata',
   initialRate = 1,
   autoPlay = false,
+  nativeControls = true,
+  controlsList,
+  showPlaybackSettings = true,
+  showFullscreenButton = true,
+  fullscreenActive,
   poster,
   fillHeight = false,
   overlay,
@@ -59,6 +68,7 @@ export function VideoPlayer({
   onPlay,
   onError,
   onVideoEl,
+  onFullscreenToggle,
 }: {
   src: string
   ariaLabel: string
@@ -69,6 +79,11 @@ export function VideoPlayer({
   preload?: 'none' | 'metadata' | 'auto'
   initialRate?: number
   autoPlay?: boolean
+  nativeControls?: boolean
+  controlsList?: string
+  showPlaybackSettings?: boolean
+  showFullscreenButton?: boolean
+  fullscreenActive?: boolean
   /** Still frame shown before playback starts / while the clip is
    *  loading (2026-07-07 fix: an unstarted <video> has no intrinsic
    *  size, so without a poster the frame is blank until metadata
@@ -89,10 +104,18 @@ export function VideoPlayer({
   /** Hands the underlying <video> element to the consumer (called once
    *  it mounts, and with null on unmount). Memoize it. */
   onVideoEl?: (el: HTMLVideoElement | null) => void
+  /** Lets a parent own the fullscreen surface while this player owns
+   *  the in-player fullscreen command. ClipModal uses this so event
+   *  fullscreen keeps its pinch-to-zoom layer. */
+  onFullscreenToggle?: (active: boolean) => void
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [rate, setRate] = useState(initialRate)
   const [loop, setLoop] = useState(initialLoop)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [appFullscreen, setAppFullscreen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     onVideoEl?.(videoRef.current)
@@ -110,21 +133,73 @@ export function VideoPlayer({
     if (autoPlay && videoRef.current) safePlay(videoRef.current)
   }, [autoPlay])
 
+  useEffect(() => {
+    const onChange = () => {
+      const active = document.fullscreenElement === containerRef.current
+      setFullscreen(active)
+      if (!active && document.fullscreenElement == null) setAppFullscreen(false)
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  const toggleFullscreen = () => {
+    const expanded = fullscreen || appFullscreen
+    if (onFullscreenToggle) {
+      setMenuOpen(false)
+      onFullscreenToggle(!(fullscreenActive ?? false))
+      return
+    }
+    const webkitVideo = videoRef.current as
+      | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
+      | null
+    if (expanded || document.fullscreenElement) {
+      setMenuOpen(false)
+      setAppFullscreen(false)
+      document.exitFullscreen?.().catch(() => {})
+      return
+    }
+    // Own the visual state immediately. The browser/API fullscreen
+    // request below is an enhancement; Android WebView can silently
+    // refuse it, but the user still gets a real full-player view.
+    setAppFullscreen(true)
+    const target = containerRef.current
+    if (target?.requestFullscreen) {
+      target.requestFullscreen({ navigationUI: 'hide' }).catch(() => {
+        webkitVideo?.webkitEnterFullscreen?.()
+      })
+      return
+    }
+    webkitVideo?.webkitEnterFullscreen?.()
+  }
+  const expanded = fullscreen || appFullscreen
+  const fullscreenControlActive = onFullscreenToggle ? !!fullscreenActive : expanded
+  const speedButtonLabel = rate === 1 ? '1×' : speedLabel(rate)
+  const rootClassName = expanded
+    ? 'fixed inset-0 z-[1000] h-[100dvh] w-screen rounded-none border-0 shadow-none'
+    : (containerClassName ?? className ?? '')
+  const innerVideoClassName = expanded
+    ? 'w-full h-full object-contain'
+    : (videoClassName ?? 'w-full')
+
   return (
     <div
-      className={`flex flex-col bg-black overflow-hidden ${containerClassName ?? className ?? ''}`}
+      ref={containerRef}
+      data-app-fullscreen={expanded ? 'true' : undefined}
+      className={`flex flex-col bg-black overflow-hidden ${rootClassName}`}
     >
-      <div className={`relative min-h-0 ${fillHeight ? 'flex-1' : ''}`}>
+      <div className={`relative min-h-0 ${fillHeight || expanded ? 'flex-1' : ''}`}>
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video
           ref={videoRef}
           src={src}
-          controls
+          controls={nativeControls}
+          controlsList={controlsList}
           loop={loop}
           playsInline
           preload={preload}
           poster={poster}
-          className={`block ${videoClassName ?? 'w-full'}`}
+          className={`block ${innerVideoClassName}`}
           aria-label={ariaLabel}
           onPlay={onPlay}
           onTimeUpdate={(e) => onTimeUpdate?.(e.currentTarget)}
@@ -139,37 +214,66 @@ export function VideoPlayer({
             {overlay}
           </div>
         )}
-      </div>
 
-      {/* Speed + repeat strip — the two controls the native bar lacks. */}
-      <div className="flex items-center gap-3 bg-black px-3 py-1.5 text-xs text-white/85">
-        <label className="flex items-center gap-1.5">
-          <span className="text-white/60">Speed</span>
-          <select
-            aria-label="Playback speed"
-            value={rate}
-            onChange={(e) => setRate(Number(e.target.value))}
-            className="min-h-[44px] rounded-lg bg-white/10 px-2 py-1 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)]"
+        {showPlaybackSettings && (
+          <button
+            type="button"
+            aria-label="Playback settings"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            className="pointer-events-auto absolute left-3 top-3 z-20 inline-flex h-10 min-w-10 items-center justify-center rounded-full bg-black/60 px-2 text-xs font-semibold tabular-nums text-white shadow-[var(--shadow-overlay)] ring-1 ring-white/15 backdrop-blur transition-colors hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] landscape-phone:left-2 landscape-phone:top-2 landscape-phone:h-9 landscape-phone:min-w-9"
           >
-            {SPEED_RATES.map((r) => (
-              <option key={r} value={r} className="text-black">
-                {speedLabel(r)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          aria-pressed={loop}
-          aria-label="Repeat"
-          onClick={() => setLoop((l) => !l)}
-          className={`ml-auto inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] ${
-            loop ? 'bg-white/20 text-white' : 'text-white/60 hover:text-white'
-          }`}
-        >
-          <RepeatIcon />
-          Repeat
-        </button>
+            {speedButtonLabel}
+          </button>
+        )}
+
+        {showFullscreenButton && (
+          <button
+            type="button"
+            aria-label={fullscreenControlActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+            onClick={toggleFullscreen}
+            className="pointer-events-auto absolute right-3 top-3 z-20 inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-white shadow-[var(--shadow-overlay)] ring-1 ring-white/15 backdrop-blur transition-colors hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] landscape-phone:right-2 landscape-phone:top-2 landscape-phone:h-9 landscape-phone:w-9"
+          >
+            {fullscreenControlActive ? <CollapseIcon /> : <ExpandIcon />}
+          </button>
+        )}
+
+        {showPlaybackSettings && menuOpen && (
+          <div
+            role="menu"
+            aria-label="Playback settings"
+            className="absolute left-3 top-14 z-30 w-56 rounded-xl bg-black/85 p-2 text-sm text-white shadow-[var(--shadow-overlay)] ring-1 ring-white/15 backdrop-blur landscape-phone:left-2 landscape-phone:top-12 landscape-phone:w-52"
+          >
+            <label className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg px-2 py-1">
+              <span className="text-white/70">Speed</span>
+              <select
+                aria-label="Playback speed"
+                value={rate}
+                onChange={(e) => setRate(Number(e.target.value))}
+                className="min-h-[44px] rounded-lg bg-white/10 px-2 py-1 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)]"
+              >
+                {SPEED_RATES.map((r) => (
+                  <option key={r} value={r} className="text-black">
+                    {speedLabel(r)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={loop}
+              aria-label="Repeat"
+              onClick={() => setLoop((l) => !l)}
+              className={`flex min-h-[44px] w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] ${
+                loop ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              <RepeatIcon />
+              Repeat
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -182,6 +286,28 @@ function RepeatIcon() {
       <path d="M3 11V9a4 4 0 0 1 4-4h14" />
       <polyline points="7 23 3 19 7 15" />
       <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
+  )
+}
+
+function ExpandIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 3h6v6" />
+      <path d="M9 21H3v-6" />
+      <path d="M21 3l-7 7" />
+      <path d="M3 21l7-7" />
+    </svg>
+  )
+}
+
+function CollapseIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 3v6H3" />
+      <path d="M15 21v-6h6" />
+      <path d="M3 9l6-6" />
+      <path d="M21 15l-6 6" />
     </svg>
   )
 }

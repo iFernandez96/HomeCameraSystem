@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
+import { probeJetsonHealth } from '../lib/jetsonHealth'
 import { log } from '../lib/log'
 import { reconnectIfClosed, subscribeWsState, type WsState } from '../lib/ws'
 
@@ -55,6 +56,10 @@ const POST_AUTH_GRACE_MS = 2_000
 // user to register the green; short enough that it doesn't outstay
 // its welcome on a healthy session.
 const RECOVERY_LINGER_MS = 1_800
+const HEALTH_PROBE_INTERVAL_MS = 5_000
+const HEALTH_FAILURE_THRESHOLD = 2
+
+type JetsonReachability = 'unknown' | 'reachable' | 'unreachable'
 
 export function ConnectionBanner() {
   const { state: authState } = useAuth()
@@ -71,6 +76,9 @@ export function ConnectionBanner() {
   // and state === 'open', we render the green "Reconnected" status
   // even though the WS is technically healthy; clears on a timer.
   const [recoveredAt, setRecoveredAt] = useState<number | null>(null)
+  const [jetsonReachability, setJetsonReachability] =
+    useState<JetsonReachability>('unknown')
+  const [phoneOnline, setPhoneOnline] = useState(() => navigator.onLine)
 
   // We need a stable handle on `outageShown` inside the WsState
   // subscriber to decide whether to fire the recovery announcement
@@ -131,12 +139,61 @@ export function ConnectionBanner() {
             setRecoveredAt(Date.now())
           }
           setEscalated(false)
+          setJetsonReachability('reachable')
         } else if (next === 'open') {
           setEscalated(false)
+          setJetsonReachability('reachable')
         }
         return next
       })
     })
+  }, [])
+
+  // A closed WebSocket alone cannot tell us whether only realtime delivery
+  // failed or the whole Jetson disappeared. Probe the unauthenticated process
+  // liveness endpoint and require two consecutive failures before saying the
+  // Jetson is offline/unreachable. The phone's own offline state is separate:
+  // it would be dishonest to blame the Jetson when Android has no network.
+  useEffect(() => {
+    if (authState !== 'authed' || state !== 'closed' || !phoneOnline) return
+    let cancelled = false
+    let failures = 0
+
+    const probe = () => {
+      probeJetsonHealth().then((reachable) => {
+        if (cancelled) return
+        if (reachable) {
+          failures = 0
+          setJetsonReachability('reachable')
+          return
+        }
+        failures += 1
+        if (failures >= HEALTH_FAILURE_THRESHOLD) {
+          setJetsonReachability('unreachable')
+        }
+      })
+    }
+
+    probe()
+    const interval = window.setInterval(probe, HEALTH_PROBE_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [authState, phoneOnline, state])
+
+  useEffect(() => {
+    const online = () => {
+      setPhoneOnline(true)
+      reconnectIfClosed()
+    }
+    const offline = () => setPhoneOnline(false)
+    window.addEventListener('online', online)
+    window.addEventListener('offline', offline)
+    return () => {
+      window.removeEventListener('online', online)
+      window.removeEventListener('offline', offline)
+    }
   }, [])
 
   // Escalation timer — fires once after ESCALATE_AFTER_MS of sustained
@@ -190,6 +247,8 @@ export function ConnectionBanner() {
     | { variant: 'connecting' }
     | { variant: 'closed-soft' } // amber, recoverable
     | { variant: 'closed-hard' } // red alert, sustained outage
+    | { variant: 'phone-offline' }
+    | { variant: 'jetson-offline' }
     | { variant: 'recovered' } // green, brief post-resolve celebration
 
   let kind: Kind | null = null
@@ -197,7 +256,13 @@ export function ConnectionBanner() {
     kind = { variant: 'connecting' }
   } else if (state === 'closed') {
     if (graceElapsed) {
-      kind = { variant: escalated ? 'closed-hard' : 'closed-soft' }
+      if (!phoneOnline) {
+        kind = { variant: 'phone-offline' }
+      } else if (jetsonReachability === 'unreachable') {
+        kind = { variant: 'jetson-offline' }
+      } else {
+        kind = { variant: escalated ? 'closed-hard' : 'closed-soft' }
+      }
     }
   } else if (state === 'open' && recoveredAt !== null) {
     kind = { variant: 'recovered' }
@@ -208,7 +273,10 @@ export function ConnectionBanner() {
   // computed kind. We can't use the closure var directly, so encode
   // the trigger in a stable string and let the effect react.
   const isOutageVisible =
-    kind?.variant === 'closed-soft' || kind?.variant === 'closed-hard'
+    kind?.variant === 'closed-soft' ||
+    kind?.variant === 'closed-hard' ||
+    kind?.variant === 'phone-offline' ||
+    kind?.variant === 'jetson-offline'
 
   return (
     <>
@@ -245,6 +313,8 @@ function Banner({
     | { variant: 'connecting' }
     | { variant: 'closed-soft' }
     | { variant: 'closed-hard' }
+    | { variant: 'phone-offline' }
+    | { variant: 'jetson-offline' }
     | { variant: 'recovered' }
 }) {
   // Visible label. All four variants use plain-English copy — Frank
@@ -283,6 +353,24 @@ function Banner({
       label = 'Live alerts paused — reconnecting. Past events still work.'
       role = 'alert'
       aria = undefined // role="alert" implies aria-live="assertive"
+      toneClass =
+        'bg-[var(--color-danger-bg)] text-[var(--color-text-primary)] border-[var(--color-danger-border)]'
+      dotClass = 'bg-[var(--color-danger)]'
+      dotPulse = 'animate-pulse'
+      break
+    case 'phone-offline':
+      label = 'This phone is offline. HomeCam will reconnect when your network returns.'
+      role = 'alert'
+      aria = undefined
+      toneClass =
+        'bg-[var(--color-danger-bg)] text-[var(--color-text-primary)] border-[var(--color-danger-border)]'
+      dotClass = 'bg-[var(--color-danger)]'
+      dotPulse = ''
+      break
+    case 'jetson-offline':
+      label = 'Jetson offline or unreachable — live view, alerts, and past events are unavailable.'
+      role = 'alert'
+      aria = undefined
       toneClass =
         'bg-[var(--color-danger-bg)] text-[var(--color-text-primary)] border-[var(--color-danger-border)]'
       dotClass = 'bg-[var(--color-danger)]'

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -6,6 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { LoadingState } from './components/states/LoadingState'
 import { PushDeniedBanner } from './components/PushDeniedBanner'
 import { RequireAuth } from './components/RequireAuth'
+import { RequireOwner } from './components/RequireOwner'
 import { SideRail } from './components/SideRail'
 import { WatchRibbon } from './components/WatchRibbon'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -28,12 +29,44 @@ const Watch = lazy(() => import('./pages/Watch').then((m) => ({ default: m.Watch
 const Events = lazy(() =>
   import('./pages/Events').then((m) => ({ default: m.Events })),
 )
+const Playback = lazy(() =>
+  import('./pages/Playback').then((m) => ({ default: m.Playback })),
+)
+const EventSearch = lazy(() =>
+  import('./pages/EventSearch').then((m) => ({ default: m.EventSearch })),
+)
+const Incidents = lazy(() =>
+  import('./pages/Incidents').then((m) => ({ default: m.Incidents })),
+)
+const IncidentDetail = lazy(() =>
+  import('./pages/IncidentDetail').then((m) => ({ default: m.IncidentDetail })),
+)
+const VisitViewer = lazy(() =>
+  import('./pages/VisitViewer').then((m) => ({ default: m.VisitViewer })),
+)
+const Visits = lazy(() =>
+  import('./pages/Visits').then((m) => ({ default: m.Visits })),
+)
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })))
+// Dev/QA harness for the cat animation system — public but unlisted
+// (no nav entry). Static art only; no data access.
+const AnimLab = lazy(() =>
+  import('./pages/AnimLab').then((m) => ({ default: m.AnimLab })),
+)
 const People = lazy(() =>
   import('./pages/People').then((m) => ({ default: m.People })),
 )
+const PersonDetail = lazy(() =>
+  import('./pages/PersonDetail').then((m) => ({ default: m.PersonDetail })),
+)
 const Settings = lazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.Settings })),
+)
+const FocusAssistant = lazy(() =>
+  import('./pages/FocusAssistant').then((m) => ({ default: m.FocusAssistant })),
+)
+const ExposureAssistant = lazy(() =>
+  import('./pages/ExposureAssistant').then((m) => ({ default: m.ExposureAssistant })),
 )
 const GodView = lazy(() =>
   import('./pages/GodView').then((m) => ({ default: m.GodView })),
@@ -51,6 +84,11 @@ const Training = lazy(() =>
 // route shipped iter-355c1 + tests; this is the FIRST UI consumer.
 const Review = lazy(() =>
   import('./pages/Review').then((m) => ({ default: m.Review })),
+)
+// Playground (Slice A): the cats' side-view diorama room. Lazy like
+// every other page; art preloads are gated inside the page itself.
+const Playground = lazy(() =>
+  import('./pages/Playground').then((m) => ({ default: m.Playground })),
 )
 
 // iter-356.6 (perf A1): lazy-load the ambient CatLayer. Pre-iter-356.6
@@ -88,6 +126,34 @@ function PageFallback({ pathname }: { pathname: string }) {
   return <LoadingState shape={pathname === '/' ? 'video' : 'list'} />
 }
 
+function useRootBackGuard(pathname: string) {
+  useEffect(() => {
+    if (pathname !== '/') return
+    if (window.history.state?.homecamRootGuard !== true) {
+      window.history.replaceState(
+        { ...(window.history.state ?? {}), homecamRootBase: true },
+        '',
+      )
+      window.history.pushState({ homecamRootGuard: true }, '', '/')
+    }
+
+    const onPop = () => {
+      const path = window.location.pathname
+      if (path === '/' || path === '/live') {
+        if (window.history.state?.homecamRootGuard !== true) {
+          window.history.pushState({ homecamRootGuard: true }, '', '/')
+        }
+        return
+      }
+      window.history.pushState({ homecamRootGuard: true }, '', '/')
+      window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }))
+    }
+
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [pathname])
+}
+
 // Each page is wrapped in its own ErrorBoundary so an uncaught throw
 // in (say) the Events list renderer doesn't blank Live or Settings.
 // Bottom nav stays outside the boundary so the user can always
@@ -98,6 +164,7 @@ function AppShell() {
   // iter-248: home-screen app-icon badge wiring.
   useUnreadBadge()
   usePageViewTelemetry(state === 'authed' ? user?.username : null, location.pathname)
+  useRootBackGuard(location.pathname)
   // iter-356.58 (layout rebuild): cats only walk on Live. The
   // mobile-architect brief flagged the cat strip overlapping the
   // empty-state cat illustration on People + Settings. Restricting
@@ -108,6 +175,14 @@ function AppShell() {
   // the full viewport with its own brand block.
   const isLoginRoute = location.pathname === '/login'
   const showShell = state === 'authed' && !isLoginRoute
+  useEffect(() => {
+    document.documentElement.classList.toggle('homecam-watch-route', isWatchRoute)
+    document.body.classList.toggle('homecam-watch-route', isWatchRoute)
+    return () => {
+      document.documentElement.classList.remove('homecam-watch-route')
+      document.body.classList.remove('homecam-watch-route')
+    }
+  }, [isWatchRoute])
   // UI/UX overhaul 2026-07-07 (hari FOCUS-1): reset the main scroll
   // container to the top on every route change. <main> is the real
   // scroller (overflow-y-auto), NOT window, so React Router's
@@ -221,9 +296,9 @@ function AppShell() {
         // a few px wide (user-hit on Firefox Android, whose font scaling
         // widens text). clip forbids the pan at the real scroll container;
         // the body-level guard in index.css covers the page itself.
-        className={`flex-1 overflow-y-auto overflow-x-clip overscroll-y-contain ${
+        className={`flex-1 min-h-0 ${isLoginRoute || isWatchRoute ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-clip overscroll-y-contain ${
           isWatchRoute
-            ? 'pb-[calc(6rem+env(safe-area-inset-bottom)+7.5rem)]'
+            ? 'pb-0'
             : 'pb-[calc(6rem+env(safe-area-inset-bottom))]'
         } lg:pb-6 landscape-phone:pb-0 w-full ${
           showShell
@@ -231,7 +306,7 @@ function AppShell() {
             // (resolution sweep 2026-07-07 caught main overflowing 10px
             // sideways at 673x455 on /settings), % tracks the real layout
             // width at every resolution.
-            ? 'lg:ml-16 lg:max-w-[calc(100%-4rem)] landscape-phone:ml-[calc(5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100%-5rem-env(safe-area-inset-left))]'
+            ? 'lg:ml-16 lg:max-w-[calc(100%-4rem)] landscape-phone:ml-[calc(3.5rem+env(safe-area-inset-left))] landscape-phone:max-w-[calc(100%-3.5rem-env(safe-area-inset-left))]'
             : ''
         }`}
         style={
@@ -244,10 +319,14 @@ function AppShell() {
       >
         {/* Premium-feel: keyed on the route so every page change plays
             the 160ms native-style enter transition. */}
-        <div key={location.pathname} className="w-full mx-auto animate-page-in">
+        <div
+          key={location.pathname}
+          className={`w-full mx-auto animate-page-in ${isWatchRoute || isLoginRoute ? 'h-full min-h-0' : ''}`}
+        >
           <Suspense fallback={<PageFallback pathname={location.pathname} />}>
             <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/anim-lab" element={<AnimLab />} />
             <Route
               path="/"
               element={
@@ -270,6 +349,12 @@ function AppShell() {
                 </RequireAuth>
               }
             />
+            <Route path="/events/playback" element={<RequireAuth><ErrorBoundary label="Playback"><Playback /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/search" element={<RequireAuth><ErrorBoundary label="Event search"><EventSearch /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/incidents" element={<RequireAuth><ErrorBoundary label="Incidents"><Incidents /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/incidents/:id" element={<RequireAuth><ErrorBoundary label="Incident details"><IncidentDetail /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/visits" element={<RequireAuth><ErrorBoundary label="Visits"><Visits /></ErrorBoundary></RequireAuth>} />
+            <Route path="/events/visits/:id" element={<RequireAuth><ErrorBoundary label="Visit story"><VisitViewer /></ErrorBoundary></RequireAuth>} />
             <Route
               path="/people"
               element={
@@ -280,6 +365,7 @@ function AppShell() {
                 </RequireAuth>
               }
             />
+            <Route path="/people/:name" element={<RequireAuth><ErrorBoundary label="Person details"><PersonDetail /></ErrorBoundary></RequireAuth>} />
             <Route
               path="/training"
               element={
@@ -306,6 +392,36 @@ function AppShell() {
                 <RequireAuth>
                   <ErrorBoundary label="Settings">
                     <Settings />
+                  </ErrorBoundary>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/settings/focus-assistant"
+              element={
+                <RequireAuth>
+                  <ErrorBoundary label="Focus Assistant">
+                    <FocusAssistant />
+                  </ErrorBoundary>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/settings/exposure"
+              element={
+                <RequireOwner>
+                  <ErrorBoundary label="Exposure">
+                    <ExposureAssistant />
+                  </ErrorBoundary>
+                </RequireOwner>
+              }
+            />
+            <Route
+              path="/playground"
+              element={
+                <RequireAuth>
+                  <ErrorBoundary label="Playground">
+                    <Playground />
                   </ErrorBoundary>
                 </RequireAuth>
               }
@@ -372,7 +488,11 @@ function AppShell() {
           timeline and the sprites walked straight over event cards.
           The brand stays via the trio mark, paw nav, and cat empty
           states. The component + cat toggle remain for a future
-          surface that has real floor space. */}
+          surface that has real floor space.
+          Playground (Slice A): if the ambient layer ever remounts,
+          it must ALSO be excluded on /playground (route check like
+          the isWatchRoute gating above) — that page renders its own
+          cat scene and two cat layers on one screen reads as a bug. */}
     </div>
   )
 }

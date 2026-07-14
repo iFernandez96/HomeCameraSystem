@@ -295,6 +295,8 @@ def test_given_long_presence_when_cap_splits_then_adjacent_and_continuation_flag
     assert len(posted) == 3
     assert "continuation" not in posted[0]
     assert all(p.get("continuation") is True for p in posted[1:])
+    assert len({p["id"] for p in posted}) == 3
+    assert {p["visit_id"] for p in posted} == {posted[0]["id"]}
     # adjacency: v2.start <= v1.end within one GOP (plan R2; nominal-exact).
     ws = sorted(windows, key=lambda w: w["start_ts"])
     assert len(ws) == 3

@@ -14,12 +14,13 @@
     "lint": "node ./node_modules/eslint/bin/eslint.js .",
     "lint:fix": "node ./node_modules/eslint/bin/eslint.js . --fix",
     "test:e2e": "npm run build && node ./node_modules/@playwright/test/cli.js test --config=playwright.config.ts",
+    "test:e2e:mobile": "npm run build && node ./node_modules/@playwright/test/cli.js test --config=playwright.mobile.config.ts",
     "test:e2e:headed": "npm run build && node ./node_modules/@playwright/test/cli.js test --config=playwright.config.ts --headed"
   },
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

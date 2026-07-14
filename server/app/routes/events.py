@@ -9,6 +9,7 @@ import hashlib
 import json
 
 from fastapi import APIRouter, Depends, Query, Request, Response, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict
 
 from ..auth import tokens, users_db
 from ..auth.dependencies import get_current_user, require_role
@@ -19,6 +20,34 @@ from ..sessions import revocation, sessions_db
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+
+def _enrich_video_status(items: list[dict]) -> list[dict]:
+    """Attach one truthful, point-in-time clip state to every event."""
+    from ..services import recording_service
+
+    statuses = recording_service.clip_statuses(
+        item.get("id") for item in items if isinstance(item, dict)
+    )
+    eta_ranges = recording_service.clip_eta_ranges(
+        item.get("id") for item in items if isinstance(item, dict)
+    )
+    for item in items:
+        event_id = item.get("id")
+        item["video_status"] = statuses.get(event_id, "unknown")
+        eta = eta_ranges.get(event_id)
+        if eta is not None:
+            item["video_eta_point_ts"] = eta["point_ts"]
+            item["video_eta_min_ts"] = eta["min_ts"]
+            item["video_eta_max_ts"] = eta["max_ts"]
+            item["video_eta_model_samples"] = eta["model_samples"]
+            item["video_eta_backtest_median_error_s"] = eta[
+                "backtest_median_error_s"
+            ]
+            item["video_eta_live_progress"] = eta["live_progress"]
+            item["video_activity_present"] = eta["activity_present"]
+            item["video_finalize_if_clear_ts"] = eta["finalize_if_clear_ts"]
+    return items
 
 
 def _origin_matches_host(origin: str | None, host: str | None) -> bool:
@@ -64,7 +93,8 @@ async def list_events(
     # closes the last gap. Empirical benchmarks (iter-315) showed
     # p99 spikes on `/api/_internal/event` (72 ms) suggestive of
     # event-loop contention under concurrent reads.
-    return await asyncio.to_thread(event_bus.recent, limit)
+    items = await asyncio.to_thread(event_bus.recent, limit)
+    return await asyncio.to_thread(_enrich_video_status, items)
 
 
 @router.get("/events/search")
@@ -151,6 +181,8 @@ async def search_events(
             face_unrecognized,
         )
         raise
+    items = await asyncio.to_thread(_enrich_video_status, items)
+
     # next_cursor convention: only set when this page is full
     # (len == limit) so the client can stop paginating cleanly on
     # the last page. Cursor value = oldest item's ts on this page,
@@ -159,6 +191,18 @@ async def search_events(
     if len(items) == limit and items:
         next_cursor = items[-1]["ts"]
     return {"items": items, "next_cursor": next_cursor}
+
+
+@router.get("/events/digest")
+async def events_daily_digest(
+    day: str = Query(..., pattern=r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$"),
+    _user: str = Depends(get_current_user),
+) -> dict:
+    from ..services import events_db
+
+    return await asyncio.to_thread(
+        events_db.daily_digest, settings.events_db_path, day
+    )
 
 
 @router.get("/events/count_by_day")
@@ -306,6 +350,34 @@ async def events_mark_all_seen(
         events_db.mark_all_seen, settings.events_db_path
     )
     return {"flipped": n}
+
+
+class _ProtectEventBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    protected: bool
+
+
+@router.put(
+    "/events/{event_id}/protection",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def events_set_protection(event_id: str, body: _ProtectEventBody) -> dict:
+    import re
+    from fastapi import HTTPException
+    from ..services import events_db
+
+    if not re.match(_EVENT_ID_PATTERN, event_id):
+        raise HTTPException(status_code=422, detail="invalid event id")
+    found = await asyncio.to_thread(
+        events_db.set_protected,
+        settings.events_db_path,
+        event_id,
+        body.protected,
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="event not found")
+    log.info("event protection changed: event_id=%r protected=%s", event_id, body.protected)
+    return {"protected": body.protected}
 
 
 _DAY_PATTERN = r"^[0-9]{4}-[01][0-9]-[0-3][0-9]$"

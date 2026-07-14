@@ -1,6 +1,7 @@
 """Tests for the detection-config endpoint + persistence layer."""
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.services.detection_config import (
@@ -111,10 +112,12 @@ def test_get_returns_current_config(client: TestClient):
         "threshold": 0.55,
         "cooldown_s": 5.0,
         "enabled": True,
+        "operating_mode": "home",
         "schedule_off_start": None,
         "schedule_off_end": None,
         "classes": ["person"],
         "zones": [],
+        "privacy_masks": [],
         # iter-254: per-event clip duration knobs (post-roll live-
         # tunable; pre-roll persisted-only until iter-255).
         "clip_post_roll_s": 8.0,
@@ -142,7 +145,17 @@ def test_get_returns_current_config(client: TestClient):
         "continuous_capture": True,
         "max_visit_s": 150.0,
         "absence_finalize_s": 30.0,
-    }
+            "daily_digest_enabled": True,
+            "daily_digest_time": "20:00",
+            "smart_rules": [],
+            "package_change_threshold": 0.35,
+            "package_stable_s": 10.0,
+            "audio_event_enabled": False,
+            "audio_event_labels": ["audio_smoke_alarm", "audio_glass_break"],
+            "deterrence_enabled": False,
+            "deterrence_action": "light",
+            "deterrence_duration_s": 10.0,
+        }
 
 
 def test_patch_updates_threshold(client: TestClient):
@@ -223,6 +236,21 @@ def test_disabled_state_survives_a_reload(tmp_path):
     s.update(enabled=False)
     s2 = DetectionConfigStore(path=path)
     assert s2.get().enabled is False
+
+
+@pytest.mark.asyncio
+async def test_detection_service_start_preserves_persisted_disabled_state(monkeypatch):
+    """API startup must not undo an owner pause."""
+    from app.services import detection as detection_module
+    from app.services.detection_config import detection_config
+
+    detection_config.update(enabled=False)
+    service = detection_module.DetectionService()
+    monkeypatch.setattr(service, "_simulator_enabled", False)
+
+    await service.start()
+
+    assert service.active is False
 
 
 def test_legacy_config_file_without_enabled_defaults_to_true(tmp_path):
@@ -345,6 +373,33 @@ def test_in_schedule_off_window_returns_false_for_missing_or_invalid():
     assert in_schedule_off_window("not-time", "06:00", 5, 0) is False
     # Zero-length window — no schedule.
     assert in_schedule_off_window("06:00", "06:00", 6, 0) is False
+
+
+def test_operating_mode_persists_and_rejects_unknown_disk_value(tmp_path):
+    from app.services.detection_config import DetectionConfigStore
+
+    path = tmp_path / "detection.json"
+    store = DetectionConfigStore(path)
+    assert store.update(operating_mode="away").operating_mode == "away"
+    assert DetectionConfigStore(path).get().operating_mode == "away"
+
+    path.write_text('{"operating_mode":"surprise"}')
+    assert DetectionConfigStore(path).get().operating_mode == "home"
+
+
+def test_owner_can_set_privacy_mode(client):
+    response = client.patch(
+        "/api/detection/config", json={"operating_mode": "privacy"}
+    )
+    assert response.status_code == 200
+    assert response.json()["operating_mode"] == "privacy"
+
+
+def test_unknown_operating_mode_is_rejected(client):
+    response = client.patch(
+        "/api/detection/config", json={"operating_mode": "surprise"}
+    )
+    assert response.status_code == 422
 
 
 # ---------- classes ----------

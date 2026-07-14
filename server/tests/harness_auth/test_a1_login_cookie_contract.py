@@ -39,3 +39,22 @@ def test_given_fresh_scratch_server_and_seeded_user_when_login_succeeds_then_aut
             assert morsel["secure"] is True
         else:
             assert morsel["secure"] == ""
+
+
+def test_given_secure_cookies_when_request_uses_http_then_server_does_not_downgrade_them(
+    scratch_auth_server,
+    monkeypatch,
+):
+    # Given: production cookie policy with an HTTP request reaching FastAPI.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "cookie_secure", True)
+
+    # When: login succeeds through the scratch HTTP transport.
+    response = scratch_auth_server.post_login()
+
+    # Then: both bearer cookies retain Secure; request scheme is not policy.
+    assert response.status_code == 200
+    morsels = _set_cookie_morsels(response)
+    assert morsels[COOKIE_ACCESS]["secure"] is True
+    assert morsels[COOKIE_REFRESH]["secure"] is True

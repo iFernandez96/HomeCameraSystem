@@ -597,6 +597,9 @@ describe('Training page', () => {
       .spyOn(URL, 'createObjectURL')
       .mockReturnValue('blob:fake')
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const anchorClickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
 
     // act
     renderTraining()
@@ -615,6 +618,7 @@ describe('Training page', () => {
 
     createSpy.mockRestore()
     revokeSpy.mockRestore()
+    anchorClickSpy.mockRestore()
     if (origCreate === undefined) {
       delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL
     } else {

@@ -49,6 +49,35 @@ def test_internal_event_appears_in_history(client: TestClient):
     assert "car" in labels
 
 
+async def test_finalized_visit_replaces_opening_notification(client: TestClient):
+    """The completion push reuses the visit tag and stays silent."""
+    from unittest.mock import AsyncMock, patch
+
+    created = client.post("/api/_internal/event", json=_payload(id="visit-ready"))
+    assert created.status_code == 200, created.text
+    captured = AsyncMock(return_value=1)
+
+    with patch(
+        "app.services.push_service.push_service.send_matching", captured
+    ):
+        response = client.post(
+            "/api/_internal/event/finalized",
+            json={"event_id": "visit-ready", "duration_s": 65.4},
+        )
+        assert response.status_code == 200, response.text
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+
+    assert captured.called
+    event, payload = captured.call_args.args
+    assert event["id"] == "visit-ready"
+    assert payload["tag"] == "visit:visit-ready"
+    assert payload["body"] == "1:05 clip is ready"
+    assert payload["silent"] is True
+
+
 def test_internal_event_streams_over_websocket(client: TestClient):
     # iter-168: WS now requires Origin matching Host. TestClient base
     # is `http://testserver`, so this header is the same-origin handshake.
@@ -63,6 +92,36 @@ def test_internal_event_streams_over_websocket(client: TestClient):
         assert evt["type"] == "detection"
         assert evt["label"] == "person"
         assert evt["score"] == 0.88
+
+
+def test_internal_live_detection_streams_without_history(client: TestClient):
+    from app.services.event_bus import event_bus
+
+    before = len(event_bus.recent(1000))
+    with client.websocket_connect(
+        "/api/events/ws", headers={"origin": "http://testserver"}
+    ) as ws:
+        r = client.post(
+            "/api/_internal/live_detection",
+            json={"camera_id": "cam1", "boxes": _payload()["boxes"]},
+        )
+        assert r.status_code == 200, r.text
+        evt = ws.receive_json()
+        assert evt["type"] == "live_detection"
+        assert evt["camera_id"] == "cam1"
+        assert evt["boxes"][0]["label"] == "person"
+
+    after = len(event_bus.recent(1000))
+    assert after == before
+
+
+def test_internal_live_detection_accepts_empty_boxes(client: TestClient):
+    r = client.post(
+        "/api/_internal/live_detection",
+        json={"camera_id": "cam1", "boxes": []},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
 
 
 def test_internal_event_rejects_missing_boxes(client: TestClient):
@@ -87,6 +146,35 @@ def test_internal_event_rejects_out_of_range_coords(client: TestClient):
 def test_internal_event_rejects_score_above_1(client: TestClient):
     r = client.post("/api/_internal/event", json=_payload(score=1.2))
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("state", ["present", "possible_theft"])
+def test_internal_event_rejects_server_derived_package_states(
+    client: TestClient, state: str,
+):
+    """Worker ingress only reports observed delivered/collected transitions.
+
+    `present` and `possible_theft` are canonical server-derived package states,
+    not claims the experimental porch-change heuristic may place on the wire.
+    """
+    response = client.post(
+        "/api/_internal/event",
+        json=_payload(package_state=state),
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("state", ["delivered", "collected"])
+def test_internal_event_accepts_worker_observed_package_transitions(
+    client: TestClient, state: str,
+):
+    response = client.post(
+        "/api/_internal/event",
+        json=_payload(package_state=state),
+    )
+
+    assert response.status_code == 200, response.text
 
 
 # --- iter-193 (iter-169 Minor S3 closure): thumb_url regex --------
@@ -392,6 +480,49 @@ async def test_push_title_falls_back_to_label_when_no_person_name(
 
     payload = captured.call_args.args[1]
     assert payload["title"] == "Person detected"
+
+
+async def test_unknown_person_is_urgent_when_household_is_away(client: TestClient):
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from app.services.detection_config import detection_config
+
+    detection_config.update(operating_mode="away")
+    captured = AsyncMock(return_value=0)
+    with patch("app.services.push_service.push_service.send_matching", captured):
+        response = client.post("/api/_internal/event", json=_payload())
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+
+    event_id = response.json()["event_id"]
+    payload = captured.call_args.args[1]
+    assert payload["importance"] == "urgent"
+    assert payload["reason"] == "unknown_person_sensitive_mode"
+    assert payload["require_interaction"] is True
+    assert payload["silent"] is False
+    assert payload["tag"] == "visit:{}".format(event_id)
+
+
+async def test_known_person_alert_is_silent_when_household_is_home(client: TestClient):
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    captured = AsyncMock(return_value=0)
+    with patch("app.services.push_service.push_service.send_matching", captured):
+        client.post(
+            "/api/_internal/event", json=_payload(person_name="israel")
+        )
+        for _ in range(20):
+            if captured.called:
+                break
+            await asyncio.sleep(0.01)
+
+    payload = captured.call_args.args[1]
+    assert payload["importance"] == "routine"
+    assert payload["reason"] == "known_person_home"
+    assert payload["silent"] is True
 
 
 async def test_push_title_combines_two_names_with_ampersand_when_multi_person(
@@ -1455,6 +1586,12 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         "wedge_diag_gpu_temp_c": 67.5,
         "wedge_diag_mem_avail_mb": 384.0,
         "wedge_diag_argus_pending": 2.0,
+        "power_sensor_status": 1,
+        "power_volts": 5.03,
+        "power_amps": 1.25,
+        "power_watts": 6.287,
+        "power_sample_ts": 1700000102.0,
+        "power_read_failures": 0,
     }
     # If this assertion fires, _ALLOWED_METRIC_FIELDS has grown a key
     # the test doesn't know about — add it to `payload` above.

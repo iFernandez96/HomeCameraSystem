@@ -82,4 +82,48 @@ describe('EventRow', () => {
     const hiddenMark = document.querySelector('span[aria-hidden="true"] svg')
     expect(hiddenMark).not.toBeNull()
   })
+
+  it('Given the video-status leading mode, When rendered, Then it replaces the identity mark with the explicit server lifecycle', () => {
+    // arrange / act
+    render(
+      <EventRow
+        event={{
+          ...baseEvent,
+          clip_url: '/clips/already-there.mp4',
+          video_status: 'finalizing',
+        }}
+        subline="A moment ago"
+        leading="video-status"
+      />,
+    )
+
+    // assert — status comes only from video_status. The clip URL is
+    // intentionally present to prove it cannot turn finalizing into
+    // a falsely optimistic available icon.
+    expect(screen.getByRole('img', { name: 'Finalizing video' })).toHaveAttribute(
+      'data-video-status',
+      'finalizing',
+    )
+    expect(screen.getByText('Estimating…')).toBeInTheDocument()
+    expect(
+      document.querySelector('span[aria-hidden="true"] svg[role="img"]'),
+    ).toBeNull()
+  })
+
+  it('Given video status is absent, When video-status leading mode renders, Then it honestly says unknown', () => {
+    // arrange / act
+    render(
+      <EventRow
+        event={{ ...baseEvent, clip_url: '/clips/not-proof.mp4' }}
+        subline="A moment ago"
+        leading="video-status"
+      />,
+    )
+
+    // assert
+    expect(screen.getByRole('img', { name: 'Video status unknown' })).toHaveAttribute(
+      'data-video-status',
+      'unknown',
+    )
+  })
 })

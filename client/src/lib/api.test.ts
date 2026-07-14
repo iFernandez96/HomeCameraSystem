@@ -1,20 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   captureSnapshot,
+  createCameraExposurePreset,
+  deleteCameraExposurePreset,
   fetchEvents,
   getCameras,
   getDetectionConfig,
+  getFaceCapabilities,
   getAdminAudit,
   getEventCountsByDay,
   fetchLogs,
   getLogsResult,
   getMe,
   getRecoverStatus,
+  getCameraExposure,
   getStatus,
   getTimelapseManifest,
   getVapidPublicKey,
   HttpError,
   listSessions,
+  listCameraExposurePresets,
+  listIncidents,
   listTimelapses,
   login,
   logout,
@@ -25,6 +31,7 @@ import {
   refreshSession,
   revokeSession,
   searchEvents,
+  setDetectionEnabled,
   sendTestPushReq,
   subscribePush,
   toggleDetection,
@@ -34,6 +41,7 @@ import {
   triggerRestore,
   triggerTimelapse,
   triggerUpdate,
+  putCameraExposure,
   unsubscribePush,
 } from './api'
 
@@ -64,12 +72,69 @@ describe('lib/api', () => {
     vi.unstubAllGlobals()
   })
 
+  it('given exposure settings, when saved, then PUTs the complete bounded wire shape', async () => {
+    const exposure = { enabled: true, x: 0.25, y: 0.25, width: 0.5, height: 0.5, compensation: 0.3, locked: false }
+    mockJson({ ...exposure, request_id: 'ae-1', status: 'pending', worker_online: true })
+    await putCameraExposure(exposure)
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/camera/exposure')
+    expect((call[1] as RequestInit).method).toBe('PUT')
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual(exposure)
+  })
+
+  it('given saved exposure, when fetched, then reads the exposure route', async () => {
+    mockJson({ enabled: false, x: 0.25, y: 0.25, width: 0.5, height: 0.5, compensation: 0, locked: false })
+    await getCameraExposure()
+    expect(asMock().mock.calls[0][0]).toBe('/api/camera/exposure')
+  })
+
+  it('given a named exposure zone, when saved and listed, then uses the preset contract', async () => {
+    const config = { enabled: true, x: 0.25, y: 0.25, width: 0.5, height: 0.5, compensation: 0.3, locked: false }
+    const thumbnail = 'data:image/jpeg;base64,AAAA'
+    mockJson({ id: 'preset-1', name: 'Doorway', thumbnail, config, created_at: 1 })
+    await createCameraExposurePreset('Doorway', thumbnail, config)
+    expect(asMock().mock.calls[0][0]).toBe('/api/camera/exposure-presets')
+    expect(JSON.parse((asMock().mock.calls[0][1] as RequestInit).body as string)).toEqual({ name: 'Doorway', thumbnail, config })
+
+    mockJson({ presets: [] })
+    await listCameraExposurePresets()
+    expect(asMock().mock.calls[1][0]).toBe('/api/camera/exposure-presets')
+
+    mockJson({ deleted: true, id: 'preset-1' })
+    await deleteCameraExposurePreset('preset-1')
+    expect(asMock().mock.calls[2][0]).toBe('/api/camera/exposure-presets/preset-1')
+    expect((asMock().mock.calls[2][1] as RequestInit).method).toBe('DELETE')
+  })
+
+  it('given incidents from multiple owners, when listed, then preserves the ownership wire field', async () => {
+    // arrange
+    mockJson({
+      items: [{
+        id: 'inc-1',
+        owner_username: 'admin',
+        title: 'Front door',
+        notes: '',
+        created_ts: 1,
+        updated_ts: 2,
+        event_count: 0,
+      }],
+    })
+
+    // act
+    const result = await listIncidents()
+
+    // assert
+    expect(asMock().mock.calls[0][0]).toBe('/api/security/incidents')
+    expect(result.items[0].owner_username).toBe('admin')
+  })
+
   it('getStatus GETs /api/status with JSON content type', async () => {
     mockJson({
       ok: true,
       uptime_s: 12,
       camera: 'ok',
       detection_active: false,
+      power_sample_age_s: 2.1,
       cpu_temp_c: null,
       fps: 0,
       worker_metrics: {
@@ -83,12 +148,20 @@ describe('lib/api', () => {
         wedge_diag_gpu_temp_c: 67.5,
         wedge_diag_mem_avail_mb: 384,
         wedge_diag_argus_pending: 2,
+        power_sensor_status: 1,
+        power_volts: 5.03,
+        power_amps: 1.25,
+        power_watts: 6.15,
+        power_sample_ts: 1700000111,
+        power_read_failures: 0,
       },
     })
     const s = await getStatus()
     expect(s.ok).toBe(true)
     expect(s.worker_metrics?.watchdog_last_action).toBe('restart_nvargus')
     expect(s.worker_metrics?.wedge_diag_mem_avail_mb).toBe(384)
+    expect(s.power_sample_age_s).toBe(2.1)
+    expect(s.worker_metrics?.power_watts).toBe(6.15)
     expect(asMock()).toHaveBeenCalledWith(
       '/api/status',
       expect.objectContaining({
@@ -112,9 +185,11 @@ describe('lib/api', () => {
   it('Given audit bounds, When getAdminAudit runs, Then it GETs the pinned admin audit route with since and until', async () => {
     // arrange
     mockJson({
-      v: 1,
+      v: 2,
       logins: [],
       views: [],
+      actions: [],
+      sessions: [],
       summary: { by_user: {} },
     })
 
@@ -122,7 +197,7 @@ describe('lib/api', () => {
     const r = await getAdminAudit({ since: 1714000000, until: 1714086400 })
 
     // assert
-    expect(r.v).toBe(1)
+    expect(r.v).toBe(2)
     expect(asMock()).toHaveBeenCalledWith(
       '/api/admin/audit?since=1714000000&until=1714086400',
       expect.objectContaining({
@@ -135,15 +210,18 @@ describe('lib/api', () => {
   it('Given no audit bounds, When getAdminAudit runs, Then it omits the query string', async () => {
     // arrange
     mockJson({
-      v: 1,
+      v: 2,
       logins: [{ ts: 1714000000, username: 'admin', action: 'login', ua: 'Chrome' }],
-      views: [{ ts: 1714000010, username: 'admin', kind: 'page', name: '/', dwell_ms: 1200 }],
+      views: [{ ts: 1714000010, username: 'admin', session_id: null, kind: 'page', name: '/', dwell_ms: 1200 }],
+      actions: [],
+      sessions: [],
       summary: {
         by_user: {
           admin: {
             logins: 1,
             page_dwell_ms: 1200,
             event_views: 0,
+            actions: 0,
             top: [['/', 1200]],
           },
         },
@@ -848,6 +926,16 @@ describe('lib/api', () => {
     expect(asMock().mock.calls[0][1].method).toBeUndefined()
   })
 
+  it('setDetectionEnabled PUTs only the explicit enabled state to the narrow all-user route', async () => {
+    mockJson({ active: false })
+    const result = await setDetectionEnabled(false)
+    const call = asMock().mock.calls[0]
+    expect(call[0]).toBe('/api/detection/enabled')
+    expect(call[1].method).toBe('PUT')
+    expect(JSON.parse(call[1].body as string)).toEqual({ enabled: false })
+    expect(result).toEqual({ active: false })
+  })
+
   it('patchDetectionConfig PATCHes /api/detection/config with serialized body', async () => {
     mockJson({
       threshold: 0.7,
@@ -1379,6 +1467,26 @@ describe('lib/api', () => {
     expect(r.dirs[1].name).toBe('__unknown__')
   })
 
+  it('Given face capabilities are requested, When the server disables retraining, Then the typed capability and reason are returned', async () => {
+    // arrange
+    mockJson({
+      bootstrap: true,
+      retrain: false,
+      retrain_reason: 'On-device retraining is not installed.',
+    })
+
+    // act
+    const result = await getFaceCapabilities()
+
+    // assert
+    expect(asMock().mock.calls[0][0]).toBe('/api/face/capabilities')
+    expect(result).toEqual({
+      bootstrap: true,
+      retrain: false,
+      retrain_reason: 'On-device retraining is not installed.',
+    })
+  })
+
   it('given listFaceCapturesInDir called, when fetch resolves, then GET /api/face/captures/{encoded name} returns the files wire shape (iter-352)', async () => {
     // arrange
     mockJson({
@@ -1717,6 +1825,169 @@ describe('lib/api', () => {
 
     // act / assert
     await expect(probeEventClip('evt-9')).resolves.toBe(false)
+  })
+
+  it('given timeline bounds, when an export starts, then the canonical endpoint receives the exact camera and epoch range', async () => {
+    const bounds = { camera_id: 'front_door', since_ts: 100, until_ts: 200 }
+    mockJson({
+      v: 1,
+      id: 'export-1',
+      status: 'pending',
+      created_ts: 201,
+      updated_ts: 201,
+      requested: bounds,
+      coverage: { recorded_s: 0, gap_s: 0 },
+      size_bytes: null,
+      sha256: null,
+      error: null,
+      status_url: '/api/security/timeline/exports/export-1',
+      file_url: null,
+    }, 202)
+    const { startTimelineExport } = await import('./api')
+
+    await startTimelineExport(bounds)
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/timeline/exports')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(bounds)
+  })
+
+  it('given an incorrect recognition without a replacement name, when feedback is submitted, then it marks the public event endpoint unknown', async () => {
+    mockJson({ ok: true, event: { id: 'evt-1' }, captures_moved: 0 })
+    const { submitIdentityFeedback } = await import('./api')
+
+    await submitIdentityFeedback('evt/1', { verdict: 'incorrect' })
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/events/evt%2F1/identity-feedback')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      verdict: 'incorrect',
+    })
+  })
+
+  it('given two identities, when merged, then the public face route receives source and target and returns retraining truth', async () => {
+    mockJson({
+      ok: true,
+      source_name: 'Alice 2',
+      target_name: 'Alice',
+      files_moved: 4,
+      events_updated: 12,
+      retrain_required: true,
+    })
+    const { mergeFaces } = await import('./api')
+
+    const result = await mergeFaces('Alice 2', 'Alice')
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/face/merge')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      source_name: 'Alice 2',
+      target_name: 'Alice',
+    })
+    expect(result.retrain_required).toBe(true)
+  })
+
+  it('given a deterrence request, when triggered, then explicit confirmation stays in the request body', async () => {
+    mockJson({
+      ok: false,
+      status: 'unavailable',
+      reason: 'hardware adapter is not available',
+      action: 'warning',
+      duration_s: 15,
+      capabilities: {
+        available: false,
+        adapter: null,
+        limitation: 'Configure a supported adapter first',
+      },
+    })
+    const { triggerDeterrence } = await import('./api')
+
+    const result = await triggerDeterrence({
+      action: 'warning',
+      duration_s: 15,
+      confirm: true,
+      event_id: 'evt-2',
+    })
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/deterrence')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      action: 'warning',
+      duration_s: 15,
+      confirm: true,
+      event_id: 'evt-2',
+    })
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'unavailable',
+      capabilities: { available: false, adapter: null },
+    })
+  })
+
+  it('Given an owner opens rules, When deterrence capability is checked, Then the dedicated capability route is used', async () => {
+    // arrange
+    mockJson({
+      v: 1,
+      available: true,
+      adapter: 'mounted_executable',
+      limitation: 'Mounted adapter required',
+      armed: false,
+      privacy_blocked: false,
+      supported_actions: ['light', 'warning', 'siren'],
+    })
+    const { getDeterrenceCapabilities } = await import('./api')
+
+    // act
+    const result = await getDeterrenceCapabilities()
+
+    // assert
+    expect(asMock().mock.calls[0][0]).toBe('/api/security/deterrence/capabilities')
+    expect(result).toMatchObject({
+      available: true,
+      adapter: 'mounted_executable',
+      privacy_blocked: false,
+    })
+  })
+
+  it('given an automation toggle, when changed, then enabled-only PATCH never round-trips masked actions', async () => {
+    mockJson({
+      id: 'auto-1',
+      name: 'Webhook alert',
+      enabled: false,
+      triggers: { labels: ['person'], sources: [], camera_ids: [], rule_ids: [] },
+      conditions: { operating_modes: [], person: 'any', min_score: 0 },
+      actions: [{ kind: 'webhook', target: 'https://example.test/hook', secret_set: true }],
+      created_ts: 1,
+      updated_ts: 2,
+    })
+    const { patchAutomationEnabled } = await import('./api')
+
+    await patchAutomationEnabled('auto/1', false)
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/automations/auto%2F1')
+    expect((init as RequestInit).method).toBe('PATCH')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      enabled: false,
+    })
+  })
+
+  it('given a scoped audio media request, when tokenized, then the public API receives only action and path', async () => {
+    mockJson({ token: 'secret-token', expires_ts: 1234 })
+    const { getMediaToken } = await import('./api')
+
+    const result = await getMediaToken('publish', 'talk')
+
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/media-token')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      action: 'publish',
+      path: 'talk',
+    })
+    expect(result.token).toBe('secret-token')
   })
 
   it('Given a server outage, When probeEventClip gets a 500, Then it throws HttpError (outage must not read as "no clip")', async () => {

@@ -45,6 +45,13 @@ class Settings:
     # containerized server reads. Sweeper deletes clips older than
     # `recordings_retention_days`.
     recordings_dir: Path = Path(os.getenv("RECORDINGS_DIR", "./recordings"))
+    # MediaMTX's short-retention continuous fMP4 archive. Files live under
+    # ``<root>/<mediamtx camera path>/<unix-seconds>.mp4`` and are deliberately
+    # separate from the event-clip sweeper, which only scans the top level of
+    # ``recordings_dir``.
+    continuous_recordings_dir: Path = Path(
+        os.getenv("CONTINUOUS_RECORDINGS_DIR", "./recordings/continuous")
+    )
     recordings_retention_days: int = int(
         os.getenv("RECORDINGS_RETENTION_DAYS", "14")
     )
@@ -148,6 +155,12 @@ class Settings:
     events_db_path: Path = Path(
         os.getenv("EVENTS_DB_PATH", "./events.db")
     )
+    clip_shares_path: Path = Path(
+        os.getenv("CLIP_SHARES_PATH", "./clip_shares.json")
+    )
+    digest_state_path: Path = Path(
+        os.getenv("DIGEST_STATE_PATH", "./daily_digest_state.json")
+    )
     audit_db_path: Path = Path(
         os.getenv("AUDIT_DB_PATH", "/app/secrets/audit.db")
     )
@@ -156,6 +169,54 @@ class Settings:
     )
     host_action_state_path: Path = Path(
         os.getenv("HOST_ACTION_STATE_PATH", "/app/secrets/host_action.json")
+    )
+    camera_exposure_path: Path = Path(
+        os.getenv("CAMERA_EXPOSURE_PATH", "/app/secrets/camera_exposure.json")
+    )
+    # Security-platform state contains automation webhook credentials,
+    # incident notes and deterrence audit records. Keep it on the private
+    # persistent volume; SecurityStore atomically writes it mode 0o600.
+    security_state_path: Path = Path(
+        os.getenv("SECURITY_STATE_PATH", "/app/secrets/security-state.json")
+    )
+    security_exports_dir: Path = Path(
+        os.getenv("SECURITY_EXPORTS_DIR", "/app/secrets/security-exports")
+    )
+    security_timeline_max_range_s: int = int(
+        os.getenv("SECURITY_TIMELINE_MAX_RANGE_S", "86400")
+    )
+    security_timeline_export_max_range_s: int = int(
+        os.getenv("SECURITY_TIMELINE_EXPORT_MAX_RANGE_S", "21600")
+    )
+    security_export_max_outstanding_jobs: int = int(
+        os.getenv("SECURITY_EXPORT_MAX_OUTSTANDING_JOBS", "2")
+    )
+    security_export_max_total_bytes: int = int(
+        os.getenv("SECURITY_EXPORT_MAX_TOTAL_BYTES", str(5 * 1024**3))
+    )
+    security_export_min_free_bytes: int = int(
+        os.getenv("SECURITY_EXPORT_MIN_FREE_BYTES", str(4 * 1024**3))
+    )
+    # Source addresses allowed to call the otherwise unauthenticated MediaMTX
+    # auth callback. Docker deployments must explicitly include the observed
+    # host-to-container bridge gateway (fixed at 172.30.0.1 in Compose).
+    mediamtx_auth_trusted_callers: str = os.getenv(
+        "MEDIAMTX_AUTH_TRUSTED_CALLERS", "127.0.0.1,::1"
+    )
+    automation_webhook_timeout_s: float = float(
+        os.getenv("AUTOMATION_WEBHOOK_TIMEOUT_S", "5")
+    )
+    mqtt_host: str = os.getenv("HOMECAM_MQTT_HOST", "")
+    mqtt_port: int = int(os.getenv("HOMECAM_MQTT_PORT", "1883"))
+    mqtt_username: str = os.getenv("HOMECAM_MQTT_USERNAME", "")
+    mqtt_password: str = os.getenv("HOMECAM_MQTT_PASSWORD", "")
+    # Optional dedicated hardware driver. This is intentionally independent
+    # of host_bridge: an absent executable produces an explicit `unavailable`
+    # result and can never masquerade as an executed deterrence action.
+    deterrence_driver_path: Path | None = (
+        Path(os.environ["HOMECAM_DETERRENCE_DRIVER"])
+        if os.getenv("HOMECAM_DETERRENCE_DRIVER")
+        else None
     )
 
     # OTA artifact-bundle apply paths. Defaults live under the existing

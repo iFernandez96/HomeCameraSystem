@@ -281,10 +281,9 @@ export function CatTrioMark({
 // (no "tail flick" raster variant). `walk` ↔ `walk2` toggles the two
 // walk frames, preserving the iter-356.4 leg-phase animation.
 //
-// Direction-flip (cat walking LEFT) is handled by CatLayer applying
-// `transform: scaleX(-1)` on the sprite container — the sprite PNGs all
-// face RIGHT by default. The 3:2 aspect ratio (`SPRITE_W_RATIO = 1.5`)
-// is preserved so CatLayer's SPRITE_WIDTH/HEIGHT math is unchanged.
+// Direction-flip is handled by CatLayer applying `transform: scaleX(-1)`
+// on the sprite container when a cat moves RIGHT — both the curated
+// sprites and the 12-frame walk cycles face LEFT by default.
 
 export type BodyState =
   | 'walk'
@@ -335,14 +334,20 @@ function RasterSprite({
   cat,
   size,
   state,
+  walkFrame,
   className,
 }: {
   cat: CatId
   size: number
   state: BodyState
+  walkFrame?: number
   className?: string
 }) {
   const pose = poseFor(state)
+  const src =
+    walkFrame === undefined
+      ? `/cats/${cat}-${pose}.png`
+      : `/cats/anim/${cat}/walk_${String(walkFrame + 1).padStart(2, '0')}.png`
   // iter-356.39: render IMG at a slightly-taller-than-square box so the
   // curated PNGs (which stand tail-up, taller than wide) aren't clipped
   // at the bottom by a wide-aspect 3:2 container. width = `size`;
@@ -350,13 +355,14 @@ function RasterSprite({
   // adjusted in lockstep.
   return (
     <img
-      src={`/cats/${cat}-${pose}.png`}
+      src={src}
       alt=""
       width={size}
       height={Math.round(size * SPRITE_H_OVER_W)}
       data-testid="cat-sprite"
       data-cat-id={cat}
       data-cat-state={state}
+      data-walk-frame={walkFrame === undefined ? undefined : walkFrame + 1}
       decoding="async"
       loading="lazy"
       style={{
@@ -382,37 +388,67 @@ function RasterSprite({
 export function BombaySprite({
   size = 48,
   state = 'walk',
+  walkFrame,
   className,
 }: {
   size?: number
   state?: BodyState
+  walkFrame?: number
   className?: string
 }) {
-  return <RasterSprite cat="panther" size={size} state={state} className={className} />
+  return (
+    <RasterSprite
+      cat="panther"
+      size={size}
+      state={state}
+      walkFrame={walkFrame}
+      className={className}
+    />
+  )
 }
 
 export function TuxedoSprite({
   size = 48,
   state = 'walk',
+  walkFrame,
   className,
 }: {
   size?: number
   state?: BodyState
+  walkFrame?: number
   className?: string
 }) {
-  return <RasterSprite cat="mushu" size={size} state={state} className={className} />
+  return (
+    <RasterSprite
+      cat="mushu"
+      size={size}
+      state={state}
+      walkFrame={walkFrame}
+      className={className}
+    />
+  )
 }
 
 export function CalicoSprite({
   size = 48,
   state = 'walk',
+  walkFrame,
   className,
 }: {
   size?: number
   state?: BodyState
+  walkFrame?: number
   className?: string
 }) {
-  return <RasterSprite cat="coco" size={size} state={state} className={className} />
+  return (
+    <RasterSprite
+      cat="coco"
+      size={size}
+      state={state}
+      walkFrame={walkFrame}
+      className={className}
+    />
+  )
 }
 
 // === SLEEPING CAT ILLUSTRATION (empty-state mascot) =======================

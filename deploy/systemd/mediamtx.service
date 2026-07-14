@@ -9,8 +9,10 @@ Description=MediaMTX video gateway (Home Camera System)
 # After= alone establishes ordering; the Wants= ensures nvargus-daemon
 # is actually started (it is socket-activated and may not be active
 # at our boot time).
-After=network-online.target nvargus-daemon.service
+After=network-online.target nvargus-daemon.service homecam-server.service srv-homecam\x2dmedia.mount
 Wants=network-online.target
+Requires=homecam-server.service
+RequiresMountsFor=/srv/homecam-media
 # iter (camera-recovery 2026-06-20, deep-research-backed): BindsTo makes the
 # Argus daemon's runtime liveness a HARD precondition — mediamtx is torn down
 # if nvargus-daemon stops/fails (it can't publish without Argus), and the
@@ -20,7 +22,7 @@ Wants=network-online.target
 # Wants=nvargus is now redundant); After= above orders it. BindsTo propagates
 # the STOP only — the watchdog still does an explicit `restart mediamtx` after
 # the nvargus restart to bring the publisher back.
-BindsTo=nvargus-daemon.service
+BindsTo=nvargus-daemon.service srv-homecam\x2dmedia.mount
 # Match the homecam-detect storm guard: 5 failures inside 60 s and
 # systemd gives up rather than spinning. A misconfigured mediamtx.yml
 # fails fast and stays failed — better to see "service failed" in the
@@ -33,7 +35,17 @@ Type=simple
 User=israel
 Group=israel
 WorkingDirectory=/home/israel/HomeCameraSystem
+# Optional, root-managed audio hardware activation. An absent file leaves all
+# speaker output disabled; never place browser media grants in this file.
+EnvironmentFile=-/etc/homecam/mediamtx.env
+ExecStartPre=/bin/mountpoint -q /srv/homecam-media
+ExecStartPre=/usr/bin/test -f /srv/homecam-media/.homecam-media
 ExecStart=/home/israel/HomeCameraSystem/mediamtx /home/israel/HomeCameraSystem/deploy/mediamtx.yml
+# Continuous archive segments contain private camera frames. MediaMTX creates
+# them with os.Create(0666), so force 0600 files (and 0700 newly-created
+# directories) instead of inheriting the host's usual world-readable 0022.
+# The FastAPI container runs as root and can still read the bind mount.
+UMask=0077
 Restart=on-failure
 # iter (camera-recovery 2026-06-20): 5s→15s. A short delay hammers a still-
 # wedged Argus on restart-on-failure (deep research: use an explicit longer

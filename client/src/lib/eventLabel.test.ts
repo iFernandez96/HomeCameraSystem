@@ -136,6 +136,24 @@ describe('eventTitle', () => {
     // assert — falls through to label branch.
     expect(title).toBe('Person at the front door')
   })
+
+  it('Given a delivered package event, When title is built, Then package state is human-readable', () => {
+    expect(
+      eventTitle(
+        makeEvent({
+          source: 'vision',
+          label: 'object_change',
+          package_state: 'delivered',
+        }),
+      ),
+    ).toBe('Package delivered at the front door')
+  })
+
+  it('Given an audio event, When title is built, Then snake-case detector labels read as a sound', () => {
+    expect(
+      eventTitle(makeEvent({ source: 'audio', label: 'glass_break' })),
+    ).toBe('Glass break sound at the front door')
+  })
 })
 
 describe('recognizedNames', () => {

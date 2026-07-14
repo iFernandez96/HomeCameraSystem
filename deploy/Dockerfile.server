@@ -13,12 +13,17 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8000 \
     SNAPSHOTS_DIR=/app/snapshots \
     RECORDINGS_DIR=/app/recordings \
+    CONTINUOUS_RECORDINGS_DIR=/app/recordings/continuous \
     BACKUP_TARGET_DIR=/app/backups \
     TIMELAPSES_DIR=/app/timelapses \
     CLIENT_DIST=/app/client_dist \
     VAPID_PRIVATE_KEY_PATH=/app/secrets/vapid_private.pem \
     VAPID_PUBLIC_KEY_PATH=/app/secrets/vapid_public.pem \
     PUSH_SUBS_PATH=/app/secrets/push_subs.json \
+    CLIP_SHARES_PATH=/app/secrets/clip_shares.json \
+    DIGEST_STATE_PATH=/app/secrets/daily_digest_state.json \
+    SECURITY_STATE_PATH=/app/secrets/security-state.json \
+    SECURITY_EXPORTS_DIR=/app/secrets/security-exports \
     DETECTION_CONFIG_PATH=/app/secrets/detection_config.json \
     USERS_DB_PATH=/app/secrets/users.db \
     JWT_SECRET_PATH=/app/secrets/jwt_secret.bin \
@@ -43,7 +48,8 @@ RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 COPY server/ ./
 
 # Ensure mount points exist so first-run before-volumes-attach doesn't crash.
-RUN mkdir -p /app/secrets /app/snapshots /app/recordings /app/backups /app/timelapses /app/client_dist
+RUN mkdir -p /app/secrets/security-exports /app/snapshots \
+    /app/recordings/continuous /app/backups /app/timelapses /app/client_dist
 
 COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

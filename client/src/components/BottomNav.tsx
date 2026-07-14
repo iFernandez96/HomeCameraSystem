@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { EventsIcon, GodViewIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
 import { useRipple } from '../lib/ripple'
 import { useAuth } from '../lib/auth'
@@ -29,6 +29,15 @@ import { isGodModeUser } from '../lib/roles'
 // header link). The desktop SideRail keeps its 5-item roster — a
 // cross-DEVICE difference is acceptable, a cross-ORIENTATION one
 // is not.
+//
+// Playground (Slice A): deliberately NOT a tab here. The width math
+// fails at 360px: the pebble's inner strip is ~360 - 28 (mx-3.5) -
+// 20 (px-2.5) - 3 (border) ≈ 309px, and each tab's icon row is a
+// w-14 (56px) span — 5 base tabs + the god-mode God View entry = 6
+// tabs at ~51px each, which overflows the 56px icon span. It also
+// re-litigates the NAV-1 4-destination phone IA cap above. The
+// Playground lives on the desktop SideRail; phones reach it by URL /
+// deep link until a dedicated mobile entry point is designed.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },
@@ -38,6 +47,7 @@ const tabs = [
 
 export function BottomNav() {
   const ripple = useRipple()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const visibleTabs =
     isGodModeUser(user)
@@ -83,8 +93,11 @@ export function BottomNav() {
       // desktop SideRail (vertical icon stack, edge-anchored, content
       // never sits under it). Overridden dimensions: bottom-anchored
       // classes (inset-x-0/mx-3.5/mb-[...]/rounded-full) give way to
-      // left-anchored ones (top-0/bottom-0/left-0/w-16/rounded-[...]).
-      className="fixed bottom-0 inset-x-0 z-10 mx-3.5 mb-[calc(0.875rem+env(safe-area-inset-bottom,0px))] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-scrim)] backdrop-blur px-2.5 py-2 shadow-[0_10px_24px_-14px_rgb(33_31_27/0.35)] landscape-phone:top-0 landscape-phone:bottom-0 landscape-phone:left-0 landscape-phone:right-auto landscape-phone:inset-x-auto landscape-phone:mx-0 landscape-phone:mb-0 landscape-phone:my-3 landscape-phone:ml-[max(0.75rem,env(safe-area-inset-left,0px))] landscape-phone:w-16 landscape-phone:rounded-[1.75rem] landscape-phone:px-1.5 landscape-phone:py-3"
+      // left-anchored ones (top-0/bottom-0/left-0/w-14/rounded-[...]).
+      // The landscape rail is icon-first: labels stay in the
+      // accessibility tree but are visually hidden. A short camera
+      // viewport should not spend prime width on nav copy.
+      className="fixed bottom-0 inset-x-0 z-10 mx-3.5 mb-[calc(0.875rem+env(safe-area-inset-bottom,0px))] rounded-full border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-scrim)] backdrop-blur px-2.5 py-2 shadow-[0_10px_24px_-14px_rgb(33_31_27/0.35)] landscape-phone:top-0 landscape-phone:bottom-0 landscape-phone:left-0 landscape-phone:right-auto landscape-phone:inset-x-auto landscape-phone:mx-0 landscape-phone:mb-0 landscape-phone:my-2 landscape-phone:ml-[max(0.375rem,env(safe-area-inset-left,0px))] landscape-phone:w-12 landscape-phone:rounded-2xl landscape-phone:px-0.5 landscape-phone:py-2"
     >
       {/* Premium-launch slice (mobile-view-auditor A2): lateral
           safe-area inset on the inner tab strip in landscape. Pre-
@@ -99,24 +112,26 @@ export function BottomNav() {
           extending under the safe-area while constraining tap
           targets to the safe inner band. Android (zero insets) is
           unchanged. */}
-      <div
-        className="flex landscape-phone:flex-col landscape-phone:h-full landscape-phone:justify-center landscape-phone:gap-1"
-        style={{
-          // `max(0px, env(...))` instead of bare `env(...)` so jsdom's
-          // CSSStyleDeclaration accepts the value (it parses `max(...)`
-          // expressions but silently rejects bare `env()` shorthands
-          // when set via the React style prop). Functionally identical
-          // on browsers — `env(safe-area-inset-left, 0px)` resolves to
-          // 0 on devices without the inset, so `max(0px, 0)` = 0; on
-          // devices with the inset, `max(0px, 47px)` = 47px.
-          paddingLeft: 'max(0px, env(safe-area-inset-left))',
-          paddingRight: 'max(0px, env(safe-area-inset-right))',
-        }}
-      >
+      <div className="bottomnav-inner flex landscape-phone:flex-col landscape-phone:h-full landscape-phone:justify-center landscape-phone:gap-1.5">
         {visibleTabs.map((t) => (
           <NavLink
             key={t.to}
             to={t.to}
+            replace
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.altKey ||
+                event.ctrlKey ||
+                event.shiftKey
+              ) {
+                return
+              }
+              event.preventDefault()
+              navigate(t.to, { replace: true })
+            }}
             // `end` on the home tab — without it NavLink treats '/'
             // as a prefix of every route and Watch would always
             // render active.
@@ -128,10 +143,7 @@ export function BottomNav() {
             // bar's rounded-full language. overflow-hidden still
             // contains the press ripple.
             className={({ isActive }) =>
-              // Landscape label: 9px was below the readable floor
-              // (frank B3) — 11px still fits "Settings" inside the
-              // 64px rail width with the px-1.5 nav padding.
-              `relative overflow-hidden flex flex-1 landscape-phone:flex-none landscape-phone:w-full py-1.5 flex-col items-center gap-0.5 text-xs landscape-phone:text-[11px] rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
+              `relative overflow-hidden flex flex-1 landscape-phone:flex-none landscape-phone:w-full landscape-phone:min-h-11 py-1.5 flex-col items-center gap-0.5 text-xs rounded-full transition-colors focus-ring focus-visible:outline-offset-[-4px] focus-visible:rounded-full ${
                 isActive
                   ? 'bg-[var(--color-ink)] text-[var(--color-on-ink)] font-semibold'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
@@ -141,10 +153,10 @@ export function BottomNav() {
           >
             {({ isActive }) => (
               <>
-                <span className="flex items-center justify-center w-14 landscape-phone:w-8 h-7">
+                <span className="flex items-center justify-center w-14 landscape-phone:w-7 h-7">
                   <t.icon active={isActive} />
                 </span>
-                <span className="landscape-phone:leading-tight landscape-phone:text-center">{t.label}</span>
+                <span className="landscape-phone:sr-only">{t.label}</span>
               </>
             )}
           </NavLink>

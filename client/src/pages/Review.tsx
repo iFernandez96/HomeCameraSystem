@@ -7,6 +7,7 @@ import { LoadingState } from '../components/states/LoadingState'
 import {
   deleteFaceCapture,
   getReviewQueue,
+  listFaceCaptureDirs,
   moveFaceCapture,
   type ReviewQueueItem,
 } from '../lib/api'
@@ -44,6 +45,8 @@ export function Review() {
   const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [knownNames, setKnownNames] = useState<string[]>([])
+  const [assignments, setAssignments] = useState<Record<string, string>>({})
   const confirm = useConfirm()
   const { showToast } = useToast()
 
@@ -56,11 +59,16 @@ export function Review() {
 
   useEffect(() => {
     let cancelled = false
-    getReviewQueue(50)
-      .then((r) => {
+    Promise.all([getReviewQueue(50), listFaceCaptureDirs()])
+      .then(([r, dirs]) => {
         if (cancelled) return
         setItems(r.items)
         setTotal(r.total_uncertain)
+        setKnownNames(
+          dirs.dirs
+            .map((dir) => dir.name)
+            .filter((name) => name !== UNKNOWN_BUCKET),
+        )
       })
       .catch((e) => {
         if (cancelled) return
@@ -159,6 +167,22 @@ export function Review() {
 
         'error',
       )
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  async function handleAssign(item: ReviewQueueItem) {
+    const target = assignments[keyOf(item)]
+    if (!target) return
+    const k = keyOf(item)
+    setBusyKey(k)
+    try {
+      await moveFaceCapture(item.current_dir, item.filename, target)
+      removeFromList(item)
+      showToast(`Filed as ${target}.`, 'success')
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Move failed — try again.', 'error')
     } finally {
       setBusyKey(null)
     }
@@ -305,6 +329,32 @@ export function Review() {
                       Not sure
                     </Button>
                   </div>
+                  {knownNames.length > 0 ? (
+                    <div className="flex gap-2">
+                      <label className="min-w-0 flex-1">
+                        <span className="sr-only">Assign this photo to a familiar person</span>
+                        <select
+                          value={assignments[k] ?? ''}
+                          onChange={(e) =>
+                            setAssignments((current) => ({ ...current, [k]: e.target.value }))
+                          }
+                          disabled={busy}
+                          className="min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-sm text-[var(--color-text-primary)]"
+                        >
+                          <option value="">Choose person…</option>
+                          {knownNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                        </select>
+                      </label>
+                      <Button
+                        variant="secondary"
+                        size="md"
+                        disabled={!assignments[k] || busy}
+                        onClick={() => void handleAssign(item)}
+                      >
+                        Assign
+                      </Button>
+                    </div>
+                  ) : null}
                   {/* Playroom Modern (Task 7 token pass): swapped the
                       ghost-variant + `!text-danger` override hack for
                       the Button primitive's own `destructive` variant

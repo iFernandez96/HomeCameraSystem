@@ -29,13 +29,16 @@ Public surface (iter-201, slice 1):
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import shutil
 import time
 from pathlib import Path
+from typing import Iterable
 
 from ..config import settings
+from ..log import RateLimitedLog
 
 
 log = logging.getLogger(__name__)
@@ -71,6 +74,10 @@ SERVER_MIN_FREE_BYTES = 300 * 1024 * 1024  # ~300 MB
 # documents the same shape so any future caller that builds an
 # event_id from outside the route layer can validate against it.
 _VALID_EVENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+_CLIP_STATE_LEDGER = ".clip_state.json"
+_CLIP_LIFECYCLE_STATES = {"recording", "finalizing", "failed"}
+_STALE_ACTIVE_AFTER_S = 15 * 60
+_clip_status_scan_gate = RateLimitedLog(60.0)
 
 
 def _is_safe_event_id(event_id: str) -> bool:
@@ -95,9 +102,274 @@ def clip_path(event_id: str) -> Path:
 def clip_exists(event_id: str) -> bool:
     """True if the per-event clip file is present on disk."""
     try:
-        return clip_path(event_id).is_file()
-    except ValueError:
+        path = clip_path(event_id)
+        return path.is_file() and path.stat().st_size > 0
+    except (ValueError, OSError):
         return False
+
+
+def clip_state_ledger_path() -> Path:
+    """Path to the worker-written clip-state ledger."""
+    return settings.recordings_dir / _CLIP_STATE_LEDGER
+
+
+def read_clip_state_ledger() -> dict:
+    """Read the worker's clip-state ledger.
+
+    Returns a normalized ``{"v": 1, "events": {...}}`` shape. Any missing,
+    corrupt, or malformed file reads as an empty ledger; the API must never fail
+    a clip fetch because observability state is unavailable.
+    """
+    path = clip_state_ledger_path()
+    try:
+        with path.open("r") as f:
+            data = json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"v": 1, "events": {}}
+    if not isinstance(data, dict):
+        return {"v": 1, "events": {}}
+    events = data.get("events")
+    if not isinstance(events, dict):
+        events = {}
+    return {"v": 1, "events": events}
+
+
+def clip_state(event_id: str) -> dict:
+    """Best known state for an event clip.
+
+    Disk availability wins over stale ledger state: if ``<id>.mp4`` exists, the
+    route can serve it and the state is ``available`` even if the worker crashed
+    before updating the ledger.
+    """
+    if not _is_safe_event_id(event_id):
+        raise ValueError("invalid event_id: {!r}".format(event_id))
+    if clip_exists(event_id):
+        path = clip_path(event_id)
+        size = None
+        updated_ts = None
+        try:
+            stat = path.stat()
+            size = stat.st_size
+            updated_ts = stat.st_mtime
+        except OSError:
+            pass
+        return {
+            "event_id": event_id,
+            "state": "available",
+            "source": "disk",
+            "bytes": size,
+            "updated_ts": updated_ts,
+        }
+    rec = read_clip_state_ledger()["events"].get(event_id)
+    if isinstance(rec, dict):
+        out = _public_clip_state(event_id, rec)
+        if out.get("state") == "available":
+            # A historical ledger claim is not proof of playback after
+            # retention, manual deletion, or a zero-byte placeholder. Only the
+            # non-empty disk check above may return available.
+            try:
+                zero_byte = clip_path(event_id).is_file() and (
+                    clip_path(event_id).stat().st_size == 0
+                )
+            except OSError:
+                zero_byte = False
+            if zero_byte:
+                try:
+                    clip_path(event_id).unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    log.warning(
+                        "could not remove empty failed clip for %s: %s",
+                        event_id,
+                        exc,
+                    )
+                out.update({
+                    "state": "failed",
+                    "failure_code": "empty_output",
+                    "failure_stage": "publishing",
+                    "failure_summary": "The saved video file is empty.",
+                    "failure_detail": (
+                        "A filename was created, but it contains no playable "
+                        "video data."
+                    ),
+                    "retryable": False,
+                })
+            else:
+                out["state"] = "unknown"
+        out.setdefault("event_id", event_id)
+        out.setdefault("source", "ledger")
+        return out
+    return {"event_id": event_id, "state": "unknown", "source": "missing"}
+
+
+def _is_stale_active(rec: dict, now: float | None = None) -> bool:
+    if rec.get("state") not in {"recording", "finalizing"}:
+        return False
+    try:
+        raw_updated = rec.get("updated_ts")
+        if raw_updated is None:
+            # Older worker ledgers did not include a heartbeat timestamp. We
+            # cannot truthfully infer their age; startup reconciliation handles
+            # current-version records with timestamps.
+            return False
+        updated = float(raw_updated)
+    except (TypeError, ValueError):
+        return False
+    current = time.time() if now is None else now
+    return current - updated > _STALE_ACTIVE_AFTER_S
+
+
+def _public_clip_state(event_id: str, rec: dict) -> dict:
+    """Return only client-safe lifecycle and plain-language diagnostics."""
+    allowed = {
+        "state", "updated_ts", "start_ts", "end_ts", "bytes", "last_seen",
+        "failure_code", "failure_stage", "failure_summary", "failure_detail",
+        "retryable", "eta_point_ts", "eta_min_ts", "eta_max_ts",
+        "eta_model_samples", "eta_historical_spread_s", "eta_model",
+        "eta_backtest_median_error_s", "eta_backtest_p90_error_s",
+        "processing_stage", "queue_ahead",
+        "eta_live_progress", "validation_progress", "validation_speed",
+    }
+    out = {key: rec[key] for key in allowed if key in rec}
+    out["event_id"] = event_id
+    if _is_stale_active(rec):
+        out.update({
+            "state": "failed",
+            "failure_code": "worker_restarted",
+            "failure_stage": rec.get("state"),
+            "failure_summary": "Video processing was interrupted.",
+            "failure_detail": (
+                "The camera worker stopped before it could publish this "
+                "event's video. Waiting longer will not make it appear."
+            ),
+            "retryable": False,
+        })
+    elif out.get("state") == "failed" and not out.get("failure_summary"):
+        out.update({
+            "failure_code": rec.get("reason") or "legacy_capture_failure",
+            "failure_stage": "processing",
+            "failure_summary": "No playable video was saved.",
+            "failure_detail": (
+                "The older recorder reported a processing failure but did "
+                "not save a more specific explanation."
+            ),
+            "retryable": False,
+        })
+    return out
+
+
+def clip_statuses(event_ids: Iterable[str]) -> dict[str, str]:
+    """Return truthful clip lifecycle states for a batch of events.
+
+    The event list and search routes can return up to 1,000 rows. Reading the
+    worker ledger separately for every row would turn one request into 1,000
+    JSON reads, while making the client poll ``/clip/status`` per card would
+    create the same N+1 problem over HTTP. This helper reads the ledger once
+    and scans the recordings directory once.
+
+    A final MP4 on disk is the only proof of ``available``. In particular, an
+    old ledger record that says ``available`` is ignored after retention or
+    manual cleanup removes the file. ``recording``, ``finalizing``, and
+    ``failed`` remain authoritative worker lifecycle states; malformed or
+    missing records degrade to ``unknown`` rather than making a claim the UI
+    cannot substantiate.
+    """
+    safe_ids = {
+        event_id
+        for event_id in event_ids
+        if isinstance(event_id, str) and _is_safe_event_id(event_id)
+    }
+    statuses = {event_id: "unknown" for event_id in safe_ids}
+    if not safe_ids:
+        return statuses
+
+    ledger_events = read_clip_state_ledger()["events"]
+    for event_id in safe_ids:
+        rec = ledger_events.get(event_id)
+        if not isinstance(rec, dict):
+            continue
+        state = rec.get("state")
+        if state in _CLIP_LIFECYCLE_STATES:
+            statuses[event_id] = (
+                "failed" if _is_stale_active(rec) else state
+            )
+
+    try:
+        with os.scandir(settings.recordings_dir) as entries:
+            for entry in entries:
+                name = entry.name
+                if not name.endswith(".mp4"):
+                    continue
+                event_id = name[:-4]
+                if event_id not in safe_ids:
+                    continue
+                try:
+                    if entry.is_file() and entry.stat().st_size > 0:
+                        statuses[event_id] = "available"
+                except OSError as exc:
+                    if _clip_status_scan_gate.should_log():
+                        log.warning(
+                            "clip status scan could not inspect %s: %s",
+                            entry.path,
+                            exc,
+                        )
+    except OSError as exc:
+        if _clip_status_scan_gate.should_log():
+            log.warning(
+                "clip status scan failed for recordings dir %s: %s",
+                settings.recordings_dir,
+                exc,
+            )
+
+    return statuses
+
+
+def clip_eta_ranges(event_ids: Iterable[str]) -> dict[str, dict]:
+    """Return worker-authored ETA bounds for active, non-stale clips."""
+    safe_ids = {
+        event_id for event_id in event_ids
+        if isinstance(event_id, str) and _is_safe_event_id(event_id)
+    }
+    ledger_events = read_clip_state_ledger()["events"]
+    ranges: dict[str, dict] = {}
+    for event_id in safe_ids:
+        rec = ledger_events.get(event_id)
+        if not isinstance(rec, dict) or _is_stale_active(rec):
+            continue
+        if rec.get("state") not in {"recording", "finalizing"}:
+            continue
+        try:
+            point = float(rec["eta_point_ts"])
+            low = float(rec["eta_min_ts"])
+            high = float(rec["eta_max_ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        activity_present = None
+        finalize_if_clear_ts = None
+        if rec.get("state") == "recording":
+            try:
+                last_seen = float(rec["last_seen"])
+                activity_present = time.time() - last_seen <= 2.0
+                finalize_if_clear_ts = last_seen + float(
+                    rec["absence_finalize_s"]
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+        if low > 0 and low <= point <= high:
+            ranges[event_id] = {
+                "point_ts": point,
+                "min_ts": low,
+                "max_ts": high,
+                "model_samples": int(rec.get("eta_model_samples") or 0),
+                "backtest_median_error_s": rec.get(
+                    "eta_backtest_median_error_s"
+                ),
+                "live_progress": bool(rec.get("eta_live_progress")),
+                "activity_present": activity_present,
+                "finalize_if_clear_ts": finalize_if_clear_ts,
+            }
+    return ranges
 
 
 def tracks_path(event_id: str) -> Path:
@@ -221,6 +493,14 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
     if not rec_dir.exists():
         return 0
     cutoff = time.time() - (retention_days * 86400)
+    try:
+        from .events_db import protected_event_ids
+        protected_ids = protected_event_ids(settings.events_db_path)
+    except Exception:
+        # Fail closed: if protection state cannot be read, do not risk deleting
+        # footage the owner explicitly retained.
+        log.exception("sweep: could not load protected event ids; skipping sweep")
+        return 0
     deleted = 0
     # iter-356.53: also sweep `.tracks.json` sidecars older than the
     # cutoff. Suffix-match the same way the .mp4 sweep does so a
@@ -236,6 +516,11 @@ def sweep_old_clips(retention_days: int | None = None) -> int:
                 # Don't touch non-mp4 / non-sidecar files — operator
                 # might keep ad-hoc test clips or partial ffmpeg
                 # work-files that share the dir.
+                continue
+            event_id = (
+                entry.name[:-12] if is_tracks_sidecar else entry.stem
+            )
+            if event_id in protected_ids:
                 continue
             try:
                 mtime = entry.stat().st_mtime
@@ -284,6 +569,38 @@ def _list_clips_by_mtime(rec_dir: Path) -> list:
         log.warning("evict: failed to list %s: %s", rec_dir, e)
     out.sort(key=lambda pair: pair[0])
     return out
+
+
+def storage_forecast(now: float | None = None) -> dict:
+    """Measure recent clip growth and protected bytes for runway estimates."""
+    if now is None:
+        now = time.time()
+    rec_dir = settings.recordings_dir
+    recent_bytes = 0
+    protected_bytes = 0
+    try:
+        from .events_db import protected_event_ids
+        protected_ids = protected_event_ids(settings.events_db_path)
+    except Exception:
+        log.exception("storage forecast: could not load protected event ids")
+        protected_ids = set()
+    try:
+        clips = _list_clips_by_mtime(rec_dir) if rec_dir.exists() else []
+        for mtime, path in clips:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if mtime >= now - 86400:
+                recent_bytes += size
+            if Path(path.name).stem in protected_ids:
+                protected_bytes += size
+    except Exception:
+        log.exception("storage forecast: clip scan failed")
+    return {
+        "recording_gb_per_day": recent_bytes / (1024 ** 3),
+        "protected_recording_gb": protected_bytes / (1024 ** 3),
+    }
 
 
 def evict_to_free_space(
@@ -335,9 +652,17 @@ def evict_to_free_space(
 
     # Snapshot oldest-first; delete until free >= floor or we run out.
     clips = list_clips(rec_dir)
+    try:
+        from .events_db import protected_event_ids
+        protected_ids = protected_event_ids(settings.events_db_path)
+    except Exception:
+        log.exception("evict: could not load protected event ids; skipping eviction")
+        return result
     for _mtime, path in clips:
         if _free() >= min_free_bytes:
             break
+        if Path(path.name).stem in protected_ids:
+            continue
         try:
             size = path.stat().st_size
         except OSError:

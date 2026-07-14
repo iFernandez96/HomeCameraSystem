@@ -24,6 +24,8 @@ import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { Button } from '../components/primitives/Button'
+import { OutageTimelinePanel } from '../components/godview/OutageTimelinePanel'
+import { UsageSessionsPanel } from '../components/godview/UsageSessionsPanel'
 
 function dayInputToEpoch(value: string, endOfDay: boolean): number | undefined {
   if (!value) return undefined
@@ -478,15 +480,9 @@ export function GodView() {
         </form>
       </header>
 
-      <CrashCartPanels status={status} />
-      <WedgePanel metrics={status?.worker_metrics ?? null} />
-      <RecoveryPanel />
-      <LogViewerPanel />
-      <SessionsPanel user={user} />
-
       {error ? (
         <ErrorState
-          title="Could not load audit log"
+          title="Could not load app activity"
           message="Check the server and try again."
           retry={() => setReloadNonce((n) => n + 1)}
           technicalDetail={formatError(error)}
@@ -494,7 +490,22 @@ export function GodView() {
       ) : loading || !audit ? (
         <LoadingState shape="list" />
       ) : (
-        <>
+        <UsageSessionsPanel sessions={audit.sessions} />
+      )}
+
+      <CrashCartPanels status={status} />
+      <WedgePanel metrics={status?.worker_metrics ?? null} />
+      <OutageTimelinePanel />
+      <RecoveryPanel />
+      <LogViewerPanel />
+      <SessionsPanel user={user} />
+
+      {!error && !loading && audit ? (
+        <details className="rounded-lg border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+          <summary className="min-h-11 cursor-pointer py-2 text-base font-semibold text-[var(--color-text-primary)]">
+            Raw audit tables
+          </summary>
+          <div className="mt-4 space-y-5">
           <section aria-labelledby="sessions-heading" className="space-y-3">
             <h2 id="sessions-heading" className="text-lg font-semibold text-[var(--color-text-primary)]">
               Sessions Timeline
@@ -538,7 +549,7 @@ export function GodView() {
                   <h3 id={`god-user-${username}`} className="text-base font-semibold text-[var(--color-text-primary)]">
                     {username}
                   </h3>
-                  <dl className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                  <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                     <div>
                       <dt className="text-[var(--color-text-secondary)]">Logins</dt>
                       <dd className="font-semibold text-[var(--color-text-primary)]">{summary.logins}</dd>
@@ -550,6 +561,10 @@ export function GodView() {
                     <div>
                       <dt className="text-[var(--color-text-secondary)]">Events</dt>
                       <dd className="font-semibold text-[var(--color-text-primary)]">{summary.event_views}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--color-text-secondary)]">Actions</dt>
+                      <dd className="font-semibold text-[var(--color-text-primary)]">{summary.actions}</dd>
                     </div>
                   </dl>
                   <div className="mt-4">
@@ -598,8 +613,9 @@ export function GodView() {
               </table>
             </div>
           </section>
-        </>
-      )}
+          </div>
+        </details>
+      ) : null}
     </section>
   )
 }

@@ -3,10 +3,15 @@ import { act, render, screen } from '@testing-library/react'
 
 const subscribeWsState = vi.fn()
 const reconnectIfClosed = vi.fn()
+const probeJetsonHealth = vi.fn()
 
 vi.mock('../lib/ws', () => ({
   subscribeWsState: (cb: (s: string) => void) => subscribeWsState(cb),
   reconnectIfClosed: () => reconnectIfClosed(),
+}))
+
+vi.mock('../lib/jetsonHealth', () => ({
+  probeJetsonHealth: () => probeJetsonHealth(),
 }))
 
 // iter-182: ConnectionBanner consumes useAuth() to hide the banner
@@ -30,10 +35,15 @@ describe('ConnectionBanner', () => {
   beforeEach(() => {
     subscribeWsState.mockReset()
     reconnectIfClosed.mockReset()
+    probeJetsonHealth.mockReset().mockResolvedValue(true)
     _authState = 'authed'
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
       get: () => 'visible',
+    })
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
     })
   })
   afterEach(() => {
@@ -107,6 +117,57 @@ describe('ConnectionBanner', () => {
       // role="alert" implies aria-live="assertive" — explicit attr
       // would double-up the announcement.
       expect(alert.getAttribute('aria-live')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Given health checks fail twice while the phone has network, Then the banner says the Jetson is offline or unreachable', async () => {
+    vi.useFakeTimers()
+    try {
+      Object.defineProperty(window.navigator, 'onLine', {
+        configurable: true,
+        value: true,
+      })
+      probeJetsonHealth.mockResolvedValue(false)
+      subscribeWsState.mockImplementation((cb) => {
+        cb('closed')
+        return () => {}
+      })
+
+      render(<ConnectionBanner />)
+      await act(async () => {
+        vi.advanceTimersByTime(7_100)
+        await Promise.resolve()
+      })
+
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent(/jetson offline or unreachable/i)
+      expect(alert).toHaveTextContent(/past events are unavailable/i)
+      expect(alert).not.toHaveTextContent(/past events still work/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Given Android has no network, Then the banner blames the phone connection rather than the Jetson', () => {
+    vi.useFakeTimers()
+    try {
+      Object.defineProperty(window.navigator, 'onLine', {
+        configurable: true,
+        value: false,
+      })
+      subscribeWsState.mockImplementation((cb) => {
+        cb('closed')
+        return () => {}
+      })
+
+      render(<ConnectionBanner />)
+      act(() => vi.advanceTimersByTime(2_100))
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/this phone is offline/i)
+      expect(screen.queryByText(/jetson offline/i)).not.toBeInTheDocument()
+      expect(probeJetsonHealth).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

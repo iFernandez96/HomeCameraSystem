@@ -1,49 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- iter-356.35 — cat-themed PWA app icon. Calico-orange tile with a
-       Mushu-style tuxedo cat face peeking through. Calico orange = the
-       app's accent token (#d97706). Tuxedo silhouette + yellow eyes +
-       white bib + pink nose reads as cat at every scale from 48 px home
-       screen up to 512 px install splash. Tiny red recording dot in
-       top-right hints at the camera function. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="HomeCam">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="72" x2="384" y2="444" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3a352b"/>
+      <stop offset="1" stop-color="#211f1b"/>
+    </linearGradient>
+  </defs>
 
-  <!-- rounded-square background -->
-  <rect width="512" height="512" rx="96" fill="#d97706"/>
+  <circle cx="256" cy="256" r="238" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="231" fill="none" stroke="#7d7258" stroke-width="8" stroke-opacity="0.65"/>
 
-  <!-- subtle warm-dark inner shadow ring for depth -->
-  <rect x="6" y="6" width="500" height="500" rx="92" fill="none" stroke="#1a1410" stroke-width="2" stroke-opacity="0.18"/>
+  <path d="M112 184 L256 82 L400 184" fill="none" stroke="#c4b48c" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M352 116 H382 V166" fill="none" stroke="#c4b48c" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- cat head — black silhouette centered, scaled to ~70% of tile -->
-  <!-- Ears -->
-  <path d="M138 180 L108 64 L210 144 Z" fill="#0e0c0a"/>
-  <path d="M374 180 L404 64 L302 144 Z" fill="#0e0c0a"/>
-  <!-- Inner ear pink -->
-  <path d="M152 168 L130 100 L194 144 Z" fill="#fda4af" opacity="0.85"/>
-  <path d="M360 168 L382 100 L318 144 Z" fill="#fda4af" opacity="0.85"/>
+  <path d="M396 242 L454 205 C465 198 478 206 478 219 V342 C478 355 465 362 454 355 L396 318 Z" fill="#fffdf7"/>
+  <rect x="82" y="184" width="318" height="174" rx="32" fill="none" stroke="#fffdf7" stroke-width="20"/>
 
-  <!-- Head silhouette -->
-  <path d="M256 110
-           C 152 110, 92 192, 92 296
-           C 92 388, 156 460, 256 460
-           C 356 460, 420 388, 420 296
-           C 420 192, 360 110, 256 110 Z"
-        fill="#0e0c0a"/>
+  <rect x="116" y="222" width="104" height="118" rx="10" fill="none" stroke="#2f5fe0" stroke-width="13"/>
+  <circle cx="168" cy="265" r="25" fill="#fffdf7"/>
+  <path d="M124 329 C130 297 147 283 168 283 C189 283 206 297 212 329 Z" fill="#fffdf7"/>
 
-  <!-- Tuxedo bib — chin + chest, contained within head -->
-  <path d="M188 350 C 220 432, 292 432, 324 350 L 336 460 L 176 460 Z" fill="#f7f3eb"/>
-  <ellipse cx="256" cy="392" rx="48" ry="32" fill="#f7f3eb"/>
+  <rect x="264" y="262" width="108" height="86" rx="11" fill="none" stroke="#f08536" stroke-width="13"/>
+  <ellipse cx="317" cy="326" rx="27" ry="30" fill="#fffdf7"/>
+  <circle cx="316" cy="294" r="22" fill="#fffdf7"/>
+  <path d="M300 279 L304 253 L323 275 Z" fill="#fffdf7"/>
+  <path d="M329 276 L346 256 L343 284 Z" fill="#fffdf7"/>
+  <path d="M343 331 C368 337 371 303 348 301" fill="none" stroke="#fffdf7" stroke-width="10" stroke-linecap="round"/>
 
-  <!-- Eyes — yellow, with slit pupils + catchlight -->
-  <ellipse cx="200" cy="276" rx="32" ry="36" fill="#fde047"/>
-  <ellipse cx="312" cy="276" rx="32" ry="36" fill="#fde047"/>
-  <ellipse cx="200" cy="276" rx="8" ry="30" fill="#0a0a0a"/>
-  <ellipse cx="312" cy="276" rx="8" ry="30" fill="#0a0a0a"/>
-  <circle cx="210" cy="266" r="6" fill="#ffffff" opacity="0.95"/>
-  <circle cx="322" cy="266" r="6" fill="#ffffff" opacity="0.95"/>
-
-  <!-- Pink heart-nose -->
-  <path d="M256 340 C 244 326, 228 332, 232 348 L 256 372 L 280 348 C 284 332, 268 326, 256 340 Z" fill="#fda4af" stroke="#1a1410" stroke-width="2" stroke-opacity="0.5"/>
-
-  <!-- Recording dot — function nod -->
-  <circle cx="438" cy="74" r="20" fill="#b91c1c" stroke="#faf6ee" stroke-width="6"/>
-  <circle cx="438" cy="74" r="8" fill="#faf6ee"/>
+  <circle cx="432" cy="106" r="17" fill="#f08536" stroke="#fffdf7" stroke-width="5"/>
 </svg>

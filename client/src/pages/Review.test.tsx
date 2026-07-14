@@ -10,11 +10,13 @@ import type { ReviewQueueItem } from '../lib/api'
 const getReviewQueue = vi.fn()
 const moveFaceCapture = vi.fn()
 const deleteFaceCapture = vi.fn()
+const listFaceCaptureDirs = vi.fn().mockResolvedValue({ dirs: [] })
 
 vi.mock('../lib/api', () => ({
   getReviewQueue: (...a: unknown[]) => getReviewQueue(...a),
   moveFaceCapture: (...a: unknown[]) => moveFaceCapture(...a),
   deleteFaceCapture: (...a: unknown[]) => deleteFaceCapture(...a),
+  listFaceCaptureDirs: (...a: unknown[]) => listFaceCaptureDirs(...a),
 }))
 
 import { ConfirmProvider } from '../lib/confirm'
@@ -48,6 +50,8 @@ describe('Review page', () => {
     getReviewQueue.mockReset()
     moveFaceCapture.mockReset()
     deleteFaceCapture.mockReset()
+    listFaceCaptureDirs.mockReset()
+    listFaceCaptureDirs.mockResolvedValue({ dirs: [] })
   })
   afterEach(() => {
     vi.clearAllMocks()

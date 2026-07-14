@@ -1,10 +1,7 @@
 import { test, expect } from '@playwright/test'
 
-// iter-356.56: Pins the new SystemStateBanner + CameraSubtitle on
-// the Live page. The banner is the page-level scannable signal
-// added in the iter-356 polish thread per Maya's "Live is a black
-// void with no clear state" critical finding. The subtitle appears
-// directly under the H1 with the armed-state pill.
+// Pins the current Watch state surfaces. The page-level status region and
+// the glance strip both keep camera state visible beside the live scene.
 //
 // E2E here means: against a real FastAPI backend with the simulator
 // enabled, the page renders the banner with deterministic copy
@@ -22,7 +19,7 @@ test.describe('Live page — SystemStateBanner + CameraSubtitle (iter-356.56)', 
     await page.locator('input[autocomplete="username"]').fill('admin')
     await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('given the Live page is loaded, when the simulator returns status, then the system state banner is announced via role=status', async ({
@@ -49,21 +46,19 @@ test.describe('Live page — SystemStateBanner + CameraSubtitle (iter-356.56)', 
     await expect(banner).toBeVisible({ timeout: 8000 })
   })
 
-  test('given the Live page is loaded, then a Camera subtitle row reports the armed/disarmed state', async ({
+  test('given the Live page is loaded, then the glance strip reports the watch state', async ({
     page,
   }) => {
     // act — wait for status poll to land.
     await page.waitForTimeout(2000)
 
-    // assert — the subtitle row sits under the H1 with one of the
-    // three armed-state labels. We match by aria-label which is a
-    // single string covering both the state and the last-frame age.
-    // This pins that the page title is no longer a bare camera name
-    // floating above a black box (Maya CRITICAL Live #4).
-    const subtitle = page.locator('[aria-label^="Camera status:"]')
-    await expect(subtitle).toBeVisible({ timeout: 8000 })
-    const label = await subtitle.getAttribute('aria-label')
-    expect(label).toMatch(/Camera status: (Armed|Disarmed|Camera offline)/i)
+    // assert — the current docked layout ties the canonical armed-state
+    // vocabulary directly to the live scene in its glance strip.
+    const glance = page.getByTestId('live-glance-strip')
+    await expect(glance).toBeVisible({ timeout: 8000 })
+    await expect(glance).toContainText(
+      /On watch|Off duty|Camera offline|Reconnecting|Checking/i,
+    )
   })
 })
 
@@ -77,7 +72,7 @@ test.describe('Settings tabs — keyboard navigation (iter-356.56)', () => {
     await page.locator('input[autocomplete="username"]').fill('admin')
     await page.locator('input[type="password"]').fill('admin')
     await page.getByRole('button', { name: /sign in|log in|login/i }).click()
-    await expect(page).toHaveURL(/\/live$/)
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('given the Settings tablist, when ArrowRight is pressed on the active tab, then the next tab gains focus + selection', async ({
@@ -88,11 +83,11 @@ test.describe('Settings tabs — keyboard navigation (iter-356.56)', () => {
     await expect(page).toHaveURL(/\/settings$/)
     // The Detection tab is owner-only; admin role hits the carve-
     // out and sees all three tabs. Default landing tab is
-    // Notifications (iter-279).
-    const notifTab = page.getByRole('tab', { name: /notifications/i })
+    // Alerts (the user-facing name for the notifications panel).
+    const notifTab = page.getByRole('tab', { name: /^alerts$/i })
     await expect(notifTab).toBeVisible()
 
-    // act — focus the Notifications tab, then arrow right.
+    // act — focus the Alerts tab, then arrow right.
     await notifTab.focus()
     await page.keyboard.press('ArrowRight')
 
@@ -102,21 +97,21 @@ test.describe('Settings tabs — keyboard navigation (iter-356.56)', () => {
     await expect(nextTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('given the Settings tablist with Detection as the active tab, when ArrowLeft is pressed, then selection wraps to the last tab', async ({
+  test('given the Settings tablist with Watching as the active tab, when ArrowLeft is pressed, then selection wraps to the last tab', async ({
     page,
   }) => {
-    // arrange — click Detection to make it the ACTIVE tab (idx 0)
+    // arrange — click Watching to make it the ACTIVE tab (idx 0)
     // so the wrap-around behavior is testable. Pre-arrange, the
     // default landing tab is Notifications (iter-279). We need
-    // Detection active for the wrap-from-first case to fire.
+    // Watching active for the wrap-from-first case to fire.
     await page.goto('/settings')
     await expect(page).toHaveURL(/\/settings$/)
-    const detectionTab = page.getByRole('tab', { name: /^detection$/i })
+    const detectionTab = page.getByRole('tab', { name: /^watching$/i })
     await expect(detectionTab).toBeVisible()
     await detectionTab.click()
     await expect(detectionTab).toHaveAttribute('aria-selected', 'true')
 
-    // act — Detection is now active; press ArrowLeft to wrap to last.
+    // act — Watching is now active; press ArrowLeft to wrap to last.
     await detectionTab.focus()
     await page.keyboard.press('ArrowLeft')
 

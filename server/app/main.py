@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 
@@ -12,7 +14,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, sessions, telemetry, training, training_admin
+from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, security, sessions, shares, telemetry, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -33,7 +35,8 @@ class _SuppressNoisyAccess(logging.Filter):
     """Drop uvicorn access-log lines for the high-volume polling
     endpoints. The PWA hits `/api/status` every 5 s (with as many
     open sessions as users), the worker hits
-    `/api/_internal/heartbeat` every 10 s, and the worker also polls
+    `/api/_internal/heartbeat` every 10 s, the live overlay sample endpoint
+    can run multiple times per second, and the worker also polls
     `/api/detection/config` every 30 s — together they generate ~1k+
     routine log lines per hour and bury the actually interesting
     routes (events, detection/config PATCH, push subscribe).
@@ -50,11 +53,17 @@ class _SuppressNoisyAccess(logging.Filter):
     _suppressed_lines = (
         '"GET /api/status ',
         '"POST /api/_internal/heartbeat ',
+        '"POST /api/_internal/live_detection ',
         '"GET /api/detection/config ',
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
+        # Clip-share paths carry an opaque bearer token. Suppress every method
+        # (including malformed probes/404s), not only successful GETs, so the
+        # token can never land in journald through Uvicorn's request line.
+        if re.search(r'"\S+\s+/api/shared/[^\s?\"]+', msg):
+            return False
         return not any(needle in msg for needle in self._suppressed_lines)
 
 
@@ -66,6 +75,9 @@ START_TIME = time.time()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    digest_stop = asyncio.Event()
+    digest_task = None
+    resilience_task = None
     # Each boot step is wrapped with a NAMED error before re-raising so
     # the journal says WHICH step aborted the boot (pre-this-iter a
     # failing step surfaced only as a bare traceback with no operation
@@ -119,6 +131,18 @@ async def lifespan(_app: FastAPI):
             settings.events_db_path, exc_info=True,
         )
         raise
+    # Resume durable timelapse jobs that were interrupted by a container or
+    # host restart. Reconciliation happens after an event loop exists and
+    # before requests are served, so duplicate POSTs cannot race recovery.
+    try:
+        resumed = control.reconcile_timelapse_jobs()
+        if resumed:
+            log.info("lifespan: resumed %d interrupted timelapse build(s)", resumed)
+    except Exception:
+        log.warning(
+            "lifespan: timelapse job reconciliation failed — continuing boot",
+            exc_info=True,
+        )
     from .services.audit_db import init_db as _audit_init_db
     try:
         _audit_init_db(settings.audit_db_path)
@@ -176,6 +200,28 @@ async def lifespan(_app: FastAPI):
             "boot (clips are best-effort storage)", exc_info=True,
         )
     try:
+        from .services import security_timeline
+        from .services.security_export_capacity import (
+            CAPACITY_LOCK,
+            cleanup_incident_outputs_at_startup,
+            cleanup_owned_temps,
+        )
+        from .services.security_store import security_store
+
+        security_timeline.prune_export_jobs()
+        with CAPACITY_LOCK:
+            cleanup_owned_temps(
+                security_store.read(),
+                include_timeline=False,
+                include_incident=True,
+            )
+        cleanup_incident_outputs_at_startup()
+    except Exception:
+        log.warning(
+            "lifespan: export crash cleanup failed — continuing boot",
+            exc_info=True,
+        )
+    try:
         await camera_service.start()
     except Exception:
         log.error(
@@ -197,9 +243,18 @@ async def lifespan(_app: FastAPI):
         detection_service.active,
         len(push_service.subs),
     )
+    from .services import daily_digest
+    from .services import security_resilience
+    digest_task = asyncio.create_task(daily_digest.run(digest_stop))
+    resilience_task = asyncio.create_task(security_resilience.run(digest_stop))
     try:
         yield
     finally:
+        digest_stop.set()
+        if digest_task is not None:
+            await digest_task
+        if resilience_task is not None:
+            await resilience_task
         # THE single most important boot/shutdown diagnostic — pairs
         # with the "server up" line so a journal grep shows the full
         # lifecycle (and an UNCLEAN exit = "server up" with no matching
@@ -325,9 +380,10 @@ _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
-    # iter-264 (security-auditor D2): the PWA never asks for camera /
-    # mic / geolocation / payment / USB / etc. (it watches the Jetson's
-    # camera over WHEP, not the device camera). Browser default policy
+    # The PWA never asks for the phone camera, geolocation, payment, USB,
+    # or motion sensors. Talk is the sole exception: this same origin may ask
+    # for microphone permission to publish Opus to the camera speaker.
+    # Browser default policy
     # lets the same origin AND nested iframes request all of these;
     # an injected `<script src=…>` to a CDN, or a third-party iframe
     # later added to a help page, could pop the user's local camera
@@ -336,7 +392,7 @@ _SECURITY_HEADERS = {
     # modern successor and additionally constrains anything the PWA's
     # own JS could request from a sandboxed origin.
     "Permissions-Policy": (
-        "camera=(), microphone=(), geolocation=(), payment=(), "
+        "camera=(), microphone=(self), geolocation=(), payment=(), "
         "usb=(), accelerometer=(), gyroscope=(), magnetometer=()"
     ),
 }
@@ -388,6 +444,10 @@ async def _add_security_headers(request: Request, call_next):
     # crop bytes themselves.
     elif request.url.path.startswith("/api/face/"):
         response.headers["Cache-Control"] = "no-store"
+    elif request.url.path.startswith("/api/security") or request.url.path.endswith(
+        "/identity-feedback"
+    ):
+        response.headers["Cache-Control"] = "private, no-store"
     # iter-356.x (security audit D1): snapshots and timelapses are the
     # same data-sensitivity tier as face crops — captured frames of the
     # household. Without Cache-Control: no-store a Tailscale Serve proxy
@@ -397,6 +457,8 @@ async def _add_security_headers(request: Request, call_next):
         "/api/timelapses/"
     ):
         response.headers["Cache-Control"] = "no-store"
+    if response.status_code < 400:
+        telemetry.record_successful_action(request)
     return response
 
 
@@ -443,25 +505,38 @@ def _build_status() -> dict[str, object]:
     # inconsistent responses (alive=True with last_seen_s>30, or
     # vice versa).
     worker_alive, worker_last_seen_s, worker_metrics = worker_health.snapshot()
+    power_sample_age_s = None
+    if worker_metrics:
+        power_sample_ts = worker_metrics.get("power_sample_ts", 0.0)
+        if isinstance(power_sample_ts, (int, float)) and power_sample_ts > 0.0:
+            power_sample_age_s = round(max(0.0, time.time() - power_sample_ts), 1)
     if _status_probe_failed:
         # Recovered — re-arm the once-flag so a later failure logs again.
         _status_probe_failed = False
         log.info("/api/status probe aggregation recovered")
+    from .services.recording_service import storage_forecast
+    recording_forecast = storage_forecast()
     return {
         "ok": True,
         "uptime_s": time.time() - START_TIME,
+        "host_uptime_s": _host_uptime_s(),
         "camera": camera_service.health(),
         "detection_active": detection_service.active,
         "worker_alive": worker_alive,
         "worker_last_seen_s": worker_last_seen_s,
         "worker_metrics": worker_metrics,
+        "power_sample_age_s": power_sample_age_s,
         "cpu_temp_c": _cpu_temp(),
         "gpu_temp_c": _gpu_temp(),
         "cpu_freq_pct": _cpu_freq_pct(),
         "load_avg": _load_avg(),
         "memory_used_mb": used_mb,
         "memory_total_mb": total_mb,
-        "disk_free_gb": _disk_free_gb("/"),
+        # Recording runway must follow the filesystem that actually owns the
+        # clips. This can be a USB bind mount while `/` remains the SD card.
+        "disk_free_gb": _disk_free_gb(str(settings.recordings_dir)),
+        "system_disk_free_gb": _disk_free_gb("/"),
+        **recording_forecast,
         # iter-246: top-level fps mirrors worker_metrics["fps"] when
         # available. Pre-iter-246 this read `camera_service.fps`, a
         # field that's initialised to 0.0 and never updated (the
@@ -509,6 +584,9 @@ def _build_status() -> dict[str, object]:
 _PROTECTED_DEPS = [Depends(get_current_user)]
 app.include_router(control.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 app.include_router(events.router, prefix="/api")
+app.include_router(shares.router, prefix="/api")
+app.include_router(security.router, prefix="/api", dependencies=_PROTECTED_DEPS)
+app.include_router(security.identity_router, prefix="/api", dependencies=_PROTECTED_DEPS)
 # docs/multicam_contract.md: camera registry for the client. The auth
 # gate also lives per-route inside cameras.py (mirrors events.py
 # style); the router-wide dep here is belt-and-braces consistency with
@@ -688,6 +766,16 @@ def _load_avg(path: str = _LOADAVG_PATH) -> list[float] | None:
         )
     except (OSError, ValueError, IndexError):
         return _note_probe("load_avg", None)
+
+
+def _host_uptime_s(path: str = "/proc/uptime") -> float | None:
+    """Linux host uptime, distinct from this FastAPI process uptime."""
+    try:
+        with open(path) as f:
+            value = float(f.read().split()[0])
+        return _note_probe("host_uptime", round(max(0.0, value), 1))
+    except (OSError, ValueError, IndexError):
+        return _note_probe("host_uptime", None)
 
 
 _MEMINFO_PATH = "/proc/meminfo"

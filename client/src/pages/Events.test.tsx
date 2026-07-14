@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import type { ServerEvent } from '../lib/types'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import type { DetectionEvent, ServerEvent } from '../lib/types'
 
 const fetchEvents = vi.fn()
 const searchEvents = vi.fn()
@@ -18,6 +18,13 @@ const deleteEventsByDay = vi.fn().mockResolvedValue({ deleted: 0 })
 // aren't disturbed; the iter-333 BDD tests override.
 const exportEventsM = vi.fn().mockResolvedValue(
   new Blob(['fake-zip'], { type: 'application/zip' }),
+)
+const fetchEventClipStatusM = vi.fn((eventId: string) =>
+  Promise.resolve({
+    event_id: eventId,
+    state: 'available',
+    source: 'disk',
+  }),
 )
 
 // iter-356.24: getStatus is needed because Events now consumes
@@ -46,6 +53,13 @@ const getDetectionConfigM = vi.fn().mockReturnValue(new Promise(() => {}))
 // tests that don't care render the single-camera layout unchanged;
 // the multicam tests override.
 const getCamerasM = vi.fn().mockReturnValue(new Promise(() => {}))
+const getDailyDigestM = vi.fn().mockResolvedValue({
+  day: '2026-01-01',
+  total: 0,
+  by_label: {},
+  unknown_people: 0,
+  known_people: [],
+})
 vi.mock('../lib/api', () => ({
   fetchEvents: (...a: unknown[]) => fetchEvents(...a),
   searchEvents: (...a: unknown[]) => searchEvents(...a),
@@ -57,7 +71,9 @@ vi.mock('../lib/api', () => ({
   exportEvents: (...a: unknown[]) => exportEventsM(...a),
   getDetectionConfig: (...a: unknown[]) => getDetectionConfigM(...a),
   getCameras: (...a: unknown[]) => getCamerasM(...a),
+  getDailyDigest: (...a: unknown[]) => getDailyDigestM(...a),
   fetchEventTracks: () => Promise.resolve(null),
+  fetchEventClipStatus: (eventId: string) => fetchEventClipStatusM(eventId),
   // Event-view jank fix (2026-07-08): ClipModal probes clip existence
   // on open. Resolve true so these page-level tests keep exercising
   // the player branch; the probe's own state machine is pinned in
@@ -102,6 +118,9 @@ vi.mock('react-router-dom', async () => {
   )
   return {
     ...actual,
+    Link: ({ to, children, ...props }: { to: string; children: React.ReactNode } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+      <a href={to} {...props}>{children}</a>
+    ),
     useSearchParams: () =>
       [new URLSearchParams(_searchSeed), () => {}] as const,
     // Playroom Modern (Task 7): ClipModal (rendered by this page when an
@@ -152,6 +171,7 @@ describe('Events page', () => {
     // 'then')" the moment a thumb row opened ClipModal.
     searchEvents.mockReset().mockResolvedValue({ items: [], next_cursor: null })
     getEventCountsByDay.mockReset().mockResolvedValue({ counts: {} })
+    fetchEventClipStatusM.mockClear()
     markAllEventsSeen.mockReset().mockResolvedValue({ flipped: 0 })
     markEventSeen.mockReset().mockResolvedValue({ flipped: true })
     subscribeEvents.mockReset()
@@ -160,6 +180,7 @@ describe('Events page', () => {
     // so the existing day-tap suite finds the cells. Tests that
     // exercise the toggle itself clear this in their own setup.
     window.localStorage.setItem('homecam:calendarOpen', '1')
+    window.localStorage.removeItem('homecam:eventsViewMode')
   })
   afterEach(() => {
     vi.clearAllMocks()
@@ -212,6 +233,29 @@ describe('Events page', () => {
     ).toBeInTheDocument()
   })
 
+  it('Given the Events hub, When its tool navigation renders, Then playback, metadata search, and incidents link to their public routes', () => {
+    fetchEvents.mockResolvedValue([])
+    render(<Events />)
+
+    const tools = screen.getByRole('navigation', { name: 'Event tools' })
+    expect(within(tools).getByRole('link', { name: 'Playback' })).toHaveAttribute(
+      'href',
+      '/events/playback',
+    )
+    expect(within(tools).getByRole('link', { name: 'Search' })).toHaveAttribute(
+      'href',
+      '/events/search',
+    )
+    expect(within(tools).getByRole('link', { name: 'Visits' })).toHaveAttribute(
+      'href',
+      '/events/visits',
+    )
+    expect(within(tools).getByRole('link', { name: 'Incidents' })).toHaveAttribute(
+      'href',
+      '/events/incidents',
+    )
+  })
+
   it('shows a skeleton loading state then the fetched events', async () => {
     fetchEvents.mockResolvedValue([
       {
@@ -252,6 +296,125 @@ describe('Events page', () => {
     )
   })
 
+  it('given events are loaded, when the page renders, then Timeline is the default event-list view', async () => {
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1,
+        type: 'detection',
+        id: '1',
+        ts: Date.now() / 1000,
+        camera_id: 'cam1',
+        label: 'person',
+        score: 0.91,
+        boxes: [],
+        thumb_url: '/snapshots/person.jpg',
+      },
+    ])
+
+    render(<Events />)
+
+    await waitFor(() =>
+      expect(screen.getByText(/person at /i)).toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: 'Timeline' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.queryByTestId('event-thumbnail-grid')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('event-compact-list')).not.toBeInTheDocument()
+  })
+
+  it('given events are loaded, when Thumbs is selected, then the Events page renders thumbnail cards and remembers the view', async () => {
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1,
+        type: 'detection',
+        id: '1',
+        ts: Date.now() / 1000,
+        camera_id: 'cam1',
+        label: 'person',
+        person_name: 'Israel',
+        score: 0.91,
+        boxes: [],
+        thumb_url: '/snapshots/israel.jpg',
+      },
+    ])
+
+    render(<Events />)
+    await waitFor(() =>
+      expect(screen.getByText(/israel at /i)).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Thumbs' }))
+
+    expect(screen.getByTestId('event-thumbnail-grid')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /israel at /i })).toHaveAttribute(
+      'src',
+      '/snapshots/israel.jpg',
+    )
+    expect(window.localStorage.getItem('homecam:eventsViewMode')).toBe('thumbs')
+  })
+
+  it('given the user previously chose thumbnails, when Events loads, then the saved thumbnail view is restored', async () => {
+    window.localStorage.setItem('homecam:eventsViewMode', 'thumbs')
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1,
+        type: 'detection',
+        id: '1',
+        ts: Date.now() / 1000,
+        camera_id: 'cam1',
+        label: 'cat',
+        score: 0.91,
+        boxes: [],
+        thumb_url: '/snapshots/cat.jpg',
+      },
+    ])
+
+    render(<Events />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('event-thumbnail-grid')).toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: 'Thumbs' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('given events are loaded, when Compact is selected, then dense rows still open the event viewer', async () => {
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    fetchEvents.mockResolvedValue([
+      {
+        v: 1,
+        type: 'detection',
+        id: '1',
+        ts: Date.now() / 1000,
+        camera_id: 'cam1',
+        label: 'person',
+        person_name: 'Israel',
+        score: 0.91,
+        boxes: [],
+        thumb_url: '/snapshots/israel.jpg',
+      },
+    ])
+
+    render(<Events />)
+    await waitFor(() =>
+      expect(screen.getByText(/israel at /i)).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Compact' }))
+
+    expect(screen.getByTestId('event-compact-list')).toBeInTheDocument()
+    expect(window.localStorage.getItem('homecam:eventsViewMode')).toBe('compact')
+    await user.click(screen.getByRole('button', { name: /open: israel at /i }))
+    expect(
+      await screen.findByRole('dialog', { name: /israel at /i }),
+    ).toBeInTheDocument()
+  })
+
   it('prepends new detection events received over WebSocket', async () => {
     fetchEvents.mockResolvedValue([])
     let push: (e: ServerEvent) => void = () => {}
@@ -276,7 +439,7 @@ describe('Events page', () => {
     await waitFor(() => expect(screen.getByText(/car at /i)).toBeInTheDocument())
   })
 
-  it('ignores non-detection events from the WebSocket', async () => {
+  it('ignores live overlay samples from the WebSocket', async () => {
     fetchEvents.mockResolvedValue([])
     let push: (e: ServerEvent) => void = () => {}
     subscribeEvents.mockImplementation((cb: (e: ServerEvent) => void) => {
@@ -287,15 +450,7 @@ describe('Events page', () => {
     await waitFor(() =>
       expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument(),
     )
-    // iter-170: the server's wire shape was narrowed to
-    // `ServerEvent = DetectionEvent` (the StatusEvent branch was a
-    // phantom — never emitted by any server code). The runtime guard
-    // in Events.tsx (`if (e.type === 'detection')`) still defends
-    // against malformed/unknown wire payloads, so this test now uses
-    // an `unknown` cast to simulate a future server pushing a
-    // non-detection shape — Events should still show the empty state
-    // (no crash, no added row).
-    push({ v: 1, type: 'status', cpu_temp_c: 30, fps: 24 } as unknown as ServerEvent)
+    push({ v: 1, type: 'live_detection', ts: Date.now() / 1000, camera_id: 'cam1', boxes: [] })
     expect(screen.getByText(/nothing came knocking/i)).toBeInTheDocument()
   })
 
@@ -514,50 +669,6 @@ describe('Events page', () => {
     )
   })
 
-  it('Given the ClipModal Delete pill is used, When the delete resolves, Then the event row is pruned from this page\'s own list (final review fix batch #1)', async () => {
-    // arrange — pre-fix, ClipModal deleted the event server-side but
-    // had no way to tell Events.tsx's OWN `events` state to forget it;
-    // the just-deleted row kept rendering until an unrelated refetch.
-    const userEvent = (await import('@testing-library/user-event')).default
-    fetchEvents.mockResolvedValue([
-      {
-        v: 1,
-        type: 'detection',
-        id: 'evt-to-delete',
-        ts: Date.now() / 1000,
-        camera_id: 'cam1',
-        label: 'cat',
-        score: 0.91,
-        boxes: [],
-        thumb_url: '/snapshots/thumb_1.jpg',
-      },
-    ])
-    deleteEvent.mockResolvedValueOnce({ deleted: true })
-    confirmFn.mockResolvedValueOnce(true)
-    const user = userEvent.setup()
-    render(<Events />)
-    const row = await screen.findByRole('button', { name: /play clip:|open: cat at/i })
-
-    // act — open the modal, click its Delete pill (confirm() is
-    // mocked at the top of this file to auto-resolve true).
-    await user.click(row)
-    await screen.findByRole('dialog', { name: /at the front door/i })
-    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
-
-    // assert — deleteEvent fired for the modal's event id, the modal
-    // closed, AND the row is gone from this page's own list (not just
-    // the modal's local state).
-    await waitFor(() => expect(deleteEvent).toHaveBeenCalledWith('evt-to-delete'))
-    await waitFor(() =>
-      expect(
-        screen.queryByRole('dialog', { name: /at the front door/i }),
-      ).not.toBeInTheDocument(),
-    )
-    expect(
-      screen.queryByRole('button', { name: /play clip:|open: cat at/i }),
-    ).not.toBeInTheDocument()
-  })
-
   // iter-290 (test-integrity-auditor #2): pre-iter-290 the
   // markEventSeen mock at line 10 was declared but no test asserted
   // it actually fired on row tap — production handler at
@@ -656,7 +767,23 @@ describe('Events page', () => {
     person_name: null, clip_url: null,
   })
 
+  const _detectionWithName = (id: string, ts: number, name: string | null): ServerEvent => ({
+    v: 1, type: 'detection', id, ts, camera_id: 'cam1',
+    label: 'person', score: 0.9, boxes: [], thumb_url: null,
+    person_name: name, clip_url: null,
+  })
+
+  describe('pagination', () => {
+  beforeEach(() => {
+    // Pagination is independent from the lazy calendar and these tests should
+    // not leave a Suspense import running after their assertions complete.
+    window.localStorage.removeItem('homecam:calendarOpen')
+  })
+
   it('shows Load more button when there are events (iter-220)', async () => {
+    // This pagination test does not exercise the independently covered lazy
+    // calendar. Keep it closed so no Suspense work outlives this assertion.
+    window.localStorage.removeItem('homecam:calendarOpen')
     fetchEvents.mockResolvedValue([_detection('a', 200), _detection('b', 100)])
     render(<Events />)
     expect(
@@ -665,6 +792,7 @@ describe('Events page', () => {
   })
 
   it('does NOT show Load more before fetch completes (iter-220)', async () => {
+    window.localStorage.removeItem('homecam:calendarOpen')
     fetchEvents.mockResolvedValue([])
     render(<Events />)
     // Before fetch resolves, the page is in loading skeleton state —
@@ -752,12 +880,6 @@ describe('Events page', () => {
   // person_name to the server-side filter. The `__unknown__` chip
   // stays client-side (server route doesn't support IS NULL).
 
-  const _detectionWithName = (id: string, ts: number, name: string | null): ServerEvent => ({
-    v: 1, type: 'detection', id, ts, camera_id: 'cam1',
-    label: 'person', score: 0.9, boxes: [], thumb_url: null,
-    person_name: name, clip_url: null,
-  })
-
   it('Load more forwards person_name when chip is active (iter-221)', async () => {
     fetchEvents.mockResolvedValue([
       _detectionWithName('a', 200, 'alice'),
@@ -825,14 +947,18 @@ describe('Events page', () => {
     expect(args.person_name).toBeUndefined()
     expect(args.face_unrecognized).toBe(true)
   })
+  })
 
   // iter-223 (Feature #6 slice 7b-client): EventHeatmap mounted at
   // top of Events page. Tap a day → searchEvents({since_ts, until_ts})
   // → events list replaced. Clear button restores fetchEvents flow.
 
   it('mounts EventHeatmap and fetches counts (iter-252: month-scoped)', async () => {
+    window.localStorage.removeItem('homecam:calendarOpen')
     fetchEvents.mockResolvedValue([])
+    const user = (await import('@testing-library/user-event')).default.setup()
     render(<Events />)
+    await user.click(screen.getByRole('button', { name: /filter by day/i }))
     await waitFor(() => expect(getEventCountsByDay).toHaveBeenCalled())
     // iter-252: heatmap aria-label includes the visible month, e.g.
     // "Detection events per day, May 2026". Match generously.
@@ -1794,9 +1920,9 @@ function _restoreVisible(): void {
 }
 
 // iter-329 helper: build a minimal DetectionEvent for label-chip
-// tests. Matches the iter-? ServerEvent shape so the EventList
+// tests. Matches the persisted event shape so the EventList
 // renders correctly. label defaults to 'person'.
-function _personEvent(over: Partial<ServerEvent> & { id: string; ts: number }): ServerEvent {
+function _personEvent(over: Partial<DetectionEvent> & { id: string; ts: number }): DetectionEvent {
   return {
     v: 1,
     type: 'detection',
@@ -1809,7 +1935,7 @@ function _personEvent(over: Partial<ServerEvent> & { id: string; ts: number }): 
     person_name: over.person_name ?? null,
     thumb_url: over.thumb_url ?? null,
     clip_url: over.clip_url ?? null,
-  } as ServerEvent
+  } as DetectionEvent
 }
 
 // notif-deeplink (UI/UX overhaul 2026-07-07): a push-notification tap
@@ -1825,6 +1951,7 @@ describe('Events page — notification deep-link (?event=)', () => {
     fetchEvents.mockReset()
     searchEvents.mockReset().mockResolvedValue({ items: [], next_cursor: null })
     getEventCountsByDay.mockReset().mockResolvedValue({ counts: {} })
+    fetchEventClipStatusM.mockClear()
     markAllEventsSeen.mockReset().mockResolvedValue({ flipped: 0 })
     markEventSeen.mockReset().mockResolvedValue({ flipped: true })
     subscribeEvents.mockReset().mockReturnValue(() => {})

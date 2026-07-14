@@ -44,6 +44,14 @@ def _auth_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "push_subs_path", tmp_path / "push_subs.json")
     monkeypatch.setattr(settings, "detection_config_path", tmp_path / "detection_config.json")
     monkeypatch.setattr(settings, "events_db_path", tmp_path / "events.db")
+    # Keep the status probe's always-existing directory separate from tests
+    # that intentionally create `tmp_path / "recordings"` themselves.
+    recordings_dir = tmp_path / "_status-recordings"
+    recordings_dir.mkdir()
+    monkeypatch.setattr(settings, "recordings_dir", recordings_dir)
+    monkeypatch.setattr(settings, "security_state_path", tmp_path / "security-state.json")
+    monkeypatch.setattr(settings, "security_exports_dir", tmp_path / "security-exports")
+    monkeypatch.setattr(settings, "continuous_recordings_dir", recordings_dir / "continuous")
     monkeypatch.setattr(settings, "audit_db_path", tmp_path / "audit.db")
     monkeypatch.setattr(settings, "sessions_db_path", tmp_path / "sessions.db")
     monkeypatch.setattr(settings, "backup_target_dir", tmp_path / "backups")
@@ -241,9 +249,18 @@ def _isolate_host_bridge(tmp_path, monkeypatch):
 
     path = tmp_path / "host_action.json"
     monkeypatch.setattr(settings, "host_action_state_path", path)
+    monkeypatch.setattr(settings, "camera_exposure_path", tmp_path / "camera_exposure.json")
     host_bridge.reset_for_tests(path)
     yield
     host_bridge.reset_for_tests(path)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_clip_shares(tmp_path, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "clip_shares_path", tmp_path / "clip_shares.json")
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -261,6 +278,24 @@ def _reset_detection_config(tmp_path):
     yield
     detection_config.path = original_path
     detection_config.config = original_config
+
+
+@pytest.fixture(autouse=True)
+def _reset_security_state():
+    from app.routes import _internal
+    from app.services.media_tokens import reset_for_tests as reset_media_tokens
+    from app.services.security_export_capacity import reset_for_tests as reset_capacity
+    from app.services.security_store import security_store
+
+    security_store.reset_for_tests()
+    reset_capacity()
+    reset_media_tokens()
+    _internal._SIGNAL_RATE.clear()
+    yield
+    _internal._SIGNAL_RATE.clear()
+    reset_capacity()
+    reset_media_tokens()
+    security_store.reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

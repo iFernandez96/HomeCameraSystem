@@ -1,6 +1,8 @@
 # Run the FastAPI server in a container on the Jetson.
 #
-#   docker compose -f deploy/docker-compose.yml up -d --build
+#   # On the Jetson, load the ARM64 image built by cross-deploy-server.sh,
+#   # then recreate without building:
+#   docker compose -f deploy/docker-compose.yml up -d --no-build server
 #   docker compose -f deploy/docker-compose.yml logs -f
 #   docker compose -f deploy/docker-compose.yml down
 #
@@ -43,21 +45,41 @@ services:
       # Bind-mount the snapshots dir so the host-side detection worker can
       # write thumbnails into the same location the server serves from.
       # (Docker named volumes can't be written from outside the container.)
-      - ../snapshots:/app/snapshots
+      - type: bind
+        source: /srv/homecam-media/snapshots
+        target: /app/snapshots
+        bind:
+          create_host_path: false
       # iter-247 (Feature #1 slice 2b): same shape for clip recordings.
       # Worker (host-side) writes `<event_id>.mp4` via ffmpeg subprocess;
       # server (container) reads via FileResponse on
       # /api/events/{event_id}/clip. Default container path matches
       # the iter-201 `recordings_dir` setting.
-      - ../recordings:/app/recordings
+      # MediaMTX also writes its bounded stream-copy archive below
+      # `../recordings/continuous/`; the same mount lets the authenticated
+      # timeline API index and serve those fMP4 segments without exposing
+      # MediaMTX's unauthenticated playback port.
+      - type: bind
+        source: /srv/homecam-media/recordings
+        target: /app/recordings
+        bind:
+          create_host_path: false
       # iter-263 (systems-engineering-auditor A1): same fix for
       # backups (iter-210) and timelapses (iter-213). Pre-iter-263
       # both defaulted to `./backups` and `./timelapses` inside the
       # container WORKDIR, so every `up -d --build` wiped operator
       # backups and timelapse outputs. Mirror of the iter-244e
       # users.db / jwt_secret / events.db relocation.
-      - ../backups:/app/backups
-      - ../timelapses:/app/timelapses
+      - type: bind
+        source: /srv/homecam-media/backups
+        target: /app/backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/homecam-media/timelapses
+        target: /app/timelapses
+        bind:
+          create_host_path: false
       # iter-351 (face-capture-for-retraining): host-side detection
       # worker writes face crops into ./face_captures via
       # detection/face_recog/capture.py; container server reads via
@@ -65,7 +87,11 @@ services:
       # iter-263 backups/timelapses bind-mount pattern. The
       # FACE_CAPTURES_DIR env var defaults to /app/face_captures so
       # this matches without any extra config.
-      - ../face_captures:/app/face_captures
+      - type: bind
+        source: /srv/homecam-media/face_captures
+        target: /app/face_captures
+        bind:
+          create_host_path: false
       # iter-356.62 (tiered-capture slices 1+2+3): parallel root for
       # full-person crops the worker saves alongside each face crop.
       # Same bind-mount + 0o600 pattern as face_captures. NOT a subdir
@@ -73,7 +99,19 @@ services:
       # route walks face_captures/<name>/ and would treat a nested
       # _person subtree as a name bucket. Read by /api/training/export
       # (kind=person) and swept by face_capture_sweeper.
-      - ../person_captures:/app/person_captures
+      - type: bind
+        source: /srv/homecam-media/person_captures
+        target: /app/person_captures
+        bind:
+          create_host_path: false
+      # Generated timeline and incident exports are write-heavy media too.
+      # Mount them below the secrets volume while keeping databases and keys
+      # on the SD card. Refuse to create a fallback host path if USB is absent.
+      - type: bind
+        source: /srv/homecam-media/security-exports
+        target: /app/secrets/security-exports
+        bind:
+          create_host_path: false
       # rw since OTA (harness #11, 2026-07-08): the owner-only update route
       # applies the client tier by atomic swap into this mount (checksummed
       # artifact, byte backups, rollback). Was :ro pre-OTA.
@@ -87,6 +125,31 @@ services:
       # 64 GB SD with ~30 GB free as of iter-256. Bump only if the
       # event volume + clip-length math exceeds available disk.
       - RECORDINGS_RETENTION_DAYS=${RECORDINGS_RETENTION_DAYS:-30}
+      # Short-retention MediaMTX stream-copy archive and the private
+      # security-platform state/export workspace. Both roots already map to
+      # the recordings bind mount / secrets named volume above.
+      - CONTINUOUS_RECORDINGS_DIR=${CONTINUOUS_RECORDINGS_DIR:-/app/recordings/continuous}
+      - SECURITY_STATE_PATH=${SECURITY_STATE_PATH:-/app/secrets/security-state.json}
+      - SECURITY_EXPORTS_DIR=${SECURITY_EXPORTS_DIR:-/app/secrets/security-exports}
+      - SECURITY_TIMELINE_MAX_RANGE_S=${SECURITY_TIMELINE_MAX_RANGE_S:-86400}
+      - SECURITY_TIMELINE_EXPORT_MAX_RANGE_S=${SECURITY_TIMELINE_EXPORT_MAX_RANGE_S:-21600}
+      - SECURITY_EXPORT_MAX_OUTSTANDING_JOBS=${SECURITY_EXPORT_MAX_OUTSTANDING_JOBS:-2}
+      - SECURITY_EXPORT_MAX_TOTAL_BYTES=${SECURITY_EXPORT_MAX_TOTAL_BYTES:-5368709120}
+      - SECURITY_EXPORT_MIN_FREE_BYTES=${SECURITY_EXPORT_MIN_FREE_BYTES:-4294967296}
+      # Exact source addresses allowed to invoke MediaMTX's unauthenticated
+      # auth callback. The dedicated network below pins the host gateway so a
+      # Compose recreate cannot silently rotate this exact-address allowlist.
+      # Adjacent containers such as 172.30.0.2 remain denied.
+      - MEDIAMTX_AUTH_TRUSTED_CALLERS=${MEDIAMTX_AUTH_TRUSTED_CALLERS:-127.0.0.1,::1,172.30.0.1}
+      - AUTOMATION_WEBHOOK_TIMEOUT_S=${AUTOMATION_WEBHOOK_TIMEOUT_S:-5}
+      # Optional automation adapters. Empty values keep MQTT and physical
+      # deterrence explicitly unavailable. A deterrence executable also needs
+      # a deliberately configured read-only bind mount/device mapping.
+      - HOMECAM_MQTT_HOST=${HOMECAM_MQTT_HOST:-}
+      - HOMECAM_MQTT_PORT=${HOMECAM_MQTT_PORT:-1883}
+      - HOMECAM_MQTT_USERNAME=${HOMECAM_MQTT_USERNAME:-}
+      - HOMECAM_MQTT_PASSWORD=${HOMECAM_MQTT_PASSWORD:-}
+      - HOMECAM_DETERRENCE_DRIVER=${HOMECAM_DETERRENCE_DRIVER:-}
       # iter-301 (user report "calendar number of detections look
       # super off"): server SQLite uses `date(ts, 'unixepoch',
       # 'localtime')` to bucket events by day for /api/events/
@@ -114,3 +177,11 @@ services:
 
 volumes:
   homecam-secrets:
+
+networks:
+  default:
+    name: homecam-net
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1

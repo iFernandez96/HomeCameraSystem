@@ -30,7 +30,7 @@ The installer:
 2. Adds the current user to the `docker` group, ensures the daemon is running.
 3. Installs the Docker Compose v2 plugin to `~/.docker/cli-plugins/`.
 4. Downloads MediaMTX (current pin: `v1.18.0` arm64).
-5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, and `homecam-jetson-perf` (iter-39 oneshot — pins clocks/power-mode at boot, avoids the 50–150 ms encode warmup on the first frame after each restart).
+5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
 6. Builds the server container image.
 7. Enables + starts all three services.
 8. Smoke tests `/api/status` and `:8889`.
@@ -69,10 +69,30 @@ curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/medi
 sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# 6. Build + start
+# 6. Cross-build + ship the server image from the development machine
+# (run this outside the Jetson shell)
+deploy/cross-deploy-server.sh jetson
+
+# Back on the Jetson, start services without any native image build
 cd ~/HomeCameraSystem
-docker compose -f deploy/docker-compose.yml build
 sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-jetson-perf
+```
+
+MediaMTX delegates every path action to the FastAPI callback on localhost. The
+container must therefore receive the observed host bridge source in
+`MEDIAMTX_AUTH_TRUSTED_CALLERS` (the committed Compose default is the Jetson's
+fixed HomeCam network gateway `172.30.0.1`, not a subnet). If Docker networking changes, inspect the
+actual callback peer and update the single address; do not broaden it to a CIDR.
+
+Optional speaker output stays inert after installation. Provision it only when
+hardware exists:
+
+```bash
+sudo install -d -m 0755 /etc/homecam
+sudo install -m 0600 deploy/mediamtx.env.example /etc/homecam/mediamtx.env
+# Edit HOMECAM_SPEAKER_DEVICE, then deliberately arm output:
+sudo install -m 0600 /dev/null /etc/homecam/speaker-enabled
+sudo systemctl restart mediamtx
 ```
 
 Verify:
@@ -84,6 +104,17 @@ journalctl -u mediamtx -u homecam-detect -f
 ```
 
 Open `http://jetson.local:8000` (or the Jetson's LAN IP) from a phone or laptop on the same LAN. Add to home screen on Android.
+
+### Repeatable phone verification
+
+With one Android device connected over ADB, run `scripts/verify-phone.sh` from
+the repository root. If multiple devices are listed, set
+`HOMECAM_ADB_SERIAL=<serial>`. The check launches the wrapper, verifies it stays
+foreground without an Android crash, and saves a screenshot, UI hierarchy, and
+bounded logcat evidence under `/tmp/homecam-phone-smoke`.
+
+Debug APKs expose their embedded WebView to `chrome://inspect` over ADB for
+interactive JavaScript, network, and performance debugging. Release APKs do not.
 
 ## First-run quirk: TRT engine compile
 
@@ -136,7 +167,8 @@ async def system_reboot():
 
 - **MediaMTX encoder** (`deploy/mediamtx.yml`): bitrate, GOP, framerate. Inline comments explain what each knob does.
 - **Detection** (`detection/README.md`): threshold, cooldown, model. All env-driven; edit `homecam-detect.service` to change.
-- **WebRTC** (`client/src/lib/webrtc.ts`): no STUN, no audio transceiver — both intentional for LAN.
+- **WebRTC video** (`client/src/lib/webrtc.ts`): receive-only video with STUN/TURN fallback.
+- **WebRTC audio** (`client/src/lib/twoWayAudio.ts`): separate WHIP talk and WHEP listen sessions using one-time FastAPI media grants.
 
 ## Observability stack (opt-in, iter-199)
 

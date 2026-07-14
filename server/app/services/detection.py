@@ -48,7 +48,11 @@ class DetectionService:
         detection_config.update(enabled=bool(value))
 
     async def start(self) -> None:
-        self.active = True
+        # Preserve the persisted operator preference across API/container
+        # restarts. Startup must never silently resume inference after the
+        # owner deliberately paused detection/classification.
+        if self._simulator_enabled and self.active and self._task is None:
+            self._task = asyncio.create_task(self._simulate())
 
     async def stop(self) -> None:
         if self._task is not None:

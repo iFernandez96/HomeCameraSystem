@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 const closeFn = vi.fn()
 const connectWhep = vi.fn()
 const subscribeEvents = vi.fn()
+const drawBoxes = vi.fn()
 
 /**
  * Minimal fake of an `RTCPeerConnection`'s event-target surface so VideoTile's
@@ -114,6 +115,9 @@ vi.mock('../lib/webrtc', () => ({
 vi.mock('../lib/ws', () => ({
   subscribeEvents: (...a: unknown[]) => subscribeEvents(...a),
 }))
+vi.mock('../lib/drawBoxes', () => ({
+  drawBoxes: (...a: unknown[]) => drawBoxes(...a),
+}))
 
 import { VideoTile } from './VideoTile'
 
@@ -123,6 +127,7 @@ describe('VideoTile', () => {
     connectWhep.mockReset()
     subscribeEvents.mockReset()
     subscribeEvents.mockReturnValue(() => {})
+    drawBoxes.mockReset()
   })
 
   afterEach(() => {
@@ -208,6 +213,41 @@ describe('VideoTile', () => {
     connectWhep.mockReturnValue(new Promise(() => {}))
     render(<VideoTile src="http://test/cam/whep" />)
     expect(subscribeEvents).toHaveBeenCalled()
+  })
+
+  it('uses live_detection samples for the live bbox overlay', async () => {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as typeof originalGetContext
+    try {
+      let handler!: (evt: {
+        type: 'live_detection'
+        boxes: Array<{ x: number; y: number; w: number; h: number; label: string; score: number }>
+        camera_id: string
+        ts: number
+        v: 1
+      }) => void
+      subscribeEvents.mockImplementation((cb) => {
+        handler = cb
+        return () => {}
+      })
+      connectWhep.mockReturnValue(new Promise(() => {}))
+      render(<VideoTile src="http://test/cam/whep" />)
+
+      const box = { x: 0.1, y: 0.2, w: 0.3, h: 0.4, label: 'person', score: 0.9 }
+      await act(async () => {
+        handler({ v: 1, type: 'live_detection', ts: 1, camera_id: 'cam1', boxes: [box] })
+      })
+
+      expect(drawBoxes).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.any(HTMLCanvasElement),
+        expect.any(HTMLVideoElement),
+        [box],
+        null,
+      )
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext
+    }
   })
 
   it('closes the connection when unmounted', async () => {

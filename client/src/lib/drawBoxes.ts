@@ -18,6 +18,13 @@ let _degenerateWarned = false
 // string for unset custom properties, so this always has a real fallback.
 const FALLBACK_ID_COLOR = '#2f5fe0'
 
+type MediaRect = {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 /**
  * Resolves an `Identity`'s CSS custom-property color (e.g.
  * `var(--color-id-person)`) to a concrete string `drawBoxes` can hand to
@@ -30,6 +37,42 @@ export function resolveIdColor(identity: Pick<Identity, 'colorVar'>): string {
   if (!match) return FALLBACK_ID_COLOR
   const value = getComputedStyle(document.documentElement).getPropertyValue(match[0]).trim()
   return value || FALLBACK_ID_COLOR
+}
+
+function renderedMediaRect(video: HTMLVideoElement, w: number, h: number): MediaRect {
+  const intrinsicW = video.videoWidth
+  const intrinsicH = video.videoHeight
+  if (
+    !Number.isFinite(intrinsicW) ||
+    !Number.isFinite(intrinsicH) ||
+    intrinsicW <= 0 ||
+    intrinsicH <= 0
+  ) {
+    return { x: 0, y: 0, w, h }
+  }
+
+  const objectFit =
+    typeof getComputedStyle === 'function' ? getComputedStyle(video).objectFit : video.style.objectFit
+  const fit = objectFit || video.style.objectFit || 'fill'
+  if (fit !== 'contain' && fit !== 'cover' && fit !== 'scale-down') {
+    return { x: 0, y: 0, w, h }
+  }
+
+  const scaleContain = Math.min(w / intrinsicW, h / intrinsicH)
+  const scale =
+    fit === 'cover'
+      ? Math.max(w / intrinsicW, h / intrinsicH)
+      : fit === 'scale-down'
+        ? Math.min(1, scaleContain)
+        : scaleContain
+  const mediaW = intrinsicW * scale
+  const mediaH = intrinsicH * scale
+  return {
+    x: (w - mediaW) / 2,
+    y: (h - mediaH) / 2,
+    w: mediaW,
+    h: mediaH,
+  }
 }
 
 /**
@@ -81,6 +124,7 @@ export function drawBoxes(
   if (canvas.height !== h) canvas.height = h
   ctx.clearRect(0, 0, w, h)
   if (boxes.length === 0) return
+  const media = renderedMediaRect(video, w, h)
   ctx.lineWidth = 2
   ctx.font = '600 12px sans-serif'
 
@@ -102,11 +146,15 @@ export function drawBoxes(
     const color = opts?.color ?? (matched ? '#34d399' : '#ef4444')
     ctx.strokeStyle = color
     ctx.fillStyle = color
-    ctx.strokeRect(b.x * w, b.y * h, b.w * w, b.h * h)
+    const x = media.x + b.x * media.w
+    const y = media.y + b.y * media.h
+    const bw = b.w * media.w
+    const bh = b.h * media.h
+    ctx.strokeRect(x, y, bw, bh)
     const label =
       matched && personName
         ? `${personName} ${(b.score * 100).toFixed(0)}%`
         : `${b.label} ${(b.score * 100).toFixed(0)}%`
-    ctx.fillText(label, b.x * w, Math.max(12, b.y * h - 4))
+    ctx.fillText(label, x, Math.max(12, y - 4))
   }
 }

@@ -222,6 +222,37 @@ export async function probeEventClip(eventId: string): Promise<boolean> {
   return true
 }
 
+export type EventClipStatus = {
+  event_id: string
+  state: 'recording' | 'finalizing' | 'available' | 'failed' | 'unknown'
+  source: 'ledger' | 'disk' | 'missing'
+  updated_ts?: number
+  start_ts?: number
+  end_ts?: number
+  bytes?: number
+  reason?: string
+  error_type?: string
+  error?: string
+  failure_code?: string
+  failure_stage?: string
+  failure_summary?: string
+  failure_detail?: string
+  retryable?: boolean
+  eta_min_ts?: number
+  eta_max_ts?: number
+  eta_point_ts?: number
+  eta_model_samples?: number
+  eta_backtest_median_error_s?: number | null
+  eta_live_progress?: boolean
+  activity_present?: boolean | null
+  finalize_if_clear_ts?: number | null
+}
+
+export const fetchEventClipStatus = (eventId: string) =>
+  req<EventClipStatus>(
+    `/api/events/${encodeURIComponent(eventId)}/clip/status`,
+  )
+
 // iter-220 (Feature #6 slice 6): cursor-paginated event search. Wraps
 // the iter-219 `GET /api/events/search` route. All filters optional;
 // `before_ts` is the cursor passed back from `next_cursor` on the
@@ -317,7 +348,7 @@ export const markAllEventsSeen = () =>
 export const captureSnapshot = () =>
   req<{ url: string }>('/api/capture', { method: 'POST' })
 
-export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot'
+export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot' | 'focus_start' | 'focus_stop' | 'exposure_apply'
 export type LogUnit =
   | 'homecam-detect'
   | 'mediamtx'
@@ -343,6 +374,7 @@ export type RecoverStatus =
       requested_by: string
       requested_at: number
       result_at: number | null
+      result?: { expires_at?: number; width?: number; height?: number } | null
       worker_online: boolean
     }
 
@@ -362,6 +394,62 @@ export const getRecoverStatus = (requestId?: string) =>
       requestId ? `?request_id=${encodeURIComponent(requestId)}` : ''
     }`,
   )
+
+export const setCameraFocusMode = (enabled: boolean) =>
+  req<{
+    ok: true
+    request_id: string
+    status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+    worker_online: boolean
+    timeout_s: number
+  }>('/api/camera/focus-mode', {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+    keepalive: true,
+  })
+
+export type CameraExposure = {
+  enabled: boolean
+  x: number
+  y: number
+  width: number
+  height: number
+  compensation: number
+  locked: boolean
+}
+export type CameraExposureApply = CameraExposure & {
+  request_id: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  worker_online: boolean
+}
+export const getCameraExposure = () =>
+  req<CameraExposure>('/api/camera/exposure')
+export const putCameraExposure = (config: CameraExposure) =>
+  req<CameraExposureApply>('/api/camera/exposure', {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  })
+export type CameraExposurePreset = {
+  id: string
+  name: string
+  thumbnail: string
+  config: CameraExposure
+  created_at: number
+}
+export const listCameraExposurePresets = () =>
+  req<{ presets: CameraExposurePreset[] }>('/api/camera/exposure-presets')
+export const createCameraExposurePreset = (
+  name: string,
+  thumbnail: string,
+  config: CameraExposure,
+) => req<CameraExposurePreset>('/api/camera/exposure-presets', {
+  method: 'POST',
+  body: JSON.stringify({ name, thumbnail, config }),
+})
+export const deleteCameraExposurePreset = (id: string) =>
+  req<{ deleted: true; id: string }>(`/api/camera/exposure-presets/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 
 export type LogHandle = {
   request_id: string
@@ -886,8 +974,25 @@ export const bootstrapFace = (
 export const retrainFace = () =>
   req<{ ok: true; note?: string }>('/api/face/retrain', { method: 'POST' })
 
+export interface FaceCapabilities {
+  bootstrap: boolean
+  retrain: boolean
+  retrain_reason: string
+}
+
+/** Server-advertised face-management operations. Unsupported host-helper
+ * scaffolds stay out of the UI instead of failing only after a click. */
+export const getFaceCapabilities = () =>
+  req<FaceCapabilities>('/api/face/capabilities')
+
 export const toggleDetection = () =>
   req<{ active: boolean }>('/api/detection/toggle', { method: 'POST' })
+
+export const setDetectionEnabled = (enabled: boolean) =>
+  req<{ active: boolean }>('/api/detection/enabled', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
 
 export const getDetectionConfig = () =>
   req<DetectionConfig>('/api/detection/config')
@@ -953,6 +1058,7 @@ export type AdminAuditLogin = {
 export type AdminAuditView = {
   ts: number
   username: string
+  session_id: string | null
   kind: 'page' | 'event'
   name: string
   dwell_ms: number
@@ -962,13 +1068,46 @@ export type AdminAuditUserSummary = {
   logins: number
   page_dwell_ms: number
   event_views: number
+  actions: number
   top: [string, number][]
 }
 
+export type AdminAuditAction = {
+  ts: number
+  username: string
+  session_id: string | null
+  name: string
+}
+
+export type UsageSession = {
+  id: string
+  username: string
+  device_label: string
+  ip_class: 'lan' | 'tailscale' | 'cellular' | 'other'
+  started_ts: number
+  last_activity_ts: number
+  screen_time_ms: number
+  page_view_count: number
+  event_view_count: number
+  action_count: number
+  legacy: boolean
+  pages: { name: string; dwell_ms: number; views: number }[]
+  events: { name: string; dwell_ms: number; views: number }[]
+  actions: { name: string; count: number }[]
+  timeline: {
+    ts: number
+    kind: 'page' | 'event' | 'action'
+    name: string
+    dwell_ms: number
+  }[]
+}
+
 export type AdminAuditResponse = {
-  v: 1
+  v: 2
   logins: AdminAuditLogin[]
   views: AdminAuditView[]
+  actions: AdminAuditAction[]
+  sessions: UsageSession[]
   summary: {
     by_user: Record<string, AdminAuditUserSummary>
   }
@@ -1080,8 +1219,437 @@ export const deleteEvent = (eventId: string) =>
     method: 'DELETE',
   })
 
+export const setEventProtection = (eventId: string, protectedValue: boolean) =>
+  req<{ protected: boolean }>(
+    `/api/events/${encodeURIComponent(eventId)}/protection`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ protected: protectedValue }),
+    },
+  )
+
 export const deleteEventsByDay = (day: string) =>
   req<{ deleted: number }>(
     `/api/events?day=${encodeURIComponent(day)}`,
     { method: 'DELETE' },
+  )
+
+export type DailyDigest = {
+  day: string
+  total: number
+  by_label: Record<string, number>
+  unknown_people: number
+  known_people: string[]
+}
+
+export const getDailyDigest = (day: string) =>
+  req<DailyDigest>(`/api/events/digest?day=${encodeURIComponent(day)}`)
+
+export const createClipShare = (eventId: string, ttlS = 3600) =>
+  req<{ share_id: string; url: string; expires_at: number }>(
+    `/api/events/${encodeURIComponent(eventId)}/share`,
+    { method: 'POST', body: JSON.stringify({ ttl_s: ttlS }) },
+  )
+
+export const revokeClipShare = (shareId: string) =>
+  req<{ revoked: boolean }>(`/api/shares/${encodeURIComponent(shareId)}`, {
+    method: 'DELETE',
+  })
+
+// Security workspace -------------------------------------------------------
+// These resources deliberately live outside DetectionConfig. Timeline,
+// incident and automation operations have their own lifecycle, permissions
+// and pagination semantics; treating them as one giant settings PATCH would
+// make retries destructive and wire drift hard to spot.
+
+export type TimelineSpan = {
+  id: string
+  camera_id: string
+  start_ts: number
+  end_ts: number
+  url: string
+  size_bytes: number
+}
+
+export type TimelineGap = {
+  start_ts: number
+  end_ts: number
+  reason: 'not_recorded'
+}
+
+export type TimelineResponse = {
+  v: 1
+  camera_id: string
+  since_ts: number
+  until_ts: number
+  spans: TimelineSpan[]
+  gaps: TimelineGap[]
+  markers: DetectionEvent[]
+}
+
+export type TimelineBounds = {
+  camera_id: string
+  since_ts: number
+  until_ts: number
+}
+
+export const getTimeline = (bounds: TimelineBounds) => {
+  const params = new URLSearchParams({
+    camera_id: bounds.camera_id,
+    since_ts: String(bounds.since_ts),
+    until_ts: String(bounds.until_ts),
+  })
+  return req<TimelineResponse>(`/api/security/timeline?${params.toString()}`)
+}
+
+export type TimelineExport = {
+  v: 1
+  id: string
+  status: 'pending' | 'running' | 'ready' | 'failed'
+  created_ts: number
+  updated_ts: number
+  requested: TimelineBounds
+  coverage: {
+    recorded_s: number
+    gap_s: number
+  }
+  size_bytes: number | null
+  sha256: string | null
+  error: string | null
+  status_url: string
+  file_url: string | null
+}
+
+export const startTimelineExport = (bounds: TimelineBounds) =>
+  req<TimelineExport>('/api/security/timeline/exports', {
+    method: 'POST',
+    body: JSON.stringify(bounds),
+  })
+
+export const getTimelineExport = (exportId: string) =>
+  req<TimelineExport>(
+    `/api/security/timeline/exports/${encodeURIComponent(exportId)}`,
+  )
+
+async function downloadBlob(path: string): Promise<Blob> {
+  const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
+  if (!res.ok) throw new HttpError(path, res.status, res.statusText)
+  return res.blob()
+}
+
+export const downloadTimelineExport = (exportId: string) =>
+  downloadBlob(
+    `/api/security/timeline/exports/${encodeURIComponent(exportId)}/file`,
+  )
+
+export type SemanticSearchResult = {
+  event: DetectionEvent
+  description: string
+  match_reason: string
+  score: number
+}
+
+export type SecuritySearchResponse = {
+  v: 1
+  query: string
+  items: SemanticSearchResult[]
+  index_status: {
+    mode: string
+    status: string
+    indexed_events: number
+  }
+}
+
+export const searchSecurityEvents = (query: string, limit = 50) => {
+  const params = new URLSearchParams({ q: query, limit: String(limit) })
+  return req<SecuritySearchResponse>(
+    `/api/security/search?${params.toString()}`,
+  )
+}
+
+export type VisitStory = {
+  id: string
+  start_ts: number
+  end_ts: number
+  camera_ids: string[]
+  people: string[]
+  labels: string[]
+  events: DetectionEvent[]
+}
+
+export const listVisitStories = () =>
+  req<{ items: VisitStory[] }>('/api/security/visits')
+
+export const getVisitStory = (visitId: string) =>
+  req<VisitStory>(`/api/security/visits/${encodeURIComponent(visitId)}`)
+
+export type IncidentSummary = {
+  id: string
+  owner_username: string
+  title: string
+  notes: string
+  created_ts: number
+  updated_ts: number
+  event_count: number
+  protected?: boolean
+  thumb_url?: string | null
+}
+
+export type IncidentDetail = IncidentSummary & {
+  events: DetectionEvent[]
+}
+
+export const listIncidents = () =>
+  req<{ items: IncidentSummary[] }>('/api/security/incidents')
+
+export const getIncident = (incidentId: string) =>
+  req<IncidentDetail>(
+    `/api/security/incidents/${encodeURIComponent(incidentId)}`,
+  )
+
+export const createIncident = (title: string, notes = '') =>
+  req<IncidentDetail>('/api/security/incidents', {
+    method: 'POST',
+    body: JSON.stringify({ title, notes }),
+  })
+
+export const updateIncident = (
+  incidentId: string,
+  patch: { title?: string; notes?: string },
+) =>
+  req<IncidentDetail>(
+    `/api/security/incidents/${encodeURIComponent(incidentId)}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  )
+
+export const deleteIncident = (incidentId: string) =>
+  req<{ deleted: boolean }>(
+    `/api/security/incidents/${encodeURIComponent(incidentId)}`,
+    { method: 'DELETE' },
+  )
+
+export const addIncidentEvents = (incidentId: string, eventIds: string[]) =>
+  Promise.all(
+    eventIds.map((eventId) =>
+      req<IncidentDetail>(
+        `/api/security/incidents/${encodeURIComponent(incidentId)}/events/${encodeURIComponent(eventId)}`,
+        { method: 'POST' },
+      ),
+    ),
+  ).then((items) => items[items.length - 1])
+
+export const removeIncidentEvent = (incidentId: string, eventId: string) =>
+  req<IncidentDetail>(
+    `/api/security/incidents/${encodeURIComponent(incidentId)}/events/${encodeURIComponent(eventId)}`,
+    { method: 'DELETE' },
+  )
+
+export const exportIncident = (incidentId: string) =>
+  fetch(
+    `${BASE}/api/security/incidents/${encodeURIComponent(incidentId)}/export`,
+    { method: 'POST', credentials: 'include' },
+  ).then((res) => {
+    const path = `/api/security/incidents/${encodeURIComponent(incidentId)}/export`
+    if (!res.ok) throw new HttpError(path, res.status, res.statusText)
+    return res.blob()
+  })
+
+export type AutomationTriggers = {
+  labels: string[]
+  sources: Array<'vision' | 'audio' | 'doorbell' | 'tamper' | 'system'>
+  camera_ids: string[]
+  rule_ids: string[]
+}
+
+export type AutomationConditions = {
+  operating_modes: Array<'home' | 'away' | 'night' | 'privacy'>
+  person: 'any' | 'known' | 'unknown'
+  min_score: number
+}
+
+export type AutomationAction =
+  | { kind: 'push'; title?: string }
+  | { kind: 'webhook'; target: string; secret_set: boolean }
+  | { kind: 'mqtt'; topic: string }
+  | { kind: 'light' | 'warning' | 'siren'; duration_s: number }
+
+export type AutomationActionInput =
+  | { kind: 'push'; title?: string }
+  | { kind: 'webhook'; url: string; secret?: string | null }
+  | { kind: 'mqtt'; topic: string }
+  | { kind: 'light' | 'warning' | 'siren'; duration_s: number }
+
+export type Automation = {
+  id: string
+  name: string
+  enabled: boolean
+  triggers: AutomationTriggers
+  conditions: AutomationConditions
+  actions: AutomationAction[]
+  created_ts: number
+  updated_ts: number
+}
+
+export type AutomationInput = {
+  name: string
+  enabled: boolean
+  triggers: AutomationTriggers
+  conditions: AutomationConditions
+  actions: AutomationActionInput[]
+}
+
+export const listAutomations = () =>
+  req<{ v: 1; items: Automation[] }>('/api/security/automations')
+
+export const createAutomation = (automation: AutomationInput) =>
+  req<Automation>('/api/security/automations', {
+    method: 'POST',
+    body: JSON.stringify(automation),
+  })
+
+export const updateAutomation = (automationId: string, automation: AutomationInput) =>
+  req<Automation>(
+    `/api/security/automations/${encodeURIComponent(automationId)}`,
+    { method: 'PUT', body: JSON.stringify(automation) },
+  )
+
+/** Enabled-only mutation. This deliberately avoids round-tripping masked
+ * webhook targets or signing-secret state from a read response. */
+export const patchAutomationEnabled = (automationId: string, enabled: boolean) =>
+  req<Automation>(
+    `/api/security/automations/${encodeURIComponent(automationId)}`,
+    { method: 'PATCH', body: JSON.stringify({ enabled }) },
+  )
+
+export const deleteAutomation = (automationId: string) =>
+  req<{ ok: true }>(
+    `/api/security/automations/${encodeURIComponent(automationId)}`,
+    { method: 'DELETE' },
+  )
+
+export const testAutomation = (automationId: string) =>
+  req<{
+    ok: true
+    automation_id: string
+    matched: boolean
+    dry_run: true
+    results: Array<{
+      kind: string
+      status: string
+      detail?: string
+      capability?: DeterrenceCapability
+    }>
+  }>(
+    `/api/security/automations/${encodeURIComponent(automationId)}/test`,
+    { method: 'POST' },
+  )
+
+export type OutageRecord = {
+  id: string
+  kind: string
+  start_ts: number
+  end_ts: number | null
+  reason: string
+  recovered: boolean
+}
+
+export const listOutages = () =>
+  req<{ items: OutageRecord[] }>('/api/security/outages')
+
+export type PackageStatus = {
+  correlation_id: string
+  state: 'delivered' | 'present' | 'collected' | 'possible_theft'
+  camera_id: string
+  first_seen_ts: number
+  updated_ts: number
+  event_id: string | null
+  thumb_url: string | null
+}
+
+export const getCurrentPackages = () =>
+  req<{ items: PackageStatus[] }>('/api/security/packages/current')
+
+export const getMediaToken = (
+  action: 'publish' | 'read',
+  path: 'talk' | 'listen',
+) =>
+  req<{ token: string; expires_ts: number }>('/api/security/media-token', {
+    method: 'POST',
+    body: JSON.stringify({ action, path }),
+  })
+
+export const triggerDeterrence = (body: {
+  action: 'light' | 'warning' | 'siren'
+  duration_s: number
+  confirm: true
+  event_id?: string
+}) =>
+  req<{
+    ok: boolean
+    status: 'executed' | 'blocked' | 'unavailable'
+    reason: string
+    action: 'light' | 'warning' | 'siren'
+    duration_s: number
+    capabilities: DeterrenceCapability
+  }>('/api/security/deterrence', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export type DeterrenceCapability = {
+  available: boolean
+  adapter: 'mounted_executable' | null
+  limitation: string
+}
+
+export type DeterrenceCapabilities = DeterrenceCapability & {
+  v: 1
+  armed: boolean
+  privacy_blocked: boolean
+  supported_actions: Array<'light' | 'warning' | 'siren'>
+}
+
+export const getDeterrenceCapabilities = () =>
+  req<DeterrenceCapabilities>('/api/security/deterrence/capabilities')
+
+export const submitIdentityFeedback = (
+  eventId: string,
+  body: { verdict: 'correct' | 'incorrect'; correct_name?: string | null },
+) =>
+  req<{ ok: true; event: DetectionEvent; captures_moved: number }>(
+    `/api/events/${encodeURIComponent(eventId)}/identity-feedback`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+
+export type FaceMergeResponse = {
+  ok: true
+  source_name: string
+  target_name: string
+  files_moved: number
+  events_updated: number
+  retrain_required: boolean
+}
+
+export const mergeFaces = (sourceName: string, targetName: string) =>
+  req<FaceMergeResponse>('/api/face/merge', {
+    method: 'POST',
+    body: JSON.stringify({ source_name: sourceName, target_name: targetName }),
+  })
+
+export type FacePreference = {
+  name: string
+  notification: 'all' | 'smart' | 'none'
+  alerts_enabled: boolean
+}
+
+export const getFacePreferences = () =>
+  req<{ v: 1; items: FacePreference[]; total: number }>('/api/face/preferences')
+
+export const setFacePreference = (name: string, alertsEnabled: boolean) =>
+  req<FacePreference>(
+    `/api/face/preferences/${encodeURIComponent(name)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ alerts_enabled: alertsEnabled }),
+    },
   )

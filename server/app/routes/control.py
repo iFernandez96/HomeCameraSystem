@@ -6,10 +6,10 @@ import logging
 import time
 from dataclasses import asdict
 from uuid import uuid4
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pathlib import Path
 
@@ -31,6 +31,14 @@ from ..services.detection_config import (
     FACE_CAPTURE_RETENTION_MIN,
     MAX_VISIT_MAX,
     MAX_VISIT_MIN,
+    AUDIO_EVENT_LABELS,
+    DETERRENCE_DURATION_MAX,
+    DETERRENCE_DURATION_MIN,
+    PACKAGE_CHANGE_THRESHOLD_MAX,
+    PACKAGE_CHANGE_THRESHOLD_MIN,
+    PACKAGE_STABLE_S_MAX,
+    PACKAGE_STABLE_S_MIN,
+    SMART_RULES_MAX,
     HHMM_PATTERN,
     THRESHOLD_MAX,
     THRESHOLD_MIN,
@@ -42,6 +50,7 @@ from ..services.detection_config import (
 from ..services import ota_orchestrator as ota_orchestrator_module
 from ..services import ota_rollback as ota_rollback_module
 from ..services import audit_db, host_bridge
+from ..services.camera_exposure import CameraExposureConfig, camera_exposure
 from ..services.backup_orchestrator import (
     BackupOrchestratorRequest,
     orchestrate_backup,
@@ -77,11 +86,44 @@ _Polygon = Annotated[
 ]
 
 
+class SmartRulePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-z0-9_]{1,32}$")
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal["line_crossing", "loitering", "package"]
+    enabled: bool = True
+    camera_id: str = Field(default="front_door", pattern=r"^[a-z0-9_]{1,32}$")
+    points: list[_Point] = Field(min_length=2, max_length=32)
+    labels: list[_ClassName] = Field(default_factory=list, max_length=16)
+    direction: Literal["any", "forward", "reverse"] = "any"
+    dwell_s: float = Field(default=0.0, ge=0.0, le=3600.0)
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _point_count_matches_kind(self) -> "SmartRulePayload":
+        if self.kind == "line_crossing" and len(self.points) != 2:
+            raise ValueError("line_crossing rules require exactly two points")
+        if self.kind != "line_crossing" and len(self.points) < 3:
+            raise ValueError("area rules require at least three points")
+        return self
+
+
 class DetectionConfigPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     threshold: float | None = Field(default=None, ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
     cooldown_s: float | None = Field(default=None, ge=COOLDOWN_MIN, le=COOLDOWN_MAX)
     enabled: bool | None = None
+    operating_mode: str | None = Field(
+        default=None, pattern="^(home|away|night|privacy)$"
+    )
     schedule_off_start: str | None = Field(default=None, pattern=HHMM_PATTERN)
     schedule_off_end: str | None = Field(default=None, pattern=HHMM_PATTERN)
     # Per-element bound caps individual class names (longest real COCO
@@ -90,6 +132,7 @@ class DetectionConfigPatch(BaseModel):
     # `["x" * 1_000_000]` would still pass.
     classes: list[_ClassName] | None = Field(default=None, max_length=30)
     zones: list[_Polygon] | None = Field(default=None, max_length=ZONES_MAX)
+    privacy_masks: list[_Polygon] | None = Field(default=None, max_length=ZONES_MAX)
     # iter-254: per-event clip duration. Post-roll is live-tunable
     # via the iter-244 unauth config-poll the worker reads.
     # iter-257: bound here is the absolute ceiling (week preset's
@@ -139,6 +182,42 @@ class DetectionConfigPatch(BaseModel):
     absence_finalize_s: float | None = Field(
         default=None, ge=ABSENCE_FINALIZE_MIN, le=ABSENCE_FINALIZE_MAX
     )
+    daily_digest_enabled: bool | None = None
+    daily_digest_time: str | None = Field(default=None, pattern=HHMM_PATTERN)
+    smart_rules: list[SmartRulePayload] | None = Field(
+        default=None, max_length=SMART_RULES_MAX
+    )
+    package_change_threshold: float | None = Field(
+        default=None,
+        ge=PACKAGE_CHANGE_THRESHOLD_MIN,
+        le=PACKAGE_CHANGE_THRESHOLD_MAX,
+    )
+    package_stable_s: float | None = Field(
+        default=None, ge=PACKAGE_STABLE_S_MIN, le=PACKAGE_STABLE_S_MAX
+    )
+    audio_event_enabled: bool | None = None
+    audio_event_labels: list[Literal[
+        "audio_smoke_alarm",
+        "audio_glass_break",
+        "audio_scream",
+        "audio_dog_bark",
+    ]] | None = Field(default=None, max_length=len(AUDIO_EVENT_LABELS))
+    deterrence_enabled: bool | None = None
+    deterrence_action: Literal["light", "warning", "siren"] | None = None
+    deterrence_duration_s: float | None = Field(
+        default=None, ge=DETERRENCE_DURATION_MIN, le=DETERRENCE_DURATION_MAX
+    )
+
+    @model_validator(mode="after")
+    def _unique_smart_rule_ids(self) -> "DetectionConfigPatch":
+        if self.smart_rules is not None:
+            ids = [rule.id for rule in self.smart_rules]
+            if len(ids) != len(set(ids)):
+                raise ValueError("smart rule ids must be unique")
+        if self.audio_event_labels is not None:
+            if len(self.audio_event_labels) != len(set(self.audio_event_labels)):
+                raise ValueError("audio event labels must be unique")
+        return self
 
 
 class _ConfirmBody(BaseModel):
@@ -150,6 +229,41 @@ class _RecoverBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: str = Field(pattern=r"^(mediamtx|nvargus|reboot)$")
     confirm: bool
+
+
+class _FocusModeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
+class _ExposureBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    x: float = Field(ge=0.0, le=0.75)
+    y: float = Field(ge=0.0, le=0.75)
+    width: float = Field(ge=0.25, le=1.0)
+    height: float = Field(ge=0.25, le=1.0)
+    compensation: float = Field(ge=-2.0, le=2.0)
+    locked: bool = False
+
+
+class _ExposurePresetBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=40)
+    thumbnail: str = Field(
+        min_length=24,
+        max_length=250_000,
+        pattern=r"^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$",
+    )
+    config: _ExposureBody
+
+    @field_validator("name")
+    @classmethod
+    def _name_must_not_be_blank(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("name must not be blank")
+        return clean
 
 
 _LOG_UNITS = ("homecam-detect", "mediamtx", "nvargus-daemon", "homecam-server")
@@ -241,6 +355,23 @@ async def capture() -> dict[str, str]:
 @router.post("/detection/toggle")
 async def toggle_detection() -> dict[str, bool]:
     await detection_service.toggle()
+    return {"active": detection_service.active}
+
+
+class DetectionEnabledPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
+@router.put("/detection/enabled")
+async def set_detection_enabled(payload: DetectionEnabledPayload) -> dict[str, bool]:
+    """Narrow, race-free pause/resume control for any signed-in user.
+
+    Broader detection configuration remains owner-only below. This endpoint
+    changes exactly one boolean so family/viewer accounts can operate the
+    live-view On watch panel without gaining threshold/zone/schedule access.
+    """
+    detection_service.active = payload.enabled
     return {"active": detection_service.active}
 
 
@@ -339,8 +470,131 @@ async def system_recover_status(
         "requested_by": rec.get("requested_by"),
         "requested_at": rec.get("requested_at"),
         "result_at": rec.get("result_at"),
+        "result": rec.get("result"),
         "worker_online": worker_health.is_alive(),
     }
+
+
+@router.post(
+    "/camera/focus-mode",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def camera_focus_mode(
+    body: _FocusModeBody,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
+    """Queue a temporary 1080p mode or restore the normal 720p pipeline."""
+    kind = "focus_start" if body.enabled else "focus_stop"
+    rec = host_bridge.enqueue(kind, {}, requested_by=user, now=time.time())
+    # The audit schema intentionally has a closed action vocabulary. Record
+    # this as its underlying mediamtx lifecycle action and keep the mode in
+    # detail rather than weakening that constraint.
+    try:
+        audit_db.insert_host_action_event(
+            settings.audit_db_path,
+            ts=time.time(),
+            username=user,
+            action="mediamtx",
+            request_id=rec["id"],
+            phase="requested",
+            status=None,
+            detail="camera_focus_mode={}".format("1080p" if body.enabled else "720p"),
+        )
+    except Exception:
+        log.warning("focus mode request audit failed id=%s", rec["id"], exc_info=True)
+    return {
+        "ok": True,
+        "request_id": rec["id"],
+        "status": rec["status"],
+        "worker_online": worker_health.is_alive(),
+        "timeout_s": 300 if body.enabled else 0,
+    }
+
+
+@router.get("/camera/exposure")
+async def get_camera_exposure() -> dict[str, object]:
+    return asdict(camera_exposure.get())
+
+
+@router.put(
+    "/camera/exposure",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def put_camera_exposure(
+    body: _ExposureBody,
+    user: str = Depends(get_current_user),
+) -> dict[str, object]:
+    if body.x + body.width > 1.0 or body.y + body.height > 1.0:
+        raise HTTPException(status_code=422, detail="exposure region must fit inside frame")
+    config = CameraExposureConfig(**body.model_dump())
+    previous = camera_exposure.get()
+    camera_exposure.save(config)
+    action_args = {
+        **asdict(config),
+        # Persist the last committed state with the durable host-action record.
+        # If hardware apply fails, the callback restores this exact value so
+        # GET /camera/exposure cannot diverge from the worker's rollback.
+        "_previous_config": asdict(previous),
+    }
+    rec = host_bridge.enqueue(
+        "exposure_apply", action_args, requested_by=user, now=time.time()
+    )
+    record_args = rec.get("args") if isinstance(rec.get("args"), dict) else {}
+    if rec.get("kind") != "exposure_apply" or any(
+        record_args.get(key) != value for key, value in asdict(config).items()
+    ):
+        # host_bridge returns the existing active action on contention. Never
+        # claim a new exposure was queued or leave its optimistic file behind.
+        camera_exposure.save(previous)
+        raise HTTPException(
+            status_code=409,
+            detail="another camera operation is already in progress",
+        )
+    _audit_host_action_requested("mediamtx", rec["id"], user)
+    log.info("camera exposure apply queued request_id=%s", rec["id"])
+    return {
+        **asdict(config),
+        "request_id": rec["id"],
+        "status": rec["status"],
+        "worker_online": worker_health.is_alive(),
+    }
+
+
+@router.get(
+    "/camera/exposure-presets",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def list_camera_exposure_presets() -> dict[str, object]:
+    return {"presets": [asdict(preset) for preset in camera_exposure.list_presets()]}
+
+
+@router.post(
+    "/camera/exposure-presets",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def create_camera_exposure_preset(body: _ExposurePresetBody) -> dict[str, object]:
+    config = body.config
+    if config.x + config.width > 1.0 or config.y + config.height > 1.0:
+        raise HTTPException(status_code=422, detail="exposure region must fit inside frame")
+    preset = camera_exposure.save_preset(
+        body.name,
+        body.thumbnail,
+        CameraExposureConfig(**config.model_dump()),
+        time.time(),
+    )
+    log.info("camera exposure preset saved id=%s", preset.id)
+    return asdict(preset)
+
+
+@router.delete(
+    "/camera/exposure-presets/{preset_id}",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def delete_camera_exposure_preset(preset_id: str) -> dict[str, object]:
+    if not camera_exposure.delete_preset(preset_id):
+        raise HTTPException(status_code=404, detail="exposure preset not found")
+    log.info("camera exposure preset deleted id=%s", preset_id)
+    return {"deleted": True, "id": preset_id}
 
 
 @router.get(
@@ -501,6 +755,7 @@ async def system_restore(body: _RestoreBody) -> dict[str, object]:
                 "vapid_public_key": settings.vapid_public_key_path.parent,
                 "push_subs": settings.push_subs_path.parent,
                 "detection_config": settings.detection_config_path.parent,
+                "security_state": settings.security_state_path.parent,
             },
             required_roles=[
                 "users_db",
@@ -552,6 +807,41 @@ _TIMELAPSE_STATUS: dict[str, dict] = {}
 _TIMELAPSE_TASKS: set[asyncio.Task] = set()
 
 
+def _job_to_status(job: dict) -> dict[str, object]:
+    state = job["state"]
+    return {
+        "building": state in ("queued", "running"),
+        "ready": state == "ready",
+        "error": job.get("error"),
+    }
+
+
+def _start_timelapse_task(date: str, requested_by: str | None) -> None:
+    task = asyncio.create_task(_run_timelapse_build(date, requested_by))
+    _TIMELAPSE_TASKS.add(task)
+    task.add_done_callback(_TIMELAPSE_TASKS.discard)
+
+
+def reconcile_timelapse_jobs() -> int:
+    """Resume builds left queued/running by an unclean server exit."""
+    from ..services import timelapse_jobs
+
+    resumed = 0
+    for job in timelapse_jobs.unfinished(settings.timelapses_dir):
+        date = job["date"]
+        if (settings.timelapses_dir / f"{date}.mp4").exists():
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "ready")
+            _TIMELAPSE_STATUS[date] = {"building": False, "ready": True, "error": None}
+            continue
+        timelapse_jobs.set_state(
+            settings.timelapses_dir, date, "queued", requested_by=job["requested_by"]
+        )
+        _TIMELAPSE_STATUS[date] = {"building": True, "ready": False, "error": None}
+        _start_timelapse_task(date, job["requested_by"])
+        resumed += 1
+    return resumed
+
+
 async def _notify_timelapse_done(
     user: str | None, date: str, ok: bool, reason: str | None
 ) -> None:
@@ -594,6 +884,10 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
     `_TIMELAPSE_STATUS` for the status endpoint, and Web-Push the requester
     (`requested_by`) when it finishes."""
     from ..services import timelapse as _timelapse_service
+    from ..services import timelapse_jobs
+    timelapse_jobs.set_state(
+        settings.timelapses_dir, date, "running", requested_by=requested_by
+    )
     ok = False
     reason = None  # human-readable failure reason, also the push body on fail
     try:
@@ -601,6 +895,7 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
         if result.ok:
             log.info("timelapse built for %s: %d clips", date, result.clip_count)
             _TIMELAPSE_STATUS[date] = {"building": False, "ready": True, "error": None}
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "ready")
             ok = True
         elif result.clip_count == 0:
             log.info("timelapse skipped for %s: no clips", date)
@@ -608,6 +903,7 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
             _TIMELAPSE_STATUS[date] = {
                 "building": False, "ready": False, "error": reason,
             }
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "failed", error=reason)
         else:
             log.warning("timelapse build failed for %s: %s", date, result.error)
             reason = "Couldn't build timelapse: {0}".format(
@@ -616,12 +912,14 @@ async def _run_timelapse_build(date: str, requested_by: str | None = None) -> No
             _TIMELAPSE_STATUS[date] = {
                 "building": False, "ready": False, "error": reason,
             }
+            timelapse_jobs.set_state(settings.timelapses_dir, date, "failed", error=reason)
     except Exception:
         log.exception("timelapse background build crashed for %s", date)
         reason = "Timelapse build crashed — see server logs."
         _TIMELAPSE_STATUS[date] = {
             "building": False, "ready": False, "error": reason,
         }
+        timelapse_jobs.set_state(settings.timelapses_dir, date, "failed", error=reason)
     # Notify the requester last, after status is settled (best-effort).
     await _notify_timelapse_done(requested_by, date, ok, reason)
 
@@ -639,6 +937,10 @@ async def system_timelapse(
     # dependency above gates access; this resolves who to notify.
     expected_url = f"/api/timelapses/{body.date}.mp4"
     existing = _TIMELAPSE_STATUS.get(body.date)
+    from ..services import timelapse_jobs
+    durable = timelapse_jobs.get(settings.timelapses_dir, body.date)
+    if existing is None and durable is not None:
+        existing = _job_to_status(durable)
     if existing is not None and existing.get("building"):
         # De-dupe: a build for this day is already running. Don't spawn a
         # second concurrent ffmpeg (they'd race on the same .tmp).
@@ -652,9 +954,10 @@ async def system_timelapse(
     # Mark building SYNCHRONOUSLY (before create_task) so two rapid POSTs
     # can't both pass the guard above.
     _TIMELAPSE_STATUS[body.date] = {"building": True, "ready": False, "error": None}
-    task = asyncio.create_task(_run_timelapse_build(body.date, user))
-    _TIMELAPSE_TASKS.add(task)
-    task.add_done_callback(_TIMELAPSE_TASKS.discard)
+    timelapse_jobs.set_state(
+        settings.timelapses_dir, body.date, "queued", requested_by=user
+    )
+    _start_timelapse_task(body.date, user)
     log.info("timelapse build started (background) for %s", body.date)
     return {
         "ok": True,
@@ -677,6 +980,11 @@ async def system_timelapse_status(
     restarted mid/after a build, or it was built in a prior session)."""
     expected_url = f"/api/timelapses/{date}.mp4"
     st = _TIMELAPSE_STATUS.get(date)
+    if st is None:
+        from ..services import timelapse_jobs
+        job = timelapse_jobs.get(settings.timelapses_dir, date)
+        if job is not None:
+            st = _job_to_status(job)
     if st is None:
         exists = (settings.timelapses_dir / f"{date}.mp4").exists()
         return {
@@ -842,7 +1150,7 @@ async def system_update(
     response["host_commands"] = list(result.host_commands)
     response["restart_required"] = bool(result.applied)
     if result.phase == "manifest_gate" and result.reason == "missing":
-        response["note"] = "scaffold: update manifest is not present"
+        response["note"] = "No signed update manifest is currently staged."
     return response
 
 
@@ -1019,6 +1327,9 @@ async def delete_timelapse(
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="invalid path")
     if not resolved.exists():
+        from ..services import timelapse_jobs
+        timelapse_jobs.delete(settings.timelapses_dir, date)
+        _TIMELAPSE_STATUS.pop(date, None)
         return {"deleted": False, "date": date}
     try:
         resolved.unlink()
@@ -1037,5 +1348,8 @@ async def delete_timelapse(
         sidecar.unlink()
     except OSError:
         pass
+    from ..services import timelapse_jobs
+    timelapse_jobs.delete(settings.timelapses_dir, date)
+    _TIMELAPSE_STATUS.pop(date, None)
     log.info("timelapse deleted for %s", date)
     return {"deleted": True, "date": date}

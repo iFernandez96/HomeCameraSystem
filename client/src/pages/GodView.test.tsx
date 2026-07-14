@@ -8,6 +8,7 @@ const fetchLogs = vi.fn()
 const getLogsResult = vi.fn()
 const getRecoverStatus = vi.fn()
 const listSessions = vi.fn()
+const listOutages = vi.fn()
 const recoverHost = vi.fn()
 const useStatus = vi.fn()
 let authUser: { username: string; role: string } | null = {
@@ -21,6 +22,7 @@ vi.mock('../lib/api', () => ({
   getLogsResult: (...a: unknown[]) => getLogsResult(...a),
   getRecoverStatus: (...a: unknown[]) => getRecoverStatus(...a),
   listSessions: () => listSessions(),
+  listOutages: () => listOutages(),
   recoverHost: (...a: unknown[]) => recoverHost(...a),
   revokeSession: (jti: string) => Promise.resolve({ ok: true, jti }),
 }))
@@ -53,7 +55,7 @@ function renderGodView() {
 
 describe('GodView page', () => {
   beforeEach(() => {
-    authUser = { username: 'owner-user', role: 'owner' }
+    authUser = { username: 'Israel', role: 'owner' }
     useStatus.mockReturnValue(null)
     recoverHost.mockReset().mockResolvedValue({
       ok: true,
@@ -85,15 +87,33 @@ describe('GodView page', () => {
       detail: null,
     })
     listSessions.mockReset().mockResolvedValue({ v: 1, sessions: [] })
+    listOutages.mockReset().mockResolvedValue({ items: [] })
     getAdminAudit.mockReset().mockResolvedValue({
-      v: 1,
+      v: 2,
       logins: [
         { ts: 1714000000, username: 'admin', action: 'login', ua: 'Chrome' },
         { ts: 1714000300, username: 'alice', action: 'refresh', ua: 'Firefox' },
       ],
       views: [
-        { ts: 1714000100, username: 'admin', kind: 'page', name: '/events', dwell_ms: 65000 },
-        { ts: 1714000200, username: 'alice', kind: 'event', name: 'evt_1', dwell_ms: 8000 },
+        { ts: 1714000100, username: 'admin', session_id: 'session-admin', kind: 'page', name: '/events', dwell_ms: 65000 },
+        { ts: 1714000200, username: 'alice', session_id: 'session-alice', kind: 'event', name: 'evt_1', dwell_ms: 8000 },
+      ],
+      actions: [
+        { ts: 1714000210, username: 'alice', session_id: 'session-alice', name: 'PATCH /api/detection/config' },
+      ],
+      sessions: [
+        {
+          id: 'session-alice', username: 'alice', device_label: 'Firefox on Android', ip_class: 'lan',
+          started_ts: 1714000000, last_activity_ts: 1714000210, screen_time_ms: 42000,
+          page_view_count: 2, event_view_count: 1, action_count: 1, legacy: false,
+          pages: [{ name: '/settings', dwell_ms: 42000, views: 2 }],
+          events: [{ name: 'evt_1', dwell_ms: 8000, views: 1 }],
+          actions: [{ name: 'PATCH /api/detection/config', count: 1 }],
+          timeline: [
+            { ts: 1714000210, kind: 'action', name: 'PATCH /api/detection/config', dwell_ms: 0 },
+            { ts: 1714000200, kind: 'event', name: 'evt_1', dwell_ms: 8000 },
+          ],
+        },
       ],
       summary: {
         by_user: {
@@ -101,12 +121,14 @@ describe('GodView page', () => {
             logins: 1,
             page_dwell_ms: 65000,
             event_views: 0,
+            actions: 0,
             top: [['/events', 65000]],
           },
           alice: {
             logins: 1,
             page_dwell_ms: 0,
             event_views: 1,
+            actions: 1,
             top: [['evt_1', 8000]],
           },
         },
@@ -114,7 +136,7 @@ describe('GodView page', () => {
     })
   })
 
-  it('Given an owner user, When the audit wrapper returns data, Then crash-cart, aggregates, sessions, and views render', async () => {
+  it('Given an owner user, When audit data loads, Then glanceable app sessions lead and raw rows stay collapsed', async () => {
     // arrange / act
     renderGodView()
 
@@ -126,16 +148,26 @@ describe('GodView page', () => {
     expect(screen.getByRole('heading', { name: /crash cart/i })).toBeInTheDocument()
     expect(screen.getByRole('status', { name: /can't reach the jetson/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /active sessions/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /app usage sessions/i })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { name: 'alice' }).length).toBeGreaterThan(0)
+    expect(screen.getByText('Firefox on Android · LAN')).toBeInTheDocument()
+    expect(screen.getByText('Settings')).toBeInTheDocument()
+    expect(screen.getAllByText('Changed detection settings').length).toBeGreaterThan(0)
+    expect(screen.getByRole('link', { name: 'View event' })).toHaveAttribute(
+      'href',
+      '/events?event=evt_1',
+    )
     expect(screen.getByRole('heading', { name: /recovery/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /logs/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/unit/i)).toBeInTheDocument()
+    const rawDetails = screen.getByText('Raw audit tables').closest('details')
+    expect(rawDetails).not.toHaveAttribute('open')
+    await userEvent.click(screen.getByText('Raw audit tables'))
+    expect(rawDetails).toHaveAttribute('open')
     expect(screen.getByRole('heading', { name: /sessions timeline/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /per user/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /^views$/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'admin' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'alice' })).toBeInTheDocument()
-    expect(screen.getAllByText('/events').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('evt_1').length).toBeGreaterThan(0)
     await waitFor(() => expect(getAdminAudit).toHaveBeenCalledTimes(1))
   })
 

@@ -63,6 +63,7 @@ def test_given_idle_when_first_present_then_single_open_at_minus_preroll():
     assert out[0]["kind"] == "open"
     assert out[0]["key"] == KEY
     assert out[0]["visit_id"] == "v1"
+    assert out[0]["root_visit_id"] == "v1"
     assert out[0]["start_ts"] == 1000.0 - PRE_ROLL
 
 
@@ -170,6 +171,7 @@ def test_given_finalized_when_redetect_later_then_new_visit_id():
     assert _kinds(out) == ["open"]
     assert out[0]["visit_id"] == "v2"
     assert out[0]["visit_id"] != "v1"
+    assert out[0]["root_visit_id"] == "v2"
 
 
 # 6. continuous presence past max_visit_s => finalize + continuation open ----
@@ -190,9 +192,13 @@ def test_given_presence_past_max_visit_then_finalize_and_continuation_open():
     assert _kinds(out) == ["finalize", "open"]
     fin, opn = out
     assert fin["visit_id"] == "v1"
+    assert fin["root_visit_id"] == "v1"
     assert fin["segment_index"] == 0
     assert opn["visit_id"] == "v2"
+    assert opn["root_visit_id"] == "v1"
     assert opn["segment_index"] == 1
+    assert t.active_visit_id(KEY) == "v2"
+    assert t.active_root_visit_id(KEY) == "v1"
     # continuation adjacency at the nominal/SM level: v2.start_ts == v1.end_ts
     # EXACTLY, with NO pre-roll re-added.
     assert opn["start_ts"] == fin["end_ts"]
@@ -301,7 +307,10 @@ def test_given_open_visit_when_snapshot_then_json_serializable():
     encoded = json.dumps(snap)  # raises if not serializable
     # assert
     assert isinstance(snap, dict)
-    assert KEY in json.loads(encoded)
+    decoded = json.loads(encoded)
+    assert KEY in decoded
+    assert decoded[KEY]["visit_id"] == "v1"
+    assert decoded[KEY]["root_visit_id"] == "v1"
 
 
 def test_given_many_keys_when_observed_then_bounded_at_max_keys():

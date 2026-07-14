@@ -60,24 +60,19 @@ def load_or_generate(path: Path) -> bytes:
             data = path.read_bytes()
         except OSError as e:
             log.warning(
-                "JWT secret at %s exists but unreadable (%s: %s) — "
+                "JWT secret exists but is unreadable (%s) — "
                 "regenerating; ALL active sessions invalidated (every "
                 "issued token now fails signature verification, forcing "
                 "a re-login)",
-                path,
                 type(e).__name__,
-                e,
             )
             return _generate_and_write(path)
         if len(data) == _SECRET_LEN:
             return data
         log.warning(
-            "JWT secret at %s has wrong size (%d bytes; expected %d) — "
-            "regenerating; ALL active sessions invalidated (every issued "
-            "token now fails signature verification, forcing a re-login)",
-            path,
-            len(data),
-            _SECRET_LEN,
+            "JWT secret has wrong size — regenerating; ALL active "
+            "sessions invalidated (every issued token now fails signature "
+            "verification, forcing a re-login)",
         )
     return _generate_and_write(path)
 
@@ -105,16 +100,14 @@ def _generate_and_write(path: Path) -> bytes:
         finally:
             os.close(fd)
         os.replace(tmp, path)
-        log.info("JWT secret generated at %s", path)
+        log.info("JWT secret generated on durable storage")
     except OSError as e:
         log.warning(
-            "JWT secret write to %s failed (%s: %s) — using in-memory "
+            "JWT secret write to durable storage failed (%s) — using in-memory "
             "secret for this process; tokens won't survive restart, and "
             "the NEXT restart will mint yet another secret, invalidating "
             "ALL active sessions (forced re-login). Fix the disk/perms "
             "and restart to make the secret durable",
-            path,
             type(e).__name__,
-            e,
         )
     return new_secret

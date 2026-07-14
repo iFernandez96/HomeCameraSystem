@@ -1,10 +1,11 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
   EventsIcon,
   GodViewIcon,
   LiveIcon,
   PeopleIcon,
+  PlaygroundIcon,
   SettingsIcon,
   TrainingIcon,
 } from './NavIcons'
@@ -65,17 +66,26 @@ type NavItem = {
 // keeps 5 items while the phone BottomNav has 4 in every
 // orientation. Cross-device difference is fine; cross-orientation
 // difference (the retired `landscapeOnly` Review) was the bug.
+//
+// Playground (Slice A): desktop-rail-only destination. It stays OFF
+// the phone BottomNav deliberately — see the width-math note in
+// BottomNav.tsx (a 5th base tab means 6 with the god-mode entry,
+// which overflows the pebble at 360px) plus the NAV-1 rule that the
+// phone's 4-destination IA is a conscious cap. The vertical rail has
+// no such width budget.
 const NAV_ITEMS: NavItem[] = [
-  { to: '/',                label: 'Home',     icon: (a) => <LiveIcon active={a} /> },
-  { to: '/events',          label: 'Events',   icon: () => <EventsIcon /> },
-  { to: '/people',          label: 'Faces',    icon: () => <PeopleIcon /> },
-  { to: '/training/review', label: 'Review',   icon: () => <TrainingIcon /> },
-  { to: '/settings',        label: 'Settings', icon: () => <SettingsIcon /> },
+  { to: '/',                label: 'Home',       icon: (a) => <LiveIcon active={a} /> },
+  { to: '/events',          label: 'Events',     icon: () => <EventsIcon /> },
+  { to: '/people',          label: 'Faces',      icon: () => <PeopleIcon /> },
+  { to: '/training/review', label: 'Review',     icon: () => <TrainingIcon /> },
+  { to: '/playground',      label: 'Playground', icon: () => <PlaygroundIcon /> },
+  { to: '/settings',        label: 'Settings',   icon: () => <SettingsIcon /> },
 ]
 
 export function SideRail() {
   const { user, logout } = useAuth()
   const ripple = useRipple()
+  const navigate = useNavigate()
   const navItems =
     isGodModeUser(user)
       ? [...NAV_ITEMS, { to: '/god', label: 'God View', icon: () => <GodViewIcon /> }]
@@ -90,6 +100,21 @@ export function SideRail() {
           <li key={t.to} className="w-full flex justify-center">
             <NavLink
               to={t.to}
+              replace
+              onClick={(event) => {
+                if (
+                  event.defaultPrevented ||
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.altKey ||
+                  event.ctrlKey ||
+                  event.shiftKey
+                ) {
+                  return
+                }
+                event.preventDefault()
+                navigate(t.to, { replace: true })
+              }}
               end={t.to === '/'}
               className={({ isActive }) =>
                 // Playroom Modern (Task 4): same active grammar as the

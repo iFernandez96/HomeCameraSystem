@@ -60,20 +60,19 @@ def test_413_body_too_large_response_has_security_headers(client: TestClient):
 # iter-264 (security-auditor D2): Permissions-Policy lockdown.
 # BDD-lite: name encodes Given/When/Then; body is AAA-shaped.
 
-def test_given_status_response_when_security_middleware_runs_then_permissions_policy_locks_camera_mic_geo(
+def test_given_status_response_when_security_middleware_runs_then_permissions_policy_allows_own_mic_only(
     client: TestClient,
 ):
     # Given: an authenticated /api/status request.
     # When: the response flows through the iter-264 security-headers middleware.
     r = client.get("/api/status")
 
-    # Then: Permissions-Policy denies camera/microphone/geolocation/payment
-    # (the four high-impact features the PWA never asks for, which a
-    # malicious script could otherwise pop a consent prompt for).
+    # Talk publishes the phone microphone, but only this origin may request it.
+    # Camera/geolocation/payment remain denied.
     assert r.status_code == 200
     pp = r.headers.get("permissions-policy", "")
     assert "camera=()" in pp
-    assert "microphone=()" in pp
+    assert "microphone=(self)" in pp
     assert "geolocation=()" in pp
     assert "payment=()" in pp
 

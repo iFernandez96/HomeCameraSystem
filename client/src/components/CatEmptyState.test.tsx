@@ -49,6 +49,18 @@ describe('CatEmptyState', () => {
     ).toBeInTheDocument()
   })
 
+  it('Given an empty state, When its illustration renders, Then idle life is CSS-only and reduced-motion gated', () => {
+    // arrange / act
+    render(<CatEmptyState heading="All quiet" body="Nothing's stirring." hint="Check back soon." />)
+
+    // assert
+    const illustration = screen.getByTestId('cat-empty-state-illustration')
+    expect(illustration.className).toMatch(/cat-empty-state-idle/)
+    expect(illustration.className).toMatch(/motion-reduce:animate-none/)
+    expect(screen.getByRole('img', { name: /sleeping cat/i })).toBeInTheDocument()
+    expect(screen.getByText('Check back soon.')).toBeInTheDocument()
+  })
+
   it('given a custom illustration, when rendered, then the override replaces the default sleeping cat', () => {
     // arrange
     const customIllustration = <span data-testid="custom-illo">paw</span>

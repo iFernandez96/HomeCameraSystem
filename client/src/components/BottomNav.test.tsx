@@ -88,9 +88,9 @@ describe('BottomNav', () => {
     })
   })
 
-  it('Given an owner user, When BottomNav renders, Then God View is visible from the role-based gate', () => {
+  it('Given the Israel owner account, When BottomNav renders, Then God View is visible', () => {
     // arrange
-    authUser = { username: 'not-admin', role: 'owner' }
+    authUser = { username: 'Israel', role: 'owner' }
 
     // act
     renderAt('/')
@@ -99,15 +99,26 @@ describe('BottomNav', () => {
     expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
   })
 
-  it('GIVEN the docked landscape-phone rail WHEN BottomNav renders THEN tab labels use the 11px landscape size, not the sub-readable 9px (UI/UX overhaul 2026-07-07, frank B3)', () => {
+  it('Given another owner account, When BottomNav renders, Then God View is undiscoverable', () => {
+    authUser = { username: 'not-admin', role: 'owner' }
+    renderAt('/')
+    expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
+  })
+
+  it('GIVEN the docked landscape-phone rail WHEN BottomNav renders THEN tab labels stay accessible but become visually hidden', () => {
     // arrange / act
     renderAt('/')
     const home = screen.getByRole('link', { name: /home/i })
 
-    // assert — the label size rides on the NavLink class string;
-    // jsdom applies no stylesheet so pin the class token itself.
-    expect(home.className).toMatch(/landscape-phone:text-\[11px\]/)
-    expect(home.className).not.toMatch(/text-\[9px\]/)
+    // assert — the label still gives the link its accessible name, but
+    // landscape camera mode is icon-first visually.
+    const label = home.querySelector('span:last-child') as HTMLElement | null
+    expect(label).not.toBeNull()
+    expect(label!.className).toMatch(/landscape-phone:sr-only/)
+    expect(home.className).toMatch(/landscape-phone:min-h-11/)
+    expect(screen.getByRole('navigation', { name: /bottom navigation/i }).className).toMatch(
+      /landscape-phone:w-12/,
+    )
   })
 
   it('given the route matches /events, when BottomNav renders, then the Events link carries aria-current="page" (iter-338: pin via ARIA, not Tailwind class — same fix as iter-290 SideNav)', () => {
@@ -141,7 +152,7 @@ describe('BottomNav', () => {
     ).toHaveAttribute('aria-current', 'page')
   })
 
-  it('Given a notched landscape phone PWA, When BottomNav renders, Then the inner tab strip carries lateral safe-area-inset padding so no tab sits under the Dynamic Island or home-indicator (premium-launch slice — mobile-view-auditor A2)', () => {
+  it('Given BottomNav renders, Then the inner tab strip uses the responsive safe-area class rather than inline padding that clips the landscape rail', () => {
     // arrange — Pre-fix the 5-tab `flex-1` distribution didn't
     // reserve room for the iPhone Dynamic Island (~47 px left) or
     // the home-indicator strip (~21 px right) in landscape PWA
@@ -161,19 +172,12 @@ describe('BottomNav', () => {
     const innerFlex = links[0].parentElement
     expect(innerFlex).not.toBeNull()
 
-    // assert — read from the raw `style` attribute string. jsdom's
-    // CSSStyleDeclaration interface drops bare `env()` values; the
-    // `max(0px, env(...))` form is the canonical pattern used
-    // across the project's safe-area-inset code (matches the
-    // BottomNav `pb-[max(0px, calc(env(safe-area-inset-bottom)-14px))]`
-    // shape from iter-356.66).
-    const styleAttr = innerFlex!.getAttribute('style') ?? ''
-    expect(styleAttr).toMatch(
-      /padding-left:\s*max\(0px,\s*env\(safe-area-inset-left\)\)/,
-    )
-    expect(styleAttr).toMatch(
-      /padding-right:\s*max\(0px,\s*env\(safe-area-inset-right\)\)/,
-    )
+    // assert — this class owns safe-area padding in CSS, where the
+    // landscape-phone media query can turn it off for the vertical
+    // rail. Inline padding cannot be media-query overridden and was
+    // clipping the rail icons in the native WebView.
+    expect(innerFlex!.className).toMatch(/bottomnav-inner/)
+    expect(innerFlex!.getAttribute('style')).toBeNull()
   })
 
   it('GIVEN the nav renders WHEN in landscape-phone THEN it carries the left-rail dock classes instead of only bottom-pebble ones (landscape pass Task 1)', () => {
@@ -187,7 +191,7 @@ describe('BottomNav', () => {
 
     // assert
     expect(nav.className).toMatch(/landscape-phone:left-0/)
-    expect(nav.className).toMatch(/landscape-phone:w-16/)
+    expect(nav.className).toMatch(/landscape-phone:w-12/)
     expect(nav.className).toMatch(/landscape-phone:top-0/)
   })
 })

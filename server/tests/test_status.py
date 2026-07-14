@@ -56,6 +56,7 @@ def test_status_returns_expected_shape(client: TestClient):
     assert body["ok"] is True
     assert isinstance(body["uptime_s"], float)
     assert body["uptime_s"] >= 0
+    assert body["host_uptime_s"] is None or body["host_uptime_s"] >= 0
     assert body["camera"] in ("ok", "missing", "error")
     assert isinstance(body["detection_active"], bool)
     assert isinstance(body["worker_alive"], bool)
@@ -79,6 +80,7 @@ def test_status_returns_expected_shape(client: TestClient):
     assert "memory_used_mb" in body
     assert "memory_total_mb" in body
     assert "disk_free_gb" in body
+    assert "system_disk_free_gb" in body
     assert isinstance(body["fps"], (int, float))
     # iter-155: count of live push subscriptions. Always non-negative;
     # zero on a fresh server before any device subscribes.
@@ -114,6 +116,27 @@ def test_status_uptime_increases_between_calls(client: TestClient):
     assert r2["uptime_s"] >= r1["uptime_s"]
 
 
+def test_status_reports_recording_filesystem_and_system_sd_separately(
+    client: TestClient, monkeypatch
+):
+    from app import main as app_main
+    from app.config import settings
+
+    calls = []
+
+    def fake_disk(path):
+        calls.append(str(path))
+        return 88.0 if str(path) == str(settings.recordings_dir) else 35.0
+
+    monkeypatch.setattr(app_main, "_disk_free_gb", fake_disk)
+    body = client.get("/api/status").json()
+
+    assert body["disk_free_gb"] == 88.0
+    assert body["system_disk_free_gb"] == 35.0
+    assert str(settings.recordings_dir) in calls
+    assert "/" in calls
+
+
 def test_status_camera_reports_ok_after_lifespan_start(client: TestClient):
     body = client.get("/api/status").json()
     # CameraService.start() is called in lifespan and flips active to True.
@@ -135,11 +158,13 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
     assert set(body.keys()) == {
         "ok",
         "uptime_s",
+        "host_uptime_s",
         "camera",
         "detection_active",
         "worker_alive",
         "worker_last_seen_s",
         "worker_metrics",
+        "power_sample_age_s",
         "cpu_temp_c",
         "gpu_temp_c",
         "cpu_freq_pct",
@@ -147,14 +172,17 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
         "memory_used_mb",
         "memory_total_mb",
         "disk_free_gb",
+        "system_disk_free_gb",
         "fps",
         "push_subs_count",
         "seconds_since_last_frame",
         # iter-313 (perf #3): inlined from /api/detection/config so the
         # Live page can read them off the existing 5 s status poll.
-        "camera_label",
-        "audio_enabled",
-    }
+            "camera_label",
+            "audio_enabled",
+            "recording_gb_per_day",
+            "protected_recording_gb",
+        }
 
 
 def test_status_calls_meminfo_once_per_request(

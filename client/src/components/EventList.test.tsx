@@ -95,7 +95,7 @@ describe('EventList', () => {
     expect(screen.getByText(/1 entry/)).toBeInTheDocument()
   })
 
-  it('when an event has a clip_url, then a small play badge is rendered without burying the thumbnail (iter-249)', () => {
+  it('when the server confirms video is available, then a small truthful play badge is rendered without burying the thumbnail', () => {
     // arrange / act — iter-249 fix: the play indicator is a corner
     // badge, NOT a full-overlay that hides the photo.
     render(
@@ -104,6 +104,7 @@ describe('EventList', () => {
           evt({
             thumb_url: '/snapshots/x.jpg',
             clip_url: '/api/events/abc/clip',
+            video_status: 'available',
           }),
         ]}
         onSelect={() => {}}
@@ -120,7 +121,7 @@ describe('EventList', () => {
     // The thumbnail <img> is still in the DOM and not stacked under
     // a full-cover overlay — pin the absence of the iter-247
     // `inset-0` overlay div.
-    expect(screen.getByRole('img')).toBeInTheDocument()
+    expect(screen.getByAltText(/person at the front door/i)).toBeInTheDocument()
   })
 
   it('Given a low-score event, When the confidence pill renders, Then it uses the neutral scrim chip (not a semantic danger color) and spells out the tier word next to the percentage (Painfix #1 — audited on-device)', () => {
@@ -254,7 +255,7 @@ describe('EventList', () => {
     render(<EventList events={[evt()]} />)
     // EventList renders an inline SVG icon in place of a missing thumb;
     // check that the slot exists by absence of an <img>.
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(document.querySelector('img')).not.toBeInTheDocument()
   })
 
   it('renders a placeholder when thumb_url is explicitly null (iter-161)', () => {
@@ -266,12 +267,12 @@ describe('EventList', () => {
     // null specifically renders the placeholder, not a broken-image
     // glyph or a crash.
     render(<EventList events={[evt({ thumb_url: null })]} />)
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(document.querySelector('img')).not.toBeInTheDocument()
   })
 
   it('renders an image when a thumb_url is provided', () => {
     render(<EventList events={[evt({ thumb_url: '/snapshots/x.jpg' })]} />)
-    const img = screen.getByRole('img')
+    const img = screen.getByAltText(/person at the front door/i)
     expect(img).toHaveAttribute('src', '/snapshots/x.jpg')
   })
 
@@ -370,7 +371,7 @@ describe('EventList', () => {
     // assert — iter-249 alt is the full title ("Israel at the
     // front door") so screen readers describe the SCENE, not just
     // the matched name.
-    expect(screen.getByRole('img').getAttribute('alt')).toMatch(
+    expect(screen.getByAltText(/israel at the front door/i).getAttribute('alt')).toMatch(
       /israel at the front door/i,
     )
     // iter-249: aria-label uses "Open:" prefix when no clip; the
@@ -382,11 +383,11 @@ describe('EventList', () => {
 
   it('falls back to placeholder when the thumb URL fails to load', () => {
     render(<EventList events={[evt({ thumb_url: '/snapshots/missing.jpg' })]} />)
-    const img = screen.getByRole('img')
+    const img = screen.getByAltText(/person at the front door/i)
     fireEvent.error(img)
     // After the error fires, the <img> is replaced by the inline
     // placeholder SVG — same component the no-thumb case uses.
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(document.querySelector('img')).not.toBeInTheDocument()
   })
 
   it('when a row is clickable without a clip, then aria-label uses the "Open:" verb prefix with the full title (iter-249)', () => {
@@ -667,17 +668,56 @@ describe('EventList', () => {
     expect(marks.length).toBe(3)
   })
 
-  it('Given a person event renders, When the timeline axis dot is inspected, Then it carries the person identity color var', () => {
-    // arrange
-    render(<EventList events={[evt({ id: 'axis-person', label: 'person' })]} />)
+  it.each([
+    ['available', 'Video available'],
+    ['recording', 'Recording video — person in scene, ETA paused'],
+    ['finalizing', 'Finalizing video'],
+    ['failed', 'Video unavailable'],
+    ['unknown', 'Video status unknown'],
+  ] as const)('Given video status %s, Then the timeline axis icon truthfully says %s', (video_status, label) => {
+    render(<EventList events={[evt({ id: `axis-${video_status}`, video_status })]} />)
+    expect(screen.getByRole('img', { name: label })).toHaveAttribute('data-video-status', video_status)
+  })
 
-    // act
-    const dot = screen.getByTestId('event-axis-dot')
-
-    // assert
-    expect(dot.getAttribute('style')).toContain(
-      'background-color: var(--color-id-person)',
+  it('Given detection is intentionally off, Then a recording row says it is closing and has no spinner', () => {
+    const { container } = render(
+      <EventList
+        events={[evt({ id: 'axis-paused', video_status: 'recording' })]}
+        detectionOff
+      />,
     )
+
+    expect(screen.getByText('Closing…')).toBeInTheDocument()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  it('Given the worker is offline, Then a recording row says offline and has no spinner', () => {
+    const { container } = render(
+      <EventList
+        events={[evt({ id: 'axis-offline', video_status: 'recording' })]}
+        cameraOffline
+      />,
+    )
+
+    expect(screen.getByText('Offline')).toBeInTheDocument()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  it('Given the server supplies clip ETA bounds, Then the timeline shows their conservative range', () => {
+    const nowTs = Date.now() / 1000
+    render(
+      <EventList
+        events={[
+          evt({
+            id: 'axis-eta',
+            video_status: 'finalizing',
+            video_eta_min_ts: nowTs + 70,
+            video_eta_max_ts: nowTs + 110,
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('~1–2 min')).toBeInTheDocument()
   })
 
   it('Given the timeline container renders, When its classes are inspected, Then it caps at lg:max-w-3xl WITHOUT re-centering via lg:mx-auto (UI/UX overhaul 2026-07-07, landscape-desktop D3: the Events page already centers the content row; a second mx-auto double-centered the timeline and left an uneven gap next to the calendar rail)', () => {

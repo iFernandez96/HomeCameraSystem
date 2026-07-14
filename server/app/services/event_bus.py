@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from ..log import RateLimitedLog
 
@@ -61,12 +61,47 @@ class DetectionEventDict(TypedDict):
     # null-default; the worker emit path (iter-205?) sets the value
     # once the recorder confirms file presence.
     clip_url: str | None
+    # Added by the REST list/search routes from the worker's clip lifecycle
+    # ledger plus the recordings directory. It is intentionally absent from
+    # freshly published WebSocket events because finalization changes after
+    # the event is emitted.
+    video_status: NotRequired[
+        Literal["recording", "finalizing", "available", "failed", "unknown"]
+    ]
+    protected: bool
+    source: NotRequired[
+        Literal["vision", "audio", "doorbell", "tamper", "system"] | None
+    ]
+    rule_id: NotRequired[str | None]
+    rule_name: NotRequired[str | None]
+    correlation_id: NotRequired[str | None]
+    related_event_id: NotRequired[str | None]
+    visit_id: NotRequired[str | None]
+    start_ts: NotRequired[float | None]
+    end_ts: NotRequired[float | None]
+    package_state: NotRequired[
+        Literal["delivered", "present", "collected", "possible_theft"] | None
+    ]
+
+
+class LiveDetectionEventDict(TypedDict):
+    """Ephemeral bbox samples for the live video overlay.
+
+    These are intentionally NOT persisted to SQLite and NOT pushed. Timeline
+    events stay cooldown/coalescing-gated; the live overlay needs fresher
+    samples so boxes track the current frame instead of the last event row.
+    """
+
+    v: Literal[1]
+    type: Literal["live_detection"]
+    ts: float
+    camera_id: str
+    boxes: list[BoxDict]
 
 
 # Anything that flows over the bus / out the WebSocket. Today only
-# DetectionEventDict — leave the alias in place so future event types
-# (status snapshots, heartbeat broadcasts) just become a Union.
-ServerEvent = DetectionEventDict
+# DetectionEventDict and websocket-only LiveDetectionEventDict.
+ServerEvent = DetectionEventDict | LiveDetectionEventDict
 
 
 class SubscriberCapReached(Exception):
@@ -114,6 +149,11 @@ class EventBus:
         # `recent()` runs on every /api/events poll; a failing read
         # would otherwise log on every poll. Rate-limit to once/60s.
         self._recent_fail_gate = RateLimitedLog(60.0)
+        # SQLite writes are serialized (one writer and no internal unbounded
+        # work queue) and run off the event-loop thread. This keeps
+        # camera/WebSocket coroutines responsive during slow fsyncs while
+        # preserving write-before-fanout ordering and idempotency.
+        self._persist_lock = asyncio.Lock()
 
     def subscribe(
         self,
@@ -155,7 +195,35 @@ class EventBus:
         # (locked DB, disk full) doesn't break the WS fanout —
         # individual events are then lost from history but live
         # subscribers still see them.
-        self._persist_event(event)
+        async with self._persist_lock:
+            await asyncio.to_thread(self._persist_event, event)
+        await self.publish_live(event)
+
+    async def publish_once(self, event: DetectionEventDict) -> bool:
+        """Persist and fan out only when this event id is new.
+
+        The legacy ``publish`` contract deliberately live-fans duplicate
+        detection retries and is pinned by parity tests. Non-visual signal
+        ingestion needs stronger retry idempotency, so it opts into this
+        separate method without changing existing callers.
+        """
+        from .events_db import insert_event
+        from ..config import settings
+
+        async with self._persist_lock:
+            inserted = await asyncio.to_thread(
+                insert_event, settings.events_db_path, event
+            )
+        if inserted:
+            await self.publish_live(event)
+        return inserted
+
+    async def publish_live(self, event: ServerEvent) -> None:
+        """Fan out an event to live subscribers without storing history.
+
+        Used for high-cadence live bbox samples. Detection events should call
+        publish(), which persists first and then delegates here.
+        """
         for q in list(self._subs):
             try:
                 q.put_nowait(event)
@@ -195,6 +263,8 @@ class EventBus:
         rhythm on a successful insert.
         """
         try:
+            if event.get("type") != "detection":
+                return
             # Lazy import: events_db imports DetectionEventDict from
             # THIS module — module-level import would loop.
             from .events_db import insert_event
@@ -281,6 +351,18 @@ def make_detection_event(
     person_names: list[str] | None = None,
     clip_url: str | None = None,
     event_id: str | None = None,
+    ts: float | None = None,
+    source: Literal["vision", "audio", "doorbell", "tamper", "system"] = "vision",
+    rule_id: str | None = None,
+    rule_name: str | None = None,
+    correlation_id: str | None = None,
+    related_event_id: str | None = None,
+    visit_id: str | None = None,
+    start_ts: float | None = None,
+    end_ts: float | None = None,
+    package_state: Literal[
+        "delivered", "present", "collected", "possible_theft"
+    ] | None = None,
 ) -> DetectionEventDict:
     """Construct a fresh DetectionEventDict.
 
@@ -310,7 +392,7 @@ def make_detection_event(
         "v": 1,
         "type": "detection",
         "id": event_id if event_id else uuid.uuid4().hex,
-        "ts": time.time(),
+        "ts": time.time() if ts is None else ts,
         "camera_id": camera_id,
         "label": label,
         "score": score,
@@ -319,4 +401,14 @@ def make_detection_event(
         "person_name": person_name,
         "person_names": person_names,
         "clip_url": clip_url,
+        "protected": False,
+        "source": source,
+        "rule_id": rule_id,
+        "rule_name": rule_name,
+        "correlation_id": correlation_id,
+        "related_event_id": related_event_id,
+        "visit_id": visit_id or related_event_id,
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "package_state": package_state,
     }

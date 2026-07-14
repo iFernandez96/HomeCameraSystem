@@ -263,6 +263,26 @@ _FACE_JPEG_QUALITY = 95
 # the example gets silently dropped from the training set). Padding is
 # bounded to the source-image dimensions — never escapes the array.
 _FACE_BBOX_PAD_FRAC = 0.30
+_FACE_QUALITY_REJECTIONS = {}
+
+
+def _record_face_quality_rejection(reason):
+    safe_reason = reason if reason in (
+        "too_small", "low_contrast", "blurry", "invalid",
+    ) else "invalid"
+    count = _FACE_QUALITY_REJECTIONS.get(safe_reason, 0) + 1
+    _FACE_QUALITY_REJECTIONS[safe_reason] = count
+    # First occurrence is immediately visible; sustained rejection is sampled
+    # rather than logged once per face on the camera hot path.
+    if count == 1 or count % 100 == 0:
+        log.info(
+            "face capture quality rejected reason=%s count=%d",
+            safe_reason, count,
+        )
+
+
+def face_quality_rejection_counts():
+    return dict(_FACE_QUALITY_REJECTIONS)
 
 
 def _save_face_capture(rgb_image, box, name, confidence, capture_dir,
@@ -280,12 +300,21 @@ def _save_face_capture(rgb_image, box, name, confidence, capture_dir,
     from PIL import Image
     import io
     from face_recog.capture import save_face_capture
+    from face_recog.quality import face_crop_quality
 
     top, right, bottom, left = box
     h = rgb_image.shape[0]
     w = rgb_image.shape[1]
     fh = bottom - top
     fw = right - left
+    # Gate the actual detected face, not its padded context.  Recognition has
+    # already happened; this only prevents unusable biometric training data
+    # from being persisted.
+    tight_crop = rgb_image[max(0, top):min(h, bottom), max(0, left):min(w, right)]
+    accepted, _reason, _quality = face_crop_quality(tight_crop)
+    if not accepted:
+        _record_face_quality_rejection(_reason)
+        return False
     pad_h = int(fh * _FACE_BBOX_PAD_FRAC)
     pad_w = int(fw * _FACE_BBOX_PAD_FRAC)
     top_p = max(0, top - pad_h)
@@ -294,11 +323,17 @@ def _save_face_capture(rgb_image, box, name, confidence, capture_dir,
     right_p = min(w, right + pad_w)
     crop = rgb_image[top_p:bottom_p, left_p:right_p]
     if crop.size == 0:
-        return
+        return False
     img = Image.fromarray(crop)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=_FACE_JPEG_QUALITY)
-    save_face_capture(
+    capture_meta = dict(meta or {})
+    capture_meta["quality"] = dict(
+        (key, _quality[key])
+        for key in ("width", "height", "contrast", "sharpness")
+        if key in _quality
+    )
+    written = save_face_capture(
         capture_dir=capture_dir,
         name=name,
         event_id=event_id,
@@ -306,5 +341,6 @@ def _save_face_capture(rgb_image, box, name, confidence, capture_dir,
         jpeg_bytes=buf.getvalue(),
         confidence=confidence,
         predicted_name=name,
-        meta=meta,
+        meta=capture_meta,
     )
+    return bool(written)

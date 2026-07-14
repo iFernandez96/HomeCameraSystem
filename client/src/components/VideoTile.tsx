@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { drawBoxes } from '../lib/drawBoxes'
 import { log, errFields } from '../lib/log'
 import {
@@ -21,6 +22,53 @@ type Status = 'connecting' | 'live' | 'error' | 'idle'
 // detection is paused — see comment in VideoTile.
 const EMPTY_BOXES: DetectionEvent['boxes'] = []
 
+function ControlsHost({
+  target,
+  controlsBottom,
+  safeAreaBottom,
+  dimControls,
+  children,
+}: {
+  target?: HTMLElement | null
+  controlsBottom?: string
+  safeAreaBottom: boolean
+  dimControls: boolean
+  children: ReactNode
+}) {
+  if (target) {
+    return createPortal(
+      <div
+        data-testid="video-tile-controls-below"
+        className="flex w-full items-center justify-between gap-3"
+      >
+        {children}
+      </div>,
+      target,
+    )
+  }
+  return (
+    <div
+      className="absolute inset-x-3 flex items-center justify-between gap-2 pointer-events-none"
+      style={{
+        bottom:
+          controlsBottom ??
+          (safeAreaBottom
+            ? 'calc(0.75rem + env(safe-area-inset-bottom))'
+            : '0.75rem'),
+        ...(dimControls
+          ? {
+              opacity: 0,
+              visibility: 'hidden' as const,
+              transition: 'opacity 300ms ease, visibility 0ms linear 300ms',
+            }
+          : { opacity: 1, transition: 'opacity 300ms ease' }),
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 export function VideoTile({
   src,
   detectionActive = null,
@@ -33,10 +81,13 @@ export function VideoTile({
   onPlayingChange,
   actions,
   showFullscreenButton = true,
+  showQualityMenu = true,
+  showBoxToggle = true,
   safeAreaBottom = false,
   controlsBottom,
   dimControls = false,
   streamPath = DEFAULT_CAMERA_PATH,
+  controlsTarget,
 }: {
   /**
    * Optional explicit WHEP URL override. When omitted, the tile composes
@@ -99,7 +150,7 @@ export function VideoTile({
   /**
    * Fuzz F3/F7/F13 (docked/fullscreen chrome consolidation, Watch.tsx):
    * the tile's own connection-status pill ("Live"/"Connecting"/
-   * "Offline", top-12 left-3) is the ONE status pill Watch wants
+   * "Offline", top-3 left-3) is the ONE status pill Watch wants
    * docked. In fullscreen Watch already renders a combined
    * "{armed state} · {camera}" cluster plus the scrubber's red LIVE
    * pill, so this tile's pill would be a third, redundant "Live"
@@ -141,6 +192,10 @@ export function VideoTile({
    * keep the button unless they opt out.
    */
   showFullscreenButton?: boolean
+  /** Hide advanced stream-quality chrome when a compact caller owns it. */
+  showQualityMenu?: boolean
+  /** Hide the bbox toggle and its teaching hint in compact/docked views. */
+  showBoxToggle?: boolean
   /**
    * Add the viewport's bottom safe-area inset to the control row's
    * offset. Only correct when the tile's bottom edge sits on the
@@ -174,11 +229,20 @@ export function VideoTile({
    * reconnect path a quality switch uses).
    */
   streamPath?: string
+  /** Optional docked toolbar target; controls render there instead of over video. */
+  controlsTarget?: HTMLElement | null
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [status, setStatus] = useState<Status>('idle')
+  // Resume listeners are installed once. Keep their decision state in a ref
+  // updated in a layout effect so a visibility event cannot land between the
+  // error UI commit and a status-keyed passive-effect re-registration.
+  const statusRef = useRef<Status>(status)
+  useLayoutEffect(() => {
+    statusRef.current = status
+  }, [status])
   // iter-246: user-toggleable bbox overlay. Default ON (the boxes
   // are the whole point of detection feedback). Persists in
   // localStorage so the user's choice survives reloads + PWA tab
@@ -189,9 +253,9 @@ export function VideoTile({
     return stored === null ? true : stored === '1'
   })
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined' || !showBoxToggle) return
     window.localStorage.setItem('homecam:boxesVisible', boxesVisible ? '1' : '0')
-  }, [boxesVisible])
+  }, [boxesVisible, showBoxToggle])
   // Painfix wave B #2: the bbox-toggle button is glyph-only — its
   // meaning lives entirely in the aria-label, which a sighted mouse/
   // touch user never hears. A transient text hint teaches the icon on
@@ -204,20 +268,19 @@ export function VideoTile({
     return Number(window.localStorage.getItem('homecam:bboxHintViews') ?? '0')
   })
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined' || !showBoxToggle) return
     if (boxHintViewCount >= 2) return
     window.localStorage.setItem('homecam:bboxHintViews', String(boxHintViewCount + 1))
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- write-once on mount; boxHintViewCount is fixed for this component's lifetime.
-  }, [])
+  }, [showBoxToggle, boxHintViewCount])
   const [showBoxHint, setShowBoxHint] = useState(() => boxHintViewCount < 2)
   useEffect(() => {
-    if (!showBoxHint) return
+    if (!showBoxToggle || !showBoxHint) return
     // Auto-hides on a timer regardless of prefers-reduced-motion — only
     // the FADE is skipped for reduced-motion users (via the
     // motion-reduce:transition-none class below), not the hide itself.
     const t = setTimeout(() => setShowBoxHint(false), 4000)
     return () => clearTimeout(t)
-  }, [showBoxHint])
+  }, [showBoxHint, showBoxToggle])
   const [boxes, setBoxes] = useState<DetectionEvent['boxes']>([])
   const [personName, setPersonName] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
@@ -539,7 +602,10 @@ export function VideoTile({
 
   useEffect(() => {
     return subscribeEvents((evt) => {
-      if (evt.type === 'detection') {
+      if (evt.type === 'live_detection') {
+        setBoxes(evt.boxes)
+        setPersonName(null)
+      } else if (evt.type === 'detection') {
         setBoxes(evt.boxes)
         setPersonName(evt.person_name ?? null)
       }
@@ -594,7 +660,7 @@ export function VideoTile({
   }, [status])
   useEffect(() => {
     const requestReconnect = () => {
-      if (status !== 'error') return
+      if (statusRef.current !== 'error') return
       if (resumeInFlightRef.current) return
       resumeInFlightRef.current = true
       setRetryNonce((n) => n + 1)
@@ -611,7 +677,7 @@ export function VideoTile({
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
-  }, [status])
+  }, [])
 
   // When detection is paused or the worker is offline, the server stops
   // broadcasting events but we may still have the last set of boxes in
@@ -802,28 +868,19 @@ export function VideoTile({
           edge, so the page opts in via `safeAreaBottom` (Watch passes
           its fullscreen state). Docked: plain 0.75rem, immune to
           toolbar/visibility churn. */}
-      <div
-        className="absolute inset-x-3 flex items-center justify-between gap-2 pointer-events-none"
-        style={{
-          bottom:
-            controlsBottom ??
-            (safeAreaBottom
-              ? 'calc(0.75rem + env(safe-area-inset-bottom))'
-              : '0.75rem'),
-          ...(dimControls
-            ? {
-                opacity: 0,
-                visibility: 'hidden' as const,
-                transition: 'opacity 300ms ease, visibility 0ms linear 300ms',
-              }
-            : { opacity: 1, transition: 'opacity 300ms ease' }),
-        }}
+      <ControlsHost
+        target={controlsTarget}
+        controlsBottom={controlsBottom}
+        safeAreaBottom={safeAreaBottom}
+        dimControls={dimControls}
       >
-        <div className="pointer-events-auto">
-          <QualityMenu quality={quality} onSelect={onSelectQuality} />
-        </div>
-        <div className="flex items-center gap-2 pointer-events-auto">
-        {showBoxHint && (
+        {showQualityMenu && (
+          <div className={controlsTarget ? 'flex flex-1 justify-center pointer-events-auto' : 'pointer-events-auto'}>
+            <QualityMenu quality={quality} onSelect={onSelectQuality} />
+          </div>
+        )}
+        <div className={`flex items-center gap-2 pointer-events-auto ${controlsTarget ? 'flex-[2] justify-around' : ''}`}>
+        {showBoxToggle && showBoxHint && (
           // Painfix wave B #2: purely visual reinforcement — the
           // button's aria-label already carries the meaning for
           // assistive tech, so this transient label is hidden from
@@ -836,7 +893,7 @@ export function VideoTile({
             Detection boxes
           </span>
         )}
-        <button
+        {showBoxToggle && <button
           type="button"
           onClick={() => setBoxesVisible((v) => !v)}
           aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
@@ -847,7 +904,7 @@ export function VideoTile({
           // exact Dana E1 contrast bug class). White on the marmalade
           // active fill is the allowed colored-fill exception. Focus
           // ring uses accent-bright over the dark video for contrast.
-          className={`flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors ${
+          className={`flex items-center justify-center gap-2 h-11 backdrop-blur text-white ring-1 ring-white/20 hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors ${controlsTarget ? 'min-w-[6.5rem] rounded-xl px-3' : 'w-11 rounded-full'} ${
             boxesVisible ? 'bg-[var(--color-accent-deep)]' : 'bg-black/60'
           }`}
         >
@@ -866,7 +923,8 @@ export function VideoTile({
             <rect x="3" y="3" width="18" height="18" rx="2" />
             {boxesVisible ? null : <path d="M4 4l16 16" />}
           </svg>
-        </button>
+          {controlsTarget && <span className="text-sm font-semibold">Boxes</span>}
+        </button>}
         {actions}
         {showFullscreenButton && (
           <button
@@ -915,7 +973,7 @@ export function VideoTile({
           </button>
         )}
         </div>
-      </div>
+      </ControlsHost>
       {/* iter-259: pill labels in plain English per ux-grandpa.
           Internal state names ("THERMAL", "OFFLINE") replaced with
           phrases that say what's happening to the user.
@@ -1123,10 +1181,7 @@ function StatusPill({ status }: { status: Status }) {
           ? 'Offline'
           : 'Idle'
   return (
-    // Structural overhaul (Watch): dropped from top-3 to top-12 — the
-    // Watch scrim owns the top strip (armed state + camera + age) and
-    // the connection pill was rendering directly behind its text.
-    <div className="absolute top-12 left-3 flex items-center gap-2 bg-[var(--color-surface-scrim)] backdrop-blur ring-1 ring-[var(--color-border)] px-2.5 py-1 rounded-full text-xs font-medium text-[var(--color-text-primary)]">
+    <div className="absolute top-3 left-3 flex items-center gap-2 bg-[var(--color-surface-scrim)] backdrop-blur ring-1 ring-[var(--color-border)] px-2.5 py-1 rounded-full text-xs font-medium text-[var(--color-text-primary)]">
       <span className={`w-2 h-2 rounded-full ${dot}`} />
       {label}
     </div>

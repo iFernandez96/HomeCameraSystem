@@ -27,13 +27,14 @@ vi.mock('workbox-cacheable-response', () => ({
 vi.mock('workbox-expiration', () => ({ ExpirationPlugin: vi.fn() }))
 
 let notificationClickTarget: typeof import('./sw').notificationClickTarget
+let notificationActionTarget: typeof import('./sw').notificationActionTarget
 
 beforeAll(async () => {
   // sw.ts calls self.skipWaiting() at module scope; jsdom's window
   // (which `self` resolves to) doesn't have it.
   ;(globalThis as unknown as { skipWaiting: () => void }).skipWaiting =
     vi.fn()
-  ;({ notificationClickTarget } = await import('./sw'))
+  ;({ notificationClickTarget, notificationActionTarget } = await import('./sw'))
 })
 
 describe('notificationClickTarget', () => {
@@ -98,5 +99,34 @@ describe('notificationClickTarget', () => {
 
     // assert
     expect(target).toBe('/events?person=Alice&event=e1')
+  })
+})
+
+describe('notificationActionTarget', () => {
+  it('given Talk is selected, when composed, then it opens a foreground talk intent without starting the microphone', () => {
+    expect(
+      notificationActionTarget('talk', {
+        url: '/events',
+        event_id: 'evt 7',
+      }),
+    ).toBe('/?talk=1&event=evt+7')
+  })
+
+  it('given a deterrence action, when composed, then it opens a foreground confirmation intent with duration and event', () => {
+    expect(
+      notificationActionTarget('siren', {
+        event_id: 'evt-9',
+        deterrence_duration_s: 20,
+      }),
+    ).toBe('/?deterrence=siren&duration=20&event=evt-9')
+  })
+
+  it('given an unrecognized action, when composed, then it safely falls back to the event viewer', () => {
+    expect(
+      notificationActionTarget('snooze', {
+        url: '/events',
+        event_id: 'evt-10',
+      }),
+    ).toBe('/events?event=evt-10')
   })
 })

@@ -56,6 +56,13 @@ def test_snapshot_returns_all_documented_fields():
         "wedge_diag_gpu_temp_c",
         "wedge_diag_mem_avail_mb",
         "wedge_diag_nvargus_rss_kb",
+        # Real input-power telemetry (0=unavailable on a bare Nano 2GB).
+        "power_sensor_status",
+        "power_volts",
+        "power_amps",
+        "power_watts",
+        "power_sample_ts",
+        "power_read_failures",
     }
 
 
@@ -83,6 +90,8 @@ def test_snapshot_defaults_are_safe_to_serialize():
     assert snap["mediamtx_restarts"] == 0
     assert snap["gear"] == "idle"
     assert snap["face_recog_names"] == []
+    assert snap["power_sensor_status"] == 0
+    assert snap["power_watts"] == 0.0
 
 
 def test_record_thumb_ms_updates_field_and_snapshot():

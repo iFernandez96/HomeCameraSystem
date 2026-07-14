@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -30,6 +32,61 @@ def test_get_events_respects_limit(client: TestClient):
     body = r.json()
     assert isinstance(body, list)
     assert len(body) <= 10
+
+
+def test_given_clip_lifecycle_when_listing_events_then_video_status_is_truthful(
+    client: TestClient,
+):
+    # arrange
+    from app.config import settings
+
+    recording_id = "evt-recording"
+    available_id = "evt-available"
+    unknown_id = "evt-unknown"
+    assert _post_event(client, id=recording_id).status_code == 200
+    assert _post_event(client, id=available_id).status_code == 200
+    assert _post_event(client, id=unknown_id).status_code == 200
+    (settings.recordings_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {
+            recording_id: {"state": "recording"},
+            # This stale state cannot prove the missing MP4 is playable.
+            unknown_id: {"state": "available"},
+        },
+    }))
+    (settings.recordings_dir / "{}.mp4".format(available_id)).write_bytes(
+        b"published"
+    )
+
+    # act
+    items = client.get("/api/events?limit=10").json()
+    by_id = {item["id"]: item for item in items}
+
+    # assert
+    assert by_id[recording_id]["video_status"] == "recording"
+    assert by_id[available_id]["video_status"] == "available"
+    assert by_id[unknown_id]["video_status"] == "unknown"
+
+
+def test_given_failed_clip_when_searching_events_then_video_status_is_in_page(
+    client: TestClient,
+):
+    # arrange
+    from app.config import settings
+
+    event_id = "evt-failed"
+    assert _post_event(client, id=event_id).status_code == 200
+    (settings.recordings_dir / ".clip_state.json").write_text(json.dumps({
+        "v": 1,
+        "events": {event_id: {"state": "failed"}},
+    }))
+
+    # act
+    body = client.get("/api/events/search?limit=10").json()
+
+    # assert
+    assert body["items"][0]["id"] == event_id
+    assert body["items"][0]["video_status"] == "failed"
 
 
 def test_get_events_rejects_zero_limit(client: TestClient):
@@ -1264,6 +1321,52 @@ def test_given_event_when_listed_then_row_includes_camera_id(
 
     # assert
     assert items[0]["camera_id"] == "back_yard"
+
+
+def test_daily_digest_summarizes_labels_and_recognition(client: TestClient):
+    import time
+
+    day = time.strftime("%Y-%m-%d", time.localtime())
+    _post_event(client, label="person", person_name="israel")
+    _post_event(client, label="person")
+    _post_event(client, label="cat")
+
+    response = client.get("/api/events/digest?day={}".format(day))
+    assert response.status_code == 200
+    assert response.json() == {
+        "day": day,
+        "total": 3,
+        "by_label": {"cat": 1, "person": 2},
+        "unknown_people": 1,
+        "known_people": ["israel"],
+    }
+
+
+def test_owner_can_protect_and_unprotect_event(client: TestClient):
+    response = _post_event(client, camera_id="front_door", label="person")
+    event_id = response.json()["event_id"]
+
+    protected = client.put(
+        "/api/events/{}/protection".format(event_id),
+        json={"protected": True},
+    )
+    assert protected.status_code == 200
+    assert protected.json() == {"protected": True}
+    assert client.get("/api/events?limit=1").json()[0]["protected"] is True
+
+    unprotected = client.put(
+        "/api/events/{}/protection".format(event_id),
+        json={"protected": False},
+    )
+    assert unprotected.status_code == 200
+    assert unprotected.json() == {"protected": False}
+
+
+def test_protection_rejects_unknown_event(client: TestClient):
+    response = client.put(
+        "/api/events/missing/protection", json={"protected": True}
+    )
+    assert response.status_code == 404
 
 
 def test_given_camera_filter_when_searching_then_only_matching_rows(

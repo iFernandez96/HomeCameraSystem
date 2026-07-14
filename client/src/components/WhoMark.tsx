@@ -19,12 +19,12 @@ const BRAND_FACE_SRC: Record<string, string> = {
 
 /**
  * The Playroom signature mark. One shape everywhere: avatar on event
- * cards, filter chips, timeline bands, empty states. People are a
- * circle; cats are a rounded square with two triangle ears; anything
- * else (dogs, cars, packages — `kind === 'other'`) is a plain rounded
- * square with NO ears, so an un-eared silhouette doesn't lie and call
- * itself a cat. Color comes from the identity token, so the mark
- * stays correct in both themes.
+ * cards, filter chips, timeline bands, empty states. People and cats
+ * now use explicit line glyphs inside the identity-color badge instead
+ * of abstract placeholder blobs. Anything else (dogs, cars, packages —
+ * `kind === 'other'`) is a plain rounded square with NO ears, so an
+ * un-eared silhouette doesn't lie and call itself a cat. Color comes
+ * from the identity token, so the mark stays correct in both themes.
  */
 const KIND_LABEL: Record<Identity['kind'], string> = {
   'named-person': '', // name used instead
@@ -47,12 +47,45 @@ export function WhoMark({ identity, size = 38 }: { identity: Identity; size?: nu
       className="shrink-0"
     >
       {person ? (
-        <circle cx="19" cy="19" r="15" fill={identity.colorVar} />
+        <>
+          <circle cx="19" cy="19" r="17" fill={identity.colorVar} />
+          <circle cx="19" cy="14.5" r="5.25" fill="none" stroke="white" strokeWidth="2.6" />
+          <path
+            d="M9.5 29c1.8-6 5.3-9 9.5-9s7.7 3 9.5 9"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.8"
+            strokeLinecap="round"
+          />
+        </>
       ) : cat ? (
         <>
-          <polygon points="7,14 13,3 17,14" fill={identity.colorVar} />
-          <polygon points="21,14 25,3 31,14" fill={identity.colorVar} />
-          <rect x="4" y="10" width="30" height="24" rx="10" fill={identity.colorVar} />
+          <circle cx="19" cy="19" r="17" fill={identity.colorVar} />
+          <path
+            d="M10.5 14.5 12.5 8l5 4M27.5 14.5 25.5 8l-5 4"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.45"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M10.5 20.5c0-5.1 3.8-8.5 8.5-8.5s8.5 3.4 8.5 8.5c0 5.4-3.5 8.5-8.5 8.5s-8.5-3.1-8.5-8.5Z"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.45"
+            strokeLinejoin="round"
+          />
+          <circle cx="15.5" cy="20" r="1.35" fill="white" />
+          <circle cx="22.5" cy="20" r="1.35" fill="white" />
+          <path
+            d="M19 22.1v2.8M15.5 25.2c1.3 1.3 2.5 1.3 3.5-.1 1 1.4 2.2 1.4 3.5.1"
+            fill="none"
+            stroke="white"
+            strokeWidth="1.9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </>
       ) : (
         <rect x="4" y="4" width="30" height="30" rx="10" fill={identity.colorVar} />

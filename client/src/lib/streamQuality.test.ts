@@ -88,6 +88,7 @@ describe('resolveAutoQuality', () => {
 describe('pathForQuality', () => {
   it('given each fixed tier, then maps to the MediaMTX path', () => {
     // arrange / act / assert
+    expect(pathForQuality('uhq')).toBe('cam_uhq')
     expect(pathForQuality('hq')).toBe('cam')
     expect(pathForQuality('sd')).toBe('cam_lq')
     expect(pathForQuality('xs')).toBe('cam_uq')
@@ -152,6 +153,14 @@ describe('whepUrlForPath', () => {
     expect(whepUrlForPath('cam_lq')).toBe(`${origin}/whep/cam_lq/whep`)
     expect(whepUrlForPath('cam_uq')).toBe(`${origin}/whep/cam_uq/whep`)
   })
+
+  it('uses MediaMTX directly for a LAN HTTP app origin', () => {
+    expect(whepUrlForPath('cam', {
+      protocol: 'http:',
+      hostname: '10.0.0.9',
+      origin: 'http://10.0.0.9:8000',
+    })).toBe('http://10.0.0.9:8889/cam/whep')
+  })
 })
 
 describe('stream quality persistence', () => {
@@ -172,7 +181,7 @@ describe('stream quality persistence', () => {
 
   it('given a value is set, when read back, then round-trips', () => {
     // arrange / act
-    for (const q of ['auto', 'hq', 'sd', 'xs'] as StreamQuality[]) {
+    for (const q of ['auto', 'uhq', 'hq', 'sd', 'xs'] as StreamQuality[]) {
       setStreamQuality(q)
       // assert
       expect(getStreamQuality()).toBe(q)

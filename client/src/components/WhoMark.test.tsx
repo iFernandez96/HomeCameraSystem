@@ -4,21 +4,23 @@ import { identityOf, identityForName } from '../lib/identity'
 import { BrandMarkRow, WhoMark } from './WhoMark'
 
 describe('WhoMark', () => {
-  it('GIVEN a cat identity WHEN rendered THEN an eared img labeled as a cat', () => {
+  it('GIVEN a cat identity WHEN rendered THEN a clear cat-face img labeled as a cat', () => {
     // arrange / act
     render(<WhoMark identity={identityOf({ label: 'cat', person_name: null, person_names: null })} />)
     // assert
     const img = screen.getByRole('img', { name: 'A cat' })
-    expect(img.querySelectorAll('polygon')).toHaveLength(2) // the ears
+    expect(img.querySelectorAll('path')).toHaveLength(3) // ears, head, nose/mouth
+    expect(img.querySelectorAll('circle')).toHaveLength(3) // badge + eyes
   })
 
-  it('GIVEN a named person WHEN rendered THEN a circle labeled with the name and no ears', () => {
+  it('GIVEN a named person WHEN rendered THEN a clear person glyph labeled with the name and no cat ears', () => {
     // arrange / act
     render(<WhoMark identity={identityForName('Israel')} />)
     // assert
     const img = screen.getByRole('img', { name: 'Israel' })
     expect(img.querySelectorAll('polygon')).toHaveLength(0)
-    expect(img.querySelector('circle')).not.toBeNull()
+    expect(img.querySelectorAll('circle')).toHaveLength(2) // badge + head
+    expect(img.querySelector('path')).not.toBeNull() // shoulders
   })
 
   it('GIVEN an "other" kind identity (dog, car, package) WHEN rendered THEN a plain un-eared square, not a cat silhouette', () => {

@@ -1,5 +1,6 @@
 import { formatUptime } from '../../lib/format'
 import type { ServerStatus, WorkerMetrics } from '../../lib/types'
+import { powerDisplay } from '../../lib/power'
 import { Mono, Row, Section } from './parts'
 
 // iter-269: read-only Jetson health-and-status panel pulled out of
@@ -25,7 +26,7 @@ import { Mono, Row, Section } from './parts'
 //   │   Camera box, detection, and resources running smoothly │
 //   ├───────────────────────────────────────────────────────┤
 //   │ CAMERA BOX                                           │
-//   │   Camera box · On since · Camera                      │
+//   │   Camera box · Jetson running · API running · Camera  │
 //   ├───────────────────────────────────────────────────────┤
 //   │ DETECTION                                             │
 //   │   Detection process · Detection running · Watching    │
@@ -33,7 +34,7 @@ import { Mono, Row, Section } from './parts'
 //   ├───────────────────────────────────────────────────────┤
 //   │ SYSTEM RESOURCES                                      │
 //   │   CPU temp · GPU temp · CPU clock · Load avg · Memory │
-//   │   Disk free                                           │
+//   │   Capture storage free · System SD free               │
 //   └───────────────────────────────────────────────────────┘
 
 // Playroom Modern (Task 8 copy pass): plain-language nickname for the
@@ -80,12 +81,16 @@ export function JetsonSection({
       >
         <Row label="Camera box" right={<Mono>{status?.ok ? 'online' : '—'}</Mono>} />
         <Row
-          label="On since"
+          label="Jetson running"
           right={
             <Mono>
-              {status?.uptime_s ? formatUptime(status.uptime_s) : '—'}
+              {status?.host_uptime_s != null ? formatUptime(status.host_uptime_s) : '—'}
             </Mono>
           }
+        />
+        <Row
+          label="API running"
+          right={<Mono>{status?.uptime_s != null ? formatUptime(status.uptime_s) : '—'}</Mono>}
         />
         <Row label="Camera" right={<Mono>{status?.camera ?? '—'}</Mono>} />
       </Section>
@@ -147,8 +152,9 @@ export function JetsonSection({
 
       <Section
         title="System resources"
-        subtitle="CPU, memory, and storage on the camera box."
+        subtitle="Power, CPU, memory, and storage on the camera box."
       >
+        <PowerRow status={status} />
         <Row
           label="CPU temp"
           right={<Temperature kind="cpu" celsius={status?.cpu_temp_c ?? null} />}
@@ -180,12 +186,35 @@ export function JetsonSection({
             />
           }
         />
-        <Row
-          label="Disk free"
-          right={<DiskFree gb={status?.disk_free_gb ?? null} />}
-        />
+        <Row label="Capture storage free" right={<DiskFree gb={status?.disk_free_gb ?? null} />} />
+        <Row label="System SD free" right={<DiskFree gb={status?.system_disk_free_gb ?? null} />} />
       </Section>
     </div>
+  )
+}
+
+function PowerRow({ status }: { status: ServerStatus | null }) {
+  const power = powerDisplay(status)
+  const color =
+    power.state === 'error' || power.state === 'stale'
+      ? 'text-[var(--color-warning)]'
+      : power.state === 'live'
+        ? 'text-[var(--color-text-primary)]'
+        : 'text-[var(--color-text-tertiary)]'
+  return (
+    <Row
+      label="Power draw"
+      right={
+        <span className={`text-right ${color}`}>
+          <Mono>{power.detail}</Mono>
+          {power.state === 'unavailable' ? (
+            <span className="mt-0.5 block text-xs font-normal text-[var(--color-text-tertiary)]">
+              Nano 2GB has no onboard power monitor.
+            </span>
+          ) : null}
+        </span>
+      }
+    />
   )
 }
 

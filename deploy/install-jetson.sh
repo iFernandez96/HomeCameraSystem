@@ -120,18 +120,33 @@ chmod +x "$REPO/detection/run-detect.sh"
 sudo cp "$REPO/deploy/systemd/mediamtx.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-server.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-detect.service" /etc/systemd/system/
+# Install the optional acoustic-event watcher definition, but deliberately do
+# not enable or start it below.  It must remain dormant until microphone
+# hardware is intentionally configured and the operator enables audio events.
+if [ -f "$REPO/deploy/systemd/homecam-audio-detect.service" ]; then
+    sudo cp "$REPO/deploy/systemd/homecam-audio-detect.service" /etc/systemd/system/
+fi
 sudo cp "$REPO/deploy/systemd/homecam-jetson-perf.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 ok "units installed"
 
-# 6. Build + start the server container ----------------------------------------
+# 6. Verify the cross-built server image ---------------------------------------
 
-log "Building server container (first run takes ~5 min)"
-docker compose -f deploy/docker-compose.yml build
+# Never compile the server image on the 2 GB Nano. Native dependency builds
+# exhaust memory/swap and can wedge the live camera host. The development
+# machine must run deploy/cross-deploy-server.sh first (or otherwise load the
+# exact ARM64 image) before this bootstrap script starts services.
+if ! sudo docker image inspect homecam-server:latest >/dev/null 2>&1; then
+    warn "homecam-server:latest is not loaded; refusing a native Jetson build."
+    warn "    From the development machine run: deploy/cross-deploy-server.sh jetson"
+    exit 1
+fi
+ok "prebuilt ARM64 homecam-server:latest is loaded"
 
 log "Enabling and starting services"
-# Jetson perf unit first — pins clocks + power mode so the encoder
-# doesn't warmup-stutter on the first frame mediamtx hands out.
+# Jetson perf unit first — selects the MAXN power envelope while leaving
+# dynamic CPU/GPU clocks enabled. The encoder has its own max-performance
+# setting, so global clock pinning is unnecessary for stream startup.
 # Skipped silently on non-Jetson hosts via the unit's
 # ConditionPathExists guard.
 sudo systemctl enable --now homecam-jetson-perf.service || true

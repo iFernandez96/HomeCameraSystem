@@ -1,18 +1,19 @@
 // Cellular-adaptive streaming quality (2026-06-16 design).
 //
-// The Jetson's MediaMTX publishes three WHEP paths for the same camera:
-//   - `cam`     — HQ  (full-bitrate NVENC bitstream)
+// The Jetson's MediaMTX publishes four WHEP paths for the same camera:
+//   - `cam_uhq` — UHQ (1920x1080 NVENC bitstream)
+//   - `cam`     — HQ  (1280x720 NVENC bitstream; detection source)
 //   - `cam_lq`  — SD  (data-saver transcode)
 //   - `cam_uq`  — XS  (ultra-low / minimum bitrate)
 // The client picks one. `auto` reads the browser's Network Information API
 // (navigator.connection) and downshifts on cellular / metered / Save-Data
 // links so a phone on LTE doesn't try to pull the full-bitrate stream.
 
-export type StreamQuality = 'auto' | 'hq' | 'sd' | 'xs'
+export type StreamQuality = 'auto' | 'uhq' | 'hq' | 'sd' | 'xs'
 
 // The non-auto tiers, in descending bandwidth order. `auto` resolves to one
 // of these at connect time.
-export type ResolvedQuality = 'hq' | 'sd' | 'xs'
+export type ResolvedQuality = 'uhq' | 'hq' | 'sd' | 'xs'
 
 /**
  * The shape of `navigator.connection` (Network Information API) we read.
@@ -56,6 +57,7 @@ export const DEFAULT_CAMERA_PATH = 'cam'
 // MediaMTX rung suffix per resolved tier, appended to the camera's
 // base path.
 const SUFFIX_BY_QUALITY: Record<ResolvedQuality, string> = {
+  uhq: '_uhq',
   hq: '',
   sd: '_lq',
   xs: '_uq',
@@ -98,14 +100,30 @@ export function pathForQuality(
  * server proxies `/whep` → `http://localhost:8889` for parity (see
  * vite.config.ts).
  */
-export function whepUrlForPath(path: string): string {
-  return `${window.location.origin}/whep/${path}/whep`
+export function whepUrlForPath(
+  path: string,
+  location: Pick<Location, 'protocol' | 'hostname' | 'origin'> = window.location,
+): string {
+  // The native Android wrapper falls back to the Jetson's LAN HTTP origin
+  // when Tailscale/MagicDNS is unavailable. FastAPI on :8000 does not proxy
+  // WHEP; MediaMTX serves it directly on :8889. HTTPS must stay same-origin
+  // through Tailscale Serve to avoid mixed content. Keep localhost on the
+  // same-origin Vite proxy used by development and tests.
+  if (
+    location.protocol === 'http:' &&
+    location.hostname !== 'localhost' &&
+    location.hostname !== '127.0.0.1'
+  ) {
+    return `http://${location.hostname}:8889/${path}/whep`
+  }
+  return `${location.origin}/whep/${path}/whep`
 }
 
 const STORAGE_KEY = 'homecam:streamQuality'
 const DEFAULT_QUALITY: StreamQuality = 'auto'
 const VALID: ReadonlySet<string> = new Set<StreamQuality>([
   'auto',
+  'uhq',
   'hq',
   'sd',
   'xs',

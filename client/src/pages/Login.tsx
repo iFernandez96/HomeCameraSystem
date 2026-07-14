@@ -6,6 +6,7 @@ import {
 } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { BrandMarkRow } from '../components/WhoMark'
+import { CAT_LAYER_HEIGHT, CatLayer } from '../components/CatLayer'
 import { Button } from '../components/primitives/Button'
 import { HttpError } from '../lib/api'
 import { useAuth } from '../lib/auth'
@@ -123,7 +124,14 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-full flex items-center justify-center px-6 py-16 bg-[var(--color-bg)]">
+    <div
+      data-testid="login-root"
+      className="relative isolate h-full min-h-0 overflow-hidden flex items-center justify-center px-5 pt-4 pb-[calc(var(--login-cat-layer-height)+env(safe-area-inset-bottom,0px))] sm:px-6 sm:pt-6 bg-[var(--color-bg)]"
+      // Keep a real floor below the centered card on short iPhone viewports.
+      // The safe-area term also keeps the floor clear of the home indicator.
+      style={{ '--login-cat-layer-height': `${CAT_LAYER_HEIGHT}px` } as React.CSSProperties}
+    >
+      <CatLayer placement="login" />
       {/* Playroom Modern (Task 9): card grammar matches the rest of
           the redesign — rounded-[var(--radius-xl)] + a 1.5px hairline
           border, still lifted by --shadow-card / --shadow-card-inset
@@ -138,7 +146,7 @@ export function Login() {
         // content shrinks the viewport. Card grows to fill available
         // space so the submit button stays bottom-anchored relative
         // to the card body.
-        className="w-full max-w-sm flex flex-col bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-10 animate-login-in shadow-[var(--shadow-card)]"
+        className="relative z-10 w-full max-w-sm max-h-full flex flex-col bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 sm:p-8 animate-login-in shadow-[var(--shadow-card)]"
         style={{ boxShadow: 'var(--shadow-card), var(--shadow-card-inset)' }}
       >
         {/* Playroom Modern (Task 9): the scoped stagger only fires
@@ -170,7 +178,7 @@ export function Login() {
         {wasExpired && (
           <div
             role="status"
-            className="mb-6 rounded-lg border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-3 text-sm text-[var(--color-text-primary)]"
+            className="mb-4 rounded-lg border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-3.5 py-2.5 text-sm text-[var(--color-text-primary)]"
           >
             <span className="font-semibold">You&apos;ve been signed out for security.</span>{' '}
             <span className="text-[var(--color-text-secondary)]">
@@ -178,22 +186,22 @@ export function Login() {
             </span>
           </div>
         )}
-        <div className="flex flex-col items-center text-center mb-8">
+        <div className="flex flex-col items-center text-center mb-5">
           {/* Playroom Modern (Task 9): BrandMarkRow replaces the old
               CatTrioMark PNG stitch — same three-cat identity, drawn
               from the shared WhoMark shape/color system instead of a
               one-off raster asset. Wrapper class scopes the staggered
               entrance defined in the <style> block above. */}
-          <div className="login-brand-stagger mb-4">
-            <BrandMarkRow size={44} />
+          <div className="login-brand-stagger mb-3">
+            <BrandMarkRow size={40} />
           </div>
-          <h1 className="font-display text-4xl font-bold text-[var(--color-text-primary)] tracking-tight">
+          <h1 className="font-display text-[2.5rem] leading-none font-bold text-[var(--color-text-primary)] tracking-tight">
             HomeCam
           </h1>
-          <p className="font-display text-base text-[var(--color-text-secondary)] mt-2 max-w-xs">
+          <p className="font-display text-sm text-[var(--color-text-secondary)] mt-2 max-w-xs">
             Panther, Mushu &amp; Coco are watching the door.
           </p>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold mt-3">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold mt-2">
             The Den · A household watch
           </p>
         </div>
@@ -206,7 +214,7 @@ export function Login() {
             probes) as before; only the outer border/radius moved from
             per-field to the shared bar. */}
         <div className="flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden mb-2">
-          <label className="flex flex-col px-3.5 py-3 border-b border-[var(--color-border)] focus-within:bg-[var(--color-surface)] transition-colors">
+          <label className="flex flex-col px-3.5 py-2.5 border-b border-[var(--color-border)] focus-within:bg-[var(--color-surface)] transition-colors">
             <span className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
               Username
             </span>
@@ -231,7 +239,7 @@ export function Login() {
             />
           </label>
 
-          <label className="flex flex-col px-3.5 py-3 focus-within:bg-[var(--color-surface)] transition-colors">
+          <label className="flex flex-col px-3.5 py-2.5 focus-within:bg-[var(--color-surface)] transition-colors">
             <span className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
               Password
             </span>
@@ -303,7 +311,7 @@ export function Login() {
             </div>
           </label>
         </div>
-        <p id="username-hint" className="text-xs text-[var(--color-text-tertiary)] -mt-1 mb-4 px-1">
+        <p id="username-hint" className="text-xs text-[var(--color-text-tertiary)] -mt-1 mb-2.5 px-1">
           Created when HomeCam was first set up.
         </p>
 
@@ -324,7 +332,7 @@ export function Login() {
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          className="min-h-[1.25rem] flex items-center gap-2 text-sm text-[var(--color-warning)] mb-4"
+          className="min-h-[1.25rem] flex items-center gap-2 text-sm text-[var(--color-warning)] mb-2"
         >
           {capsLockOn && (
             <>
@@ -354,7 +362,7 @@ export function Login() {
             ~80 px when the error appears. Pre-iter-356.1a Frank's
             thumb was tapping air after a wrong-password attempt.
             min-h ensures the layout stays stable empty-or-full. */}
-        <div className="min-h-[3.5rem] mt-4 mb-6">
+        <div className="min-h-[3.5rem] mt-2 mb-4">
           {error && (
             // iter-356.1a (Maya Major Color): all token-driven. Was
             // bg-red-500/8 (non-standard /8 stop) + bare red-500/300.

@@ -300,7 +300,12 @@ def _review_queue_sync(root: Path, limit: int) -> dict:
             conf = sidecar.get("confidence")
             if conf is None:
                 continue
-            if not (_UNCERTAINTY_LO <= conf <= _UNCERTAINTY_HI):
+            # Every explicitly unknown capture belongs in the inbox, even a
+            # strong miss below the active-learning uncertainty band. Named
+            # buckets stay limited to uncertain predictions to avoid asking
+            # the owner to reconfirm confident household matches.
+            is_unknown = child.name == "__unknown__"
+            if not is_unknown and not (_UNCERTAINTY_LO <= conf <= _UNCERTAINTY_HI):
                 continue
             stem = f.stem
             ts_str, _, event_id = stem.partition("_")
@@ -316,10 +321,11 @@ def _review_queue_sync(root: Path, limit: int) -> dict:
                 "confidence": conf,
                 "current_dir": child.name,
                 "url": f"/api/face/captures/{child.name}/{f.name}",
-                "_uncertainty": abs(conf - 0.5),
+                "_uncertainty": -1.0 if is_unknown else abs(conf - 0.5),
+                "_newest": -ts_ms,
             })
 
-    candidates.sort(key=lambda c: c["_uncertainty"])
+    candidates.sort(key=lambda c: (c["_uncertainty"], c["_newest"]))
     total = len(candidates)
     items = [
         {k: v for k, v in c.items() if not k.startswith("_")}
@@ -592,6 +598,23 @@ async def delete_capture(name: str, filename: str) -> dict:
 # generic body-cap rejection.
 _BOOTSTRAP_MAX_BYTES = 5 * 1024 * 1024
 _BOOTSTRAP_ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png"}
+_RETRAIN_UNAVAILABLE_REASON = (
+    "Face retraining requires the Jetson host encoder helper, which is not "
+    "installed on this deployment."
+)
+
+
+@router.get(
+    "/face/capabilities",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def face_capabilities() -> dict:
+    """Report deploy-dependent training operations without fake success."""
+    return {
+        "bootstrap": True,
+        "retrain": False,
+        "retrain_reason": _RETRAIN_UNAVAILABLE_REASON,
+    }
 
 
 @router.post(
@@ -673,11 +696,8 @@ async def bootstrap_face(
         "ok": True,
         "saved_to": "{}/{}".format(name, filename),
         "note": (
-            "scaffold: photo saved but face encodings are NOT updated. "
-            "iter-355 will wire the encode_known_faces.py subprocess. "
-            "For now, SSH to the Jetson and run "
-            "`cd detection/face_recog && python encode_known_faces.py` "
-            "after copying the file from face_captures/ to known_faces/<name>/."
+            "Photo saved to the training queue. Automatic retraining is not "
+            "available on this deployment; see face capabilities for status."
         ),
     }
 
@@ -692,17 +712,8 @@ async def retrain_face() -> dict:
     `note: "scaffold..."`; iter-355 wires the actual subprocess +
     worker restart via host-helper.
     """
-    return {
-        "ok": True,
-        "note": (
-            "scaffold: re-train is stubbed. iter-355 will wire the "
-            "encode_known_faces.py subprocess + worker restart via "
-            "the host-helper NOPASSWD sudoers entry. For now, SSH to "
-            "the Jetson and run `cd detection/face_recog && "
-            "python encode_known_faces.py && "
-            "sudo systemctl restart homecam-detect`."
-        ),
-    }
+    log.warning("face retrain rejected reason=%s", "host_helper_unavailable")
+    raise HTTPException(status_code=503, detail=_RETRAIN_UNAVAILABLE_REASON)
 
 
 def _suffix_on_collision(target_dir: Path, filename: str) -> str:

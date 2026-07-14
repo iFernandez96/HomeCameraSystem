@@ -8,6 +8,8 @@ the Prometheus text-based spec.
 """
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
 
 
@@ -103,6 +105,35 @@ def test_metrics_endpoint_includes_thumb_ms_when_set(client_anon: TestClient):
     r = client_anon.get("/metrics")
     body = r.text
     assert "homecam_worker_thumb_ms_recent 78.9" in body
+
+
+def test_metrics_endpoint_exposes_only_fresh_real_power_samples(client_anon: TestClient):
+    """Power history is scrapeable, but a stale value must disappear rather
+    than continuing to look like the Jetson's current draw."""
+    now = time.time()
+    client_anon.post(
+        "/api/_internal/heartbeat",
+        json={
+            "power_sensor_status": 1,
+            "power_watts": 6.287,
+            "power_volts": 5.03,
+            "power_amps": 1.25,
+            "power_sample_ts": now,
+            "power_read_failures": 0,
+        },
+    )
+    body = client_anon.get("/metrics").text
+    assert "homecam_input_power_watts 6.287" in body
+    assert "homecam_input_voltage_volts 5.03" in body
+    assert "homecam_input_current_amps 1.25" in body
+    assert "# TYPE homecam_power_read_failures_total counter" in body
+
+    client_anon.post(
+        "/api/_internal/heartbeat",
+        json={"power_sensor_status": 1, "power_sample_ts": now - 30.0},
+    )
+    stale_body = client_anon.get("/metrics").text
+    assert "homecam_input_power_watts" not in stale_body
 
 
 def test_metrics_endpoint_skips_none_probes_silently(client_anon: TestClient):

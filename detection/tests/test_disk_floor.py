@@ -9,6 +9,7 @@ Run from `detection/`:
     /tmp/homecam-venv/bin/python -m pytest tests/test_disk_floor.py -q
 """
 import sys
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -23,13 +24,15 @@ import visit_runtime  # noqa: E402
 from visit import VisitTracker  # noqa: E402
 
 
-def _make_runner(tmp_path, free_bytes, min_free_bytes=None):
+def _make_runner(tmp_path, free_bytes, min_free_bytes=None, on_finalized=None,
+                 **runner_kwargs):
     """A VisitRunner whose free-space reader returns a FIXED ``free_bytes`` (or
     a callable for dynamic tests), with side effects captured into lists and
     finalize run synchronously."""
     events = {"open": [], "copy": [], "finalize": []}
 
-    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0):
+    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0,
+                   root_visit_id=None, **_kwargs):
         events["open"].append((visit_id, key, start_ts, boxes))
 
     def copy_segments(visit_id, start_ts, until_ts, scratch, already):
@@ -56,9 +59,11 @@ def _make_runner(tmp_path, free_bytes, min_free_bytes=None):
         tracker=VisitTracker(id_factory=lambda: "vid1"),
         spawn=_sync_spawn,
         free_space=free_space,
+        on_finalized=on_finalized,
     )
     if min_free_bytes is not None:
         kwargs["min_free_bytes"] = min_free_bytes
+    kwargs.update(runner_kwargs)
     runner = visit_runtime.VisitRunner(**kwargs)
     return runner, events
 
@@ -104,6 +109,53 @@ def test_given_free_space_above_floor_when_open_then_opens_normally(tmp_path):
     assert "vid1" in visit_runtime.read_open_visits(str(tmp_path))
     # plan S6: an accepted open is NOT counted as a disk-floor drop.
     assert runner.clips_dropped_disk_floor == 0
+    ledger = json.loads((tmp_path / ".clip_state.json").read_text())
+    assert ledger["events"]["vid1"]["state"] == "recording"
+    assert ledger["events"]["vid1"]["start_ts"] == 100.0
+
+
+def test_given_finalize_returns_false_when_visit_closes_then_ledger_marks_failed(
+    tmp_path,
+):
+    # arrange
+    events = {"open": [], "copy": [], "finalize": []}
+
+    def post_event(visit_id, key, start_ts, boxes=None, segment_index=0,
+                   root_visit_id=None, **_kwargs):
+        events["open"].append((visit_id, key, start_ts, boxes))
+
+    def copy_segments(visit_id, start_ts, until_ts, scratch, already):
+        events["copy"].append((visit_id, start_ts, until_ts))
+        return [], set()
+
+    def finalize(visit_id, scratch, start_ts, end_ts):
+        events["finalize"].append((visit_id, start_ts, end_ts))
+        return False
+
+    def sync_spawn(target, _vid):
+        target()
+
+    runner = visit_runtime.VisitRunner(
+        recordings_dir=str(tmp_path),
+        post_event=post_event,
+        copy_segments=copy_segments,
+        finalize_visit=finalize,
+        tracker=VisitTracker(id_factory=lambda: "vid1"),
+        spawn=sync_spawn,
+        free_space=lambda _path: visit_runtime.WORKER_MIN_FREE_BYTES + 1,
+    )
+
+    # act
+    runner.observe("person:cam1", (0.0, 0.0, 0.1, 0.1), now=100.0,
+                   pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0,
+                   boxes=[{"label": "person"}])
+    runner.tick(now=111.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    # assert
+    assert events["finalize"] == [("vid1", 100.0, 110.0)]
+    ledger = json.loads((tmp_path / ".clip_state.json").read_text())
+    assert ledger["events"]["vid1"]["state"] == "failed"
+    assert ledger["events"]["vid1"]["reason"] == "finalize_returned_false"
 
 
 def test_given_refused_open_when_subject_persists_then_tracker_rolled_back(
@@ -215,6 +267,57 @@ def test_given_open_visit_when_absence_finalizes_then_visits_finalized_increment
     assert len(events["finalize"]) == 1
     assert runner.visits_finalized == 1
     assert runner.clips_dropped_disk_floor == 0
+
+
+def test_successful_finalize_notifies_server_callback(tmp_path):
+    above = visit_runtime.WORKER_MIN_FREE_BYTES + (50 * 1024 * 1024)
+    completed = []
+    runner, _events = _make_runner(
+        tmp_path,
+        free_bytes=above,
+        on_finalized=lambda visit_id, start, end: completed.append(
+            (visit_id, start, end)
+        ),
+    )
+    runner.set_absence_finalize_s(10.0)
+    runner.observe(
+        "person:cam1", (0.0, 0.0, 0.2, 0.2), now=100.0,
+        pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0,
+        boxes=[{"label": "person"}],
+    )
+
+    runner.tick(now=200.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    assert completed == [("vid1", 100.0, 110.0)]
+
+
+def test_finalized_notification_retries_without_marking_valid_clip_failed(tmp_path):
+    above = visit_runtime.WORKER_MIN_FREE_BYTES + (50 * 1024 * 1024)
+    calls = []
+
+    def flaky(visit_id, start, end):
+        calls.append((visit_id, start, end))
+        if len(calls) == 1:
+            raise OSError("server restarting")
+
+    runner, _events = _make_runner(
+        tmp_path,
+        free_bytes=above,
+        on_finalized=flaky,
+        notification_attempts=2,
+        notification_sleep=lambda _seconds: None,
+    )
+    runner.set_absence_finalize_s(10.0)
+    runner.observe(
+        "person:cam1", (0.0, 0.0, 0.2, 0.2), now=100.0,
+        pre_roll_s=0.0, absence_finalize_s=10.0, max_visit_s=150.0,
+        boxes=[{"label": "person"}],
+    )
+    runner.tick(now=200.0, absence_finalize_s=10.0, max_visit_s=150.0)
+
+    assert len(calls) == 2
+    state = visit_runtime.clip_state.get_state(str(tmp_path), "vid1")
+    assert state["state"] != "failed"
 
 
 # --------------------------------------------------------------------------- #

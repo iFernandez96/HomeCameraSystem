@@ -1,13 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { EventRow } from '../components/EventRow'
 import { SnapshotPreview } from '../components/SnapshotPreview'
 import { ErrorState } from '../components/states/ErrorState'
+import { PackageStatusCard } from '../components/PackageStatusCard'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
-import { captureSnapshot, getCameras, searchEvents, HttpError, type Camera } from '../lib/api'
+import { captureSnapshot, getCameras, searchEvents, setDetectionEnabled, triggerDeterrence, HttpError, type Camera } from '../lib/api'
 import { nextRovingIndex } from '../lib/a11y'
 import { clockTime, recognizedNames, registerCameraNames, relativeTime } from '../lib/eventLabel'
 import { DEFAULT_CAMERA_PATH } from '../lib/streamQuality'
@@ -23,9 +24,19 @@ import {
   type ZoomState,
 } from '../lib/pinchZoom'
 import { useToast } from '../lib/toast'
+import { useConfirm } from '../lib/confirm'
+import { useAuth } from '../lib/auth'
+import { isOwner } from '../lib/roles'
 import { useTicker } from '../lib/useTicker'
+import {
+  startListenSession,
+  startTalkSession,
+  type ListenSession,
+  type TalkSession,
+} from '../lib/twoWayAudio'
 import type { DetectionEvent } from '../lib/types'
 import { useStatus } from '../lib/useStatus'
+import { powerDisplay } from '../lib/power'
 import {
   WATCH_STATE_LABEL,
   watchStateDotClass,
@@ -199,6 +210,15 @@ function useTodayEvents() {
     }
   }, [refetchKey])
 
+  const hasActiveVideo = events?.some(
+    (event) => event.video_status === 'recording' || event.video_status === 'finalizing',
+  ) === true
+  useEffect(() => {
+    if (!hasActiveVideo || document.visibilityState !== 'visible') return
+    const id = window.setInterval(() => setRefetchKey((key) => key + 1), 2000)
+    return () => window.clearInterval(id)
+  }, [hasActiveVideo])
+
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
@@ -208,11 +228,6 @@ function useTodayEvents() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
-  // Final whole-branch review fix batch #1: ClipModal's Delete pill
-  // (see Watch()'s ClipModal usage below) needs a way to make this
-  // list forget the just-deleted event. Reuses the EXISTING
-  // refetch-key mechanism (the same one visibilitychange bumps above)
-  // rather than adding a second, parallel invalidation path.
   // Overhaul W1 item 7: stable identity (useCallback) so the memoized
   // TodayTimeline's props don't churn on every 5 s status-poll render.
   const refetch = useCallback(() => setRefetchKey((k) => k + 1), [])
@@ -224,10 +239,15 @@ export function Watch() {
   const status = useStatus()
   const sentryCat = useSentryCat()
   const { showToast } = useToast()
+  const { user } = useAuth()
+  const canTalk = isOwner(user)
+  const canManageDetection = user != null
+  const confirm = useConfirm()
   const navigate = useNavigate()
+  const [actionParams, setActionParams] = useSearchParams()
   const ripple = useRipple()
   const isLandscape = useIsLandscape()
-  const nowMs = useTicker()
+  const nowMs = useTicker(1000)
   const { events, quietSince, error, refetch: refetchTodayEvents } = useTodayEvents()
   const { cameras, selectedCamera, selectCamera } = useCameras()
   // Multicam contract: the switcher + per-event camera labels only
@@ -237,6 +257,9 @@ export function Watch() {
   const streamPath = selectedCamera?.path ?? DEFAULT_CAMERA_PATH
 
   const [full, setFull] = useState(false)
+  const [dockedControlsTarget, setDockedControlsTarget] = useState<HTMLElement | null>(null)
+  const [dockedChromeVisible, setDockedChromeVisible] = useState(true)
+  const [detectionToggleBusy, setDetectionToggleBusy] = useState(false)
   // Fullscreen chrome auto-hide (fullscreen contract item 4): controls
   // fade out ~3.5 s after the last interaction so fullscreen is for
   // WATCHING; any tap brings them back. All state changes happen in
@@ -259,6 +282,12 @@ export function Watch() {
     }
   }, [])
   const [busy, setBusy] = useState(false)
+  const [talkStarting, setTalkStarting] = useState(false)
+  const [talkActive, setTalkActive] = useState(false)
+  const talkSessionRef = useRef<TalkSession | null>(null)
+  const [listenStarting, setListenStarting] = useState(false)
+  const [listenActive, setListenActive] = useState(false)
+  const listenSessionRef = useRef<ListenSession | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [openEvent, setOpenEvent] = useState<DetectionEvent | null>(null)
   // Status-truth fix (server-restart contradiction, 2026-07-07): a
@@ -287,6 +316,15 @@ export function Watch() {
   )
 
   const detectionActive = status?.detection_active ?? null
+  const audioEnabled = status?.audio_enabled === true
+  const talkIntent = actionParams.get('talk') === '1'
+  const deterrenceRaw = actionParams.get('deterrence')
+  const deterrenceAction =
+    deterrenceRaw === 'light' || deterrenceRaw === 'warning' || deterrenceRaw === 'siren'
+      ? deterrenceRaw
+      : null
+  const deterrenceDuration = Math.max(1, Math.min(60, Number(actionParams.get('duration')) || 15))
+  const intentEventId = actionParams.get('event') ?? undefined
   const workerAlive = status?.worker_alive ?? null
   const streamStaleSeconds = status?.seconds_since_last_frame ?? null
   const lowMemory = status?.worker_metrics?.gear === 'low-memory'
@@ -297,6 +335,117 @@ export function Watch() {
   const cameraLabel = multiCam
     ? selectedCamera?.name ?? _DEFAULT_CAMERA_LABEL
     : status?.camera_label ?? _DEFAULT_CAMERA_LABEL
+
+  const toggleTalk = async () => {
+    if (talkStarting) return
+    if (talkSessionRef.current) {
+      talkSessionRef.current.close()
+      talkSessionRef.current = null
+      setTalkActive(false)
+      showToast('Talk ended', 'info')
+      return
+    }
+    setTalkStarting(true)
+    try {
+      const session = await startTalkSession(undefined, () => {
+        talkSessionRef.current = null
+        setTalkActive(false)
+        showToast('Talk connection ended', 'error')
+      })
+      talkSessionRef.current = session
+      setTalkActive(true)
+      showToast('Microphone is live at the camera', 'success')
+    } catch {
+      showToast('Could not start talk — check microphone and speaker setup', 'error')
+    } finally {
+      setTalkStarting(false)
+    }
+  }
+
+  const toggleListen = async () => {
+    if (listenStarting) return
+    if (listenSessionRef.current) {
+      listenSessionRef.current.close()
+      listenSessionRef.current = null
+      setListenActive(false)
+      return
+    }
+    setListenStarting(true)
+    try {
+      listenSessionRef.current = await startListenSession(undefined, () => {
+        listenSessionRef.current = null
+        setListenActive(false)
+        showToast('Listen connection ended', 'error')
+      })
+      setListenActive(true)
+    } catch {
+      showToast('Could not listen — check camera microphone setup', 'error')
+    } finally {
+      setListenStarting(false)
+    }
+  }
+
+  const clearActionIntent = () => {
+    const next = new URLSearchParams(actionParams)
+    for (const key of ['talk', 'deterrence', 'duration', 'event']) next.delete(key)
+    setActionParams(next, { replace: true })
+  }
+
+  const confirmDeterrence = async () => {
+    if (!deterrenceAction) return
+    const label = deterrenceAction === 'light' ? 'turn on the light' : deterrenceAction === 'warning' ? 'play the warning' : 'sound the siren'
+    const ok = await confirm({
+      title: `${label.charAt(0).toUpperCase()}${label.slice(1)}?`,
+      body: `This will ${label} at the camera for ${deterrenceDuration} seconds.`,
+      confirmLabel: deterrenceAction === 'siren' ? 'Sound siren' : 'Start action',
+      destructive: deterrenceAction === 'siren',
+    })
+    if (!ok) return
+    try {
+      const result = await triggerDeterrence({
+        action: deterrenceAction,
+        duration_s: deterrenceDuration,
+        confirm: true,
+        ...(intentEventId ? { event_id: intentEventId } : {}),
+      })
+      if (!result.ok) {
+        const detail =
+          result.status === 'unavailable'
+            ? result.capabilities.limitation || result.reason
+            : result.reason
+        showToast(
+          `${result.status === 'unavailable' ? 'Action unavailable' : 'Action blocked'}: ${detail}`,
+          'error',
+        )
+        return
+      }
+      showToast('Deterrence action started', 'success')
+      clearActionIntent()
+    } catch {
+      showToast('Could not start deterrence action', 'error')
+    }
+  }
+
+  useEffect(() => () => {
+    talkSessionRef.current?.close()
+    talkSessionRef.current = null
+    listenSessionRef.current?.close()
+    listenSessionRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (audioEnabled) return
+    talkSessionRef.current?.close()
+    talkSessionRef.current = null
+    listenSessionRef.current?.close()
+    listenSessionRef.current = null
+    Promise.resolve().then(() => {
+      setTalkActive(false)
+      setListenActive(false)
+      setTalkStarting(false)
+      setListenStarting(false)
+    })
+  }, [audioEnabled])
 
   // Overhaul W1 item 2 (one state vocabulary): the three-state truth
   // model (status-confirmed down / status unknown with video-truth
@@ -335,32 +484,44 @@ export function Watch() {
       ? 'Check its power, then see Settings.'
       : "Can't reach the camera. Check its connection."
     : reconnecting
-      ? 'Status reconnecting…'
+      ? 'Status reconnecting'
       : lowMemory
         ? 'Paused: the system is low on memory.'
         : thermal
           ? 'Slowed down: the camera is running warm.'
           : watching
-            ? `${sentryCatName(sentryCat)} is on watch · alerts on`
+            ? `${sentryCatName(sentryCat)} is watching`
             : detectionActive === false
               ? 'Turn alerts on in Settings.'
-              : 'Checking the camera…'
-  const todayCount = events?.length ?? 0
-  // Painfix wave B #1: this used to read "N person · M cat sightings",
-  // which reads as N DISTINCT PEOPLE — but `persons` counts EVENTS, so
-  // one person walking by 50 times over a day showed "50 people". Every
-  // event.label === 'person' row is a SIGHTING, not a unique visitor
-  // (no dedup by identity happens here), so both halves now say
-  // "sighting(s)" consistently.
-  const todayBreakdown = useMemo(() => {
-    if (events == null) return 'Loading…'
-    const persons = events.filter((e) => e.label === 'person').length
-    const cats = events.filter((e) => e.label === 'cat').length
-    const personWord = persons === 1 ? 'person sighting' : 'person sightings'
-    const catWord = cats === 1 ? 'cat sighting' : 'cat sightings'
-    return `${persons} ${personWord} · ${cats} ${catWord}`
-  }, [events])
+              : 'Checking camera status'
 
+  const toggleDetectionFromWatchPanel = async () => {
+    if (!canManageDetection || detectionToggleBusy || detectionActive == null) return
+    const enabled = !detectionActive
+    if (!enabled) {
+      const ok = await confirm({
+        title: 'Pause detection and classification?',
+        body: 'Live video and continuous recording will stay on. New detections, classifications, and alerts will stop until you resume them.',
+        confirmLabel: 'Pause detection',
+        destructive: true,
+      })
+      if (!ok) return
+    }
+    setDetectionToggleBusy(true)
+    try {
+      await setDetectionEnabled(enabled)
+      showToast(
+        enabled
+          ? `${sentryCatName(sentryCat)} is back on watch`
+          : 'Detection and classification paused',
+        'success',
+      )
+    } catch {
+      showToast('Could not change detection — try again', 'error')
+    } finally {
+      setDetectionToggleBusy(false)
+    }
+  }
   // Fullscreen contract (2026-07-07, user session): entering pushes a
   // history entry so the Android back gesture exits FULLSCREEN, not
   // the app — the number-one "acts like a real camera app"
@@ -764,7 +925,7 @@ export function Watch() {
     // left column's video keeps a TRUE 16:9 box at lg (max-w cap
     // below) instead of landscape-phone's full-height cover fit, so
     // `cover` never canyon-crops on a wide monitor.
-    <div className="flex flex-col landscape-phone:grid landscape-phone:grid-cols-[58%_1fr] landscape-phone:grid-rows-[auto_1fr] landscape-phone:h-[calc(100dvh-var(--ribbon-h,0px))] landscape-phone:overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] lg:grid-rows-[auto_1fr] lg:h-[calc(100dvh-var(--ribbon-h,0px))] lg:overflow-hidden lg:w-full lg:max-w-[100rem] lg:mx-auto">
+    <div className="flex h-[calc(100dvh-var(--ribbon-h,0px))] flex-col overflow-hidden landscape-phone:grid landscape-phone:grid-cols-[minmax(0,1fr)_clamp(22rem,32vw,29rem)] landscape-phone:grid-rows-[auto_1fr] landscape-phone:gap-x-4 tablet-landscape:grid tablet-landscape:grid-cols-[minmax(0,1fr)_clamp(24rem,38vw,32rem)] tablet-landscape:grid-rows-[auto_1fr] tablet-landscape:gap-x-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] lg:grid-rows-[auto_1fr] lg:w-full lg:max-w-[100rem] lg:mx-auto">
       {/* Audit seam fix: `landscape-phone` is height-only, so a
           short-but-wide lg window can render App.tsx's WatchRibbon
           while this grid is active. Subtract the shell-provided
@@ -774,8 +935,8 @@ export function Watch() {
           internal right-pane scroll degrades to page-level scroll in
           that edge case, which is acceptable). */}
       {/* ============ PAGE HEADER ============ */}
-      <header className="px-4 pt-4 pb-1 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:px-3 landscape-phone:pt-2 landscape-phone:pb-1 lg:col-span-2 lg:row-start-1 lg:px-6">
-        <div className="flex items-center justify-between gap-3">
+      <header className="px-4 pt-4 pb-1 landscape-phone:col-span-2 landscape-phone:row-start-1 landscape-phone:p-0 tablet-landscape:col-span-2 tablet-landscape:row-start-1 tablet-landscape:px-4 tablet-landscape:pt-3 tablet-landscape:pb-1 lg:col-span-2 lg:row-start-1 lg:px-6">
+        <div className="flex items-center justify-between gap-3 landscape-phone:sr-only">
           <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
             Home
           </h1>
@@ -837,10 +998,21 @@ export function Watch() {
               // is absolute — without a flex parent the pane's height
               // collapses to 0 in docked mode (user-caught: black tile,
               // no controls, on the landscape two-pane layout).
-              'relative flex flex-col aspect-video max-h-[48dvh] mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:aspect-auto landscape-phone:max-h-none landscape-phone:h-full landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:mb-3 lg:col-start-1 lg:row-start-2 lg:self-start lg:mx-6 lg:mt-3 lg:mb-6 lg:max-w-[85.33dvh]'
+              'relative flex flex-col mx-4 mt-3 rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] bg-black overflow-hidden landscape-phone:col-start-1 landscape-phone:row-start-2 landscape-phone:w-full landscape-phone:max-h-[calc(100dvh-var(--ribbon-h,0px)-1rem)] landscape-phone:self-start landscape-phone:m-0 landscape-phone:ml-2 landscape-phone:mt-12 landscape-phone:rounded-[var(--radius-xl)] tablet-landscape:col-start-1 tablet-landscape:row-start-2 tablet-landscape:w-full tablet-landscape:max-h-[calc(100dvh-var(--ribbon-h,0px)-1.5rem)] tablet-landscape:self-start tablet-landscape:m-0 tablet-landscape:ml-3 tablet-landscape:mt-12 tablet-landscape:rounded-[var(--radius-xl)] lg:col-start-1 lg:row-start-2 lg:self-start lg:mx-6 lg:mt-3 lg:mb-6 lg:max-w-[85.33dvh]'
         }
       >
-        <div className="relative flex-1 min-h-0 overflow-hidden">
+        <div
+          data-testid="live-scene"
+          onPointerUp={(event) => {
+            if (full || (event.target as HTMLElement).closest('button')) return
+            setDockedChromeVisible((visible) => !visible)
+          }}
+          className={
+            full
+              ? 'relative flex-1 min-h-0 overflow-hidden'
+              : 'relative aspect-video min-h-0 overflow-hidden'
+          }
+        >
           {/* Pinch-zoom layer (fullscreen contract item 7): only the
               video scales/pans; the pills, rail and scrubber are
               siblings and stay put. Transform written imperatively by
@@ -864,14 +1036,14 @@ export function Watch() {
             // docked stays `cover` inside its true 16:9 box, and
             // portrait full-bleed keeps `contain` so the scene's
             // edges are never cropped (original full-bleed rationale).
-            fit={full ? (isLandscape ? 'cover' : 'contain') : 'cover'}
+            fit={full ? (isLandscape ? 'cover' : 'contain') : isLandscape ? 'contain' : 'cover'}
             // Fuzz F3/F7/F13: docked wants exactly ONE status pill —
             // this tile's own connection pill ("Live"/"Connecting"/
             // "Offline"). Fullscreen already has a combined armed +
             // camera cluster below plus the scrubber's LIVE pill, so
             // this tile's pill would be a third, redundant "Live"
             // label crowding the back chevron.
-            showStatusPill={!full}
+            showStatusPill={!full && dockedChromeVisible}
             // Status-truth fix: independent read on whether frames are
             // actually flowing, so the glance card can tell "the API
             // doesn't know" apart from "the camera is really down".
@@ -890,6 +1062,9 @@ export function Watch() {
             // element and carries the hour scrubber; the native
             // Fullscreen API button would be a second, competing one).
             showFullscreenButton={false}
+            showQualityMenu
+            showBoxToggle
+            controlsTarget={full ? null : dockedControlsTarget}
             safeAreaBottom={full}
             // Fullscreen: the scrubber now OVERLAYS the bottom of the
             // full-bleed video, so the tile's own control row must sit
@@ -901,38 +1076,34 @@ export function Watch() {
             actions={
               full ? undefined : (
                 <>
-                  {/* Overhaul W1 item 4 (mira#5) + user screenshot
-                      (2026-07-07): these render inside VideoTile's
-                      rounded-full w-11 control row. Snapshot was a
-                      wide text pill sandwiched between two circles —
-                      circle/pill/circle read disordered. It is now an
-                      icon circle like its siblings (uniform w-11 row);
-                      the labeled Snapshot button still exists on the
-                      fullscreen rail for discoverability. */}
                   <button
                     type="button"
                     onClick={onSnapshot}
                     disabled={busy}
                     aria-label={busy ? 'Saving snapshot' : 'Snapshot'}
                     onPointerDown={busy ? undefined : ripple}
-                    className="relative overflow-hidden inline-flex items-center justify-center w-11 h-11 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
+                    className="relative min-w-[6.5rem] overflow-hidden inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-black/60 px-3 ring-1 ring-white/20 text-white disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
                   >
                     <SnapshotIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Full screen live view"
-                    onClick={enterFull}
-                    onPointerDown={ripple}
-                    className="relative overflow-hidden inline-flex items-center justify-center w-11 h-11 rounded-full bg-black/60 backdrop-blur ring-1 ring-white/20 text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors hover:bg-black/75 active:bg-black/85"
-                  >
-                    <ExpandIcon />
+                    <span className="text-sm font-semibold">Snapshot</span>
                   </button>
                 </>
               )
             }
           />
           </div>
+
+          {!full && dockedChromeVisible && (
+            <button
+              type="button"
+              aria-label="Full screen live view"
+              onClick={enterFull}
+              onPointerDown={ripple}
+              className="absolute bottom-3 right-3 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white ring-1 ring-white/20 backdrop-blur focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2"
+            >
+              <ExpandIcon />
+            </button>
+          )}
 
           {/* Floating pill overlays — the armed state lives ON the
               video here (the ribbon is hidden on this route on
@@ -948,7 +1119,9 @@ export function Watch() {
               live signal and a standalone "Live now" text was pure
               duplication (fuzz F3). */}
           <div
-            className="absolute top-0 left-0 right-0 flex items-center gap-2 px-4 pointer-events-none"
+            className={`absolute top-0 left-0 right-0 flex items-center gap-2 px-4 pointer-events-none ${
+              full ? '' : 'justify-end'
+            }`}
             style={{
               paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
               ...chromeFade(chromeHidden),
@@ -980,11 +1153,11 @@ export function Watch() {
                   {stateLabel} · {cameraLabel}
                 </span>
               </span>
-            ) : (
-              <span className="pointer-events-auto bg-black/70 text-white text-xs font-semibold rounded-full px-3 py-1 truncate">
+            ) : multiCam ? (
+              <span className="pointer-events-auto max-w-[45%] bg-black/70 text-white text-xs font-semibold rounded-full px-3 py-1 truncate">
                 {cameraLabel}
               </span>
-            )}
+            ) : null}
           </div>
 
           {/* Full-mode thumb rail. Fuzz F11: the "Talk · soon"
@@ -1011,9 +1184,52 @@ export function Watch() {
               >
                 <SnapshotIcon />
               </RailButton>
+              {audioEnabled ? (
+                <>
+                  <RailButton
+                    label={listenStarting ? 'Starting…' : listenActive ? 'Mute' : 'Listen'}
+                    onClick={() => void toggleListen()}
+                    disabled={listenStarting}
+                  >
+                    <span aria-hidden>{listenActive ? '◉' : '◌'}</span>
+                  </RailButton>
+                  {canTalk ? (
+                    <RailButton
+                      label={talkStarting ? 'Starting…' : talkActive ? 'End talk' : 'Talk'}
+                      onClick={() => void toggleTalk()}
+                      disabled={talkStarting}
+                    >
+                      <span aria-hidden>{talkActive ? '■' : '●'}</span>
+                    </RailButton>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           )}
+
         </div>
+
+        {!full && (
+          <div
+            ref={setDockedControlsTarget}
+            aria-label="Camera controls"
+            className="flex min-h-16 items-center bg-black px-4 py-2"
+          />
+        )}
+
+        {!full && (
+          <LiveGlanceStrip
+            unhealthy={unhealthy}
+            stateLabel={stateLabel}
+            watchingDetail={watchingDetail}
+            sentryName={sentryCatName(sentryCat)}
+            detectionActive={detectionActive}
+            canManageDetection={canManageDetection}
+            detectionToggleBusy={detectionToggleBusy}
+            onToggleDetection={toggleDetectionFromWatchPanel}
+            power={powerDisplay(status)}
+          />
+        )}
 
         {/* Full-mode bottom: hour scrubber with event markers.
             OVERLAY, not a flex sibling (user report 2026-07-07: "black
@@ -1041,14 +1257,34 @@ export function Watch() {
         )}
       </div>
 
-      {/* landscape-phone: glance cards + today's story share the
-          RIGHT pane and scroll independently of the (now full-height)
-          video pane on the left — this wrapper only takes effect at
-          that breakpoint (`contents` elsewhere, so it doesn't add an
-          extra scroll container / DOM landmark on portrait or
-          desktop, where these two sections already flow normally in
-          the page's own scroll). */}
-      <div className="contents landscape-phone:flex landscape-phone:flex-col landscape-phone:col-start-2 landscape-phone:row-start-2 landscape-phone:min-h-0 landscape-phone:overflow-y-auto lg:flex lg:flex-col lg:col-start-2 lg:row-start-2 lg:min-h-0 lg:overflow-y-auto lg:pr-6">
+      {/* Glance cards + Today's Story share the lower/right pane, but
+          the pane itself is height-bounded instead of scrollable.
+          The "Today at home" section below owns vertical scroll, so
+          the live tile and glance context stay anchored while the
+          activity area behaves like a native sheet. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden landscape-phone:col-start-2 landscape-phone:row-start-2 landscape-phone:gap-2 landscape-phone:pr-2 landscape-phone:pl-1 landscape-phone:pt-12 tablet-landscape:col-start-2 tablet-landscape:row-start-2 tablet-landscape:gap-2 tablet-landscape:pr-3 tablet-landscape:pt-12 lg:col-start-2 lg:row-start-2 lg:pt-0 lg:pr-6">
+        {talkIntent || deterrenceAction ? (
+          <section aria-label="Notification action confirmation" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-xl)] border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] p-3 md:mx-auto md:w-full md:max-w-[40rem] lg:mx-0">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {talkIntent ? (canTalk ? 'Ready to talk through the camera?' : 'Talk requires owner access') : `Ready to ${deterrenceAction === 'light' ? 'turn on the light' : deterrenceAction === 'warning' ? 'play a warning' : 'sound the siren'}?`}
+              </p>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                {talkIntent ? (!canTalk ? 'Family and viewer accounts can listen, but only an owner can publish microphone audio.' : audioEnabled ? 'Your microphone starts only after you tap below.' : 'Configure and enable camera audio in Settings first.') : `Foreground confirmation is required for the ${deterrenceDuration}-second action.`}
+              </p>
+            </div>
+            <div className="flex gap-1">
+              <button type="button" onClick={clearActionIntent} className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)]">Cancel</button>
+              <button
+                type="button"
+                onClick={() => talkIntent ? (!canTalk ? clearActionIntent() : audioEnabled ? void toggleTalk().then(clearActionIntent) : navigate('/settings')) : void confirmDeterrence()}
+                className="min-h-11 rounded-full bg-[var(--color-ink)] px-3 text-xs font-semibold text-[var(--color-on-ink)]"
+              >
+                {talkIntent ? (!canTalk ? 'Dismiss' : audioEnabled ? 'Start talk' : 'Open Settings') : 'Review action'}
+              </button>
+            </div>
+          </section>
+        ) : null}
         {/* Overhaul W1 item 9: passive "alerts are off" nudge. Links
             to Settings → Alerts by seeding the tab key Settings
             already reads from localStorage (it has no URL tab param).
@@ -1086,34 +1322,7 @@ export function Watch() {
           </button>
         )}
 
-        {/* ============ GLANCE ROW ============ */}
-        <div className="mx-4 mt-3.5 flex gap-2.5 landscape-phone:mx-3 landscape-phone:mt-0 landscape-phone:flex-col landscape-phone:gap-2 md:w-full md:max-w-[40rem] md:mx-auto lg:mx-0 lg:mt-3 lg:flex-col lg:gap-2">
-          <div
-            className={`flex-1 rounded-[var(--radius-xl)] px-3 py-2.5 ${
-              unhealthy
-                ? 'bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
-                : 'bg-[var(--color-ink)] text-[var(--color-on-ink)]'
-            }`}
-          >
-            {/* Overhaul W1 items 2+6: headline speaks the shared
-                ribbon vocabulary, and the one-off text-[17px]/[12.5px]
-                sizes map onto the --text-* scale (text-lg 18px /
-                text-sm 14px — the previous 12.5px was a hand-rolled
-                "xs is too small" compromise; the token scale wins). */}
-            <p className="text-lg leading-tight font-extrabold tracking-tight">
-              {stateLabel}
-            </p>
-            <p className="text-sm font-semibold">{watchingDetail}</p>
-          </div>
-          <div className="flex-1 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
-            <p className="text-lg leading-tight font-extrabold tracking-tight text-[var(--color-text-primary)]">
-              {todayCount} today
-            </p>
-            <p className="text-sm font-semibold text-[var(--color-text-secondary)]">
-              {todayBreakdown}
-            </p>
-          </div>
-        </div>
+        <PackageStatusCard />
 
         {/* ============ TODAY'S STORY ============ */}
         <TodayTimeline
@@ -1122,6 +1331,8 @@ export function Watch() {
           error={error}
           onOpen={setOpenEvent}
           onRetry={refetchTodayEvents}
+          detectionPaused={detectionActive === false && workerAlive !== false}
+          workerOffline={workerAlive === false}
           nowMs={nowMs}
         />
       </div>
@@ -1133,11 +1344,6 @@ export function Watch() {
         <ClipModal
           event={openEvent}
           onClose={() => setOpenEvent(null)}
-          // Final whole-branch review fix batch #1: bump the SAME
-          // refetch key visibilitychange already uses, so the
-          // just-deleted event drops out of Today's Story without a
-          // second, parallel invalidation mechanism.
-          onDeleted={() => refetchTodayEvents()}
         />
       )}
     </div>
@@ -1145,6 +1351,132 @@ export function Watch() {
 }
 
 /* ================= Today timeline ================= */
+
+function LiveGlanceStrip({
+  unhealthy,
+  stateLabel,
+  watchingDetail,
+  sentryName,
+  detectionActive,
+  canManageDetection,
+  detectionToggleBusy,
+  onToggleDetection,
+  power,
+}: {
+  unhealthy: boolean
+  stateLabel: string
+  watchingDetail: string
+  sentryName: string
+  detectionActive: boolean | null
+  canManageDetection: boolean
+  detectionToggleBusy: boolean
+  onToggleDetection: () => void
+  power: ReturnType<typeof powerDisplay>
+}) {
+  const watchState = (
+    <div className="flex min-w-0 items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
+          {stateLabel.replace(/…/g, '')}
+        </p>
+        <p className="text-xs font-medium leading-tight text-white/78">
+          {detectionToggleBusy ? 'Updating watch status' : watchingDetail}
+        </p>
+      </div>
+      <div className="flex flex-none items-center gap-1.5">
+        <span
+          aria-label={power.detail}
+          title={power.detail}
+          className={`whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold tabular-nums ${
+            power.state === 'live'
+              ? 'border-white/25 bg-white/8 text-white/85'
+              : power.state === 'error' || power.state === 'stale'
+                ? 'border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
+                : 'border-white/18 bg-white/5 text-white/60'
+          }`}
+        >
+          {power.compact}
+        </span>
+      {canManageDetection && detectionActive != null ? (
+        <span
+          aria-hidden="true"
+          className="inline-flex flex-none items-center gap-1 rounded-full border border-white/35 bg-white/10 px-2 py-1 text-[11px] font-bold text-white shadow-sm transition-colors group-hover:bg-white/16 group-active:bg-white/22"
+        >
+          {detectionToggleBusy ? (
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/35 border-t-white" />
+          ) : detectionActive ? (
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="3" y="3" width="3.5" height="10" rx="1" />
+              <rect x="9.5" y="3" width="3.5" height="10" rx="1" />
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4 2.8v10.4L13 8 4 2.8Z" />
+            </svg>
+          )}
+          {detectionToggleBusy ? 'Saving' : detectionActive ? 'Pause' : 'Resume'}
+        </span>
+      ) : null}
+      </div>
+    </div>
+  )
+  return (
+    <div
+      data-testid="live-glance-strip"
+      className="shrink-0 border-t border-white/10 bg-black/88 px-3 py-2 text-white backdrop-blur-md landscape-phone:px-2.5 landscape-phone:py-1.5 tablet-landscape:px-3 tablet-landscape:py-2 lg:px-4"
+    >
+      <div className="flex items-center">
+        {canManageDetection && detectionActive != null ? (
+          <button
+            type="button"
+            disabled={detectionToggleBusy}
+            onClick={onToggleDetection}
+            aria-label={
+              detectionActive
+                ? `Pause detection and classification — ${sentryName} is on watch`
+                : `Resume detection and classification — bring ${sentryName} back on watch`
+            }
+            className={`group min-h-11 w-full min-w-0 cursor-pointer rounded-xl border px-3 py-2 text-left shadow-sm transition-colors hover:bg-white/8 active:bg-white/12 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-70 ${
+              unhealthy
+                ? 'border-[var(--color-danger)] bg-white/5 text-[var(--color-danger)]'
+                : 'border-white/18 bg-white/5 text-white'
+            }`}
+          >
+            {watchState}
+          </button>
+        ) : (
+          <div
+            className={`min-h-11 w-full min-w-0 rounded-xl border px-3 py-2 ${
+            unhealthy
+              ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
+              : 'border-white/18 bg-white/5 text-white'
+            }`}
+          >
+            {watchState}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function sightingBreakdown(events: DetectionEvent[]): string {
+  const persons = events.filter((event) => event.label === 'person').length
+  const cats = events.filter((event) => event.label === 'cat').length
+  const others = events.length - persons - cats
+  const parts: string[] = []
+  if (persons > 0) {
+    parts.push(`${persons} person ${persons === 1 ? 'sighting' : 'sightings'}`)
+  }
+  if (cats > 0) {
+    parts.push(`${cats} cat ${cats === 1 ? 'sighting' : 'sightings'}`)
+  }
+  if (others > 0) {
+    parts.push(`${others} other ${others === 1 ? 'sighting' : 'sightings'}`)
+  }
+  if (parts.length < 2) return parts[0] ?? ''
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
 
 /**
  * Fuzz F8: the row subline used to be the constant "Tap to review" —
@@ -1176,6 +1508,8 @@ const TodayTimeline = memo(function TodayTimeline({
   error,
   onOpen,
   onRetry,
+  detectionPaused,
+  workerOffline,
   nowMs,
 }: {
   events: DetectionEvent[] | null
@@ -1183,6 +1517,8 @@ const TodayTimeline = memo(function TodayTimeline({
   error: boolean
   onOpen: (e: DetectionEvent) => void
   onRetry: () => void
+  detectionPaused: boolean
+  workerOffline: boolean
   nowMs: number
 }) {
   const navigate = useNavigate()
@@ -1193,11 +1529,11 @@ const TodayTimeline = memo(function TodayTimeline({
     // to stretch the full window. Inside the lg grid the right rail's
     // own column cap wins (max-w-2xl is wider than the rail).
     <section
-      className="px-4 pt-4 pb-6 w-full md:max-w-[40rem] md:mx-auto md:px-0 lg:max-w-none lg:mx-0"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] w-full landscape-phone:order-2 landscape-phone:px-0 landscape-phone:pt-0 landscape-phone:pb-2 landscape-phone:scrollbar-hide tablet-landscape:order-2 tablet-landscape:px-0 tablet-landscape:pt-0 tablet-landscape:pb-0 tablet-landscape:scrollbar-hide md:max-w-[40rem] md:mx-auto md:px-0 lg:max-w-none lg:mx-0 lg:pb-0"
       aria-label="Today's activity"
     >
       <div className="flex items-baseline justify-between">
-        <h2 className="font-display text-lg font-bold text-[var(--color-text-primary)]">
+        <h2 className="font-display text-lg font-bold text-[var(--color-text-primary)] landscape-phone:text-base">
           Today at home
         </h2>
         {/* Overhaul W1 item 4: -m-2 p-2 grows the tap target without
@@ -1205,19 +1541,26 @@ const TodayTimeline = memo(function TodayTimeline({
         <button
           type="button"
           onClick={() => navigate('/events')}
-          className="-m-2 p-2 text-xs font-semibold text-[var(--color-accent-deep)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded"
+          className="-m-2 inline-flex min-h-11 items-center rounded p-2 text-xs font-semibold text-[var(--color-accent-deep)] hover:text-[var(--color-accent-bright)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
         >
           Full history →
         </button>
       </div>
-      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5 mb-4">
+      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5 mb-4 landscape-phone:mb-2">
         {events == null
-          ? 'Loading today…'
+          ? 'Loading today'
           : events.length === 0
-            ? 'No events yet today'
-            : 'Newest first'}
+            ? 'No sightings yet today'
+            : `${events.length} ${events.length === 1 ? 'sighting' : 'sightings'} today`}
       </p>
-
+      {events != null && events.length > 0 ? (
+        <p
+          data-testid="today-sightings-summary"
+          className="-mt-3 mb-4 text-xs font-medium text-[var(--color-text-tertiary)] landscape-phone:-mt-1 landscape-phone:mb-2"
+        >
+          {sightingBreakdown(events)}
+        </p>
+      ) : null}
       {/* Overhaul W1 item 3 (mira#4, hari GESTURE-4/STATE-1): the
           designed ErrorState with a real Retry button replaces the
           bare red <p> — whose copy told users to "pull to refresh",
@@ -1237,7 +1580,7 @@ const TodayTimeline = memo(function TodayTimeline({
         />
       )}
 
-      <ol className="space-y-2">
+      <ol className="space-y-2 pr-1">
         {quietSince && (
           <li className="rounded-[var(--radius-xl)] border border-dashed border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-secondary)]">
             Quiet since {quietSince}
@@ -1249,6 +1592,10 @@ const TodayTimeline = memo(function TodayTimeline({
               event={e}
               subline={eventSubline(e, nowMs)}
               onOpen={() => onOpen(e)}
+              leading="video-status"
+              detectionPaused={detectionPaused}
+              workerOffline={workerOffline}
+              nowMs={nowMs}
             />
           </li>
         ))}

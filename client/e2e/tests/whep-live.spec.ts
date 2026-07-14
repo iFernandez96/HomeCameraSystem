@@ -219,6 +219,12 @@ test.describe('WHEP live smoke', () => {
 
   const liveRungs: LiveRung[] = [
     {
+      title: 'W3: rung uhq posts /whep/cam_uhq/whep and presents a 1080p frame within 8s',
+      optionName: /^UHQ\b/,
+      expectedPath: '/whep/cam_uhq/whep',
+      preseedQuality: 'hq',
+    },
+    {
       title: 'W4: rung hq posts /whep/cam/whep and presents a first frame within 8s',
       optionName: /^HQ\b/,
       expectedPath: '/whep/cam/whep',

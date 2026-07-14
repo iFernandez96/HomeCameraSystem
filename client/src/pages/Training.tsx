@@ -421,7 +421,7 @@ function IndexView({ onPick }: { onPick: (name: string) => void }) {
         data exports. The camera still recognizes everyone normally
         either way — consent only affects exports.
       </p>
-      <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 list-none">
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 list-none">
         {dirs.map((d) => (
         <li key={d.name}>
           <div className="flex flex-col gap-2 bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-[var(--radius-xl)] p-3 shadow-[var(--shadow-card),var(--shadow-card-inset)] [@media(hover:hover)]:hover:border-[var(--color-border-strong)] transition-colors">

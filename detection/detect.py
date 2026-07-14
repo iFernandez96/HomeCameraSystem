@@ -52,6 +52,7 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -76,6 +77,12 @@ if _HERE not in sys.path:
 # thing so the leaf-lib `logging` records + the hot-loop `[tag]` prints all
 # land in journald with one format.
 import applog  # noqa: E402
+import clip_state  # noqa: E402
+from activity_rules import ActivityRuleEngine, sanitize_rules  # noqa: E402
+from audio_events import sanitize_audio_labels  # noqa: E402
+from scene_guard import SceneGuard  # noqa: E402
+from doorbell import DebouncedButton  # noqa: E402
+from power_monitor import start_power_sampler  # noqa: E402
 
 # Leaf-style logger for the worker. `applog.configure()` (called first
 # thing in main()) installs the root handler so these records reach
@@ -199,8 +206,18 @@ from presence import PresenceTracker  # noqa: E402
 from shadow_presence import ShadowPresenceRunner  # noqa: E402
 import visit_runtime  # noqa: E402  (continuous-capture wiring + recovery, S4)
 from schedule import in_off_window  # noqa: E402
+from signal_retry import SignalEmitter  # noqa: E402
 from thermal_guard import ThermalGuard, read_gpu_temp_c  # noqa: E402
-from zones import any_box_center_inside_any_zone, sanitize_zones  # noqa: E402
+from zones import (  # noqa: E402
+    any_box_center_inside_any_zone,
+    box_center_inside_any_zone,
+    sanitize_zones,
+)
+from wedge_diagnostics import (  # noqa: E402
+    count_argus_pending as _count_argus_pending,
+    parse_free_available_mb as _parse_free_available_mb,
+    parse_nvargus_rss_kb as _parse_nvargus_rss_kb,
+)
 
 # Note: `nvbuf_utils` / `dmabuf_fd` / `gstBufferManager` warnings come straight
 # from C code, not Python's stderr — a Python-level fd-redirect doesn't catch
@@ -343,6 +360,239 @@ def post_event(url, payload, timeout=2.0, metrics=None):
             metrics.event_post_failures += 1
 
 
+def _activity_related_visit(event, camera_id):
+    """Return the open segment + stable visit story overlapping a rule event.
+
+    The segment event id is the concrete clip a rule event occurred alongside;
+    the root visit id remains stable when max_visit_s rolls that footage into a
+    new event/clip. Returning both prevents the server timeline from splitting
+    one physical presence into unrelated stories.
+    """
+    runner = _VISIT_RUNNER
+    tracker = getattr(runner, "tracker", None) if runner is not None else None
+    if tracker is None:
+        return None
+    box = event.get("box") if isinstance(event, dict) else None
+    box_label = box.get("label") if isinstance(box, dict) else None
+    labels = []
+    if event.get("package_state") is not None:
+        labels.append("person")
+    if isinstance(box_label, str) and not box_label.startswith("package_"):
+        labels.append(box_label)
+    for label in labels:
+        try:
+            key = "{}:{}".format(label, camera_id)
+            event_id = tracker.active_visit_id(key)
+            visit_id = tracker.active_root_visit_id(key)
+        except Exception:
+            continue
+        if event_id and visit_id:
+            return {"related_event_id": event_id, "visit_id": visit_id}
+    return {}
+
+
+def build_activity_event_payload(event, camera_id, related_event_id=None,
+                                 visit_id=None, event_id=None):
+    """Translate an internal rule transition to the strict `/event` shape."""
+    payload = {
+        "id": event_id or uuid.uuid4().hex,
+        "label": event["label"],
+        "score": min(1.0, max(0.0, float(event["score"]))),
+        "boxes": [dict(event["box"])],
+        "camera_id": camera_id,
+        "source": "vision",
+        "rule_id": event["rule_id"],
+        "rule_name": event["rule_name"],
+        "correlation_id": event["correlation_id"],
+    }
+    if related_event_id:
+        payload["related_event_id"] = related_event_id
+    if visit_id:
+        payload["visit_id"] = visit_id
+    if event.get("package_state") in ("delivered", "collected"):
+        payload["package_state"] = event["package_state"]
+    return payload
+
+
+def emit_activity_events(events, event_url, camera_id, metrics=None):
+    """Publish rule candidates; never actuate deterrence hardware here."""
+    for event in events:
+        related = _activity_related_visit(event, camera_id)
+        payload = build_activity_event_payload(
+            event, camera_id,
+            related_event_id=related.get("related_event_id"),
+            visit_id=related.get("visit_id"),
+        )
+        post_event(event_url, payload, metrics=metrics)
+        if metrics is not None:
+            metrics.emitted += 1
+        if event.get("package_state") is not None:
+            log.info(
+                "possible package/porch object transition rule_id=%s state=%s",
+                event.get("rule_id"), event.get("package_state"),
+            )
+        else:
+            log.info(
+                "smart-rule candidate emitted rule_id=%s label=%s",
+                event.get("rule_id"), event.get("label"),
+            )
+
+
+def normalize_activity_boxes(detections, net, width, height, rules,
+                             privacy_masks=None):
+    """Normalize every box relevant to an enabled object-based rule.
+
+    This path is intentionally independent from the legacy global class,
+    threshold, zone, and cooldown gates.  Each smart rule owns its own labels
+    and confidence threshold; the engine performs the final per-rule check.
+    """
+    minimum_by_label = {}
+    for rule in rules:
+        if not rule.get("enabled"):
+            continue
+        threshold = float(rule.get("threshold", 0.0))
+        for label in rule.get("labels", []):
+            old = minimum_by_label.get(label)
+            if old is None or threshold < old:
+                minimum_by_label[label] = threshold
+    if not minimum_by_label:
+        return []
+    boxes = []
+    for detection in detections:
+        label = net.GetClassDesc(detection.ClassID).lower()
+        minimum = minimum_by_label.get(label)
+        if minimum is None or float(detection.Confidence) < minimum:
+            continue
+        try:
+            box = normalize_box(
+                detection.Left, detection.Top,
+                detection.Right, detection.Bottom,
+                width, height, label, detection.Confidence,
+            )
+        except ValueError:
+            continue
+        if privacy_masks and box_center_inside_any_zone(box, privacy_masks):
+            continue
+        boxes.append(box)
+        if len(boxes) >= 32:
+            break
+    return boxes
+
+
+def prepare_visit_open_faces(visit_id, key, boxes, cuda_img, segment_index,
+                             recognizer, capture_dir, camera_id, model_name,
+                             metrics=None):
+    """Run bounded face recognition once for a new physical visit."""
+    if (
+        segment_index > 0
+        or recognizer is None
+        or cuda_img is None
+        or not isinstance(key, str)
+        or not key.startswith("person:")
+        or _MAX_PERSONS_FACE_RECOG <= 0
+    ):
+        return {}
+    people = [
+        box for box in (boxes or [])
+        if isinstance(box, dict) and box.get("label") == "person"
+    ]
+    people.sort(key=lambda box: float(box.get("score", 0.0)), reverse=True)
+    if not people:
+        return {}
+    try:
+        rgb = cuda_to_rgb_numpy(cuda_img)
+        height = int(rgb.shape[0])
+        width = int(rgb.shape[1])
+    except Exception as error:
+        log.warning("visit face CPU copy failed: %s", type(error).__name__)
+        return {}
+    names = []
+    seen = set()
+    for index, box in enumerate(people[:_MAX_PERSONS_FACE_RECOG]):
+        left = max(0, min(width, int(float(box["x"]) * width)))
+        top = max(0, min(height, int(float(box["y"]) * height)))
+        right = max(left + 1, min(
+            width, int((float(box["x"]) + float(box["w"])) * width),
+        ))
+        bottom = max(top + 1, min(
+            height, int((float(box["y"]) + float(box["h"])) * height),
+        ))
+        # Search the upper 55% of the person box, matching crop_face_region's
+        # bounded head/shoulder intent without needing the SDK detection type.
+        face_bottom = min(bottom, top + max(1, int((bottom - top) * 0.55)))
+        crop = rgb[top:face_bottom, left:right]
+        if getattr(crop, "size", 1) == 0:
+            continue
+        capture_meta = {
+            "source": {"w": width, "h": height, "camera_id": camera_id},
+            "model": {
+                "name": model_name,
+                "version": os.getenv("HOMECAM_MODEL_VERSION", "trt-fp16"),
+                "floor": RuntimeConfig.DETECT_FLOOR,
+            },
+            "detection": {
+                "label": "person",
+                "score": float(box.get("score", 0.0)),
+                "bbox_pixels": [left, top, right, bottom],
+                "bbox_norm": [box["x"], box["y"], box["x"] + box["w"],
+                              box["y"] + box["h"]],
+            },
+            "person_index": index,
+            "sw_rev": _SW_REV,
+        }
+        if metrics is not None:
+            capture_meta["infer_ms"] = metrics.infer_ms_recent or None
+            capture_meta["gear"] = metrics.gear
+        try:
+            matched = recognizer.recognize_in_crop(
+                crop,
+                capture_dir=capture_dir or None,
+                event_id=visit_id,
+                ts_ms=int(time.time() * 1000) + index,
+                capture_meta=capture_meta,
+                face_origin_xy=(left, top),
+            )
+        except Exception as error:
+            log.warning(
+                "visit face recognition failed index=%d: %s",
+                index, type(error).__name__,
+            )
+            continue
+        if matched and matched.lower() not in seen:
+            seen.add(matched.lower())
+            names.append(matched)
+    if not names:
+        return {}
+    return {"person_name": names[0], "person_names": names}
+
+
+_LIVE_DETECTION_POST_WARN_AT = 0.0
+
+
+def post_live_detection(url, boxes, camera_id, timeout=0.5):
+    """POST an ephemeral live-overlay bbox sample.
+
+    This is intentionally separate from post_event(): failures should not read
+    as lost timeline events, and the route is hot while a person is moving.
+    """
+    global _LIVE_DETECTION_POST_WARN_AT
+    payload = {"boxes": list(boxes or []), "camera_id": camera_id}
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except Exception as e:
+        now = time.time()
+        if now - _LIVE_DETECTION_POST_WARN_AT >= 30.0:
+            _LIVE_DETECTION_POST_WARN_AT = now
+            log.warning(
+                "live_detection POST failed: %s: %s (overlay sample dropped)",
+                type(e).__name__, e,
+            )
+
+
 def _request_json(url, method="GET", payload=None, timeout=2.0):
     data = None
     if payload is not None:
@@ -360,21 +610,74 @@ def _load_host_action_seen(path):
             data = json.load(f)
         if isinstance(data, list):
             return set(str(x) for x in data[-50:] if x)
+        if isinstance(data, dict):
+            ids = data.get("ids")
+            if isinstance(ids, list):
+                return set(str(x) for x in ids[-50:] if x)
+            results = data.get("results")
+            if isinstance(results, dict):
+                return set(str(x) for x in results if x)
     except (OSError, ValueError, TypeError):
         pass
     return set()
 
 
-def _save_host_action_seen(path, seen_ids):
+def _load_host_action_results(path):
+    """Load small terminal results used to replay a failed result POST.
+
+    Older workers persisted only a JSON list of seen ids; those remain seen but
+    have no trustworthy outcome, so the poller reports an unknown/failure
+    rather than inventing a successful terminal status after restart.
+    """
+    try:
+        with open(str(path)) as f:
+            data = json.load(f)
+        raw = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(raw, dict):
+            return {}
+        out = {}
+        for record_id in list(raw.keys())[-10:]:
+            entry = raw.get(record_id)
+            if not isinstance(entry, dict):
+                continue
+            status = entry.get("status")
+            detail = entry.get("detail")
+            result = entry.get("result")
+            if status not in ("done", "failed") or not isinstance(detail, str):
+                continue
+            if result is not None and not isinstance(result, dict):
+                continue
+            out[str(record_id)] = {
+                "status": status,
+                "detail": detail[:512],
+                "result": result,
+            }
+        return out
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _save_host_action_seen(path, seen_ids, results=None):
     if path is None:
         return
     try:
         ids = list(seen_ids)[-50:]
+        terminal = results if isinstance(results, dict) else {}
+        terminal_ids = [rid for rid in list(terminal.keys())[-10:] if rid in seen_ids]
+        payload = {
+            "v": 2,
+            "ids": ids,
+            "results": {rid: terminal[rid] for rid in terminal_ids},
+        }
         tmp = str(path) + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(ids, f)
+            json.dump(payload, f, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
         os.replace(tmp, str(path))
-    except OSError as e:
+        os.chmod(str(path), 0o600)
+    except (OSError, TypeError, ValueError) as e:
         print("[detect] host-action seen save failed: {}".format(e), flush=True)
 
 
@@ -383,7 +686,42 @@ def _mark_host_action_seen(record_id):
     _HOST_ACTION_SEEN_IDS.add(record_id)
     if len(_HOST_ACTION_SEEN_IDS) > 50:
         _HOST_ACTION_SEEN_IDS = set(list(_HOST_ACTION_SEEN_IDS)[-50:])
-    _save_host_action_seen(_HOST_ACTION_SEEN_PATH, _HOST_ACTION_SEEN_IDS)
+    _save_host_action_seen(
+        _HOST_ACTION_SEEN_PATH, _HOST_ACTION_SEEN_IDS, _HOST_ACTION_RESULTS,
+    )
+
+
+def _record_host_action_terminal(record_id, status, detail, result):
+    """Persist the real terminal outcome before attempting the result POST."""
+    global _HOST_ACTION_RESULTS
+    _HOST_ACTION_RESULTS[record_id] = {
+        "status": status,
+        "detail": str(detail)[:512],
+        "result": result,
+    }
+    if len(_HOST_ACTION_RESULTS) > 10:
+        keep = list(_HOST_ACTION_RESULTS.keys())[-10:]
+        _HOST_ACTION_RESULTS = {
+            rid: _HOST_ACTION_RESULTS[rid] for rid in keep
+        }
+    _save_host_action_seen(
+        _HOST_ACTION_SEEN_PATH, _HOST_ACTION_SEEN_IDS, _HOST_ACTION_RESULTS,
+    )
+
+
+def _replay_host_action_terminal(record_id):
+    entry = _HOST_ACTION_RESULTS.get(record_id)
+    if isinstance(entry, dict):
+        return (
+            entry.get("status", "failed"),
+            entry.get("detail", "host action outcome missing"),
+            entry.get("result"),
+        )
+    return (
+        "failed",
+        "execution outcome unknown after worker restart",
+        None,
+    )
 
 
 def start_host_action_poll(base_url, deps, interval_s=4.0):
@@ -423,7 +761,10 @@ def start_host_action_poll(base_url, deps, interval_s=4.0):
                 )
                 if plan != host_action.PLAN_EXECUTE:
                     if plan == host_action.PLAN_SKIP_SEEN and record_id:
-                        post_result(record_id, "done", "already executed (post-restart)", None)
+                        status, detail, result = _replay_host_action_terminal(
+                            record_id,
+                        )
+                        post_result(record_id, status, detail, result)
                     elif record_id:
                         post_result(record_id, "failed", "skipped: {}".format(plan), None)
                     time.sleep(interval_s)
@@ -440,8 +781,18 @@ def start_host_action_poll(base_url, deps, interval_s=4.0):
                     continue
 
                 _mark_host_action_seen(record_id)
-                with _RECOVERY_LOCK:
-                    status, detail, result = host_action.execute_action(action, deps)
+                try:
+                    with _RECOVERY_LOCK:
+                        status, detail, result = host_action.execute_action(action, deps)
+                except Exception as error:
+                    status = "failed"
+                    detail = "host action raised {}".format(type(error).__name__)
+                    result = None
+                    log.error(
+                        "host action execution failed id=%s kind=%s: %s: %s",
+                        record_id, action.get("kind"), type(error).__name__, error,
+                    )
+                _record_host_action_terminal(record_id, status, detail, result)
                 post_result(record_id, status, detail, result)
                 backoff = 1.0
                 warned = False
@@ -478,10 +829,14 @@ class RuntimeConfig:
 
     DETECT_FLOOR = 0.05
 
-    def __init__(self, threshold=0.55, cooldown_s=5.0, enabled=True):
+    def __init__(self, threshold=0.55, cooldown_s=5.0, enabled=True,
+                 camera_id="front_door"):
         self.threshold = threshold
         self.cooldown_s = cooldown_s
         self.enabled = enabled
+        self.operating_mode = "home"
+        self.camera_id = camera_id
+        self.config_loaded = False
         # HH:MM strings (24h, local time) defining a daily off-window;
         # both must be set for the schedule to apply.
         self.schedule_off_start = None
@@ -495,6 +850,24 @@ class RuntimeConfig:
         # When non-empty, emit events only when at least one
         # detection box's center falls inside any polygon.
         self.zones = []
+        self.privacy_masks = []
+        # Optional smart activity rules.  The engine remains entirely dormant
+        # when this list is empty.  Audio fields are mirrored here for config
+        # contract parity; audio acquisition runs in the separate, optional
+        # audio_watch process so it can never destabilize vision inference.
+        self.smart_rules = []
+        self.package_change_threshold = 0.35
+        self.package_stable_s = 10.0
+        self.audio_event_enabled = False
+        self.audio_event_labels = [
+            "audio_smoke_alarm", "audio_glass_break",
+        ]
+        # Deliberately state-only: detect.py never actuates deterrence hardware.
+        # Candidate rule events flow to the server, which owns authorization,
+        # policy, cooldown, and audited execution.
+        self.deterrence_enabled = False
+        self.deterrence_action = "light"
+        self.deterrence_duration_s = 10.0
         # iter-254/324/356.61 (Feature #1 polish): live-tunable
         # per-event clip durations. `clip_post_roll_s` and
         # `clip_pre_roll_s` are passed into ClipRecorder.start_clip
@@ -564,6 +937,12 @@ def apply_config(runtime, data):
                 "enabled",
                 "non-bool {!r} coerced to {}".format(val, runtime.enabled),
             ))
+    if "operating_mode" in data:
+        mode = data["operating_mode"]
+        if mode in ("home", "away", "night", "privacy"):
+            runtime.operating_mode = mode
+        else:
+            warnings.append(("operating_mode", "unknown mode {!r}".format(mode)))
     if "schedule_off_start" in data:
         runtime.schedule_off_start = data["schedule_off_start"]
     if "schedule_off_end" in data:
@@ -589,6 +968,69 @@ def apply_config(runtime, data):
             runtime.zones = sanitize_zones(data["zones"])
         except Exception as e:
             warnings.append(("zones", "{}: {}".format(type(e).__name__, e)))
+    if "privacy_masks" in data:
+        try:
+            runtime.privacy_masks = sanitize_zones(data["privacy_masks"])
+        except Exception as e:
+            warnings.append(("privacy_masks", "{}: {}".format(type(e).__name__, e)))
+    if "smart_rules" in data:
+        raw = data["smart_rules"]
+        if isinstance(raw, list):
+            runtime.smart_rules = sanitize_rules(
+                raw, camera_id=getattr(runtime, "camera_id", None),
+            )
+        else:
+            warnings.append((
+                "smart_rules", "expected list, got {}".format(type(raw).__name__),
+            ))
+    if "package_change_threshold" in data:
+        try:
+            value = float(data["package_change_threshold"])
+            if not math.isfinite(value):
+                raise ValueError("must be finite")
+            runtime.package_change_threshold = max(0.05, min(3.0, value))
+        except (TypeError, ValueError) as e:
+            warnings.append(("package_change_threshold", "{}".format(e)))
+    if "package_stable_s" in data:
+        try:
+            value = float(data["package_stable_s"])
+            if not math.isfinite(value):
+                raise ValueError("must be finite")
+            runtime.package_stable_s = max(2.0, min(300.0, value))
+        except (TypeError, ValueError) as e:
+            warnings.append(("package_stable_s", "{}".format(e)))
+    if "audio_event_enabled" in data:
+        value = data["audio_event_enabled"]
+        if isinstance(value, bool):
+            runtime.audio_event_enabled = value
+        else:
+            warnings.append(("audio_event_enabled", "expected bool"))
+    if "audio_event_labels" in data:
+        raw = data["audio_event_labels"]
+        if isinstance(raw, list):
+            runtime.audio_event_labels = sanitize_audio_labels(raw)
+        else:
+            warnings.append(("audio_event_labels", "expected list"))
+    if "deterrence_enabled" in data:
+        value = data["deterrence_enabled"]
+        if isinstance(value, bool):
+            runtime.deterrence_enabled = value
+        else:
+            warnings.append(("deterrence_enabled", "expected bool"))
+    if "deterrence_action" in data:
+        value = data["deterrence_action"]
+        if value in ("light", "warning", "siren"):
+            runtime.deterrence_action = value
+        else:
+            warnings.append(("deterrence_action", "unknown action {!r}".format(value)))
+    if "deterrence_duration_s" in data:
+        try:
+            value = float(data["deterrence_duration_s"])
+            if not math.isfinite(value):
+                raise ValueError("must be finite")
+            runtime.deterrence_duration_s = max(1.0, min(60.0, value))
+        except (TypeError, ValueError) as e:
+            warnings.append(("deterrence_duration_s", "{}".format(e)))
     if "clip_post_roll_s" in data:
         try:
             runtime.clip_post_roll_s = float(data["clip_post_roll_s"])
@@ -626,10 +1068,249 @@ def apply_config(runtime, data):
                 )
         except (TypeError, ValueError) as e:
             warnings.append(("absence_finalize_s", "{}".format(e)))
+    runtime.config_loaded = True
     return warnings
 
 
-def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0):
+def privacy_rectangles(masks, width=1920, height=1080):
+    """Convert normalized polygons to conservative integer rectangles."""
+    out = []
+    for polygon in sanitize_zones(masks):
+        xs = [point[0] for point in polygon]
+        ys = [point[1] for point in polygon]
+        left = max(0, min(width - 1, int(min(xs) * width)))
+        top = max(0, min(height - 1, int(min(ys) * height)))
+        right = max(left + 1, min(width, int(max(xs) * width + 1)))
+        bottom = max(top + 1, min(height, int(max(ys) * height + 1)))
+        out.append((left, top, right - left, bottom - top))
+    return out
+
+
+_FULL_FRAME_PRIVACY_MASK = [
+    [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+]
+
+
+def effective_privacy_masks(runtime):
+    """Configured masks, or a hard full-frame mask in privacy mode.
+
+    Keeping the configured list untouched is what makes exiting privacy mode
+    restore the operator's previous partial masks instead of clearing them.
+    """
+    if runtime.operating_mode == "privacy":
+        return [[list(point) for point in _FULL_FRAME_PRIVACY_MASK[0]]]
+    return [[list(point) for point in polygon] for polygon in runtime.privacy_masks]
+
+
+def default_package_state_path(recordings_dir, camera_id):
+    if not recordings_dir:
+        return ""
+    return os.path.join(
+        str(recordings_dir),
+        ".package-rule-state-{}.json".format(camera_id),
+    )
+
+
+def apply_privacy_pipeline_masks(masks, path, restart=None,
+                                 force_restart=False, fail_closed=None):
+    """Atomically update masks and durably retry a failed pipeline restart."""
+    rects = privacy_rectangles(masks)
+    value = ";".join("{},{},{},{}".format(*rect) for rect in rects)
+    content = "PRIVACY_RECTS='{}'\n".format(value)
+    pending_path = path + ".restart-pending"
+    changed = True
+    try:
+        with open(path, "r") as handle:
+            if handle.read() == content:
+                changed = False
+    except IOError:
+        pass
+    pending = os.path.exists(pending_path)
+    try:
+        if changed or force_restart:
+            # Arm the retry marker before changing the file.  If either the
+            # write or restart fails, the next reconciliation cannot mistake
+            # matching file contents for an already-active configuration.
+            pending_tmp = pending_path + ".tmp"
+            fd = os.open(
+                pending_tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600,
+            )
+            try:
+                remaining = b"pending\n"
+                while remaining:
+                    written = os.write(fd, remaining)
+                    if written <= 0:
+                        raise OSError("short write while arming privacy restart")
+                    remaining = remaining[written:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.rename(pending_tmp, pending_path)
+            pending = True
+        if changed:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.rename(tmp, path)
+    except Exception:
+        # A stricter server-side policy that cannot be persisted must never
+        # leave the previous upstream publication running.  Stop it before
+        # retrying; process-side redaction cannot protect MediaMTX recording.
+        if fail_closed is not None:
+            fail_closed()
+        raise
+    if pending and restart is not None:
+        restart()
+    if pending:
+        try:
+            os.unlink(pending_path)
+        except OSError:
+            pass
+    return bool(changed or pending)
+
+
+def reconcile_polled_privacy(privacy_apply, masks, state):
+    """Apply first poll, changes, and failed attempts until success.
+
+    ``state`` is caller-owned so the polling loop can stay a simple daemon.
+    The function updates ``applied`` only after the callback succeeds.
+    """
+    desired = [[list(point) for point in polygon] for polygon in masks]
+    first = state.get("first", True)
+    pending = state.get("pending", False)
+    if not first and not pending and state.get("applied") == desired:
+        return False
+    state["first"] = False
+    try:
+        # The launcher reads the durable file on every start, and
+        # apply_privacy_pipeline_masks() keeps a restart-pending marker across
+        # crashes.  Re-applying matching contents on every worker start would
+        # needlessly tear down the sole Argus owner and can race JetPack's
+        # asynchronous camera-session cleanup.  A changed file or pending
+        # marker still forces the fail-closed reset below.
+        privacy_apply(desired, force_restart=False)
+    except Exception:
+        state["pending"] = True
+        raise
+    state["pending"] = False
+    state["applied"] = desired
+    return True
+
+
+def _stop_mediamtx_verified(run):
+    """Stop MediaMTX or prove that no server/publisher process remains."""
+    stop_command = [
+        "sudo", "-n", "systemctl", "stop", "mediamtx.service",
+    ]
+    result = run(stop_command, timeout=30.0, check=False)
+    if getattr(result, "returncode", 0) == 0:
+        return
+
+    # A transient systemd stop failure must not leave the old privacy policy
+    # publishing.  Kill the complete unit cgroup plus any escaped same-host
+    # publisher, retry the stop, then verify both unit state and processes.
+    run(
+        ["sudo", "-n", "systemctl", "kill", "--kill-who=all",
+         "--signal=SIGKILL", "mediamtx.service"],
+        timeout=15.0, check=False,
+    )
+    run(
+        ["sudo", "-n", "pkill", "-9", "-f",
+         "[g]st-launch-1.0.*(nvarguscamerasrc|videotestsrc)"],
+        timeout=15.0, check=False,
+    )
+    retry = run(stop_command, timeout=30.0, check=False)
+    if getattr(retry, "returncode", 0) == 0:
+        return
+    active = run(
+        ["systemctl", "is-active", "--quiet", "mediamtx.service"],
+        timeout=10.0, check=False,
+    )
+    server = run(
+        ["pgrep", "-x", "mediamtx"], timeout=10.0, check=False,
+    )
+    publisher = run(
+        ["pgrep", "-f", "[g]st-launch-1.0.*(nvarguscamerasrc|videotestsrc)"],
+        timeout=10.0, check=False,
+    )
+    if all(getattr(item, "returncode", 0) != 0
+           for item in (active, server, publisher)):
+        return
+    raise RuntimeError("could not verify MediaMTX publication stopped")
+
+
+def stop_privacy_pipeline_fail_closed(run=subprocess.run, planned_reset=None,
+                                      recovery_lock=None):
+    """Stop upstream publication after a privacy persistence failure."""
+    planned = planned_reset if planned_reset is not None else _PLANNED_CAMERA_RESET
+    lock = recovery_lock if recovery_lock is not None else _RECOVERY_LOCK
+    planned.set()
+    with lock:
+        _stop_mediamtx_verified(run)
+
+
+def restart_privacy_pipeline_fail_closed(run=subprocess.run, sleep=time.sleep,
+                                         streams_ready=None,
+                                         schedule_restart=None,
+                                         planned_reset=None,
+                                         recovery_lock=None):
+    """Apply privacy masks through a full, fail-closed Argus lifecycle.
+
+    JetPack 4.x can retain the old capture session after a direct MediaMTX
+    restart.  Starting the replacement publisher immediately then trips
+    ``AlreadyAllocated`` and can crash ``nvargus-daemon``.  Release the only
+    camera owner, reset Argus, give it the same settle window as the operator
+    recovery script, and verify both publications before replacing this
+    worker's now-stale RTSP decoder.
+    """
+    planned = planned_reset if planned_reset is not None else _PLANNED_CAMERA_RESET
+    lock = recovery_lock if recovery_lock is not None else _RECOVERY_LOCK
+    planned.set()
+    commands = (
+        (["sudo", "-n", "pkill", "-9", "-f",
+          "gst-launch-1.0.*nvarguscamerasrc"], False),
+        (["sudo", "-n", "systemctl", "restart",
+          "nvargus-daemon.service"], True),
+    )
+    with lock:
+        try:
+            _stop_mediamtx_verified(run)
+            for command, required in commands:
+                run(command, timeout=30.0, check=required)
+            sleep(5.0)
+            run(
+                ["sudo", "-n", "systemctl", "start", "mediamtx.service"],
+                timeout=30.0, check=True,
+            )
+            ready = streams_ready
+            if ready is None:
+                ready = _both_camera_streams_ready
+            if not ready(timeout_s=25.0):
+                raise RuntimeError("privacy pipeline publications did not recover")
+            schedule = schedule_restart
+            if schedule is None:
+                schedule = _schedule_detection_restart
+            if not schedule():
+                raise RuntimeError("detection restart could not be scheduled")
+        except Exception as original_error:
+            try:
+                _stop_mediamtx_verified(run)
+            except Exception as stop_error:
+                raise RuntimeError(
+                    "privacy reset failed ({}); fail-closed stop also failed ({})".
+                    format(type(original_error).__name__, type(stop_error).__name__)
+                ) from original_error
+            # Keep the planned-reset gate armed.  A successful path has
+            # scheduled this process for replacement; a failed path must not
+            # let the capture watchdog republish stale/unmasked video while
+            # the config thread retries.
+            raise
+
+
+def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0,
+                      privacy_apply=None):
     """Periodically GET the config endpoint and update `runtime`. Runs as
     a daemon thread; failures are logged once per backoff cycle so a brief
     server-restart blip doesn't fill the journal.
@@ -652,6 +1333,10 @@ def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0):
         # regression logs again instead of being silenced forever (the
         # plan §4 re-arm guardrail). Keyed by field name.
         field_warned = set()
+        privacy_state = {"first": True, "pending": False, "applied": None}
+        privacy_warned = False
+        privacy_retry_at = 0.0
+        privacy_backoff = max(5.0, interval_s)
         while True:
             try:
                 req = urllib.request.Request(url, method="GET")
@@ -672,6 +1357,24 @@ def start_config_poll(url, runtime, preroll_buffer=None, interval_s=30.0):
                 # Re-arm: any field that's now healthy drops out of the
                 # warned set so a later regression on it logs afresh.
                 field_warned &= bad_fields
+                next_effective_masks = effective_privacy_masks(runtime)
+                if privacy_apply is not None and time.time() >= privacy_retry_at:
+                    try:
+                        reconcile_polled_privacy(
+                            privacy_apply, next_effective_masks, privacy_state,
+                        )
+                        privacy_warned = False
+                        privacy_retry_at = 0.0
+                        privacy_backoff = max(5.0, interval_s)
+                    except Exception as _e:
+                        if not privacy_warned:
+                            log.error(
+                                "privacy mask pipeline apply failed; retrying: %s: %s",
+                                type(_e).__name__, _e,
+                            )
+                            privacy_warned = True
+                        privacy_retry_at = time.time() + privacy_backoff
+                        privacy_backoff = min(privacy_backoff * 2.0, 60.0)
                 # iter-356.61: grow the segment-recorder ring if the
                 # slider asked for more pre-roll than the current
                 # capacity covers. No-op when the ring already has
@@ -853,6 +1556,22 @@ def cuda_to_rgb_numpy(cuda_img):
     return np.array(view, dtype="uint8", copy=True)
 
 
+def redact_cuda_image(cuda_img, masks):
+    """Black conservative bounding rectangles in unified CUDA memory."""
+    if not masks:
+        return
+    view = jetson_utils.cudaToNumpy(cuda_img)
+    height, width = view.shape[:2]
+    for polygon in masks:
+        xs = [point[0] for point in polygon]
+        ys = [point[1] for point in polygon]
+        left = max(0, min(width, int(min(xs) * width)))
+        right = max(0, min(width, int(max(xs) * width + 1)))
+        top = max(0, min(height, int(min(ys) * height)))
+        bottom = max(0, min(height, int(max(ys) * height + 1)))
+        view[top:bottom, left:right] = 0
+
+
 def crop_face_region(rgb, det):
     """Slice the upper portion of the person bbox to give face_recognition
     something head-sized rather than full-body to scan. Returns None if
@@ -919,6 +1638,273 @@ def restart_mediamtx():
         return False
     print("[detect] mediamtx restarted by watchdog", flush=True)
     return True
+
+
+def start_doorbell_poll(value_path, active_low, signal_emitter, runtime):
+    """Watch an optional GPIO value file and emit one event per press."""
+    if not value_path:
+        return None
+    button = DebouncedButton()
+
+    def loop():
+        warned = False
+        while True:
+            try:
+                with open(value_path, "r") as handle:
+                    raw = handle.read(8).strip()
+                pressed = (raw == "0") if active_low else (raw == "1")
+                if button.update(pressed, time.monotonic()):
+                    # A press while privacy/detection-off is discarded, not
+                    # queued for delivery after the operator re-enables it.
+                    if metadata_signal_allowed(runtime):
+                        signal_emitter.emit("doorbell", "doorbell")
+                warned = False
+            except Exception as e:
+                if not warned:
+                    log.warning("doorbell GPIO unavailable path=%s reason=%s: %s", value_path, type(e).__name__, e)
+                    warned = True
+            time.sleep(0.02)
+
+    thread = threading.Thread(target=loop, daemon=True, name="doorbell-gpio")
+    thread.start()
+    return thread
+
+
+def metadata_signal_allowed(runtime):
+    """Nonvisual sensor events are hard-disabled in off/privacy modes."""
+    return runtime.enabled and runtime.operating_mode != "privacy"
+
+
+_FOCUS_MODE_SECONDS = 300
+_FOCUS_MARKER = "/home/israel/HomeCameraSystem/.focus-mode-expires"
+_FOCUS_RESTORE_SCRIPT = "/home/israel/HomeCameraSystem/deploy/restore-focus-mode.sh"
+
+
+def _camera_resolution(path="cam"):
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-rtsp_transport", "tcp",
+                "-select_streams", "v:0", "-show_entries",
+                "stream=width,height", "-of", "csv=p=0",
+                "rtsp://127.0.0.1:8554/{}".format(path),
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+        )
+        if result.returncode == 0:
+            text = result.stdout.decode("utf-8", "replace").strip()
+            parts = text.split(",")
+            if len(parts) == 2:
+                return (int(parts[0]), int(parts[1]))
+    except Exception:
+        pass
+    return None
+
+
+def _wait_for_camera_resolution(expected, timeout_s=20.0):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _camera_resolution() == expected:
+            return True
+        time.sleep(1.0)
+    return False
+
+
+_EXPOSURE_CONFIG = "/home/israel/HomeCameraSystem/.camera-exposure.env"
+
+
+def _valid_exposure_args(args):
+    try:
+        enabled = args.get("enabled") is True
+        x = float(args.get("x"))
+        y = float(args.get("y"))
+        width = float(args.get("width"))
+        height = float(args.get("height"))
+        compensation = float(args.get("compensation"))
+        locked = args.get("locked") is True
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not (0.0 <= x <= 0.75 and 0.0 <= y <= 0.75):
+        return None
+    if not (0.25 <= width <= 1.0 and 0.25 <= height <= 1.0):
+        return None
+    if x + width > 1.0 or y + height > 1.0:
+        return None
+    if not -2.0 <= compensation <= 2.0:
+        return None
+    return (enabled, x, y, width, height, compensation, locked)
+
+
+def _write_exposure_config(values):
+    enabled, x, y, width, height, compensation, locked = values
+    region = ""
+    if enabled:
+        left = int(round(x * 1920))
+        top = int(round(y * 1080))
+        right = int(round((x + width) * 1920))
+        bottom = int(round((y + height) * 1080))
+        region = "{} {} {} {} 1".format(left, top, right, bottom)
+    content = "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n".format(
+        region, compensation, "true" if locked else "false"
+    )
+    tmp = _EXPOSURE_CONFIG + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write(content)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, _EXPOSURE_CONFIG)
+    return region
+
+
+def _both_camera_streams_ready(timeout_s=25.0):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if (_camera_resolution("cam") == (1280, 720) and
+                _camera_resolution("cam_uhq") == (1920, 1080)):
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def apply_exposure(args):
+    """Apply bounded AE settings and restore the previous file on failure."""
+    values = _valid_exposure_args(args)
+    if values is None:
+        log.error("exposure apply rejected invalid bounded arguments")
+        return None
+    try:
+        with open(_EXPOSURE_CONFIG, "rb") as handle:
+            previous = handle.read()
+    except OSError:
+        previous = None
+    try:
+        region = _write_exposure_config(values)
+        # A plain MediaMTX restart can leave JetPack 4.x libargus holding a
+        # destroyed CaptureProvider. Use the proven deep reset lifecycle that
+        # releases the sole camera owner, resets nvargus, verifies 720p, and
+        # schedules this worker to reconnect its decoder.
+        if (not _restart_camera_pipeline_for_focus((1280, 720)) or
+                not _both_camera_streams_ready()):
+            raise RuntimeError("720p and 1080p streams did not recover")
+        return {"region": region, "compensation": values[5], "locked": values[6]}
+    except Exception as e:
+        log.error("exposure apply failed; restoring prior config: %s: %s", type(e).__name__, e)
+        try:
+            if previous is None:
+                os.remove(_EXPOSURE_CONFIG)
+            else:
+                tmp = _EXPOSURE_CONFIG + ".rollback"
+                with open(tmp, "wb") as handle:
+                    handle.write(previous)
+                os.replace(tmp, _EXPOSURE_CONFIG)
+        except OSError as restore_error:
+            log.error("exposure rollback file restore failed: %s", restore_error)
+        _restart_camera_pipeline_for_focus((1280, 720))
+        _both_camera_streams_ready()
+        return None
+
+
+def _schedule_detection_restart():
+    # The current worker's gstDecoder cannot recover if it opened RTSP during
+    # the mode-switch gap and received 404. Delay gives the host-action thread
+    # time to POST its terminal result before systemd replaces this process.
+    unit = "homecam-camera-detect-restart-{}".format(int(time.time() * 1000))
+    try:
+        result = subprocess.run(
+            [
+                "sudo", "-n", "systemd-run", "--unit", unit,
+                "--on-active=8s", "/bin/systemctl", "restart",
+                "homecam-detect.service",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        log.error("focus detection restart scheduling failed: %s", e)
+        return False
+
+
+def _restart_camera_pipeline_for_focus(expected_resolution):
+    """Release the Argus owner before starting a differently-sized stream."""
+    commands = (
+        ["sudo", "-n", "systemctl", "stop", "mediamtx.service"],
+        ["sudo", "-n", "pkill", "-9", "-f", "gst-launch-1.0.*nvarguscamerasrc"],
+        ["sudo", "-n", "systemctl", "restart", "nvargus-daemon.service"],
+        ["sudo", "-n", "systemctl", "start", "mediamtx.service"],
+    )
+    for attempt in range(2):
+        for index, command in enumerate(commands):
+            try:
+                result = subprocess.run(
+                    command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20
+                )
+            except Exception as e:
+                log.error("focus camera reset raised at step %s: %s", index, e)
+                return False
+            # pkill is best-effort; restarting Argus is authoritative.
+            if result.returncode != 0 and index != 1:
+                log.error(
+                    "focus camera reset failed at step %s: %s",
+                    index,
+                    result.stderr.decode("utf-8", "replace")[-300:],
+                )
+                return False
+            if index == 2:
+                time.sleep(2.0)
+        if _wait_for_camera_resolution(expected_resolution):
+            return _schedule_detection_restart()
+        log.warning(
+            "focus camera reset attempt %s published no %sx%s stream; retrying",
+            attempt + 1, expected_resolution[0], expected_resolution[1],
+        )
+    return False
+
+
+def start_focus_mode():
+    """Atomically select 1080p and arm an independent systemd timeout."""
+    expires = int(time.time()) + _FOCUS_MODE_SECONDS
+    tmp = _FOCUS_MARKER + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(str(expires) + "\n")
+        os.replace(tmp, _FOCUS_MARKER)
+        unit = "homecam-focus-restore-{}".format(expires)
+        scheduled = subprocess.run(
+            [
+                "sudo", "-n", "systemd-run", "--unit", unit,
+                "--on-active={}s".format(_FOCUS_MODE_SECONDS),
+                _FOCUS_RESTORE_SCRIPT, str(expires),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        if scheduled.returncode != 0:
+            raise RuntimeError(
+                scheduled.stderr.decode("utf-8", "replace")[-300:]
+            )
+        if not _restart_camera_pipeline_for_focus((1920, 1080)):
+            raise RuntimeError("camera reset failed")
+        return {"expires_at": expires, "width": 1920, "height": 1080}
+    except Exception as e:
+        try:
+            os.remove(_FOCUS_MARKER)
+        except OSError:
+            pass
+        log.error("focus mode start failed: %s: %s", type(e).__name__, e)
+        _restart_camera_pipeline_for_focus((1280, 720))
+        return None
+
+
+def stop_focus_mode():
+    """Restore the normal pipeline; old tokenized timers become harmless."""
+    try:
+        os.remove(_FOCUS_MARKER)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.error("focus mode marker removal failed: %s", e)
+        return False
+    return _restart_camera_pipeline_for_focus((1280, 720))
 
 
 def escalate_argus_recovery():
@@ -999,11 +1985,13 @@ _WATCHDOG_STATE_PATH = None   # set in main() to <recordings_dir>/.watchdog_stat
 _LAST_WEDGE_DIAG = {}         # type: ignore[var-annotated]
 _DECISION_LEDGER = None       # set in main() to <recordings_dir>/decision.jsonl
 _RECOVERY_LOCK = threading.Lock()
+_PLANNED_CAMERA_RESET = threading.Event()
 _HOST_ACTION_SEEN_IDS = set()
+_HOST_ACTION_RESULTS = {}
 _HOST_ACTION_SEEN_PATH = None
 _HostActionDeps = namedtuple(
     "_HostActionDeps",
-    "restart_mediamtx restart_nvargus do_reboot tail_journal allow_reboot now",
+    "restart_mediamtx restart_nvargus do_reboot tail_journal start_focus_mode stop_focus_mode apply_exposure allow_reboot now",
 )
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
@@ -1011,6 +1999,8 @@ _HostActionDeps = namedtuple(
 # BEFORE the watchdog restarts mediamtx/nvargus or reboots, so a mid-visit
 # wedge yields a short VALID clip rather than one spanning the gap.
 _VISIT_RUNNER = None          # type: ignore[var-annotated]
+_PREROLL_BUFFER = None        # owned ffmpeg ring; stopped explicitly on SIGTERM
+_SHUTDOWN_STARTED = threading.Event()
 # Don't auto-reboot more than once per this window — a reboot that doesn't fix
 # the wedge would otherwise boot-loop the Jetson.
 _REBOOT_MIN_INTERVAL_S = 1800.0
@@ -1084,46 +2074,6 @@ def _clear_watchdog_escalation():
         _WATCHDOG_STATE["level"] = 0
         _WATCHDOG_STATE["last_action_at"] = None
         _save_watchdog_state(_WATCHDOG_STATE_PATH, _WATCHDOG_STATE)
-
-
-def _parse_nvargus_rss_kb(text):
-    """Best-effort RSS parser for `ps -o pid=,rss=,etime=,cmd=` output."""
-    best = 0.0
-    for line in text.splitlines():
-        parts = line.strip().split(None, 3)
-        if len(parts) < 2:
-            continue
-        try:
-            rss = float(parts[1])
-        except (TypeError, ValueError):
-            continue
-        best = max(best, rss)
-    return best
-
-
-def _parse_free_available_mb(text):
-    """Return the Mem: available column from `free -m` output."""
-    for line in text.splitlines():
-        if not line.startswith("Mem:"):
-            continue
-        parts = line.split()
-        if len(parts) >= 7:
-            try:
-                return float(parts[6])
-            except (TypeError, ValueError):
-                return 0.0
-    return 0.0
-
-
-def _count_argus_pending(text):
-    """Count the known libargus pending/overflow signatures in dmesg."""
-    if not text:
-        return 0.0
-    return float(len(re.findall(
-        r"(Argus OverFlow|too many pending events)",
-        text,
-        flags=re.IGNORECASE,
-    )))
 
 
 def _mirror_watchdog_metrics(metrics, mediamtx_watchdog):
@@ -1226,16 +2176,18 @@ def _do_reboot():
 
 def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
                         event_url, camera_id, thumb_dir=None,
-                        thumb_max=None, thumb_quality=None, metrics=None):
+                        thumb_max=None, thumb_quality=None, metrics=None,
+                        prepare_open_event=None):
     """Construct a ``visit_runtime.VisitRunner`` with the three side-effect
     callables wired to the real recorder/preroll/POST path (plan S4 item 2).
     Factored out of ``main()`` so the wiring is small + the loop body stays
     focused. The callables themselves are thin adapters; the heavy lifting is
     in ``recording.finalize_visit`` / ``preroll.copy_new_segments`` (S2/S3)."""
     def _post_open(visit_id, key, start_ts, boxes, segment_index=0,
-                   cuda_img=None):
-        # event_id == visit_id (plan: "pick an event_id (= visit_id)"). POST
-        # the open event today with clip_url pointing at the eventual clip
+                   cuda_img=None, event_meta=None, root_visit_id=None):
+        # `visit_id` here is the segment event/clip id. `root_visit_id` is the
+        # stable physical-visit story id shared by max-duration continuations.
+        # POST the open event today with clip_url pointing at the eventual clip
         # (R4's no-clip-url-at-open is S6's job, NOT here). label is the part
         # of the emit key before ":".
         #
@@ -1256,6 +2208,7 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
             return
         payload = {
             "id": visit_id,
+            "visit_id": root_visit_id or visit_id,
             "label": label,
             "score": 1.0,
             "boxes": list(boxes),
@@ -1285,6 +2238,13 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
                 thumb_url = None
         if thumb_url:
             payload["thumb_url"] = thumb_url
+        if isinstance(event_meta, dict):
+            person_name = event_meta.get("person_name")
+            person_names = event_meta.get("person_names")
+            if isinstance(person_name, str) and person_name:
+                payload["person_name"] = person_name
+            if isinstance(person_names, list) and person_names:
+                payload["person_names"] = person_names[:16]
         # Cap-split continuations (segment_index > 0) are the SAME physical
         # presence rolling into its next max_visit_s window — mark them so
         # the server records the row (it is a real clip) but does NOT push
@@ -1307,17 +2267,33 @@ def _build_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
             recordings_dir=recordings_dir,
         )
 
+    finalized_url = event_url.rsplit("/", 1)[0] + "/event/finalized"
+
+    def _notify_finalized(visit_id, start_ts, end_ts):
+        _request_json(
+            finalized_url,
+            method="POST",
+            payload={
+                "event_id": visit_id,
+                "duration_s": max(0.0, float(end_ts) - float(start_ts)),
+            },
+            timeout=2.0,
+        )
+
     return visit_runtime.VisitRunner(
         recordings_dir=recordings_dir,
         post_event=_post_open,
         copy_segments=_copy_segments,
         finalize_visit=_finalize,
+        on_finalized=_notify_finalized,
+        prepare_open_event=prepare_open_event,
     )
 
 
 def _arm_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
                       event_url, camera_id, runtime, thumb_dir=None,
-                      thumb_max=None, thumb_quality=None, metrics=None):
+                      thumb_max=None, thumb_quality=None, metrics=None,
+                      prepare_open_event=None):
     """Build + arm the continuous-capture runner (boot AND runtime flag
     flips share this path — 2026-07-07 fix: a Settings toggle used to be
     a no-op until restart). Order is load-bearing: recovery + orphan
@@ -1328,7 +2304,20 @@ def _arm_visit_runner(recordings_dir, clip_recorder, preroll_buffer,
         recordings_dir, clip_recorder, preroll_buffer, event_url,
         camera_id, thumb_dir=thumb_dir, thumb_max=thumb_max,
         thumb_quality=thumb_quality, metrics=metrics,
+        prepare_open_event=prepare_open_event,
     )
+    try:
+        reconciled = clip_state.reconcile_stale(recordings_dir)
+        if reconciled:
+            log.warning(
+                "marked %s abandoned clip lifecycle record(s) failed",
+                reconciled,
+            )
+    except Exception as e:
+        log.error(
+            "clip lifecycle reconciliation failed: %s: %s",
+            type(e).__name__, e,
+        )
     try:
         _recover_open_visits(
             recordings_dir, clip_recorder, _vr, runtime.absence_finalize_s,
@@ -1364,7 +2353,7 @@ def _disarm_visit_runner(now):
     if runner is None:
         return
     try:
-        runner.finalize_open_visits_for_escalation(now)
+        runner.finalize_open_visits(now, reason="continuous capture disabled")
     except Exception as e:
         log.error(
             "continuous-capture disarm finalize failed: %s: %s",
@@ -1374,6 +2363,61 @@ def _disarm_visit_runner(now):
     log.info(
         "continuous-capture DISARMED — legacy start_clip path restored",
     )
+
+
+def _reconcile_detection_capture_gate(previous_active, active, now):
+    """Close an open visit on the exact on->off detection transition.
+
+    The old path merely stopped inference and waited for the normal absence
+    grace. That left the event UI in ``recording`` for the config-poll delay,
+    the full grace window, and video finalization. A disabled detector cannot
+    establish continued presence, so finalize at the last observed frame.
+    """
+    if previous_active is True and not active and _VISIT_RUNNER is not None:
+        try:
+            _VISIT_RUNNER.finalize_open_visits(
+                now, reason="detection capture gate paused",
+            )
+        except Exception as e:
+            log.error(
+                "detection pause finalize failed: %s: %s",
+                type(e).__name__, e,
+            )
+    return bool(active)
+
+
+def _handle_worker_shutdown(signum, _frame):
+    """Finalize open footage before a normal systemd stop/restart exits."""
+    if _SHUTDOWN_STARTED.is_set():
+        raise SystemExit(128 + int(signum))
+    _SHUTDOWN_STARTED.set()
+    preroll = _PREROLL_BUFFER
+    if preroll is not None:
+        try:
+            preroll.stop()
+        except Exception as e:
+            log.error(
+                "worker shutdown preroll stop failed: %s: %s",
+                type(e).__name__, e,
+            )
+    runner = _VISIT_RUNNER
+    if runner is not None:
+        now = time.time()
+        try:
+            finalized = runner.finalize_open_visits(
+                now, reason="worker shutdown",
+            )
+            drained = runner.wait_for_finalizers(40.0)
+            log.info(
+                "worker shutdown finalized %s open visit(s); drained=%s",
+                len(finalized), drained,
+            )
+        except Exception as e:
+            log.error(
+                "worker shutdown finalize failed: %s: %s",
+                type(e).__name__, e,
+            )
+    raise SystemExit(0)
 
 
 def _recover_open_visits(recordings_dir, clip_recorder, runner,
@@ -1420,6 +2464,56 @@ def open_camera(uri, attempts=30, retry_s=2.0):
     raise SystemExit("videoSource never came up: {}".format(last_err))
 
 
+def _close_camera(camera):
+    """Best-effort close for jetson-utils videoSource across JetPack builds."""
+    for method_name in ("Close", "close"):
+        method = getattr(camera, method_name, None)
+        if callable(method):
+            try:
+                method()
+                return True
+            except Exception as e:
+                print(
+                    "[detect] videoSource {}() failed during reopen: {}".format(
+                        method_name, e,
+                    ),
+                    flush=True,
+                )
+                return False
+    return False
+
+
+def reopen_camera_after_watchdog_action(uri, camera, action, attempts=15, retry_s=2.0):
+    """Recreate the RTSP reader after MediaMTX/Argus recovery.
+
+    Live failure seen 2026-07-09: MediaMTX recovered and republished `/cam`,
+    but the existing jetson-utils videoSource kept returning capture timeouts.
+    Browser Retry cannot fix that stale in-process reader; the detector must
+    reconnect to the recovered RTSP publisher.
+    """
+    print(
+        "[detect] reopening videoSource after watchdog action={} uri={}".format(
+            action, uri,
+        ),
+        flush=True,
+    )
+    closed = _close_camera(camera)
+    if closed:
+        print("[detect] previous videoSource closed before reopen", flush=True)
+    else:
+        print(
+            "[detect] previous videoSource had no close hook; replacing object",
+            flush=True,
+        )
+    camera = None
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+    return open_camera(uri, attempts=attempts, retry_s=retry_s)
+
+
 def _handle_capture_failure(
     reason, consecutive_failures, metrics, mediamtx_watchdog, liveness,
 ):
@@ -1446,6 +2540,13 @@ def _handle_capture_failure(
     Returns the new `consecutive_failures` count. Raises SystemExit
     on giving up.
     """
+    # Privacy/focus reconfiguration deliberately removes the RTSP source.  Do
+    # not let the ordinary wedge ladder race that serialized reset, climb
+    # toward reboot, or hit the 100-failure exit during the planned outage.
+    if _PLANNED_CAMERA_RESET.is_set():
+        liveness.bump()
+        time.sleep(0.05)
+        return 0
     consecutive_failures += 1
     metrics.dropped += 1
     mediamtx_watchdog.on_capture_fail()
@@ -1494,7 +2595,13 @@ def _handle_capture_failure(
                     "{}: {}".format(type(e).__name__, e), flush=True,
                 )
         with _RECOVERY_LOCK:
-            if action == ACTION_RESTART_MEDIAMTX:
+            if _PLANNED_CAMERA_RESET.is_set():
+                consecutive_failures = 0
+                print(
+                    "[detect] watchdog action suppressed during planned camera reset",
+                    flush=True,
+                )
+            elif action == ACTION_RESTART_MEDIAMTX:
                 if restart_mediamtx():
                     metrics.mediamtx_restarts += 1
             elif action == ACTION_RESTART_NVARGUS:
@@ -1589,6 +2696,8 @@ def main():
     # run BEFORE any worker thread (heartbeat / config-poll / preroll
     # watchdog) spawns so their first log line is already handled.
     applog.configure()
+    signal.signal(signal.SIGTERM, _handle_worker_shutdown)
+    signal.signal(signal.SIGINT, _handle_worker_shutdown)
     source_uri = _env("DETECT_SOURCE", "rtsp://localhost:8554/cam")
     threshold = _env("DETECT_THRESHOLD", 0.55, float)
     cooldown = _env("DETECT_COOLDOWN_S", 5.0, float)
@@ -1596,6 +2705,7 @@ def main():
         "0", "false", "False", "no", "NO", "off", "OFF",
     )
     event_url = _env("EVENT_URL", "http://127.0.0.1:8000/api/_internal/event")
+    live_detection_url = event_url.rsplit("/event", 1)[0] + "/live_detection"
     # iter-288 (security-auditor G1, queued since iter-264): the
     # systemd unit file (`deploy/systemd/homecam-detect.service`) is
     # root-owned + chmod 644 in the operator-blessed deploy, so a
@@ -1628,6 +2738,10 @@ def main():
     # Multicam contract (docs/multicam_contract.md): read DETECT_CAMERA_ID
     # once at startup; invalid values WARN + fall back inside the helper.
     camera_id = camera_ident.camera_id_from_env()
+    doorbell_value_path = _env("DETECT_DOORBELL_GPIO_VALUE_PATH", "")
+    doorbell_active_low = _env("DETECT_DOORBELL_ACTIVE_LOW", "1") not in (
+        "0", "false", "False", "no", "off",
+    )
     model = _env("DETECT_MODEL", "ssd-mobilenet-v2")
     person_class_id = _env("PERSON_CLASS_ID", 1, int)
     active_fps = _env("DETECT_ACTIVE_FPS", 5.0, float)
@@ -1720,6 +2834,7 @@ def main():
     # buffer is off, ClipRecorder falls back to post-roll-only
     # behavior automatically (pre_roll_s defaults to 0 in the
     # caller below).
+    global _PREROLL_BUFFER
     preroll_buffer = None
     if recordings_dir:
         preroll_dir = _env(
@@ -1768,6 +2883,8 @@ def main():
                 )
                 preroll_buffer = None
 
+    _PREROLL_BUFFER = preroll_buffer
+
     # iter-356.62 (camera-algorithm-auditor pre-YOLO win 3): mem-floor
     # gate runs ONCE here, before TRT engine workspace allocation can
     # SIGKILL us. Distinct from the runtime MemoryGuard armed below
@@ -1812,7 +2929,9 @@ def main():
     # iter-184 auth-gated and 401s without a cookie) to the unauth
     # `_internal` mirror that the rest of the worker → server traffic
     # already uses.
-    runtime = RuntimeConfig(threshold=threshold, cooldown_s=cooldown)
+    runtime = RuntimeConfig(
+        threshold=threshold, cooldown_s=cooldown, camera_id=camera_id,
+    )
     # Seed the continuous-capture flag + knobs from env (plan S4). The
     # config-poll later overrides these live; resolving here means a boot-time
     # env override is honored before the server has spoken. Default ON.
@@ -1820,6 +2939,19 @@ def main():
     runtime.continuous_capture = _cc["enabled"]
     runtime.max_visit_s = _cc["max_visit_s"]
     runtime.absence_finalize_s = _cc["absence_finalize_s"]
+    package_state_path = _env(
+        "DETECT_PACKAGE_STATE_PATH",
+        default_package_state_path(recordings_dir, camera_id),
+    )
+    activity_engine = ActivityRuleEngine(
+        camera_id,
+        package_change_threshold=runtime.package_change_threshold,
+        package_stable_s=runtime.package_stable_s,
+        package_state_path=package_state_path or None,
+    )
+    signal_url = event_url.rsplit("/event", 1)[0] + "/signal"
+    signal_emitter = SignalEmitter(signal_url, camera_id)
+    signal_emitter.start()
     metrics_known_names = (
         sorted(set(recognizer.names)) if recognizer is not None else []
     )
@@ -1827,7 +2959,28 @@ def main():
     # iter-356.61: thread the preroll_buffer through so the poll can
     # grow the segment-recorder ring on demand when the user pushes
     # the Settings "Pre-roll" slider above the boot-time capacity.
-    start_config_poll(config_url, runtime, preroll_buffer=preroll_buffer)
+    privacy_path = _env(
+        "HOMECAM_PRIVACY_CONFIG",
+        "/home/israel/HomeCameraSystem/.privacy-masks.env",
+    )
+
+    def _restart_for_privacy():
+        restart_privacy_pipeline_fail_closed()
+
+    def _stop_for_privacy():
+        stop_privacy_pipeline_fail_closed()
+
+    start_config_poll(
+        config_url,
+        runtime,
+        preroll_buffer=preroll_buffer,
+        interval_s=max(1.0, min(30.0, _env("DETECT_CONFIG_POLL_S", 5.0, float))),
+        privacy_apply=lambda masks, force_restart=False: apply_privacy_pipeline_masks(
+            masks, privacy_path, restart=_restart_for_privacy,
+            force_restart=force_restart,
+            fail_closed=_stop_for_privacy,
+        ),
+    )
     log.info("config poll -> %s", config_url)
 
     # Liveness signal driven by the inference loop; heartbeat thread reads
@@ -1836,12 +2989,28 @@ def main():
     liveness = Liveness()
     metrics = Metrics()
     metrics.face_recog_names = metrics_known_names
+    # Independent, low-rate sysfs sampler. It keeps probing while detection is
+    # manually paused and automatically begins reporting if an external INA2xx
+    # sensor appears later. Readings are carried on the existing heartbeat.
+    start_power_sampler(metrics)
+
+    def _prepare_visit_open_event(visit_id, key, _start_ts, boxes,
+                                  cuda_img, segment_index):
+        return prepare_visit_open_faces(
+            visit_id, key, boxes, cuda_img, segment_index,
+            recognizer, face_captures_dir, camera_id, model,
+            metrics=metrics,
+        )
     heartbeat_url = event_url.rsplit("/", 1)[0] + "/heartbeat"
     start_heartbeat(heartbeat_url, liveness, metrics)
     log.info("heartbeat -> %s", heartbeat_url)
+    log.info("live detection samples -> %s", live_detection_url)
 
     log.info("opening source %s", source_uri)
     camera = open_camera(source_uri)
+    start_doorbell_poll(
+        doorbell_value_path, doorbell_active_low, signal_emitter, runtime,
+    )
     log.info("source open; sending events to %s", event_url)
     # Worker is fully up (model loaded + camera open). Tell systemd we're READY
     # (Type=notify) so the WatchdogSec liveness timer starts NOW — the long TRT
@@ -1917,6 +3086,7 @@ def main():
             recordings_dir, clip_recorder, preroll_buffer, event_url,
             camera_id, runtime, thumb_dir=thumb_dir, thumb_max=thumb_max,
             thumb_quality=thumb_quality, metrics=metrics,
+            prepare_open_event=_prepare_visit_open_event,
         )
     # iter-356.53 (bbox-track sidecar, Feature #1 follow-up):
     # rolling deque of (frame_ts, boxes) for the last ~64 s of
@@ -1929,6 +3099,7 @@ def main():
     import collections as _collections
     track_deque = _collections.deque(maxlen=512)
     active_tracks = {}  # type: ignore[var-annotated]
+    visit_track_ids = set()
     try:
         import tracks as _tracks_mod
     except Exception as _e:
@@ -1942,6 +3113,91 @@ def main():
             "%s: %s", type(_e).__name__, _e,
         )
         _tracks_mod = None
+
+    def _write_track_sidecar(event_id, track, post_roll_s=None):
+        if _tracks_mod is None:
+            return
+        try:
+            _post_roll_s = (
+                float(post_roll_s)
+                if post_roll_s is not None
+                else float(track.get("post_roll_s", 0.0))
+            )
+            _payload = _tracks_mod.build_payload(
+                event_id, track["event_ts"],
+                track["pre_roll_s"], _post_roll_s, track["samples"],
+            )
+            _ok = _tracks_mod.write_sidecar(recordings_dir, event_id, _payload)
+            if _ok:
+                applog.emit(
+                    "tracks",
+                    "wrote sidecar event_id={} samples={} pre_roll_s={:.3f} "
+                    "duration_s={:.3f}".format(
+                        event_id, len(_payload.get("samples", [])),
+                        float(_payload.get("pre_roll_s", 0.0)),
+                        _post_roll_s,
+                    ),
+                )
+        except Exception as _e:
+            print(
+                "[detect] track sidecar write failed for {}: {}".format(
+                    event_id, _e,
+                ),
+                flush=True,
+            )
+
+    def _sync_visit_track_sidecars(now):
+        """Register/finalize bbox tracks for continuous visit clips.
+
+        The legacy `start_clip` path registers an active track when it forks
+        the per-event recorder. Continuous capture suppresses that path, so it
+        must register visits from the VisitRunner's open table instead.
+        """
+        if _tracks_mod is None:
+            return
+        runner = _VISIT_RUNNER
+        open_visits = getattr(runner, "_open", {}) if runner is not None else {}
+        # Continuous VisitRunner records `start_ts` as the clip-window start
+        # (it already includes any pre-roll). `tracks.build_payload` subtracts
+        # `pre_roll_s` from `event_ts`, so visits must pass 0 here or the
+        # overlay is shifted late by one full pre-roll window.
+        pre_roll_s = 0.0
+        for _vid, _rec in list(open_visits.items()):
+            if _vid not in visit_track_ids:
+                _start_ts = float(_rec.get("start_ts", now))
+                _pre_lo = _start_ts
+                _pre_samples = [
+                    (_t, _b) for (_t, _b) in list(track_deque)
+                    if _t >= _pre_lo
+                ]
+                active_tracks[_vid] = {
+                    "event_ts": _start_ts,
+                    "pre_roll_s": pre_roll_s,
+                    "post_roll_s": 0.0,
+                    "samples": _pre_samples,
+                    "last_seen": float(_rec.get("last_seen", now)),
+                    "visit": True,
+                }
+                visit_track_ids.add(_vid)
+                applog.emit(
+                    "tracks",
+                    "registered continuous visit sidecar event_id={} "
+                    "seed_samples={}".format(_vid, len(_pre_samples)),
+                )
+            else:
+                _track = active_tracks.get(_vid)
+                if _track is not None:
+                    _track["last_seen"] = float(_rec.get("last_seen", now))
+        for _vid in list(visit_track_ids):
+            if _vid in open_visits:
+                continue
+            _track = active_tracks.pop(_vid, None)
+            visit_track_ids.discard(_vid)
+            if _track is None:
+                continue
+            _end_ts = float(_track.get("last_seen", now))
+            _post_roll_s = max(0.0, _end_ts - float(_track["event_ts"]))
+            _write_track_sidecar(_vid, _track, _post_roll_s)
     last_inference = 0.0
     last_detection = 0.0
     last_latest_save = 0.0
@@ -1955,6 +3211,7 @@ def main():
     # directly so a change is logged ONCE at the transition, never
     # per-frame. Seeded to None so the FIRST gear is always logged.
     gear_state = {"prev": None}
+    capture_gate_state = {"active": None}
 
     def _set_gear(new_gear):
         metrics.gear = new_gear
@@ -1995,11 +3252,12 @@ def main():
     # restarts — the old in-memory restart_count reset every restart, so the
     # nvargus rung was unreachable and it flapped on mediamtx forever.
     global _WATCHDOG_STATE, _WATCHDOG_STATE_PATH
-    global _HOST_ACTION_SEEN_IDS, _HOST_ACTION_SEEN_PATH
+    global _HOST_ACTION_SEEN_IDS, _HOST_ACTION_RESULTS, _HOST_ACTION_SEEN_PATH
     _WATCHDOG_STATE_PATH = os.path.join(str(recordings_dir), ".watchdog_state.json")
     _WATCHDOG_STATE = _load_watchdog_state(_WATCHDOG_STATE_PATH)
     _HOST_ACTION_SEEN_PATH = os.path.join(str(recordings_dir), ".host_action_seen.json")
     _HOST_ACTION_SEEN_IDS = _load_host_action_seen(_HOST_ACTION_SEEN_PATH)
+    _HOST_ACTION_RESULTS = _load_host_action_results(_HOST_ACTION_SEEN_PATH)
     _allow_reboot = _env("DETECT_WATCHDOG_ALLOW_REBOOT", "1") not in (
         "0", "false", "False", "no", "off",
     )
@@ -2019,6 +3277,9 @@ def main():
             restart_nvargus=escalate_argus_recovery,
             do_reboot=_do_reboot,
             tail_journal=host_action.tail_journal,
+            start_focus_mode=start_focus_mode,
+            stop_focus_mode=stop_focus_mode,
+            apply_exposure=apply_exposure,
             allow_reboot=_allow_reboot,
             now=time.time,
         ),
@@ -2046,6 +3307,9 @@ def main():
     # both safely under any plausible thermal slew. Cost: one extra
     # `_read_thermal_zone_by_name` syscall per ~10 s — negligible.
     thermal_check_every_n_frames = 10
+    scene_guard = SceneGuard()
+    scene_last_sample_at = 0.0
+    scene_reference = None
     while True:
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
@@ -2054,6 +3318,7 @@ def main():
         try:
             img = camera.Capture(timeout=2000)
         except Exception as e:
+            prev_action_count = mediamtx_watchdog.action_count
             consecutive_failures = _handle_capture_failure(
                 "error: {}".format(e),
                 consecutive_failures,
@@ -2061,6 +3326,13 @@ def main():
                 mediamtx_watchdog,
                 liveness,
             )
+            if (mediamtx_watchdog.action_count != prev_action_count
+                    and _WATCHDOG_STATE.get("last_action") != ACTION_REBOOT):
+                camera = reopen_camera_after_watchdog_action(
+                    source_uri,
+                    camera,
+                    _WATCHDOG_STATE.get("last_action"),
+                )
             continue
         if img is None:
             # iter-264 (camera-library-usage-auditor A1): jetson-utils
@@ -2087,6 +3359,7 @@ def main():
             # an hour with zero recovery action. Move the success
             # reset BELOW this check so it only runs on a real
             # frame (img is not None).
+            prev_action_count = mediamtx_watchdog.action_count
             consecutive_failures = _handle_capture_failure(
                 "timeout (None)",
                 consecutive_failures,
@@ -2094,6 +3367,13 @@ def main():
                 mediamtx_watchdog,
                 liveness,
             )
+            if (mediamtx_watchdog.action_count != prev_action_count
+                    and _WATCHDOG_STATE.get("last_action") != ACTION_REBOOT):
+                camera = reopen_camera_after_watchdog_action(
+                    source_uri,
+                    camera,
+                    _WATCHDOG_STATE.get("last_action"),
+                )
             continue
         # iter-300: real frame received. Reset both the local
         # counter AND the watchdog tally. Pre-iter-300 these were
@@ -2161,6 +3441,10 @@ def main():
         # extension valid AND prevents the listing-regex defenses in
         # `/api/timelapses` etc. from accidentally picking up the
         # intermediate as a complete artifact).
+        # Redact before any inference or still-image write. Because Jetson
+        # unified memory backs this view, downstream detectNet/saveImage and
+        # face crops all see the blacked pixels.
+        redact_cuda_image(img, effective_privacy_masks(runtime))
         now_for_latest = time.time()
         if now_for_latest - last_latest_save >= 1.0:
             try:
@@ -2190,6 +3474,15 @@ def main():
         # active_fps (default 5 Hz). This keeps the GPU off the thermal
         # throttle while still giving prompt response on motion.
         now = time.time()
+        activity_engine.set_rules(
+            runtime.smart_rules,
+            package_change_threshold=runtime.package_change_threshold,
+            package_stable_s=runtime.package_stable_s,
+            authoritative=runtime.config_loaded,
+        )
+        # Expire association/loiter state before every early-continue path.
+        # This is the smart-rule equivalent of VisitRunner.tick below.
+        activity_engine.tick(now)
         # Runtime flag reconciler (2026-07-07 user report "apparently it
         # doesn't work"): the config poll flips runtime.continuous_capture
         # mid-run, but the loop gates on _VISIT_RUNNER — which was only
@@ -2207,9 +3500,17 @@ def main():
                 recordings_dir, clip_recorder, preroll_buffer, event_url,
                 camera_id, runtime, thumb_dir=thumb_dir, thumb_max=thumb_max,
                 thumb_quality=thumb_quality, metrics=metrics,
+                prepare_open_event=_prepare_visit_open_event,
             )
         elif not runtime.continuous_capture and _VISIT_RUNNER is not None:
             _disarm_visit_runner(now)
+        capture_gate_active = (
+            metadata_signal_allowed(runtime)
+            and not runtime.schedule_says_off()
+        )
+        capture_gate_state["active"] = _reconcile_detection_capture_gate(
+            capture_gate_state["active"], capture_gate_active, now,
+        )
         # plan B5: continuous-capture tick at the TOP of the loop body, BEFORE
         # any detection logic or early-continue (off / scheduled-off / zone-
         # reject / no-detection all early-continue below — exactly the absent
@@ -2217,7 +3518,9 @@ def main():
         # runner is armed; no-op on the legacy path. The tracker is pure, so a
         # frame where the subject is gone still drives finalize at the deadline.
         if _VISIT_RUNNER is not None:
-            _VISIT_RUNNER.set_absence_finalize_s(runtime.absence_finalize_s)
+            _VISIT_RUNNER.set_runtime_bounds(
+                runtime.absence_finalize_s, runtime.max_visit_s,
+            )
             _VISIT_RUNNER.tick(
                 now, runtime.absence_finalize_s, runtime.max_visit_s,
             )
@@ -2229,20 +3532,56 @@ def main():
             metrics.clips_dropped_disk_floor = (
                 _VISIT_RUNNER.clips_dropped_disk_floor
             )
+            _sync_visit_track_sidecars(now)
         # If the user has disabled detection (manually or via the schedule
         # window), drop the frame without running inference. Worker thus
         # burns no CUDA while still consuming the RTSP stream so it doesn't
         # back up. /api/status will show `worker_alive: true` because
         # heartbeats keep firing — the `gear` field tells the UI which
         # off-state we're in.
-        if not runtime.enabled:
+        if not runtime.enabled or runtime.operating_mode == "privacy":
+            activity_engine.suspend()
+            scene_guard.suspend()
+            scene_reference = None
             _set_gear("off")
             del img
             continue
         if runtime.schedule_says_off():
+            activity_engine.suspend()
+            scene_guard.suspend()
+            scene_reference = None
             _set_gear("scheduled-off")
             del img
             continue
+
+        # Low-cadence tamper guard. Downsampling before the CPU copy keeps the
+        # comparison tiny; three consecutive five-second samples are required
+        # so exposure transitions and a hand passing the lens do not alert.
+        if now - scene_last_sample_at >= 5.0:
+            scene_last_sample_at = now
+            try:
+                import numpy as np
+                rgb = cuda_to_rgb_numpy(img)
+                emit_activity_events(
+                    activity_engine.observe_package_frame(rgb, now),
+                    event_url, camera_id, metrics=metrics,
+                )
+                sample = rgb[::32, ::32, :].astype(np.float32).mean(axis=2)
+                difference = None
+                if scene_reference is not None and scene_reference.shape == sample.shape:
+                    difference = float(np.abs(sample - scene_reference).mean())
+                tamper_kind = scene_guard.observe(
+                    float(sample.mean()), float(sample.std()), difference,
+                )
+                if scene_guard.should_update_reference(
+                    float(sample.mean()), float(sample.std()), difference,
+                    tamper_kind,
+                ):
+                    scene_reference = sample.copy()
+                if tamper_kind:
+                    signal_emitter.emit("tamper", tamper_kind, now=now)
+            except Exception as e:
+                log.warning("scene guard sample failed: %s: %s", type(e).__name__, e)
 
         # iter-172: sampling moved earlier (above the early-continue
         # ladder). The guards' state checks below remain in place —
@@ -2327,6 +3666,19 @@ def main():
         threshold_now = runtime.threshold
         cooldown_now = runtime.cooldown_s
         wanted = set(runtime.classes)
+        w = float(img.width)
+        h = float(img.height)
+        # Smart activity rules see every relevant normalized box before the
+        # legacy global class/threshold/zone/cooldown ladder.  The rule engine
+        # applies each rule's own label and confidence policy.
+        activity_boxes = normalize_activity_boxes(
+            detections, net, w, h, runtime.smart_rules,
+            privacy_masks=runtime.privacy_masks,
+        )
+        emit_activity_events(
+            activity_engine.observe_boxes(activity_boxes, time.time()),
+            event_url, camera_id, metrics=metrics,
+        )
         # An empty wanted-set means the user explicitly turned every class
         # off. Treat as "no detections" (silent), don't fall back to person.
         # WARN once on the transition into the empty state (re-arming
@@ -2339,8 +3691,8 @@ def main():
             if not empty_class_warned:
                 log.warning(
                     "wanted-class set is EMPTY (every class deselected in "
-                    "Settings) - NO events will fire until a class is "
-                    "re-enabled"
+                    "Settings) - NO legacy class events will fire until a "
+                    "class is re-enabled; smart rules remain independent"
                 )
                 empty_class_warned = True
             del img
@@ -2355,6 +3707,7 @@ def main():
                 continue
             kept.append((d, label))
         if not kept:
+            post_live_detection(live_detection_url, [], camera_id)
             del img
             continue
 
@@ -2367,8 +3720,6 @@ def main():
         # zone-gate first (cheap; pure numeric polygon test), then
         # per-(label, camera_id) cooldown using the dict above.
 
-        w = float(img.width)
-        h = float(img.height)
         boxes = []
         try:
             for d, label in kept:
@@ -2394,6 +3745,17 @@ def main():
                 "frame dropped", metrics.frames, w, h, e,
             )
             continue
+        if runtime.privacy_masks:
+            filtered = [
+                (pair, box) for pair, box in zip(kept, boxes)
+                if not box_center_inside_any_zone(box, runtime.privacy_masks)
+            ]
+            kept = [item[0] for item in filtered]
+            boxes = [item[1] for item in filtered]
+            if not boxes:
+                post_live_detection(live_detection_url, [], camera_id)
+                del img
+                continue
         # iter-356.53: capture this frame's boxes for any in-flight
         # clip's track sidecar — runs BEFORE zone/cooldown gates so
         # the post-roll path of a triggering event still sees every
@@ -2405,26 +3767,17 @@ def main():
             if active_tracks:
                 _expired = []
                 for _eid, _track in active_tracks.items():
+                    if _track.get("visit"):
+                        _track["samples"].append((now, list(boxes)))
+                        _track["last_seen"] = now
+                        continue
                     if now > _track["expires_at"]:
                         _expired.append(_eid)
                     else:
                         _track["samples"].append((now, list(boxes)))
                 for _eid in _expired:
                     _track = active_tracks.pop(_eid)
-                    try:
-                        _payload = _tracks_mod.build_payload(
-                            _eid, _track["event_ts"],
-                            _track["pre_roll_s"], _track["post_roll_s"],
-                            _track["samples"],
-                        )
-                        _tracks_mod.write_sidecar(
-                            recordings_dir, _eid, _payload,
-                        )
-                    except Exception as _e:
-                        print(
-                            "[detect] track sidecar write failed for {}: {}".format(_eid, _e),
-                            flush=True,
-                        )
+                    _write_track_sidecar(_eid, _track)
         # iter-191b (Feature #5): zone gate. When the user has drawn
         # zones, drop the event entirely if no detection box's center
         # falls inside any polygon. Empty zones short-circuits to
@@ -2448,8 +3801,10 @@ def main():
                     _ZONE_SUPPRESS_EVERY_S,
                 )
                 last_zone_suppress_log = now
+            post_live_detection(live_detection_url, [], camera_id)
             del img
             continue
+        post_live_detection(live_detection_url, boxes, camera_id)
         # Compute the top-confidence detection now — it drives the presence
         # key and the rest of the emit path.
         top_d, top_label = max(kept, key=lambda dl: dl[0].Confidence)
@@ -2482,6 +3837,7 @@ def main():
                 runtime.absence_finalize_s, runtime.max_visit_s,
                 boxes=boxes, cuda_img=img,
             )
+            _sync_visit_track_sidecars(now)
             del img
             continue
         # Presence-coalescing gate (replaces the old flat per-key cooldown).

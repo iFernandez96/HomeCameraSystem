@@ -21,7 +21,9 @@ and the design expect:
 """
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,10 +32,13 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _MEDIAMTX_YML = _REPO_ROOT / "deploy" / "mediamtx.yml"
+_MEDIAMTX_SERVICE = _REPO_ROOT / "deploy" / "systemd" / "mediamtx.service"
+_DETECT_SERVICE = _REPO_ROOT / "deploy" / "systemd" / "homecam-detect.service"
 
 # MediaMTX expands $RTSP_PORT at runtime; the config commits 8554 as the
 # rtspAddress, so the published source URL the rungs must read from is:
 _CAM_SOURCE_URL = "rtsp://localhost:8554/cam"
+_CAMERA_SCRIPT = _REPO_ROOT / "deploy" / "run-camera-pipeline.sh"
 
 
 @pytest.fixture(scope="module")
@@ -51,6 +56,57 @@ def _normalize(command: str) -> str:
     folding."""
     expanded = command.replace("$RTSP_PORT", "8554")
     return re.sub(r"\s+", " ", expanded)
+
+
+def _camera_publish_script(paths: dict) -> str:
+    """Resolve the committed camera publisher referenced by ``runOnInit``.
+
+    The camera pipeline is a script because it selects temporary focus mode at
+    runtime.  Keep the config-to-script boundary pinned while inspecting the
+    actual pipeline rather than assuming it remains inline YAML.
+    """
+    command = paths["cam"]["runOnInit"].strip()
+    script = Path(command.split()[0])
+    if script.is_absolute():
+        try:
+            script = _REPO_ROOT / script.relative_to("/home/israel/HomeCameraSystem")
+        except ValueError:
+            pytest.fail("cam runOnInit points outside the deployed project: {}".format(script))
+    assert script.is_file(), "cam runOnInit script is missing: {}".format(script)
+    return _normalize(script.read_text(encoding="utf-8"))
+
+
+def _run_camera_script_with_privacy(tmp_path: Path, content: str | None) -> str:
+    """Run the shell wrapper against a fake gst-launch and return its argv."""
+    # arrange
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    gst = fake_bin / "gst-launch-1.0"
+    gst.write_text(
+        '#!/usr/bin/env bash\nprintf "GST_ARGS:%s\\n" "$*"\n',
+        encoding="utf-8",
+    )
+    gst.chmod(0o755)
+    privacy = tmp_path / "privacy.env"
+    if content is not None:
+        privacy.write_text(content, encoding="utf-8")
+    env = os.environ.copy()
+    env.update({
+        "PATH": "{}:{}".format(fake_bin, env.get("PATH", "")),
+        "HOMECAM_PRIVACY_CONFIG": str(privacy),
+        "HOMECAM_EXPOSURE_CONFIG": str(tmp_path / "missing-exposure.env"),
+    })
+
+    # act
+    result = subprocess.run(
+        ["bash", str(_CAMERA_SCRIPT)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    return result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("rung", ["cam_lq", "cam_uq"])
@@ -130,7 +186,7 @@ def test_Given_hq_cam_path_When_inspected_Then_keeps_hardware_encoder(paths):
     encodes live sensor frames (monotonic PTS, WebRTC-safe) and full-res
     software encode would be far too costly on the Nano."""
     # arrange / act
-    command = _normalize(paths["cam"]["runOnInit"])
+    command = _camera_publish_script(paths)
     # assert
     assert "nvv4l2h264enc" in command, "HQ cam path must keep the hardware encoder"
     assert "nvarguscamerasrc" in command, "HQ cam path is the single capture path"
@@ -143,10 +199,133 @@ def test_Given_hq_cam_path_When_inspected_Then_has_mid_stream_stall_watchdog(pat
     sits AFTER h264parse (post-encoder, regular memory) so it can't perturb
     the NVMM zero-copy path."""
     # arrange / act
-    command = _normalize(paths["cam"]["runOnInit"])
+    command = _camera_publish_script(paths)
     # assert — watchdog present, with a finite (non-zero = enabled) timeout,
     # and downstream of the encoder/parser (not on the NVMM sensor caps).
     assert "watchdog timeout=5000" in command, "publish pipeline must have a stall watchdog"
     assert command.index("h264parse") < command.index("watchdog"), (
         "watchdog must sit after h264parse (post-encoder regular memory)"
     )
+
+
+def test_Given_hq_cam_path_When_inspected_Then_records_bounded_continuous_history(paths):
+    """The investigation timeline records the already-encoded ``cam`` path.
+
+    This must remain a path-level MediaMTX recorder (stream copy), not another
+    GStreamer camera/decode/encode graph.  The two-hour bound is deliberately
+    conservative for the Nano's current free-space runway.
+    """
+    # arrange
+    cam = paths["cam"]
+
+    # act / assert
+    assert cam["record"] is True
+    assert cam["recordFormat"] == "fmp4"
+    assert cam["recordPath"] == "/srv/homecam-media/recordings/continuous/%path/%s"
+    assert cam["recordPartDuration"] == "1s"
+    assert cam["recordSegmentDuration"] == "5m"
+    assert cam["recordDeleteAfter"] == "2h"
+    assert paths["cam_uhq"].get("record", False) is False
+
+
+@pytest.mark.parametrize(
+    "privacy_content",
+    [
+        None,
+        "PRIVACY_RECTS='1900,0,30,20'\n",
+        "PRIVACY_RECTS='10,20,30,40'; echo unsafe\n",
+    ],
+)
+def test_Given_missing_or_invalid_privacy_config_When_camera_starts_Then_masks_full_frame(
+    tmp_path, privacy_content
+):
+    # arrange / act
+    output = _run_camera_script_with_privacy(tmp_path, privacy_content)
+
+    # assert
+    assert "applying full-frame privacy mask without opening camera" in output
+    assert "videotestsrc pattern=black is-live=true" in output
+    assert "nvcompositor name=privacy" not in output
+    assert "nvarguscamerasrc" not in output
+
+
+def test_Given_explicit_empty_privacy_config_When_camera_starts_Then_unmasked_path_is_allowed(
+    tmp_path,
+):
+    # arrange / act
+    output = _run_camera_script_with_privacy(tmp_path, "PRIVACY_RECTS=''\n")
+
+    # assert
+    assert "nvcompositor name=privacy" not in output
+    assert "nvarguscamerasrc sensor-mode=1" in output
+
+
+def test_Given_privacy_compositor_When_publishing_Then_encoder_input_is_nv12(tmp_path):
+    """Normalize compositor output before either Jetson H.264 encoder branch.
+
+    ``nvcompositor`` can negotiate RGBA output even when the sensor source is
+    NV12.  The Nano encoder cannot consume that directly, so keep one NVMM
+    conversion immediately before the fan-out tee.
+    """
+    # arrange / act
+    output = _run_camera_script_with_privacy(
+        tmp_path, "PRIVACY_RECTS='0,0,1919,1080'\n"
+    )
+
+    # assert
+    compositor_output = (
+        "nvcompositor name=privacy background=1 sink_0::zorder=0 "
+        "sink_1::xpos=0 sink_1::ypos=0 sink_1::width=1919 "
+        "sink_1::height=1080 sink_1::zorder=1 ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=NV12,width=1920,height=1080,"
+        "framerate=60/1 ! tee name=camera"
+    )
+    assert compositor_output in output
+    assert (
+        "nvarguscamerasrc sensor-mode=1 exposurecompensation=0.0 aelock=false ! "
+        "video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1 ! "
+        "queue ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=RGBA,width=1920,height=1080,"
+        "framerate=60/1 ! privacy.sink_0"
+    ) in output
+    assert (
+        "videotestsrc pattern=black is-live=true ! "
+        "video/x-raw,width=1919,height=1080,framerate=60/1 ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=RGBA,width=1919,height=1080,"
+        "framerate=60/1 ! privacy.sink_1"
+    ) in output
+
+
+def test_Given_continuous_recording_When_mediamtx_runs_Then_archive_files_are_private():
+    # arrange / act
+    unit = _MEDIAMTX_SERVICE.read_text(encoding="utf-8")
+
+    # assert
+    assert "UMask=0077" in unit
+
+
+def test_Given_event_recording_When_detector_runs_Then_camera_files_are_private():
+    # arrange / act
+    unit = _DETECT_SERVICE.read_text(encoding="utf-8")
+
+    # assert
+    assert "UMask=0077" in unit
+
+
+def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1080p(paths):
+    # arrange / act
+    command = _camera_publish_script(paths)
+
+    # assert — one libargus owner fans out to two hardware encoders. Detection
+    # remains on /cam while explicit UHQ viewers consume /cam_uhq.
+    assert paths["cam_uhq"]["source"] == "publisher"
+    assert command.count("nvarguscamerasrc") == 1
+    # The script contains mutually exclusive full-mask, partial-mask, and
+    # unmasked graphs. Each exec path still owns one tee and two encoders.
+    assert 'if [[ -n "$PRIVACY_RECTS" ]]' in command
+    assert command.count("tee name=camera") == 3
+    assert command.count("nvv4l2h264enc") == 6
+    assert "width=1280,height=720" in command
+    assert "width=1920,height=1080" in command
+    assert "rtsp://localhost:${RTSP_PORT}/cam\"" in command
+    assert "rtsp://localhost:${RTSP_PORT}/cam_uhq\"" in command

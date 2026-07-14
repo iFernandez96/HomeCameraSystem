@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homecamera.local/contracts/internal-worker.schema.json",
+  "title": "Home Camera internal worker wire contract",
+  "type": "object",
+  "$defs": {
+    "Box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h", "label", "score"],
+      "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "w": {"type": "number", "minimum": 0, "maximum": 1},
+        "h": {"type": "number", "minimum": 0, "maximum": 1},
+        "label": {"type": "string", "minLength": 1, "maxLength": 64},
+        "score": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "DetectionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "score", "boxes"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1, "maxLength": 64},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "boxes": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/Box"}},
+        "camera_id": {"type": "string", "default": "front_door", "pattern": "^[a-z0-9_]{1,32}$"},
+        "continuation": {"type": "boolean", "default": false},
+        "thumb_url": {"type": ["string", "null"], "pattern": "^/snapshots/thumb_[0-9]+\\.jpg$"},
+        "clip_url": {"type": ["string", "null"], "pattern": "^/api/events/[A-Za-z0-9_-]+/clip$"},
+        "id": {"type": ["string", "null"], "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$"},
+        "person_name": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+        "person_names": {"type": ["array", "null"], "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 64}},
+        "source": {"type": "string", "const": "vision", "default": "vision"},
+        "rule_id": {"type": ["string", "null"], "pattern": "^[a-z0-9_]{1,32}$"},
+        "rule_name": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+        "correlation_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "related_event_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "visit_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "start_ts": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "end_ts": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "package_state": {"type": ["string", "null"], "enum": ["delivered", "collected", null]}
+      }
+    },
+    "Heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fps": {"type": "number"}, "infer_per_s": {"type": "number"}, "gear": {"type": "string"},
+        "frames": {"type": "number"}, "inferences": {"type": "number"}, "emitted": {"type": "number"},
+        "dropped": {"type": "number"}, "infer_ms_recent": {"type": "number"}, "infer_ms_p95": {"type": "number"},
+        "mediamtx_restarts": {"type": "number"}, "argus_restarts": {"type": "number"}, "last_frame_ts": {"type": "number"},
+        "thumb_ms_recent": {"type": "number"}, "uptime_s": {"type": "number"},
+        "face_recog_names": {"type": "array", "items": {"type": "string"}},
+        "clips_dropped_capacity": {"type": "number"}, "clip_start_failures": {"type": "number"},
+        "face_recog_failures": {"type": "number"}, "event_post_failures": {"type": "number"},
+        "thumb_save_failures": {"type": "number"}, "visits_finalized": {"type": "number"},
+        "clips_dropped_disk_floor": {"type": "number"}, "watchdog_level": {"type": "number"},
+        "watchdog_last_action": {"type": "string"}, "watchdog_last_action_at": {"type": "number"},
+        "watchdog_last_reboot_at": {"type": "number"}, "watchdog_action_count": {"type": "number"},
+        "wedge_diag_at": {"type": "number"}, "wedge_diag_nvargus_rss_kb": {"type": "number"},
+        "wedge_diag_gpu_temp_c": {"type": "number"}, "wedge_diag_mem_avail_mb": {"type": "number"},
+        "wedge_diag_argus_pending": {"type": "number"},
+        "power_sensor_status": {"type": "number"}, "power_volts": {"type": "number"},
+        "power_amps": {"type": "number"}, "power_watts": {"type": "number"},
+        "power_sample_ts": {"type": "number"}, "power_read_failures": {"type": "number"}
+      }
+    }
+  }
+}

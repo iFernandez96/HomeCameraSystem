@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
   ZOOM_IDENTITY,
   isZoomed,
@@ -8,9 +8,23 @@ import {
   toTransform,
   type ZoomState,
 } from '../lib/pinchZoom'
-import { deleteEvent, exportEvents, fetchEventTracks, probeEventClip, searchEvents } from '../lib/api'
+import {
+  addIncidentEvents,
+  createIncident,
+  createClipShare,
+  fetchEventClipStatus,
+  fetchEventTracks,
+  probeEventClip,
+  searchEvents,
+  setEventProtection,
+  submitIdentityFeedback,
+  listIncidents,
+  type IncidentSummary,
+  type EventClipStatus,
+} from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { isOwner } from '../lib/roles'
+import { useToast } from '../lib/toast'
 import { drawBoxes, resolveIdColor } from '../lib/drawBoxes'
 import {
   absoluteTime,
@@ -22,13 +36,10 @@ import {
 } from '../lib/eventLabel'
 import { identityOf } from '../lib/identity'
 import { log, errFields } from '../lib/log'
-import { useConfirm } from '../lib/confirm'
 import { useEventViewTelemetry } from '../lib/telemetry'
-import { useReportError, useToast } from '../lib/toast'
 import type { DetectionBox, DetectionEvent, EventTracks } from '../lib/types'
-import { EventRow } from './EventRow'
 import { VideoPlayer } from './VideoPlayer'
-import { Button } from './primitives/Button'
+import { ClipStateBadge, getClipStatePresentation } from './ClipStateBadge'
 
 // Playroom Modern (Task 7): ±2h window either side of the active event for
 // the "More from tonight" rail. Wide enough to surface a household's usual
@@ -51,16 +62,13 @@ const SWIPE_RUBBER_MAX_PX = 20
  *  guard is skipped when the pane has no layout box (jsdom). */
 const SWIPE_CONTROLS_GUARD_PX = 64
 
-/** Event-view jank fix (2026-07-08): how long after the event a missing
- *  clip is treated as "the visit is still recording" rather than "no
- *  video was ever saved". The continuous recorder finalizes a visit's
- *  clip when the visit closes — production data shows the file landing
- *  within ~3 minutes of the event for open visits, while genuinely
- *  clipless events (~8%% of rows) never get one. Inside this window the
- *  modal keeps probing and swaps the player in on its own; past it, the
- *  copy stops promising a video that will never arrive. */
-const CLIP_STILL_WRITING_WINDOW_S = 10 * 60
-/** Re-probe cadence while a fresh visit's clip is still being written. */
+/** How long a missing clip stays in the recheck window. A 404 from the
+ *  clip route means only "not available right now"; it does not identify why.
+ *  During this window the modal keeps probing and
+ *  swaps the player in if the MP4 appears. Past it, the UI stops implying
+ *  that waiting is likely to help. */
+const CLIP_RECHECK_WINDOW_S = 10 * 60
+/** Re-probe cadence while a fresh event's clip is not available yet. */
 const CLIP_PROBE_INTERVAL_MS = 8000
 
 /** Content dedupe pass (Frank phone-round finding): the "More from
@@ -100,18 +108,9 @@ function moreTonightSubline(e: DetectionEvent, currentCameraId: string, nowMs: n
 export function ClipModal({
   event: eventProp,
   onClose,
-  onDeleted,
 }: {
   event: DetectionEvent
   onClose: () => void
-  // Final whole-branch review fix batch #1: ClipModal's own Delete
-  // flow (below) removes the row from the SERVER, but had no way to
-  // tell the parent list (Events.tsx / Watch.tsx's today-events feed)
-  // to prune it — the parent kept rendering the just-deleted event
-  // until its next unrelated refetch. Optional so pages that don't
-  // hold their own list (none today, but keeps the prop non-breaking)
-  // can omit it.
-  onDeleted?: (id: string) => void
 }) {
   // Playroom Modern (Task 7, "More from tonight"): the modal can browse
   // sideways into a neighboring event from the SAME open dialog (tap a
@@ -124,22 +123,10 @@ export function ClipModal({
   // trap only applies to effect bodies, and this deliberately isn't one.
   const [event, setEvent] = useState(eventProp)
   const [syncedEventId, setSyncedEventId] = useState(eventProp.id)
-  if (eventProp.id !== syncedEventId) {
-    setSyncedEventId(eventProp.id)
-    setEvent(eventProp)
-  }
-  const navigate = useNavigate()
-  const confirm = useConfirm()
-  // Fix round (review finding): the Delete pill must not render for
-  // non-owners — mirrors Events.tsx's isOwner gating (admin is a
-  // transitional owner-equivalent, same carve-out as Settings.tsx's
-  // isOwner). Derived here via useAuth() rather than threaded as a
-  // prop: AuthProvider wraps the whole app (see App.tsx), so both of
-  // ClipModal's call sites (Events.tsx, Watch.tsx) always have it in
-  // context, and reading it locally avoids plumbing a prop through
-  // both.
   const { user } = useAuth()
-  const canDelete = isOwner(user)
+  const { showToast } = useToast()
+  const canManage = isOwner(user)
+  const [eventAction, setEventAction] = useState<'protect' | 'share' | null>(null)
   useEventViewTelemetry(user?.username, event.id)
   const clipUrl = `/api/events/${event.id}/clip`
   // Event-view jank fix round 2 (2026-07-08): the worker marks
@@ -152,6 +139,43 @@ export function ClipModal({
   // optimistic — only an explicit null is the worker saying "no clip
   // of its own, by design".
   const hasOwnClip = event.clip_url !== null
+
+  const toggleProtection = async () => {
+    if (eventAction) return
+    setEventAction('protect')
+    try {
+      const result = await setEventProtection(event.id, !event.protected)
+      setEvent((current) => ({ ...current, protected: result.protected }))
+      showToast(result.protected ? 'Clip protected from cleanup' : 'Clip protection removed', 'success')
+    } catch (error) {
+      log.warn('clipModal:protection-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not change clip protection', 'error')
+    } finally {
+      setEventAction(null)
+    }
+  }
+
+  const shareSecurely = async () => {
+    if (eventAction) return
+    setEventAction('share')
+    try {
+      const grant = await createClipShare(event.id)
+      const url = new URL(grant.url, window.location.origin).toString()
+      const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> }
+      if (typeof nav.share === 'function') {
+        await nav.share({ title: 'HomeCam clip', url })
+      } else {
+        await navigator.clipboard.writeText(url)
+        showToast('Secure one-hour link copied', 'success')
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      log.warn('clipModal:share-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not create secure share link', 'error')
+    } finally {
+      setEventAction(null)
+    }
+  }
   // Track which clip URL has errored. If the prop event changes
   // (parent passed a new event), `clipErrored` naturally becomes
   // false because `erroredClipUrl !== clipUrl`.
@@ -162,13 +186,12 @@ export function ClipModal({
 
   // Event-view jank fix (2026-07-08): probe the clip route directly
   // instead of waiting for <video> to error on a 404. Same URL-keyed
-  // shape as erroredClipUrl so switching events auto-clears it. The
-  // probe distinguishes the two honest states the old error path
-  // conflated: "the visit is still recording, the file lands when it
-  // closes" vs "no video was ever saved for this event" (the old copy
-  // said "check back in a few seconds" for BOTH, forever).
+  // shape as erroredClipUrl so switching events auto-clears it. A 404
+  // means only that the MP4 is not available right now; the age window
+  // below decides whether to keep rechecking.
   const [missingClipUrl, setMissingClipUrl] = useState<string | null>(null)
   const clipMissing = !hasOwnClip || missingClipUrl === clipUrl
+  const [clipStatus, setClipStatus] = useState<EventClipStatus | null>(null)
   useEffect(() => {
     let cancelled = false
     // clip_url=null events never get a standalone clip — nothing to
@@ -192,20 +215,45 @@ export function ClipModal({
     }
   }, [event.id, hasOwnClip])
 
-  // While the visit is plausibly still recording, keep probing so the
-  // player swaps in BY ITSELF the moment the file lands — pre-fix the
-  // user had to close and reopen the modal to see a clip that
-  // finalized seconds after they opened it.
+  // While a fresh event's clip is missing, keep probing so the player swaps in
+  // by itself the moment the file lands. This is a recheck policy, not a claim
+  // that the recorder is still running.
   const clipGone = clipMissing || clipErrored
+  const [clipFullscreen, setClipFullscreen] = useState(false)
+  if (clipGone && clipFullscreen) setClipFullscreen(false)
+  const activeClipStatus = clipStatus?.event_id === event.id ? clipStatus : null
+  useEffect(() => {
+    let cancelled = false
+    if (!hasOwnClip) return undefined
+    fetchEventClipStatus(event.id)
+      .then((status) => {
+        if (cancelled) return
+        setClipStatus(status)
+        if (status.state === 'available') {
+          setMissingClipUrl(null)
+          setErroredClipUrl(null)
+        }
+      })
+      .catch((e) => {
+        log.warn('clipModal:clip-status-fetch-failed', {
+          eventId: event.id,
+          ...errFields(e),
+        })
+        if (!cancelled) setClipStatus(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [event.id, hasOwnClip])
   useEffect(() => {
     if (!clipGone) return
     // No standalone clip will ever exist for a clip_url=null event —
     // polling would spin for the whole still-writing window for nothing.
     if (!hasOwnClip) return
-    if (Date.now() / 1000 - event.ts >= CLIP_STILL_WRITING_WINDOW_S) return
+    if (Date.now() / 1000 - event.ts >= CLIP_RECHECK_WINDOW_S) return
     let cancelled = false
     const id = setInterval(() => {
-      if (Date.now() / 1000 - event.ts >= CLIP_STILL_WRITING_WINDOW_S) {
+      if (Date.now() / 1000 - event.ts >= CLIP_RECHECK_WINDOW_S) {
         clearInterval(id)
         return
       }
@@ -225,9 +273,41 @@ export function ClipModal({
     }
   }, [clipGone, hasOwnClip, event.id, event.ts])
 
+  useEffect(() => {
+    if (!hasOwnClip) return
+    if (
+      !clipGone &&
+      activeClipStatus?.state !== 'recording' &&
+      activeClipStatus?.state !== 'finalizing'
+    ) return
+    let cancelled = false
+    const id = setInterval(() => {
+      fetchEventClipStatus(event.id)
+        .then((status) => {
+          if (cancelled) return
+          setClipStatus(status)
+          if (status.state === 'available') {
+            setMissingClipUrl(null)
+            setErroredClipUrl(null)
+            clearInterval(id)
+          }
+        })
+        .catch((e) => {
+          log.warn('clipModal:clip-status-poll-failed', {
+            eventId: event.id,
+            ...errFields(e),
+          })
+        })
+    }, CLIP_PROBE_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [clipGone, activeClipStatus?.state, event.id, hasOwnClip])
+
   // Bug fix (real-device Firefox Android, phone-verified): the clip
   // pane went completely blank on both fresh AND minutes-old events —
-  // no player, no error, no thumb, no action row. Root cause was two
+  // no player, no error, no thumb. Root cause was two
   // layered issues:
   //   1. An unstarted <video> has zero intrinsic size. With mobile
   //      autoplay blocked, the media pane collapsed toward nothing
@@ -236,7 +316,7 @@ export function ClipModal({
   //      ever kicked in.
   //   2. The video-pane flex column used `min-h-0` unconditionally,
   //      so once (1) shrank its content, the WHOLE column (header +
-  //      video + action row) could be squeezed toward zero height by
+  //      video) could be squeezed toward zero height by
   //      its sibling (the evidence <aside>, which has no cap on its
   //      own natural height once "More from tonight" grew it).
   // `videoReady` (wired up below, once `videoRef` exists) tracks
@@ -247,26 +327,27 @@ export function ClipModal({
   const [readyClipUrl, setReadyClipUrl] = useState<string | null>(null)
   const videoReady = readyClipUrl === clipUrl
 
-  // Ticks every 5s so both the "is this clip still being written"
-  // pending-state gate below AND the WHEN/"More from tonight" relative
+  // Ticks every 5s so both the fresh-clip loading/recheck gates below AND the WHEN/"More from tonight" relative
   // timestamps stay fresh for as long as the modal stays open.
   const [nowMs, setNowMs] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 5000)
     return () => clearInterval(id)
   }, [])
-  // Post-roll recording typically finishes within ~90s of the
-  // detection firing (docs/logging_plan.md recorder notes) — under
-  // that, an unplayable clip almost certainly just isn't written yet
-  // rather than actually broken.
-  const clipLikelyWriting = nowMs / 1000 - event.ts < 100
-  // Wider window than clipLikelyWriting: a continuous-capture visit
-  // keeps its clip open until the visit ends, so "missing" stays
-  // plausible-in-progress for minutes, not seconds. Derived from the
-  // same 5s nowMs tick so an open modal flips to the honest "no video
-  // was saved" copy on its own once the window closes.
-  const clipStillWriting = nowMs / 1000 - event.ts < CLIP_STILL_WRITING_WINDOW_S
-
+  // Brief loading affordance for a clip route that exists but has not
+  // produced a frame yet. This is a UI loading state, not proof that the
+  // recorder is still running.
+  const clipRecentlyCreated = nowMs / 1000 - event.ts < 100
+  // Wider window for a clip route that is still returning 404. A 404 is
+  // evidence only that the MP4 is not available right now; the modal keeps
+  // checking for fresh events, but the copy must not claim a cause.
+  const clipInRecheckWindow = nowMs / 1000 - event.ts < CLIP_RECHECK_WINDOW_S
+  const clipState = getClipStatePresentation({
+    hasOwnClip,
+    clipStatus: activeClipStatus,
+    clipGone,
+    clipInRecheckWindow,
+  })
   // iter-270 (accessibility-auditor A): stash the element that had
   // focus when the modal opened so we can restore it on close.
   // Without this, ESC / Close / backdrop click leaves focus on
@@ -274,11 +355,6 @@ export function ClipModal({
   // page on the next interaction. Mirror of the iter-? confirm-
   // dialog focus-restore (also added this iter).
   const closeRef = useRef<HTMLButtonElement | null>(null)
-  // iter-331 (missing-feature #1, ClipModal speed + loop): user
-  // wants 0.5x for "is that really a person?" review. Native browser
-  // controls expose speed on desktop Chrome but NOT on mobile Chrome
-  // / Safari — the speed strip below covers the mobile gap. Loop
-  // toggle for "watch the dog walk past again" without re-tapping.
   const videoRef = useRef<HTMLVideoElement | null>(null)
   // VideoPlayer hands us its <video> element here; store it in our own ref so
   // the bbox-overlay effect can bind to it. Memoized so VideoPlayer's
@@ -287,103 +363,32 @@ export function ClipModal({
     videoRef.current = el
   }, [])
   // Wires up `videoReady` (declared above) now that `videoRef` exists.
-  // Runs after VideoPlayer's own `onVideoEl` effect populates the ref —
-  // React commits child effects before parent effects, the same
-  // ordering the bbox-overlay effect below already relies on.
+  // Mobile Chrome can start painting/playing a cached clip before this
+  // effect observes loadeddata, so readiness must also be derived from the
+  // element's current state and playback events. Otherwise the loading
+  // overlay can remain visible behind a playing video.
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
     const markReady = () => setReadyClipUrl(clipUrl)
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA || !video.paused) {
+      markReady()
+    }
     video.addEventListener('loadeddata', markReady)
     video.addEventListener('canplay', markReady)
+    video.addEventListener('playing', markReady)
+    video.addEventListener('play', markReady)
     return () => {
       video.removeEventListener('loadeddata', markReady)
       video.removeEventListener('canplay', markReady)
+      video.removeEventListener('playing', markReady)
+      video.removeEventListener('play', markReady)
     }
   }, [clipUrl])
   // iter-336 (a11y blocker #2): focus-trap host. Tab cycles within
   // focusable descendants of this div instead of escaping to the
   // browser chrome / page behind the modal.
   const dialogRef = useRef<HTMLDivElement | null>(null)
-  // iter (user "same as youtube"): playback speed, loop, best-effort
-  // autoplay, scrub/play and fullscreen are now owned by the <VideoPlayer>
-  // control bar. ClipModal keeps `videoRef` ONLY so its bbox-overlay effect
-  // can attach to the <video> element (VideoPlayer forwards it).
-  const { showToast } = useToast()
-  // docs/logging_plan.md §1.3: pair error-toasts with a structured
-  // log.error so the user message + device log can't drift.
-  const reportError = useReportError()
-  // iter-330 (missing-feature #3, Event Export ZIP): per-event
-  // download button. Posts the single event id to /api/events/export
-  // and triggers the browser's download flow via createObjectURL.
-  // Multi-select export is a follow-up (iter-331+) once the EventList
-  // has a selection mechanism; the per-event path is the foundation.
-  const [downloading, setDownloading] = useState(false)
-  const onDownload = async () => {
-    if (downloading) return
-    setDownloading(true)
-    try {
-      const blob = await exportEvents([event.id])
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      // Use the event id + timestamp so multiple downloads don't clobber.
-      a.download = `homecam_${event.id}.zip`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      // Defer revoke so Safari has time to start the download.
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      showToast('Download started', 'success')
-    } catch (e) {
-      // docs/logging_plan.md §2 (ClipModal): export fail ERROR — the
-      // HTTP status was discarded today (toast-only). reportError pairs
-      // the user toast with a structured log.error carrying the status
-      // (413 over-cap / 503 semaphore / 401) so the operator sees WHY.
-      reportError(
-        'clipModal:export-failed',
-        e instanceof Error ? `Download failed: ${e.message}` : 'Download failed',
-        { eventId: event.id, ...errFields(e) },
-      )
-    } finally {
-      setDownloading(false)
-    }
-  }
-  // iter-356.x (feature audit P1-5): copy a deep-link to this event for
-  // sharing. The clip URL itself is auth-gated so a raw link won't work
-  // for un-authed recipients, but copying /events?event=<id> lets a
-  // household member paste it into the same authed PWA on the other
-  // person's phone — which is the common case (e.g., "look at this
-  // delivery"). navigator.share is preferred where available (Android
-  // Chrome, iOS Safari 16.4+ standalone) so the OS share sheet handles
-  // routing; falls back to clipboard.
-  const onShare = async () => {
-    const path = `/events?event=${encodeURIComponent(event.id)}`
-    const url = `${window.location.origin}${path}`
-    const title = personLabel ?? event.label
-    const text = `HomeCam event: ${title}`
-    try {
-      const nav = navigator as Navigator & {
-        share?: (data: ShareData) => Promise<void>
-      }
-      if (typeof nav.share === 'function') {
-        await nav.share({ title, text, url })
-        return
-      }
-      await navigator.clipboard.writeText(url)
-      showToast('Link copied — paste it into a chat to share', 'success')
-    } catch (e) {
-      // AbortError is the user dismissing the share sheet — silent.
-      const name = (e as Error)?.name
-      if (name === 'AbortError') return
-      // docs/logging_plan.md §2 (ClipModal): share/clipboard fail WARN.
-      // Distinguishes a clipboard-permission denial / share-sheet
-      // failure from the benign user-dismiss above.
-      log.warn('clipModal:share-failed', { eventId: event.id, ...errFields(e) })
-      showToast('Could not share link — try copy/paste', 'error')
-    }
-  }
-
   // Playroom Modern (identity-colored boxes + evidence-pane grammar):
   // moved up from the bottom of the component (was computed only for the
   // WHO/aside JSX) — the bbox-overlay effect below now needs the same
@@ -391,6 +396,14 @@ export function ClipModal({
   // there's a single source of truth instead of two derivations drifting.
   const matchedNames = recognizedNames(event)
   const personLabel = matchedNames.length > 0 ? matchedNames[0] : null
+  const [feedbackFor, setFeedbackFor] = useState<string | null>(null)
+  const [feedbackMode, setFeedbackMode] = useState<'idle' | 'correcting' | 'done'>('idle')
+  const [correctName, setCorrectName] = useState('')
+  const [feedbackBusy, setFeedbackBusy] = useState(false)
+  const [incidentOptions, setIncidentOptions] = useState<IncidentSummary[] | null>(null)
+  const [incidentChoice, setIncidentChoice] = useState('__new__')
+  const [incidentTitle, setIncidentTitle] = useState('')
+  const [incidentBusy, setIncidentBusy] = useState(false)
   const identity = useMemo(() => identityOf(event), [event])
   // resolveIdColor reads getComputedStyle once per identity change (NOT
   // per animation frame) — the resolved rgb/hex string is what the canvas
@@ -401,6 +414,72 @@ export function ClipModal({
   // `${personName} score%`) by handing it a display name even though no
   // real name was recognized, rather than adding a second labeling mode.
   const boxLabelName = personLabel ?? (identity.kind === 'person' ? 'Someone' : null)
+
+  const sendIdentityFeedback = async (
+    verdict: 'correct' | 'incorrect',
+    corrected?: string,
+  ) => {
+    if (feedbackBusy) return
+    setFeedbackBusy(true)
+    try {
+      const result = await submitIdentityFeedback(event.id, {
+        verdict,
+        ...(corrected?.trim() ? { correct_name: corrected.trim() } : {}),
+      })
+      setEvent(result.event)
+      setFeedbackFor(event.id)
+      setFeedbackMode('done')
+      setCorrectName('')
+      showToast('Recognition feedback saved', 'success')
+    } catch (error) {
+      log.warn('clipModal:identity-feedback-failed', {
+        eventId: event.id,
+        ...errFields(error),
+      })
+      showToast('Could not save recognition feedback', 'error')
+    } finally {
+      setFeedbackBusy(false)
+    }
+  }
+
+  const openIncidentPicker = async () => {
+    if (incidentBusy) return
+    setIncidentBusy(true)
+    try {
+      const result = await listIncidents()
+      const username = user?.username.trim().toLocaleLowerCase('en-US')
+      const ownedIncidents = result.items.filter(
+        (item) => item.owner_username.trim().toLocaleLowerCase('en-US') === username,
+      )
+      setIncidentOptions(ownedIncidents)
+      setIncidentChoice(ownedIncidents[0]?.id ?? '__new__')
+      setIncidentTitle(`Incident ${new Date(event.ts * 1000).toLocaleDateString()}`)
+    } catch (error) {
+      log.warn('clipModal:incident-list-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not load incidents', 'error')
+    } finally {
+      setIncidentBusy(false)
+    }
+  }
+
+  const addToIncident = async () => {
+    if (incidentOptions === null || incidentBusy) return
+    setIncidentBusy(true)
+    try {
+      const incident = incidentChoice === '__new__'
+        ? await createIncident(incidentTitle.trim() || 'New incident')
+        : incidentOptions.find((item) => item.id === incidentChoice)
+      if (!incident) throw new Error('incident unavailable')
+      await addIncidentEvents(incident.id, [event.id])
+      setIncidentOptions(null)
+      showToast(`Added to ${incident.title}`, 'success')
+    } catch (error) {
+      log.warn('clipModal:incident-add-failed', { eventId: event.id, ...errFields(error) })
+      showToast('Could not add event to incident', 'error')
+    } finally {
+      setIncidentBusy(false)
+    }
+  }
 
   // Playroom Modern (Task 7, "More from tonight"): sibling events within
   // ±2h of the active event, so a household member reviewing one clip can
@@ -420,7 +499,7 @@ export function ClipModal({
     })
       .then((r) => {
         if (cancelled) return
-        setMoreTonight(r.items.filter((e) => e.id !== event.id).slice(0, 5))
+        setMoreTonight(r.items.filter((e) => e.id !== event.id))
       })
       .catch((e) => {
         // Non-fatal — the rail just stays empty. WARN (not ERROR): the
@@ -463,20 +542,19 @@ export function ClipModal({
   const swipeStartY = useRef<number | null>(null)
   const swipeAxis = useRef<'h' | 'v' | null>(null)
   const swipeDx = useRef(0)
-  // Pinch-to-zoom (user request 2026-07-07, mirrors Watch's fullscreen
-  // zoom): two fingers scale the INNER zoom layer (video + overlays),
-  // one finger pans while zoomed, and the clip-swipe gesture is
-  // suppressed until the zoom glides back to 1x — otherwise a pan
-  // would also flip clips. The zoom layer is separate from the pane so
-  // the swipe's translateX and the zoom's transform never fight over
-  // one style property. All math in lib/pinchZoom (unit-tested pure).
+  // Pinch-to-zoom: two fingers scale the INNER zoom layer (video/snapshot +
+  // overlays), one finger pans while zoomed, and clip-swipe is suppressed
+  // until the zoom glides back to 1x. The zoom layer is separate from the
+  // pane so swipe translateX and zoom transform never fight over one style.
   const zoomLayerRef = useRef<HTMLDivElement | null>(null)
   const zoomRef = useRef<ZoomState>(ZOOM_IDENTITY)
+  const [clipZoomed, setClipZoomed] = useState(false)
   const pinchDist = useRef(0)
   const panLast = useRef<{ x: number; y: number } | null>(null)
   const applyClipZoom = () => {
     const el = zoomLayerRef.current
     if (el) el.style.transform = toTransform(zoomRef.current)
+    setClipZoomed(isZoomed(zoomRef.current))
     // While zoomed the pane owns EVERY touch (panning must not scroll
     // the modal's single-column layout underneath); back at 1x the
     // class's touch-pan-y resumes letting vertical scrolls through.
@@ -487,14 +565,41 @@ export function ClipModal({
     zoomRef.current = ZOOM_IDENTITY
     pinchDist.current = 0
     panLast.current = null
+    setClipZoomed(false)
     const el = zoomLayerRef.current
     if (el) el.style.transform = ''
     const pane = videoPaneRef.current
     if (pane) pane.style.touchAction = ''
   }, [])
-  // A different clip is a fresh viewing context — zoom starts at 1x.
+  const selectEvent = useCallback(
+    (nextEvent: DetectionEvent) => {
+      resetClipZoom()
+      setEvent(nextEvent)
+    },
+    [resetClipZoom],
+  )
+  const toggleClipFullscreen = useCallback(
+    (active: boolean) => {
+      if (!active) resetClipZoom()
+      setClipFullscreen(active)
+    },
+    [resetClipZoom],
+  )
+  // A parent-selected clip is a fresh viewing context. Adjusting local state
+  // during render follows React's prop/state synchronization pattern and avoids
+  // an extra stale render from synchronizing in an effect.
+  if (eventProp.id !== syncedEventId) {
+    setSyncedEventId(eventProp.id)
+    setEvent(eventProp)
+  }
   useEffect(() => {
-    resetClipZoom()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) resetClipZoom()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [event.id, resetClipZoom])
   const paneSize = () => {
     const r = videoPaneRef.current?.getBoundingClientRect()
@@ -505,7 +610,7 @@ export function ClipModal({
       top: r?.top ?? 0,
     }
   }
-  const pinchDistanceOf = (ev: React.TouchEvent) => {
+  const pinchDistanceOf = (ev: TouchEvent) => {
     const a = ev.touches[0]
     const b = ev.touches[1]
     return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
@@ -519,7 +624,7 @@ export function ClipModal({
     },
     [swipeTimeline, event.id],
   )
-  const onPaneTouchStart = (ev: React.TouchEvent) => {
+  const onPaneTouchStart = (ev: TouchEvent) => {
     // Second finger down: the gesture becomes a pinch regardless of
     // what the first finger was doing; any in-flight swipe feedback is
     // abandoned.
@@ -527,6 +632,7 @@ export function ClipModal({
       pinchDist.current = pinchDistanceOf(ev)
       panLast.current = null
       resetSwipeRefs()
+      ev.preventDefault()
       const pane = videoPaneRef.current
       if (pane) {
         pane.style.transition = ''
@@ -537,13 +643,14 @@ export function ClipModal({
     // Controls stay controls: a touch that begins on any interactive
     // element (bbox toggle, speed select, Repeat, a focused overlay
     // button) is never a swipe.
-    const target = ev.target as HTMLElement | null
+    const target = ev.target instanceof Element ? ev.target : null
     if (target && target.closest('button, select, input, a, label')) return
     const t = ev.touches[0]
     // Zoomed in: one finger pans the picture; clip-swipe stays off
     // until the pinch glides back home to 1x.
     if (isZoomed(zoomRef.current)) {
       panLast.current = { x: t.clientX, y: t.clientY }
+      ev.preventDefault()
       return
     }
     const pane = videoPaneRef.current
@@ -562,7 +669,7 @@ export function ClipModal({
     swipeAxis.current = null
     swipeDx.current = 0
   }
-  const onPaneTouchMove = (ev: React.TouchEvent) => {
+  const onPaneTouchMove = (ev: TouchEvent) => {
     if (ev.touches.length >= 2) {
       // Pinch step: scale around the finger midpoint, clamped by the
       // pane box so panning never reveals off-content gaps.
@@ -582,6 +689,7 @@ export function ClipModal({
         applyClipZoom()
       }
       pinchDist.current = d
+      ev.preventDefault()
       return
     }
     if (panLast.current !== null && isZoomed(zoomRef.current)) {
@@ -596,6 +704,7 @@ export function ClipModal({
       )
       panLast.current = { x: t0.clientX, y: t0.clientY }
       applyClipZoom()
+      ev.preventDefault()
       return
     }
     if (swipeStartX.current === null) return
@@ -637,7 +746,7 @@ export function ClipModal({
     pane.style.transition = reduceMotion ? '' : 'transform 160ms ease-out'
     pane.style.transform = ''
   }
-  const onPaneTouchEnd = (ev: React.TouchEvent) => {
+  const onPaneTouchEnd = (ev: TouchEvent) => {
     // jsdom fireEvent.touchEnd with no init has no touches list.
     if ((ev.touches?.length ?? 0) > 0) {
       // Pinch losing a finger: rebase so the remaining finger pans
@@ -669,7 +778,7 @@ export function ClipModal({
         pane.style.transform = ''
       }
       // The EXACT mechanism a "More from tonight" row tap uses.
-      setEvent(neighbor)
+      selectEvent(neighbor)
       return
     }
     snapPaneBack()
@@ -685,46 +794,21 @@ export function ClipModal({
     if (axis === 'h') snapPaneBack()
   }
 
-  // Playroom Modern (Task 7): "Name them" — persons only, and only when
-  // unrecognized (a named person already has a name; nothing to do).
-  // Reuses the EXISTING uncertain-face review flow rather than inventing
-  // a new naming affordance — `/training/review` (Review.tsx) is where an
-  // operator confirms/corrects a predicted name from a face capture.
-  // Content pain-fix batch: append the event id as a query param so a
-  // future queue implementation CAN pre-filter to this event's face
-  // capture. Deep queue integration is out of scope here — the review
-  // flow itself doesn't consume the param yet.
-  const onNameThem = () => {
-    navigate(`/training/review?event=${encodeURIComponent(event.id)}`)
-  }
-
-  const [deleting, setDeleting] = useState(false)
-  const onDelete = async () => {
-    if (!canDelete || deleting) return
-    const ok = await confirm({
-      title: 'Delete this event?',
-      body: `Delete the ${clockTime(event.ts)} ${personLabel ?? event.label} event? The clip will be removed. This cannot be undone.`,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Cancel',
-      destructive: true,
-    })
-    if (!ok) return
-    setDeleting(true)
-    try {
-      await deleteEvent(event.id)
-      showToast('Event deleted', 'success')
-      onDeleted?.(event.id)
-      onClose()
-    } catch (e) {
-      reportError(
-        'clipModal:delete-failed',
-        e instanceof Error ? `Could not delete event: ${e.message}` : 'Could not delete event',
-        { eventId: event.id, ...errFields(e) },
-      )
-    } finally {
-      setDeleting(false)
+  useEffect(() => {
+    const pane = videoPaneRef.current
+    if (!pane) return
+    const opts = { capture: true, passive: false } as const
+    pane.addEventListener('touchstart', onPaneTouchStart, opts)
+    pane.addEventListener('touchmove', onPaneTouchMove, opts)
+    pane.addEventListener('touchend', onPaneTouchEnd, opts)
+    pane.addEventListener('touchcancel', onPaneTouchCancel, opts)
+    return () => {
+      pane.removeEventListener('touchstart', onPaneTouchStart, opts)
+      pane.removeEventListener('touchmove', onPaneTouchMove, opts)
+      pane.removeEventListener('touchend', onPaneTouchEnd, opts)
+      pane.removeEventListener('touchcancel', onPaneTouchCancel, opts)
     }
-  }
+  })
 
   useEffect(() => {
     const previouslyFocused =
@@ -748,33 +832,32 @@ export function ClipModal({
   }, [onClose])
 
   // iter-356.44 — bbox overlay during clip playback (canvas-on-video,
-  // never pixel burn-in so the worker keeps `-c copy`). Shares the
-  // `homecam:boxesVisible` localStorage key with VideoTile.
+  // never pixel burn-in so the worker keeps `-c copy`). Events keep their
+  // own per-modal toggle, but it is intentionally neutral so it does not read
+  // like a recording/stop control over saved playback.
   //
   // iter-356.53 — bbox FOLLOWS the object: fetch the per-event
   // bbox-track sidecar (`/api/events/{id}/tracks`), bind the canvas
   // to `<video>.timeupdate`, and on each tick draw the closest-in-
   // time sample's boxes. Legacy clips have no sidecar (404) → fall
   // back to today's static `event.boxes` overlay.
-  const [boxesVisible, setBoxesVisible] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true
-    const stored = window.localStorage.getItem('homecam:boxesVisible')
-    return stored === null ? true : stored === '1'
-  })
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem('homecam:boxesVisible', boxesVisible ? '1' : '0')
-  }, [boxesVisible])
+  const [boxesVisible, setBoxesVisible] = useState(true)
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   // Track sidecar — null when not yet fetched OR 404 (legacy clip).
   // The per-clipUrl fetch fires once on mount + clipUrl change.
-  const [tracks, setTracks] = useState<EventTracks | null>(null)
+  const [trackFetch, setTrackFetch] = useState<{
+    eventId: string | null
+    tracks: EventTracks | null
+    done: boolean
+  }>({ eventId: null, tracks: null, done: false })
   useEffect(() => {
     if (clipErrored) return
     let cancelled = false
     fetchEventTracks(event.id)
       .then((t) => {
-        if (!cancelled) setTracks(t)
+        if (!cancelled) {
+          setTrackFetch({ eventId: event.id, tracks: t, done: true })
+        }
       })
       .catch((e) => {
         // docs/logging_plan.md §2 (ClipModal): non-404 tracks fetch
@@ -788,12 +871,18 @@ export function ClipModal({
           eventId: event.id,
           ...errFields(e),
         })
-        if (!cancelled) setTracks(null)
+        if (!cancelled) {
+          setTrackFetch({ eventId: event.id, tracks: null, done: true })
+        }
       })
     return () => {
       cancelled = true
     }
   }, [event.id, clipErrored])
+  const tracks = trackFetch.eventId === event.id ? trackFetch.tracks : null
+  const tracksFetchDone = trackFetch.eventId === event.id && trackFetch.done
+  const hasTimedTracks = tracks !== null && tracks.samples.length > 1
+  const overlayKindLabel = tracksFetchDone ? (hasTimedTracks ? 'Tracked' : 'Static') : 'Checking'
   useEffect(() => {
     const canvas = overlayCanvasRef.current
     const video = videoRef.current
@@ -977,8 +1066,8 @@ export function ClipModal({
     // fullscreen). VideoPlayer forwards its <video> element to `videoRef`, so
     // the bbox-overlay effect (which binds to the element's timeupdate/seek/
     // rVFC events) keeps working unchanged.
-    const showPendingMessage = !videoReady && clipLikelyWriting
-    const showLoadingAffordance = !videoReady && !clipLikelyWriting
+    const showPendingMessage = !videoReady && clipRecentlyCreated
+    const showLoadingAffordance = !videoReady && !clipRecentlyCreated
     body = (
       <VideoPlayer
         key={clipUrl}
@@ -989,7 +1078,13 @@ export function ClipModal({
         onVideoEl={handleVideoEl}
         preload="metadata"
         autoPlay
+        nativeControls={!clipZoomed}
+        controlsList="nofullscreen"
         onError={() => setErroredClipUrl(clipUrl)}
+        showPlaybackSettings
+        showFullscreenButton
+        fullscreenActive={clipFullscreen}
+        onFullscreenToggle={toggleClipFullscreen}
         containerClassName="w-full h-full rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
         videoClassName="w-full h-full object-contain"
         overlay={
@@ -1002,21 +1097,21 @@ export function ClipModal({
               aria-hidden="true"
               className="absolute inset-0 pointer-events-none"
             />
-            {/* Bbox visibility toggle — TOP-right so it clears the bottom
-                control bar (was bottom-right under native controls). */}
             {event.boxes.length > 0 && (
               <button
                 type="button"
                 onClick={() => setBoxesVisible((v) => !v)}
-                aria-label={boxesVisible ? 'Hide detection boxes' : 'Show detection boxes'}
+                aria-label={`${boxesVisible ? 'Hide' : 'Show'} detection overlay (${overlayKindLabel.toLowerCase()})`}
                 aria-pressed={boxesVisible}
-                className={`pointer-events-auto absolute top-3 right-3 z-10 flex items-center justify-center w-11 h-11 backdrop-blur rounded-full text-white hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 ${
-                  boxesVisible ? 'bg-[var(--color-accent-deep)]' : 'bg-black/60'
+                className={`pointer-events-auto absolute right-3 top-3 z-10 inline-flex h-9 min-w-9 items-center justify-center gap-1.5 rounded-full px-2 text-[11px] font-semibold text-white shadow-[var(--shadow-overlay)] backdrop-blur transition-colors hover:bg-black/75 active:bg-black/85 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 landscape-phone:right-2 landscape-phone:top-2 landscape-phone:h-8 landscape-phone:min-w-8 ${
+                  boxesVisible
+                    ? 'bg-black/65 ring-1 ring-white/30'
+                    : 'bg-black/45 text-white/65 ring-1 ring-white/15'
                 }`}
               >
                 <svg
-                  width="16"
-                  height="16"
+                  width="15"
+                  height="15"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -1025,16 +1120,16 @@ export function ClipModal({
                   strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  {boxesVisible ? null : <path d="M4 4l16 16" />}
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                  {boxesVisible ? null : <path d="M5 5l14 14" />}
                 </svg>
+                <span className="hidden sm:inline">{overlayKindLabel}</span>
               </button>
             )}
-            {/* Bug fix: explicit pending/loading state so the frame
-                never reads as broken while a fresh clip's post-roll is
-                still being written (~90s typical) or a slow network is
-                still fetching metadata. Mutually exclusive with the
-                error branches below (those replace `body` entirely). */}
+            {/* Explicit pending/loading state so the frame never reads as
+                broken while the browser is waiting for a fresh clip frame or
+                a slow network is still fetching metadata. Mutually exclusive
+                with the error branches below (those replace `body` entirely). */}
             {showPendingMessage && (
               <div
                 role="status"
@@ -1042,8 +1137,7 @@ export function ClipModal({
                 className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 px-6 text-center"
               >
                 <p className="text-sm text-white/90 max-w-xs">
-                  Video not ready yet: it&apos;s still being saved.
-                  This usually takes under two minutes.
+                  Video is loading. It may take a moment after the clip becomes available.
                 </p>
               </div>
             )}
@@ -1066,26 +1160,27 @@ export function ClipModal({
     )
   } else if (event.thumb_url && !imgErrored) {
     body = (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4 text-center">
-        {/* Event-view jank fix (2026-07-08): the old copy ("Video not
-            ready yet... check back in a few seconds") rendered for
-            EVERY missing/errored clip regardless of age — including
-            events that will never get a video — and never re-checked.
-            Now the copy is honest per state: inside the still-writing
-            window the modal is actively polling and will swap the
-            player in on its own; past it, no false promise. */}
-        <p role="status" className="text-sm text-white/85 max-w-xs">
-          {!hasOwnClip
-            ? 'This event has no video of its own: it happened while a nearby event was already recording. Its footage is in that event, under "More from tonight".'
-            : clipStillWriting
-              ? 'Still recording: the video will appear here on its own once it finishes saving.'
-              : 'No video was saved for this event. Here’s the photo it captured.'}
+      <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4 text-center landscape-phone:gap-0 landscape-phone:p-0">
+        {/* Event-view jank fix (2026-07-08), tightened after live phone
+            verification (2026-07-09): a 404 from the clip route is not proof
+            that the recorder is still running. Keep polling fresh events, but
+            phrase the UI around the evidence we actually have. */}
+        <p role="status" className="text-sm text-white/85 max-w-xs landscape-phone:sr-only">
+          {activeClipStatus?.state === 'recording' ||
+          activeClipStatus?.state === 'finalizing' ||
+          activeClipStatus?.state === 'failed'
+            ? clipState.detail
+            : !hasOwnClip
+              ? 'No separate video was saved for this event. Check nearby events under "More from tonight" for overlapping footage.'
+              : clipInRecheckWindow
+                ? 'Video is not available yet. This app will keep checking for a short time and switch to playback if the clip appears.'
+                : 'No video is available for this event. The snapshot below is the captured evidence.'}
         </p>
         <img
           src={event.thumb_url}
           alt={`Snapshot of ${event.person_name ?? event.label} event`}
           onError={() => setErroredImgUrl(event.thumb_url ?? null)}
-          className="max-w-full max-h-[70%] rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)]"
+          className="max-w-full max-h-[70%] rounded-[var(--radius-2xl)] shadow-[var(--shadow-overlay)] border border-[var(--color-border)] landscape-phone:h-full landscape-phone:max-h-full landscape-phone:w-full landscape-phone:object-contain landscape-phone:rounded-xl"
         />
       </div>
     )
@@ -1103,13 +1198,14 @@ export function ClipModal({
           ?
         </div>
         <p className="text-white">Clip unavailable</p>
-        {/* iter-356.16 (Frank Round-5 D1): "worker" + "pruned" jargon
-            stripped. Frank: "My wife asked me what a worker was and
-            she thought I was asking about her shift schedule." */}
+        {/* Keep this cause-neutral: at this point neither the clip nor
+            thumbnail is available, but the client cannot prove why. */}
         <p className="text-sm text-white/70 max-w-xs mx-auto">
-          This video isn&apos;t available yet — it may still be saving,
-          or it&apos;s been removed automatically to save space. Try
-          again in a moment.
+          {activeClipStatus?.state === 'recording' ||
+          activeClipStatus?.state === 'finalizing' ||
+          activeClipStatus?.state === 'failed'
+            ? clipState.detail
+            : 'No video or snapshot is available for this event. It may appear after a refresh if the server has not finished publishing it yet.'}
         </p>
       </div>
     )
@@ -1195,7 +1291,7 @@ export function ClipModal({
       // two-pane reflow, mirroring Watch.tsx's landscape-phone grid and
       // this modal's own lg: split. A rotated phone (landscape, height
       // <520px — the `landscape-phone` custom variant in index.css) used
-      // to get the PORTRAIT stack: header → aspect-video strip → actions
+      // to get the PORTRAIT stack: header → aspect-video strip
       // → evidence aside all scrolled vertically in a <400px-tall
       // viewport, squeezing the video to a narrow width-driven band.
       // Now landscape-phone reuses the lg shape: video pane docks left
@@ -1203,7 +1299,7 @@ export function ClipModal({
       // scrolling right column. The mobile-collapse fixes (shrink-0
       // column + aspect-video frame, see comments below) stay intact
       // for portrait.
-      className="fixed inset-0 z-40 flex flex-col lg:flex-row landscape-phone:flex-row overflow-y-auto lg:overflow-hidden landscape-phone:overflow-hidden bg-black/95 backdrop-blur-sm pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] animate-modal-in"
+      className="fixed inset-0 z-40 flex flex-col lg:flex-row landscape-phone:flex-row tablet-landscape:flex-row overflow-y-auto lg:overflow-hidden landscape-phone:overflow-hidden tablet-landscape:overflow-hidden bg-black/95 backdrop-blur-sm pt-[max(2.25rem,env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)] animate-modal-in"
     >
       {/* iter-270 (accessibility-auditor A top-3): backdrop is a
           DIV with onClick + aria-hidden, NOT a button. Pre-iter-270
@@ -1225,7 +1321,7 @@ export function ClipModal({
           this becomes the left flex-1 column; the evidence pane is
           its sibling on the right. On mobile both stack vertically. */}
       {/* Bug fix: was unconditionally `flex-1 min-h-0`, which let this
-          WHOLE column (header + video + action row) shrink to zero
+          WHOLE column (header + video) shrink to zero
           height whenever the evidence pane below grew past the
           available space. On mobile it's now `shrink-0` — sized to
           its own content, never crushed — and the dialog scrolls if
@@ -1237,7 +1333,7 @@ export function ClipModal({
           sizing to content (the 58%-ish left pane of Watch.tsx's
           landscape grid, expressed here as flex-1 vs the aside's
           fixed 42%). */}
-      <div className="relative flex flex-col shrink-0 lg:flex-1 lg:min-h-0 landscape-phone:flex-1 landscape-phone:min-h-0 min-w-0">
+      <div className="relative flex flex-col shrink-0 lg:flex-1 lg:min-h-0 landscape-phone:flex-1 landscape-phone:min-h-0 tablet-landscape:flex-1 tablet-landscape:min-h-0 min-w-0">
       {/* iter-356.17 (Maya 11th CRITICAL #1): event-header bar.
           Title + camera + face-match badge + close-X. Lives ABOVE the
           video region so the user has context before the player even
@@ -1252,12 +1348,12 @@ export function ClipModal({
           pane — after the Sunroom token flip text-primary became ink
           (#292013) which vanished on black. Explicit dark-glass whites;
           per shared rule 2, over-video chrome keeps its dark glass. */}
-      <div className="relative flex items-start justify-between gap-3 px-4 pt-3 pb-2 border-b border-white/10 bg-black/30">
+      <div className="relative flex items-start justify-between gap-3 border-b border-white/10 bg-black/30 px-4 py-3 landscape-phone:px-3 landscape-phone:py-2 tablet-landscape:px-3 tablet-landscape:py-2">
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-white truncate">
+          <h2 className="text-base font-semibold text-white truncate landscape-phone:text-sm">
             {title}
           </h2>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-white/70">
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-white/70 landscape-phone:gap-1.5">
             <span title={absoluteTime(event.ts)} className="tabular-nums">{timeLabel}</span>
             {personLabel && (
               // Solid success fill — the light-theme 12% tint
@@ -1287,18 +1383,42 @@ export function ClipModal({
             )}
           </div>
         </div>
-        <button
-          ref={closeRef}
-          type="button"
-          onClick={onClose}
-          aria-label="Close clip viewer"
-          className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full text-white/70 hover:text-white hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {canManage ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void toggleProtection()}
+                disabled={eventAction !== null}
+                aria-label={event.protected ? 'Remove clip protection' : 'Protect clip from cleanup'}
+                aria-pressed={event.protected === true}
+                className="inline-flex min-h-11 items-center rounded-full px-3 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
+              >
+                {event.protected ? 'Protected' : 'Keep'}
+              </button>
+              {hasOwnClip ? (
+                <button
+                  type="button"
+                  onClick={() => void shareSecurely()}
+                  disabled={eventAction !== null}
+                  aria-label="Share clip securely for one hour"
+                  className="inline-flex min-h-11 items-center rounded-full px-3 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                >
+                  Share
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close clip viewer"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
+          >
+            <CloseIcon />
+          </button>
+        </div>
       </div>
       {/* iter-342 (mobile G1 from iter-333 broad audit):
           overflow-hidden hard-caps the video region in landscape
@@ -1322,10 +1442,6 @@ export function ClipModal({
       <div
         ref={videoPaneRef}
         data-testid="clip-swipe-pane"
-        onTouchStart={onPaneTouchStart}
-        onTouchMove={onPaneTouchMove}
-        onTouchEnd={onPaneTouchEnd}
-        onTouchCancel={onPaneTouchCancel}
         // Event-view jank fix (2026-07-08): NO w-full here. w-full +
         // mx-4 is width:100% PLUS margins — the pane ran 16px past the
         // right screen edge on phones, clipping the video, the bbox
@@ -1333,7 +1449,11 @@ export function ClipModal({
         // modal a horizontal scrollbar. The flex-column parent's
         // default stretch already sizes the pane to full width MINUS
         // the margins.
-        className="relative aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:min-h-0 flex items-center justify-center overflow-hidden touch-pan-y bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:mx-3 landscape-phone:mt-2 landscape-phone:mb-1"
+          className={
+            clipFullscreen
+              ? 'fixed inset-0 z-[1100] m-0 flex h-[100dvh] w-screen touch-none items-center justify-center overflow-hidden rounded-none bg-black'
+              : 'relative aspect-video lg:flex-1 lg:aspect-auto lg:min-h-0 landscape-phone:flex-1 landscape-phone:aspect-auto landscape-phone:self-stretch landscape-phone:h-auto landscape-phone:max-w-none landscape-phone:w-auto tablet-landscape:flex-1 tablet-landscape:aspect-auto tablet-landscape:self-stretch tablet-landscape:h-auto tablet-landscape:max-w-none tablet-landscape:w-auto flex items-center justify-center overflow-hidden touch-pan-y bg-black rounded-[var(--radius-2xl)] mx-4 mt-4 mb-2 lg:m-4 landscape-phone:m-2 landscape-phone:rounded-xl tablet-landscape:m-3 tablet-landscape:rounded-xl'
+          }
       >
         {/* Zoom layer: pinch scales/pans THIS wrapper (video + its
             overlays together) while the pane above keeps translateX
@@ -1345,83 +1465,12 @@ export function ClipModal({
         >
           {body}
         </div>
-      </div>
-      {/* Playback speed, repeat, scrub/play and fullscreen now live IN the
-          VideoPlayer control bar (the user's "same as youtube"), so the old
-          pill strip below the video is gone. */}
-      {/* iter-356.3b (Maya iter-356.2 Critical 3 deferred): action-bar
-          inversion fix.
-          iter-356.63 (Slice D a11y): the duplicate "Close" button at
-          the bottom (and the desktop-only X in the evidence pane)
-          were both dropped. The header X (top-right) is now the
-          single dismiss surface and receives focus on open via
-          closeRef. AT users no longer encounter "Close clip viewer,
-          Close clip viewer, Close" three times in a row. Save clip
-          uses Button primitive's loading state (Maya iter-356.2
-          Major: "this is exactly what the primitive was built for"). */}
-      {/* Fix wave F3 (accepted audit finding): the 4-pill row (Share +
-          Save clip + Name them + Delete) overflows a 360px viewport —
-          measured ~379px of pills vs ~328px of available width, no
-          wrap, and Share got pushed fully off-screen with no scroll
-          affordance. `flex-wrap` lets the row break to a second line
-          instead of overflowing; `justify-end` is kept so a wrapped
-          row still hugs the right edge like the single-row layout
-          did. gap-y bumped slightly above gap-x so two wrapped rows
-          don't feel cramped against each other. */}
-      <div className="relative px-4 pb-4 flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        {/* redesign/warm-boutique: this row sits on the modal's dark
-            pane — the ghost variant's umber text fails contrast on
-            black, so Share is an explicit over-video dark-glass
-            control (same treatment as the VideoPlayer buttons).
-            Save clip stays on the Button primitive for its loading
-            state; its paper secondary fill reads clearly on black. */}
-        <button
-          type="button"
-          onClick={onShare}
-          aria-label="Share or copy link to this event"
-          className="inline-flex items-center justify-center h-10 min-w-[44px] px-4 rounded-full text-sm font-medium text-white/90 hover:bg-white/15 hover:text-white focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 transition-colors"
-        >
-          Share
-        </button>
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={onDownload}
-          loading={downloading}
-          loadingText="Preparing…"
-          aria-label={
-            downloading
-              ? 'Preparing download…'
-              : 'Save clip as ZIP (clip + thumbnail + metadata)'
-          }
-        >
-          Save clip
-        </Button>
-        {/* Playroom Modern (Task 7): "Name them" — persons only, and only
-            when the camera couldn't put a name to the face (a named person
-            has nothing left to name). Reuses the existing uncertain-face
-            review flow instead of inventing a new one. */}
-        {identity.kind === 'person' && (
-          <Button variant="secondary" size="md" onClick={onNameThem}>
-            Name them
-          </Button>
-        )}
-        {/* Fix round (review finding): parity with Events.tsx, which hides
-            delete affordances entirely for non-owners (isOwner gating
-            around lines 704/1384) rather than just disabling the handler.
-            Delete must not render for non-owner sessions. */}
-        {canDelete && (
-          <Button
-            variant="destructive"
-            size="md"
-            loading={deleting}
-            loadingText="Deleting…"
-            onClick={onDelete}
-            aria-label={`Delete this ${personLabel ?? event.label} event`}
-          >
-            Delete
-          </Button>
-        )}
+        <ClipStateBadge
+          hasOwnClip={hasOwnClip}
+          clipStatus={activeClipStatus}
+          clipGone={clipGone}
+          clipInRecheckWindow={clipInRecheckWindow}
+        />
       </div>
       </div>
       {/* iter-356.58 (LAYOUT REBUILD) — EVIDENCE PANE.
@@ -1448,15 +1497,52 @@ export function ClipModal({
         // The video area above keeps its dark glass; the metadata
         // reads as a cream evidence card in both layouts.
         // UI/UX overhaul 2026-07-07 (coherence MOBILE #1): on
-        // landscape-phone the aside becomes the right column —
-        // proportional 42% (mirroring Watch.tsx's 58%/1fr landscape
-        // split; lg keeps its fixed w-80) with its own scroll, side
+        // landscape-phone the aside becomes the right column. Keep it
+        // narrower than the Watch page rail so the event video and
+        // controls have enough short-viewport breathing room; lg keeps
+        // its fixed w-80. It has its own scroll, side
         // border instead of top border.
-        className="relative shrink-0 w-full lg:w-80 landscape-phone:w-[42%] lg:border-l landscape-phone:border-l border-t lg:border-t-0 landscape-phone:border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] overflow-y-auto overscroll-contain"
+        // Scroll fix (2026-07-09): in the two-pane layouts the aside
+        // must be explicitly height-bounded, but the ASIDE is not the
+        // scroller. Only the "More from tonight" clip list below
+        // scrolls, so the WHEN/WHO context stays anchored.
+        className="relative shrink-0 w-full min-w-0 lg:w-96 landscape-phone:w-[38%] tablet-landscape:w-[36%] lg:h-full landscape-phone:h-full tablet-landscape:h-full lg:min-h-0 landscape-phone:min-h-0 tablet-landscape:min-h-0 lg:flex landscape-phone:flex tablet-landscape:flex lg:flex-col landscape-phone:flex-col tablet-landscape:flex-col lg:overflow-hidden landscape-phone:overflow-hidden tablet-landscape:overflow-hidden lg:border-l landscape-phone:border-l tablet-landscape:border-l border-t lg:border-t-0 landscape-phone:border-t-0 tablet-landscape:border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)]"
       >
+        {activeClipStatus?.state === 'failed' ? (
+          <details className="border-b border-[var(--color-border-subtle)] bg-[var(--color-danger-bg)] px-5 py-3 text-sm">
+            <summary className="min-h-11 cursor-pointer select-none content-center font-semibold text-[var(--color-danger)]">
+              Why is there no video?
+            </summary>
+            <div className="space-y-2 pb-2 text-[var(--color-text-secondary)]">
+              <p className="font-medium text-[var(--color-text-primary)]">
+                {activeClipStatus.failure_summary ?? 'No playable video was saved.'}
+              </p>
+              <p>
+                {activeClipStatus.failure_detail
+                  ?? 'The recorder reported a failure but did not save a more specific explanation.'}
+              </p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                {activeClipStatus.failure_stage ? (
+                  <><dt className="font-semibold">Stage</dt><dd>{activeClipStatus.failure_stage}</dd></>
+                ) : null}
+                {activeClipStatus.failure_code ? (
+                  <><dt className="font-semibold">Issue code</dt><dd className="font-mono">{activeClipStatus.failure_code}</dd></>
+                ) : null}
+                {activeClipStatus.updated_ts ? (
+                  <><dt className="font-semibold">Last update</dt><dd>{absoluteTime(activeClipStatus.updated_ts)}</dd></>
+                ) : null}
+              </dl>
+              <p className="text-xs">
+                {activeClipStatus.retryable
+                  ? 'The system can retry this processing step.'
+                  : 'Waiting longer will not make this video appear.'}
+              </p>
+            </div>
+          </details>
+        ) : null}
         {personLabel && (
           <div className="px-5 py-4 border-b border-[var(--color-border-subtle)] flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
                 Who
               </div>
@@ -1470,15 +1556,50 @@ export function ClipModal({
                   3-person event reads "Israel / & Sheenal & Coco"
                   (display weight + secondary line) without
                   overflowing the 320 px aside on desktop. */}
-              <div className="font-display text-xl font-bold mt-0.5 capitalize">
+              <div className="font-display text-xl font-bold mt-0.5 capitalize break-words">
                 {personLabel}
               </div>
               {matchedNames.length > 1 ? (
-                <div className="mt-1 text-sm text-[var(--color-text-secondary)] capitalize">
+                <div className="mt-1 text-sm text-[var(--color-text-secondary)] capitalize break-words">
                   with {matchedNames.slice(1).join(' & ')}
                 </div>
               ) : null}
+              {matchedNames[0] ? (
+                <Link
+                  to={`/people/${encodeURIComponent(matchedNames[0])}`}
+                  className="mt-2 inline-flex min-h-11 items-center text-xs font-semibold text-[var(--color-accent-deep)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)]"
+                >
+                  Person details
+                </Link>
+              ) : null}
             </div>
+            {canManage ? (
+              <div className="min-w-0 text-right">
+                {feedbackFor === event.id && feedbackMode === 'done' ? (
+                  <p role="status" className="text-xs font-semibold text-[var(--color-success)]">Feedback saved</p>
+                ) : feedbackFor === event.id && feedbackMode === 'correcting' ? (
+                  <div className="w-48 max-w-full space-y-2 text-left">
+                    <label className="block text-xs text-[var(--color-text-secondary)]">
+                      Correct person, or leave blank for unknown
+                      <input
+                        value={correctName}
+                        onChange={(feedbackEvent) => setCorrectName(feedbackEvent.target.value)}
+                        className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-base text-[var(--color-text-primary)]"
+                      />
+                    </label>
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <button type="button" className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)]" onClick={() => setFeedbackMode('idle')}>Cancel</button>
+                      <button type="button" disabled={feedbackBusy} className="min-h-11 rounded-full bg-[var(--color-ink)] px-3 text-xs font-semibold text-[var(--color-on-ink)] disabled:opacity-60" onClick={() => void sendIdentityFeedback('incorrect', correctName)}>Save correction</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div aria-label="Recognition feedback" className="flex flex-wrap justify-end gap-1">
+                    <button type="button" disabled={feedbackBusy} className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-success)] hover:bg-[var(--color-success-bg)] disabled:opacity-60" onClick={() => void sendIdentityFeedback('correct')}>Correct</button>
+                    <button type="button" className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]" onClick={() => { setFeedbackFor(event.id); setFeedbackMode('correcting') }}>Wrong person</button>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
         {/* Content dedupe pass (Frank phone-round finding): the header
@@ -1501,22 +1622,51 @@ export function ClipModal({
             {relativeTime(event.ts, nowMs)}
           </div>
         </div>
+        {canManage ? (
+          <div className="space-y-2 border-b border-[var(--color-border-subtle)] px-5 py-4">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
+              Incident
+            </div>
+            {incidentOptions === null ? (
+              <button type="button" disabled={incidentBusy} onClick={() => void openIncidentPicker()} className="min-h-11 rounded-full border border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-primary)] disabled:opacity-60">
+                {incidentBusy ? 'Loading…' : 'Add to incident'}
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <label className="block text-xs text-[var(--color-text-secondary)]">
+                  Destination
+                  <select value={incidentChoice} onChange={(incidentEvent) => setIncidentChoice(incidentEvent.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-base text-[var(--color-text-primary)]">
+                    {incidentOptions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+                    <option value="__new__">Create new incident…</option>
+                  </select>
+                </label>
+                {incidentChoice === '__new__' ? (
+                  <label className="block text-xs text-[var(--color-text-secondary)]">New incident title<input value={incidentTitle} onChange={(incidentEvent) => setIncidentTitle(incidentEvent.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-base text-[var(--color-text-primary)]" /></label>
+                ) : null}
+                <div className="flex flex-wrap gap-1">
+                  <button type="button" onClick={() => setIncidentOptions(null)} className="min-h-11 rounded-full px-3 text-xs font-semibold text-[var(--color-text-secondary)]">Cancel</button>
+                  <button type="button" disabled={incidentBusy || (incidentChoice === '__new__' && !incidentTitle.trim())} onClick={() => void addToIncident()} className="min-h-11 rounded-full bg-[var(--color-ink)] px-3 text-xs font-semibold text-[var(--color-on-ink)] disabled:opacity-60">Add event</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
         {/* Playroom Modern (Task 7): "More from tonight" — siblings within
             ±2h of the active event. Tapping a row swaps the WHOLE modal
             (video, evidence pane, and this rail itself) to that event
             via local `setEvent` — no parent involvement needed. */}
         {moreTonight && moreTonight.length > 0 && (
-          <div className="px-5 py-4 space-y-2">
+          <div className="px-5 py-4 space-y-2 lg:min-h-0 landscape-phone:min-h-0 lg:flex-1 landscape-phone:flex-1 lg:flex landscape-phone:flex lg:flex-col landscape-phone:flex-col">
             <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-brass-default)] font-semibold">
               More from tonight
             </div>
-            <ul className="space-y-1.5 list-none">
+            <ul className="max-h-[min(45vh,28rem)] lg:max-h-none landscape-phone:max-h-none lg:flex-1 landscape-phone:flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y pr-1 space-y-1.5 list-none">
               {moreTonight.map((e) => (
                 <li key={e.id}>
-                  <EventRow
+                  <MoreTonightRow
                     event={e}
                     subline={moreTonightSubline(e, event.camera_id, nowMs)}
-                    onOpen={() => setEvent(e)}
+                    onOpen={() => selectEvent(e)}
                   />
                 </li>
               ))}
@@ -1525,6 +1675,52 @@ export function ClipModal({
         )}
       </aside>
     </div>
+  )
+}
+
+function MoreTonightRow({
+  event,
+  subline,
+  onOpen,
+}: {
+  event: DetectionEvent
+  subline: string
+  onOpen: () => void
+}) {
+  const identity = identityOf(event)
+  const color = resolveIdColor(identity)
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="grid w-full grid-cols-[0.625rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-raised)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+    >
+      <span
+        aria-hidden="true"
+        className="h-2.5 w-2.5 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold text-[var(--color-text-primary)] landscape-phone:text-xs">
+          {eventTitle(event)}
+        </span>
+        <span className="block truncate text-xs text-[var(--color-text-secondary)] landscape-phone:text-[11px]">
+          {subline}
+        </span>
+      </span>
+      <span className="text-xs tabular-nums text-[var(--color-text-tertiary)] landscape-phone:text-[11px]">
+        {clockTime(event.ts)}
+      </span>
+    </button>
+  )
+}
+
+function CloseIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
   )
 }
 

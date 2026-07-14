@@ -221,6 +221,52 @@ export function notificationClickTarget(
   return `${base}${base.includes('?') ? '&' : '?'}event=${encodeURIComponent(eventId)}`
 }
 
+export function notificationActionTarget(
+  action: string,
+  data:
+    | {
+        url?: string
+        event_id?: string | null
+        deterrence_duration_s?: number
+      }
+    | null
+    | undefined,
+): string {
+  if (action === 'talk') {
+    const params = new URLSearchParams({ talk: '1' })
+    if (data?.event_id) params.set('event', data.event_id)
+    return `/?${params.toString()}`
+  }
+  if (action === 'light' || action === 'warning' || action === 'siren') {
+    const params = new URLSearchParams({
+      deterrence: action,
+      duration: String(data?.deterrence_duration_s ?? 15),
+    })
+    if (data?.event_id) params.set('event', data.event_id)
+    return `/?${params.toString()}`
+  }
+  return notificationClickTarget(data)
+}
+
+async function focusOrOpenWindow(target: string): Promise<WindowClient | null> {
+  const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  for (const client of all) {
+    if (!('focus' in client)) continue
+    const win = client as WindowClient
+    try {
+      const url = new URL(win.url)
+      const wanted = new URL(target, url.origin)
+      if (url.pathname + url.search !== wanted.pathname + wanted.search) {
+        await win.navigate(target)
+      }
+    } catch {
+      await win.navigate(target)
+    }
+    return win.focus()
+  }
+  return self.clients.openWindow(target)
+}
+
 self.addEventListener('notificationclick', (event) => {
   // iter-332: branch on event.action. Empty string = body tap (the
   // default "open the app" flow); 'view' = explicit View action
@@ -229,9 +275,9 @@ self.addEventListener('notificationclick', (event) => {
   // without focusing the PWA.
   const action = (event as unknown as { action?: string }).action ?? ''
   const data = event.notification.data as
-    | { url?: string; event_id?: string }
+    | { url?: string; event_id?: string; deterrence_duration_s?: number }
     | null
-  const target = notificationClickTarget(data)
+  const target = notificationActionTarget(action, data)
   const eventId = data?.event_id
 
   if (action === 'dismiss' && eventId && eventId !== 'event') {
@@ -257,40 +303,26 @@ self.addEventListener('notificationclick', (event) => {
     return
   }
 
+  if (action === 'protect' && eventId && eventId !== 'event') {
+    event.notification.close()
+    event.waitUntil(
+      fetch(`/api/events/${encodeURIComponent(eventId)}/protection`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protected: true }),
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error(`protect failed: ${response.status}`)
+        })
+        // A failed lock-screen mutation must not disappear silently: open the
+        // event so the user can retry from the authenticated foreground UI.
+        .catch(() => focusOrOpenWindow(notificationClickTarget(data))),
+    )
+    return
+  }
+
   // Default + 'view': close the notification and focus the PWA.
   event.notification.close()
-  event.waitUntil(
-    (async () => {
-      const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-      for (const c of all) {
-        if ('focus' in c) {
-          // iter-356.7 (widget C2): skip the navigate when the client
-          // is already at the target URL. Pre-iter-356.7 every
-          // notification tap caused a full page reload of /events
-          // even when the user was already viewing it — re-fired
-          // markAllEventsSeen, dropped scroll position, felt sluggish.
-          // The `c.url.endsWith(target)` check avoids false negatives
-          // from the WindowClient.url including the origin
-          // (`https://homecam.tail4a6525.ts.net/events`).
-          const win = c as WindowClient
-          try {
-            // notif-deeplink: target may now carry a query string
-            // (?event=<id>), so compare pathname + search, not just
-            // pathname — otherwise an /events window would skip the
-            // navigate and the deep-linked clip would never open.
-            const url = new URL(win.url)
-            const wanted = new URL(target, url.origin)
-            if (url.pathname + url.search !== wanted.pathname + wanted.search) {
-              await win.navigate(target)
-            }
-          } catch {
-            // If URL parsing fails, fall back to navigate.
-            await win.navigate(target)
-          }
-          return win.focus()
-        }
-      }
-      return self.clients.openWindow(target)
-    })(),
-  )
+  event.waitUntil(focusOrOpenWindow(target))
 })

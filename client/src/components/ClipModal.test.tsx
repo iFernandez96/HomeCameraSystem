@@ -2,46 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render as rtlRender, screen, waitFor, type RenderOptions } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
-import { ConfirmProvider } from '../lib/confirm'
 
-// Playroom Modern (Task 7): ClipModal's "Name them" action now calls
-// react-router's `useNavigate`, which throws outside a Router context.
-// This shadows the RTL `render` import with one that always wraps in a
-// MemoryRouter — every existing `render(<ClipModal .../>)` call (and the
-// `rerender` it returns, per RTL's `wrapper` option contract) picks this
-// up for free with no per-call changes needed.
-//
-// ConfirmProvider is ALSO wrapped unconditionally: without it,
-// `useConfirm()`'s context default resolves every call to `false`
-// (cancel), which would silently no-op the new Delete action in every
-// test. ConfirmProvider renders nothing until a confirm() call is
-// in flight, so pre-existing tests are unaffected.
 function Wrapper({ children }: { children: ReactNode }) {
-  return (
-    <MemoryRouter>
-      <ConfirmProvider>{children}</ConfirmProvider>
-    </MemoryRouter>
-  )
+  return <MemoryRouter>{children}</MemoryRouter>
 }
 function render(ui: ReactElement, options?: RenderOptions) {
   return rtlRender(ui, { wrapper: Wrapper, ...options })
 }
 
-// Mirrors People.test.tsx's pattern: mock just `useNavigate` (keep every
-// other react-router export real) so "Name them" can be pinned against a
-// plain spy instead of asserting on MemoryRouter's internal history.
-const navigateSpy = vi.fn()
-vi.mock('react-router-dom', async () => {
-  const actual =
-    await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
-  return { ...actual, useNavigate: () => navigateSpy }
-})
-
-// Fix round (review finding): ClipModal's Delete pill is now gated by
-// isOwner (parity with Events.tsx). Mirrors Events.test.tsx's auth mock
-// idiom — default to 'admin' (owner-equivalent via the transitional
-// carve-out) so pre-existing Delete-flow tests below keep passing
-// unchanged; the new owner/non-owner tests override `_authUser.role`.
 const _authUser: { username: string; role: 'owner' | 'admin' | 'viewer' } = {
   username: 'testuser',
   role: 'admin',
@@ -72,7 +40,6 @@ vi.mock('../lib/log', () => ({
 }))
 
 import { ClipModal } from './ClipModal'
-import { HttpError } from '../lib/api'
 import type { DetectionEvent } from '../lib/types'
 
 
@@ -120,7 +87,7 @@ describe('ClipModal', () => {
     expect(
       screen.getByAltText(/snapshot of person event/i),
     ).toHaveAttribute('src', '/snapshots/thumb_1.jpg')
-    expect(screen.getByText(/no video was saved/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/no video is available/i).length).toBeGreaterThan(0)
   })
 
   it('shows "Clip unavailable" when both video and snapshot error', () => {
@@ -130,6 +97,7 @@ describe('ClipModal', () => {
     const img = screen.getByAltText(/snapshot of person event/i)
     fireEvent.error(img)
     expect(screen.getByText(/clip unavailable/i)).toBeInTheDocument()
+    expect(screen.getByText(/no video or snapshot is available/i)).toBeInTheDocument()
   })
 
   it('shows "Clip unavailable" immediately when no thumb_url is present', () => {
@@ -142,6 +110,7 @@ describe('ClipModal', () => {
     const video = screen.getByLabelText(/clip of person event/i)
     fireEvent.error(video)
     expect(screen.getByText(/clip unavailable/i)).toBeInTheDocument()
+    expect(screen.getByText(/no video or snapshot is available/i)).toBeInTheDocument()
   })
 
   it('given the header X is clicked, when the modal is open, then onClose fires (iter-356.63: single close surface)', () => {
@@ -213,9 +182,9 @@ describe('ClipModal', () => {
       <ClipModal event={makeEvent()} onClose={() => {}} />,
     )
     fireEvent.error(screen.getByLabelText(/clip of person event/i))
-    // Snapshot fallback should be visible now (old event → honest
-    // "no video was saved" copy, jank fix 2026-07-08).
-    expect(screen.getByText(/no video was saved/i)).toBeInTheDocument()
+    // Snapshot fallback should be visible now (old event -> honest
+    // "no video is available" copy, jank fix 2026-07-08).
+    expect(screen.getAllByText(/no video is available/i).length).toBeGreaterThan(0)
     // New event → fallback clears, video re-renders.
     rerender(
       <ClipModal
@@ -223,130 +192,46 @@ describe('ClipModal', () => {
         onClose={() => {}}
       />,
     )
-    expect(screen.queryByText(/no video was saved/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/no video is available/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText(/clip of car event/i)).toBeInTheDocument()
   })
 
-  it('when the modal renders, then a Download button is present (iter-330: Event Export ZIP)', () => {
+  it('when the modal renders, then event action buttons are not shown in the viewer', () => {
+    render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
+
+    expect(screen.queryByRole('button', { name: /save event/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /share or copy link/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /name them/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /delete this cat event/i })).not.toBeInTheDocument()
+  })
+
+  it('given the clip viewer renders, then playback speed settings include 4x for events', async () => {
     // arrange / act
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
 
     // assert
-    expect(
-      screen.getByRole('button', { name: /save clip/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByLabelText(/clip of person event/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Playback settings' }))
+    expect(screen.getByLabelText('Playback speed')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '4×' })).toBeInTheDocument()
   })
 
-  it('given a clicked Download, when exportEvents resolves, then the browser is handed an object URL via an anchor click (iter-330)', async () => {
-    // arrange
-    const fakeBlob = new Blob(['fake-zip-bytes'], { type: 'application/zip' })
-    const exportSpy = vi
-      .spyOn(await import('../lib/api'), 'exportEvents')
-      .mockResolvedValue(fakeBlob)
-    // jsdom's URL.createObjectURL is undefined by default; stub it.
-    const createObjectURLSpy = vi.fn().mockReturnValue('blob:fake')
-    const revokeSpy = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', {
-      value: createObjectURLSpy,
-      configurable: true,
-    })
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      value: revokeSpy,
-      configurable: true,
-    })
-    // Spy on anchor click so we can pin "download was triggered."
-    const anchorClickSpy = vi.fn()
-    const realCreate = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      const el = realCreate(tag)
-      if (tag === 'a') {
-        ;(el as HTMLAnchorElement).click = anchorClickSpy
-      }
-      return el
-    })
-
-    // act
-    render(<ClipModal event={makeEvent({ id: 'evt-export' })} onClose={() => {}} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /save clip/i }))
-
-    // assert — exportEvents called with the single id; anchor click fired.
-    expect(exportSpy).toHaveBeenCalledWith(['evt-export'])
-    expect(createObjectURLSpy).toHaveBeenCalledWith(fakeBlob)
-    expect(anchorClickSpy).toHaveBeenCalled()
-
-    // cleanup
-    vi.restoreAllMocks()
-  })
-
-  // docs/logging_plan.md §2/§5 (ClipModal): export failure must log a
-  // structured ERROR carrying the discarded HTTP status (toast-only
-  // before) so a 413 over-cap / 503 semaphore is diagnosable.
-  it('given a clicked Download, when exportEvents rejects with a 413, then a structured ERROR is logged with the status (logging plan §2)', async () => {
-    // arrange
-    logError.mockReset()
-    vi.spyOn(await import('../lib/api'), 'exportEvents').mockRejectedValue(
-      new HttpError('/api/events/export', 413, 'too many'),
-    )
-
-    // act
-    render(<ClipModal event={makeEvent({ id: 'evt-413' })} onClose={() => {}} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /save clip/i }))
-
-    // assert — export-failed ERROR with the event id + the 413 status.
-    await vi.waitFor(() =>
-      expect(logError).toHaveBeenCalledWith(
-        'clipModal:export-failed',
-        expect.objectContaining({ eventId: 'evt-413', status: 413 }),
-      ),
-    )
-
-    // cleanup
-    vi.restoreAllMocks()
-  })
-
-  it('given the in-player speed menu, when a speed is picked, then the video element playbackRate updates (YouTube-style)', async () => {
-    // arrange — speed now lives in the VideoPlayer control bar's settings menu
-    // (detailed behavior covered in VideoPlayer.test.tsx); this pins the
-    // ClipModal integration.
+  it('given the event player fullscreen command is clicked, then the pinch-capable event pane expands', async () => {
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const video = screen.getByLabelText(/clip of person event/i) as HTMLVideoElement
-    expect(video.playbackRate).toBe(1)
     const userEvent = (await import('@testing-library/user-event')).default
     const user = userEvent.setup()
 
-    // act — native-controls era: speed is a <select> in the strip
-    // under the video (the custom menu died with the hand-rolled bar).
-    await user.selectOptions(screen.getByLabelText('Playback speed'), '2')
+    await user.click(screen.getByRole('button', { name: 'Enter fullscreen' }))
 
-    // assert — the effect applied it to the element.
-    expect(video.playbackRate).toBe(2)
-  })
-
-  it('given the user clicks the Loop button, when the click fires, then the video element receives loop=true (iter-331)', async () => {
-    // arrange
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const video = screen.getByLabelText(/clip of person event/i) as HTMLVideoElement
-    expect(video.loop).toBe(false)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    const loopBtn = screen.getByRole('button', { name: /repeat/i })
-    expect(loopBtn).toHaveAttribute('aria-pressed', 'false')
-
-    // act
-    await user.click(loopBtn)
-
-    // assert
-    expect(video.loop).toBe(true)
-    expect(loopBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('clip-swipe-pane')).toHaveClass('fixed')
+    expect(screen.getByRole('button', { name: 'Exit fullscreen' })).toBeInTheDocument()
   })
 
   // Speed menu, scrub, play/pause, repeat and fullscreen are tested in
-  // isolation in VideoPlayer.test.tsx. ClipModal keeps the integration tests
-  // (player present, speed menu → playbackRate) and its focus-trap tests below.
+  // isolation in VideoPlayer.test.tsx. ClipModal pins that the event viewer
+  // exposes the speed menu.
 
   it('given Tab from the LAST focusable, then focus wraps to the FIRST focusable inside the dialog (iter-336 → iter-356.58 split-pane)', () => {
     // arrange — iter-356.58 (LAYOUT REBUILD) added the right-pane
@@ -393,20 +278,20 @@ describe('ClipModal', () => {
     expect(document.activeElement).toBe(last)
   })
 
-  it('given Download focused (mid-DOM), when Tab fires on the dialog, then focus stays inside dialog (iter-336: trap)', () => {
-    // arrange — Download is mid-DOM. Tab from a non-last focusable
+  it('given a mid-DOM control is focused, when Tab fires on the dialog, then focus stays inside dialog (iter-336: trap)', () => {
+    // arrange — the in-player settings button is mid-DOM. Tab from a non-last focusable
     // should NOT trigger the wrap; my handler only intercepts at
     // the boundaries. Browser-native Tab handles middle case.
     render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const downloadBtn = screen.getByRole('button', { name: /save clip/i })
-    downloadBtn.focus()
+    const settingsBtn = screen.getByRole('button', { name: /playback settings/i })
+    settingsBtn.focus()
     // iter-356.17: dialog aria-label is now dynamic eventTitle.
     const dialog = screen.getByRole('dialog', { name: /at the front door/i })
 
     // act
     fireEvent.keyDown(dialog, { key: 'Tab' })
 
-    // assert — focus did NOT escape (it stayed on Download since
+    // assert — focus did NOT escape (it stayed on the focused control since
     // my handler doesn't preventDefault on the mid case, and
     // jsdom doesn't simulate native Tab focus shift either way).
     expect(dialog.contains(document.activeElement)).toBe(true)
@@ -425,34 +310,6 @@ describe('ClipModal', () => {
     expect(
       screen.queryByRole('button', { name: /repeat/i }),
     ).not.toBeInTheDocument()
-  })
-
-  it('given Download is in-flight, when the user clicks again, then a second exportEvents call is suppressed (iter-330: no double-trigger)', async () => {
-    // arrange — return a promise that never resolves so the
-    // in-flight state stays true.
-    const exportSpy = vi
-      .spyOn(await import('../lib/api'), 'exportEvents')
-      .mockReturnValue(new Promise(() => {}))
-    Object.defineProperty(URL, 'createObjectURL', {
-      value: vi.fn().mockReturnValue('blob:fake'),
-      configurable: true,
-    })
-
-    // act
-    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    const btn = screen.getByRole('button', { name: /save clip/i })
-    await user.click(btn)
-    // Second click while disabled — should be suppressed (button is
-    // disabled by the in-flight state, AND the onDownload guard
-    // is the second line of defense).
-    await user.click(btn)
-
-    // assert — exportEvents called exactly once.
-    expect(exportSpy).toHaveBeenCalledTimes(1)
-
-    vi.restoreAllMocks()
   })
 
   // iter-356.44 — bbox overlay on clip playback (Feature #1 follow-up).
@@ -475,8 +332,7 @@ describe('ClipModal', () => {
     const canvas = screen.getByTestId('clip-bbox-canvas')
     expect(canvas.tagName).toBe('CANVAS')
     expect(canvas.getAttribute('aria-hidden')).toBe('true')
-    // The toggle button only renders when the event has at least one bbox.
-    expect(screen.getByRole('button', { name: /hide detection boxes/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /hide .*detection overlay/i })).toBeInTheDocument()
   })
 
   it('Given an event with no bboxes, When ClipModal opens, Then the canvas mounts but the toggle button does not', () => {
@@ -491,25 +347,31 @@ describe('ClipModal', () => {
     // when there is nothing to overlay.
     expect(screen.getByTestId('clip-bbox-canvas')).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: /(show|hide) detection boxes/i }),
+      screen.queryByRole('button', { name: /(show|hide) detection overlay/i }),
     ).not.toBeInTheDocument()
   })
 
-  it('Given the boxes toggle was off in localStorage, When ClipModal opens, Then the toggle is unchecked and aria-pressed=false', () => {
-    // arrange — share the iter-246 VideoTile localStorage key so the
-    // live + clip toggles stay in lockstep.
-    window.localStorage.setItem('homecam:boxesVisible', '0')
+  it('Given the detection overlay toggle is clicked, When the user toggles it, Then aria-pressed flips without using the Live tile setting', async () => {
+    // arrange
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    window.localStorage.setItem('homecam:boxesVisible', '1')
     try {
       const eventWithBox = makeEvent({
-        boxes: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2, label: 'cat', score: 0.7 }],
+        boxes: [{ x: 0, y: 0, w: 0.5, h: 0.5, label: 'person', score: 0.8 }],
       })
+      render(<ClipModal event={eventWithBox} onClose={() => {}} />)
+      const toggle = screen.getByRole('button', { name: /hide .*detection overlay/i })
 
       // act
-      render(<ClipModal event={eventWithBox} onClose={() => {}} />)
+      await user.click(toggle)
 
       // assert
-      const toggle = screen.getByRole('button', { name: /show detection boxes/i })
-      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      expect(screen.getByRole('button', { name: /show .*detection overlay/i })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+      expect(window.localStorage.getItem('homecam:boxesVisible')).toBe('1')
     } finally {
       window.localStorage.removeItem('homecam:boxesVisible')
     }
@@ -558,32 +420,6 @@ describe('ClipModal', () => {
       expect(seen.has('timeupdate')).toBe(true)
     } finally {
       HTMLVideoElement.prototype.addEventListener = origAdd
-    }
-  })
-
-  it('Given the boxes toggle is clicked, When the user toggles, Then aria-pressed flips and the localStorage key persists', async () => {
-    // arrange
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-    window.localStorage.setItem('homecam:boxesVisible', '1')
-    try {
-      const eventWithBox = makeEvent({
-        boxes: [{ x: 0, y: 0, w: 0.5, h: 0.5, label: 'person', score: 0.8 }],
-      })
-      render(<ClipModal event={eventWithBox} onClose={() => {}} />)
-      const toggle = screen.getByRole('button', { name: /hide detection boxes/i })
-
-      // act
-      await user.click(toggle)
-
-      // assert — aria-label flips from "Hide" to "Show", aria-pressed
-      // false, and the iter-246 localStorage key now reads '0'.
-      expect(
-        screen.getByRole('button', { name: /show detection boxes/i }),
-      ).toBeInTheDocument()
-      expect(window.localStorage.getItem('homecam:boxesVisible')).toBe('0')
-    } finally {
-      window.localStorage.removeItem('homecam:boxesVisible')
     }
   })
 
@@ -672,6 +508,36 @@ describe('ClipModal', () => {
     expect(screen.queryByText(/face match/i)).not.toBeInTheDocument()
     expect(screen.getByText('87%')).toBeInTheDocument()
     expect(screen.getByText(/high confidence/i)).toBeInTheDocument()
+  })
+
+  it('applies the server-returned event immediately after identity feedback', async () => {
+    const api = await import('../lib/api')
+    const original = makeEvent({ person_name: 'Alice' })
+    const updated = { ...original, person_name: 'Bob', person_names: ['Bob'] }
+    const feedback = vi.spyOn(api, 'submitIdentityFeedback').mockResolvedValue({
+      ok: true,
+      event: updated,
+      captures_moved: 1,
+    })
+    const userEvent = (await import('@testing-library/user-event')).default
+    const user = userEvent.setup()
+    render(<ClipModal event={original} onClose={() => {}} />)
+
+    await user.click(screen.getByRole('button', { name: 'Wrong person' }))
+    await user.type(
+      screen.getByLabelText(/correct person, or leave blank for unknown/i),
+      'Bob',
+    )
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+
+    expect(
+      await screen.findByLabelText(/clip of bob event/i),
+    ).toBeInTheDocument()
+    expect(feedback).toHaveBeenCalledWith('evt-1', {
+      verdict: 'incorrect',
+      correct_name: 'Bob',
+    })
+    feedback.mockRestore()
   })
 
   it('given an event, when the modal renders, then the evidence pane shows exactly ONE compact When line (absolute time + relative age), not repeated When/Where/What blocks', () => {
@@ -785,6 +651,44 @@ describe('ClipModal', () => {
     expect(screen.queryByText(/^with /i)).not.toBeInTheDocument()
   })
 
+  it('Given household incidents, When the destination picker opens, Then it offers only the signed-in owners incidents plus create', async () => {
+    // arrange
+    vi.spyOn(await import('../lib/api'), 'listIncidents').mockResolvedValue({
+      items: [
+        {
+          id: 'mine',
+          owner_username: 'TestUser',
+          title: 'My incident',
+          notes: '',
+          created_ts: 1,
+          updated_ts: 1,
+          event_count: 0,
+        },
+        {
+          id: 'theirs',
+          owner_username: 'israel',
+          title: 'Israel incident',
+          notes: '',
+          created_ts: 1,
+          updated_ts: 1,
+          event_count: 0,
+        },
+      ],
+    })
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+
+    // act
+    fireEvent.click(screen.getByRole('button', { name: 'Add to incident' }))
+
+    // assert
+    expect(await screen.findByRole('option', { name: 'My incident' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Israel incident' })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Create new incident…' })).toBeInTheDocument()
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
   it('Given a multi-person event, When the dialog aria-label is queried, Then the title fans out to multiple names so the SR announcement is "Israel & Sheenal at the front door, ..."', () => {
     // arrange / act
     const ev = makeEvent({
@@ -801,174 +705,6 @@ describe('ClipModal', () => {
     expect(dialog.getAttribute('aria-label')).toMatch(
       /israel & sheenal at the front door/i,
     )
-  })
-
-  // ─── Playroom Modern (Task 7): pill action row — Name them + Delete ──
-
-  it('Given an unrecognized person (no name), When the modal renders, Then a "Name them" action is present', () => {
-    // arrange / act
-    const ev = makeEvent({ label: 'person', person_name: null })
-    render(<ClipModal event={ev} onClose={() => {}} />)
-
-    // assert
-    expect(screen.getByRole('button', { name: /name them/i })).toBeInTheDocument()
-  })
-
-  it('Given a recognized (named) person, When the modal renders, Then "Name them" is absent (nothing left to name)', () => {
-    // arrange / act
-    const ev = makeEvent({ label: 'person', person_name: 'alice' })
-    render(<ClipModal event={ev} onClose={() => {}} />)
-
-    // assert
-    expect(screen.queryByRole('button', { name: /name them/i })).not.toBeInTheDocument()
-  })
-
-  it('Given a cat event, When the modal renders, Then "Name them" is absent (cats aren\'t named via this flow)', () => {
-    // arrange / act
-    const ev = makeEvent({ label: 'cat', person_name: null })
-    render(<ClipModal event={ev} onClose={() => {}} />)
-
-    // assert
-    expect(screen.queryByRole('button', { name: /name them/i })).not.toBeInTheDocument()
-  })
-
-  it('Given "Name them" is clicked, When an unrecognized person is showing, Then it navigates to the existing uncertain-face review flow with the event id as a query param', async () => {
-    // arrange
-    navigateSpy.mockClear()
-    const ev = makeEvent({ id: 'evt-1', label: 'person', person_name: null })
-    render(<ClipModal event={ev} onClose={() => {}} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.click(screen.getByRole('button', { name: /name them/i }))
-
-    // assert — still reuses /training/review (Review.tsx), NOT a new
-    // route; the event id is appended so a future queue implementation
-    // CAN pre-filter to this event's face capture.
-    expect(navigateSpy).toHaveBeenCalledWith('/training/review?event=evt-1')
-  })
-
-  it('Given the Delete pill is clicked and the confirm dialog is accepted, When the delete resolves, Then the event is deleted and the modal closes', async () => {
-    // arrange
-    const deleteSpy = vi
-      .spyOn(await import('../lib/api'), 'deleteEvent')
-      .mockResolvedValue({ deleted: true })
-    const onClose = vi.fn()
-    const ev = makeEvent({ id: 'evt-del', label: 'cat' })
-    render(<ClipModal event={ev} onClose={onClose} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
-    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
-
-    // assert
-    await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('evt-del'))
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
-
-    // cleanup
-    vi.restoreAllMocks()
-  })
-
-  it('Given onDeleted is passed, When the Delete pill resolves, Then onDeleted fires with the event id BEFORE onClose (final review fix batch #1)', async () => {
-    // arrange
-    vi.spyOn(await import('../lib/api'), 'deleteEvent').mockResolvedValue({ deleted: true })
-    const onClose = vi.fn()
-    const onDeleted = vi.fn()
-    const ev = makeEvent({ id: 'evt-notify', label: 'cat' })
-    render(<ClipModal event={ev} onClose={onClose} onDeleted={onDeleted} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
-    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
-
-    // assert — the parent's prune callback fires with the deleted id,
-    // and does so no later than onClose (both happen in the same
-    // resolved-delete branch).
-    await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledWith('evt-notify'))
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
-
-    // cleanup
-    vi.restoreAllMocks()
-  })
-
-  it('Given onDeleted is OMITTED, When the Delete pill resolves, Then the delete still succeeds and onClose still fires (optional prop, no crash)', async () => {
-    // arrange
-    vi.spyOn(await import('../lib/api'), 'deleteEvent').mockResolvedValue({ deleted: true })
-    const onClose = vi.fn()
-    const ev = makeEvent({ id: 'evt-no-callback', label: 'cat' })
-    render(<ClipModal event={ev} onClose={onClose} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
-    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
-
-    // assert
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
-
-    // cleanup
-    vi.restoreAllMocks()
-  })
-
-  it('Given the Delete pill is clicked and the confirm dialog is CANCELLED, When the user backs out, Then no delete request is made', async () => {
-    // arrange
-    const deleteSpy = vi.spyOn(await import('../lib/api'), 'deleteEvent')
-    const onClose = vi.fn()
-    const ev = makeEvent({ id: 'evt-keep', label: 'cat' })
-    render(<ClipModal event={ev} onClose={onClose} />)
-    const userEvent = (await import('@testing-library/user-event')).default
-    const user = userEvent.setup()
-
-    // act
-    await user.click(screen.getByRole('button', { name: /delete this cat event/i }))
-    await user.click(await screen.findByRole('button', { name: /^cancel$/i }))
-
-    // assert
-    expect(deleteSpy).not.toHaveBeenCalled()
-    expect(onClose).not.toHaveBeenCalled()
-
-    // cleanup
-    vi.restoreAllMocks()
-  })
-
-  // ─── Fix round (review finding): Delete pill owner gating ────────────
-
-  it('Given a non-owner session, When the clip modal renders, Then no Delete button is shown', () => {
-    // arrange
-    _authUser.role = 'viewer'
-
-    // act
-    render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
-
-    // assert
-    expect(
-      screen.queryByRole('button', { name: /delete this cat event/i }),
-    ).not.toBeInTheDocument()
-
-    // cleanup
-    _authUser.role = 'admin'
-  })
-
-  it('Given an owner session, When the clip modal renders, Then the Delete button is shown', () => {
-    // arrange
-    _authUser.role = 'owner'
-
-    // act
-    render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
-
-    // assert
-    expect(
-      screen.getByRole('button', { name: /delete this cat event/i }),
-    ).toBeInTheDocument()
-
-    // cleanup
-    _authUser.role = 'admin'
   })
 
   // ─── Playroom Modern (Task 7): "More from tonight" rail ──────────────
@@ -994,6 +730,38 @@ describe('ClipModal', () => {
     // The active event itself is excluded from its own "more" rail.
     const rail = screen.getByText(/more from tonight/i).closest('div') as HTMLElement
     expect(rail.textContent).not.toMatch(/evt-active/)
+
+    // cleanup
+    vi.restoreAllMocks()
+  })
+
+  it('Given more than five sibling events, When "More from tonight" renders, Then the section list is scrollable and all fetched siblings render', async () => {
+    // arrange
+    const active = makeEvent({ id: 'evt-active', ts: 1700000000 })
+    const siblings = Array.from({ length: 8 }, (_, i) =>
+      makeEvent({
+        id: `evt-sibling-${i}`,
+        ts: 1700000100 + i,
+        label: 'person',
+        person_name: `person ${i}`,
+      }),
+    )
+    vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+      items: [active, ...siblings],
+      next_cursor: null,
+    })
+
+    // act
+    render(<ClipModal event={active} onClose={() => {}} />)
+    const heading = await screen.findByText(/more from tonight/i)
+    const section = heading.parentElement as HTMLElement
+    const list = section.querySelector('ul') as HTMLElement
+
+    // assert — this used to render only five rows via slice(0, 5).
+    expect(section.querySelectorAll('button')).toHaveLength(8)
+    expect(list.className).toMatch(/overflow-y-auto/)
+    expect(list.className).toMatch(/touch-pan-y/)
+    expect(list.className).toMatch(/max-h-\[min\(45vh,28rem\)\]/)
 
     // cleanup
     vi.restoreAllMocks()
@@ -1050,14 +818,14 @@ describe('ClipModal', () => {
   })
 
   // ─── Real-device bug fix (Firefox Android): the clip pane rendered
-  // completely blank — no player, no error, no thumb, no action row —
+  // completely blank — no player, no error, no thumb —
   // on both fresh AND minutes-old events. Root cause: an unstarted
   // <video> has no intrinsic size, so the media pane (and the flex
   // column it lived in) collapsed toward zero height before metadata
   // loaded, and `onError` never fires for a merely-pending clip. These
   // tests pin the fix: a fixed-aspect frame that's never zero-height,
   // a poster for an instant first frame, explicit pending/loading
-  // states, and an action row that renders regardless of media state.
+  // states.
 
   it('Given the clip has not finished loading, When the modal renders, Then the media frame carries a fixed aspect ratio so it can never render at zero height', () => {
     // arrange / act
@@ -1086,15 +854,15 @@ describe('ClipModal', () => {
     )
   })
 
-  it('Given a FRESH event (clip likely still writing), When the video has not loaded, Then a "not ready yet, still saving" message shows inside the frame', () => {
-    // arrange — post-roll typically finishes within ~90s.
+  it('Given a FRESH event, When the video has not loaded, Then an evidence-based loading message shows inside the frame', () => {
+    // arrange — a fresh route can exist before the browser has a decoded frame.
     const ev = makeEvent({ ts: Math.floor(Date.now() / 1000) - 10 })
 
     // act
     render(<ClipModal event={ev} onClose={() => {}} />)
 
     // assert
-    expect(screen.getByText(/still being saved/i)).toBeInTheDocument()
+    expect(screen.getByText(/video is loading/i)).toBeInTheDocument()
   })
 
   it('Given an OLDER event, When the video has not loaded, Then a subtle loading affordance shows instead of the fresh-clip message', () => {
@@ -1106,7 +874,7 @@ describe('ClipModal', () => {
 
     // assert
     expect(screen.getByText(/loading video/i)).toBeInTheDocument()
-    expect(screen.queryByText(/still being saved/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/video is loading/i)).not.toBeInTheDocument()
   })
 
   it('Given the video fires loadeddata, When it becomes ready, Then the pending/loading overlay disappears', () => {
@@ -1122,14 +890,27 @@ describe('ClipModal', () => {
     expect(screen.queryByText(/loading video/i)).not.toBeInTheDocument()
   })
 
-  it('Given the clip has not finished loading, When the modal renders, Then Share/Save clip/Delete still render (the action row is independent of media load state)', () => {
+  it('Given the video starts playing before loadeddata is observed, When play fires, Then the loading overlay disappears', () => {
+    // arrange
+    render(<ClipModal event={makeEvent()} onClose={() => {}} />)
+    const video = screen.getByLabelText(/clip of person event/i)
+    expect(screen.getByText(/loading video/i)).toBeInTheDocument()
+
+    // act
+    fireEvent.play(video)
+
+    // assert
+    expect(screen.queryByText(/loading video/i)).not.toBeInTheDocument()
+  })
+
+  it('Given the clip has not finished loading, When the modal renders, Then event actions are still absent from the viewer', () => {
     // arrange / act
     render(<ClipModal event={makeEvent({ label: 'cat' })} onClose={() => {}} />)
 
-    // assert — none of these depend on the video having loaded.
-    expect(screen.getByRole('button', { name: /share or copy link/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /save clip/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /delete this cat event/i })).toBeInTheDocument()
+    // assert
+    expect(screen.queryByRole('button', { name: /share or copy link/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /save event/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /delete this cat event/i })).not.toBeInTheDocument()
   })
 
   // ─── "More from tonight" subline dedupe (Frank phone-round finding) ──
@@ -1194,9 +975,9 @@ describe('ClipModal', () => {
   // UI/UX overhaul 2026-07-07 (coherence MOBILE #1): a rotated phone
   // (landscape, height <520px) used to get the PORTRAIT stack — video
   // squeezed to a narrow width-driven strip, evidence aside scrolled
-  // below. The modal now mirrors its own lg: split at the
-  // landscape-phone custom variant: video pane left at full pane
-  // height, evidence aside as the independently scrolling right column.
+  // below. The modal now uses a landscape-phone split, but keeps the
+  // video pane uses the available height while the title moves
+  // into compact overlays instead of stealing scarce vertical space.
   it('Given the modal renders, Then the dialog, video pane and evidence aside carry the landscape-phone two-pane classes (coherence MOBILE #1)', () => {
     // arrange
     const ev = makeEvent({ label: 'person', score: 0.5 })
@@ -1208,17 +989,28 @@ describe('ClipModal', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog.className).toMatch(/landscape-phone:flex-row/)
     expect(dialog.className).toMatch(/landscape-phone:overflow-hidden/)
-    // ...the video column fills the remaining width instead of
-    // sizing to content...
+    // ...the video column fills the remaining width, while the video
+    // pane itself fills the available short viewport height...
     expect(
       dialog.querySelector('[class*="landscape-phone:flex-1"]'),
     ).not.toBeNull()
+    const pane = screen.getByTestId('clip-swipe-pane')
+    expect(pane.className).toMatch(/landscape-phone:flex-1/)
+    expect(pane.className).toMatch(/landscape-phone:aspect-auto/)
+    expect(pane.className).toMatch(/landscape-phone:self-stretch/)
+    expect(pane.className).toMatch(/landscape-phone:h-auto/)
+    expect(pane.className).toMatch(/landscape-phone:max-w-none/)
+    expect(pane.className).toMatch(/landscape-phone:m-2/)
+    expect(pane.className).toMatch(/landscape-phone:rounded-xl/)
     // ...and the aside becomes the proportional right column with a
     // side border instead of a top border.
     const aside = screen.getByRole('complementary', {
       name: /incident details/i,
     })
-    expect(aside.className).toMatch(/landscape-phone:w-\[42%\]/)
+    expect(aside.className).toMatch(/landscape-phone:w-\[38%\]/)
+    expect(aside.className).toMatch(/landscape-phone:h-full/)
+    expect(aside.className).toMatch(/landscape-phone:min-h-0/)
+    expect(aside.className).toMatch(/landscape-phone:overflow-hidden/)
     expect(aside.className).toMatch(/landscape-phone:border-l/)
     expect(aside.className).toMatch(/landscape-phone:border-t-0/)
   })
@@ -1281,10 +1073,12 @@ describe('ClipModal', () => {
       fireEvent.touchEnd(pane)
 
       // assert
-      expect(screen.getByLabelText(/clip of cat event/i)).toHaveAttribute(
-        'src',
-        '/api/events/evt-newer/clip',
-      )
+      await waitFor(() => {
+        expect(screen.getByLabelText(/clip of cat event/i)).toHaveAttribute(
+          'src',
+          '/api/events/evt-newer/clip',
+        )
+      })
 
       // cleanup
       vi.restoreAllMocks()
@@ -1378,8 +1172,8 @@ describe('ClipModal', () => {
       vi.restoreAllMocks()
     })
 
-    it('Given a touch that starts on a CONTROL (the bbox toggle button), When it moves horizontally past the threshold, Then no swipe happens — controls stay controls', async () => {
-      // arrange — boxes present so the toggle button renders.
+    it('Given a touch that starts on a CONTROL, When it moves horizontally past the threshold, Then no swipe happens — controls stay controls', async () => {
+      // arrange
       const active = makeEvent({
         id: 'evt-active',
         ts: 1700000000,
@@ -1394,11 +1188,11 @@ describe('ClipModal', () => {
       render(<ClipModal event={active} onClose={() => {}} />)
       await screen.findByText(/more from tonight/i)
       const pane = screen.getByTestId('clip-swipe-pane')
-      const toggle = screen.getByRole('button', { name: /hide detection boxes/i })
+      const control = screen.getByRole('button', { name: /playback settings/i })
 
       // act — the gesture BEGINS on the button; moves bubble through
       // the pane but the gesture was never armed.
-      fireEvent.touchStart(toggle, { touches: [{ clientX: 200, clientY: 150 }] })
+      fireEvent.touchStart(control, { touches: [{ clientX: 200, clientY: 150 }] })
       fireEvent.touchMove(pane, { touches: [{ clientX: 80, clientY: 150 }] })
       fireEvent.touchEnd(pane)
 
@@ -1499,16 +1293,19 @@ describe('ClipModal', () => {
       fireEvent.touchEnd(pane)
     }
 
-    it('Given a playing clip, When two fingers pinch outward, Then the zoom layer scales up (clamped by the pure pinchZoom math)', async () => {
+    it('Given a playing clip is embedded, When two fingers pinch outward, Then the zoom layer scales up and native media chrome is disabled', async () => {
       // arrange
       const { pane, layer } = await renderZoomable()
 
-      // act — finger distance grows 40px → 160px.
+      // act
       pinchOut(pane)
 
       // assert — scale(4) at the midpoint; jsdom's zero-size pane
       // clamps translation to 0.
       expect(layer.style.transform).toContain('scale(4)')
+      await waitFor(() =>
+        expect(screen.getByLabelText(/clip of person event/i)).not.toHaveAttribute('controls'),
+      )
 
       // cleanup
       vi.restoreAllMocks()

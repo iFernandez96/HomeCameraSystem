@@ -1,0 +1,38 @@
+groups:
+  - name: homecam-health
+    rules:
+      - alert: HomecamDetectionWorkerDown
+        expr: homecam_worker_alive == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Detection worker is offline
+          description: No worker heartbeat has reached the server for at least two minutes.
+      - alert: HomecamVideoStale
+        expr: homecam_worker_seconds_since_last_frame > 30
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Camera frames have stopped
+          description: The worker is alive but has not captured a frame for over 30 seconds.
+      - alert: HomecamJetsonHot
+        expr: (homecam_cpu_temp_celsius > 80) or (homecam_gpu_temp_celsius > 80)
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Jetson is running hot
+          description: CPU or GPU temperature has remained above 80 C for five minutes.
+      - alert: HomecamDiskLow
+        expr: homecam_disk_free_gb < 5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Recording disk space is low
+          description: Less than 5 GB remains on the server filesystem.
+      - alert: HomecamCameraRecoveryLoop
+        expr: increase(homecam_worker_mediamtx_restarts_total[15m]) > 2 or increase(homecam_worker_argus_restarts_total[15m]) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: Camera pipeline is repeatedly recovering
+          description: MediaMTX restarted repeatedly or the heavier Argus recovery was required.

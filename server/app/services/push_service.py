@@ -479,6 +479,16 @@ class PushService:
         if not subs:
             return 0
         body = json.dumps(payload)
+        importance = str(payload.get("importance") or "normal")
+        urgency = {
+            "critical": "high",
+            "high": "high",
+            "urgent": "high",
+            "notable": "normal",
+            "normal": "normal",
+            "routine": "low",
+            "low": "low",
+        }.get(importance, "normal")
         # iter-244e: prefer the pre-built Vapid object when available
         # (production path, set by load_keys). Fall back to the raw
         # PEM string for tests that monkeypatch `private_pem` without
@@ -505,7 +515,7 @@ class PushService:
                     vapid_private_key=vapid_key,
                     vapid_claims={"sub": settings.vapid_subject},
                     ttl=_PUSH_TTL_S,
-                    headers={"Urgency": "normal"},
+                    headers={"Urgency": urgency},
                 )
                 return True, None, None
             except WebPushException as e:
