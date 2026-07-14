@@ -125,16 +125,21 @@ beforeEach(() => {
 })
 
 describe('Playback time and range safety', () => {
-  it('splits a 25-hour fall-back DST day into server-safe timeline windows', () => {
-    const bounds = localDayBounds('2026-11-01')
-    expect(bounds.until - bounds.since).toBe(25 * 60 * 60)
+  it('Given a 25-hour fall-back range, when splitting it, then it creates server-safe windows', () => {
+    // arrange
+    // Use an explicit 25-hour range so this stays meaningful on runners whose
+    // configured local timezone does not observe daylight saving time.
+    const since = Date.UTC(2026, 10, 1) / 1000
+    const until = since + 25 * 60 * 60
 
+    // act
     const windows = splitTimelineBounds({
       camera_id: 'front_door',
-      since_ts: bounds.since,
-      until_ts: bounds.until,
+      since_ts: since,
+      until_ts: until,
     })
 
+    // assert
     expect(windows).toHaveLength(2)
     expect(windows[0].until_ts - windows[0].since_ts).toBe(24 * 60 * 60)
     expect(windows[1].until_ts - windows[1].since_ts).toBe(60 * 60)

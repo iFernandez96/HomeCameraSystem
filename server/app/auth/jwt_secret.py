@@ -70,11 +70,9 @@ def load_or_generate(path: Path) -> bytes:
         if len(data) == _SECRET_LEN:
             return data
         log.warning(
-            "JWT secret has wrong size (%d bytes; expected %d) — "
-            "regenerating; ALL active sessions invalidated (every issued "
-            "token now fails signature verification, forcing a re-login)",
-            len(data),
-            _SECRET_LEN,
+            "JWT secret has wrong size — regenerating; ALL active "
+            "sessions invalidated (every issued token now fails signature "
+            "verification, forcing a re-login)",
         )
     return _generate_and_write(path)
 
