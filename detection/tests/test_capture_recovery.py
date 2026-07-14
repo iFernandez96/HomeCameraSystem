@@ -34,6 +34,7 @@ Run from `detection/`:
 The test mocks `jetson_inference` + `jetson_utils` in sys.modules so
 detect.py imports cleanly on the dev host (which has neither).
 """
+import os
 import sys
 import threading
 from pathlib import Path
@@ -555,6 +556,38 @@ def test_focus_start_does_not_mutate_pipeline_when_preflight_blocks(
     assert result["blocked"] is True
     assert marker.exists() is False
     restart.assert_not_called()
+
+
+def test_focus_start_requires_systemd_to_confirm_guard_exec(tmp_path, monkeypatch):
+    marker = tmp_path / "focus-mode"
+    monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
+    monkeypatch.setattr(
+        detect,
+        "precision_preflight",
+        lambda: {"safe": True, "reasons": []},
+    )
+    monkeypatch.setattr(detect.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(detect, "_restart_camera_pipeline_for_focus", lambda _size: True)
+    monkeypatch.setattr(detect, "_both_camera_streams_ready", lambda: True)
+    scheduled = MagicMock(return_value=MagicMock(returncode=0, stdout=b"", stderr=b""))
+    monkeypatch.setattr(detect.subprocess, "run", scheduled)
+
+    result = detect.start_focus_mode()
+
+    assert result["expires_at"] == 1000 + detect._FOCUS_MODE_SECONDS
+    assert scheduled.call_count == 2
+    restore_command = scheduled.call_args_list[0].args[0]
+    guard_command = scheduled.call_args_list[1].args[0]
+    assert "--property=Type=exec" in restore_command
+    assert "--property=Type=exec" in guard_command
+    assert detect._FOCUS_GUARD_SCRIPT in guard_command
+
+
+def test_focus_guard_script_is_executable_in_deployment_checkout():
+    root = Path(__file__).resolve().parents[2]
+    script = root / "deploy" / "guard-focus-mode.sh"
+
+    assert os.access(script, os.X_OK)
 
 
 def test_privacy_pipeline_file_is_atomic_and_restart_only_on_change(tmp_path):

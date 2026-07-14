@@ -76,7 +76,7 @@ async def metrics_prom() -> str:
     from ..services.health import worker_health
     from ..services.push_service import push_service
     from ..services.recording_assurance import status as recording_assurance_status
-    from ..services.recording_jobs import summary as recording_jobs_summary
+    from ..services.recording_jobs import metrics_summary as recording_jobs_summary
     from ..services.operations import storage_guardian
 
     used_mb, total_mb = _meminfo()

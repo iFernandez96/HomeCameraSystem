@@ -1968,6 +1968,7 @@ def start_focus_mode():
         scheduled = subprocess.run(
             [
                 "sudo", "-n", "systemd-run", "--unit", unit,
+                "--property=Type=exec",
                 "--on-active={}s".format(_FOCUS_MODE_SECONDS),
                 _FOCUS_RESTORE_SCRIPT, str(expires),
             ],
@@ -1983,6 +1984,7 @@ def start_focus_mode():
         guarded = subprocess.run(
             [
                 "sudo", "-n", "systemd-run", "--unit", guard_unit,
+                "--property=Type=exec",
                 _FOCUS_GUARD_SCRIPT, str(expires),
             ],
             stdout=subprocess.PIPE,

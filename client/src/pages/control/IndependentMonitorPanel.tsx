@@ -20,7 +20,7 @@ export function IndependentMonitorPanel() {
   }, [])
 
   return (
-    <Section title="Independent phone observer" subtitle="The Android wrapper checks both Tailscale and the local network even when the Jetson cannot send a push.">
+    <Section title="Independent phone observer" subtitle="The Android wrapper checks the encrypted Tailscale origin even when the Jetson cannot send a push.">
       {status ? (
         <div className="space-y-2 p-4 text-sm">
           <p className="font-semibold">{status.last_reachable ? 'Last check reached HomeCam' : status.last_check_ms ? 'Last check could not reach HomeCam' : 'Waiting for the first check'}</p>
