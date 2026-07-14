@@ -26,7 +26,7 @@ from ..services import audit_db, host_bridge
 from ..config import settings
 from ..services.push_service import push_service
 from ..services.alert_policy import decide_alert
-from ..services import mediamtx_auth
+from ..services import mediamtx_auth, media_tokens
 from ..services.internal_peer import has_proxy_marker
 from ..services.worker_auth import require_worker
 from ..log import RateLimitedLog
@@ -130,6 +130,13 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         "wedge_diag_gpu_temp_c",
         "wedge_diag_mem_avail_mb",
         "wedge_diag_argus_pending",
+        "whep_probe_last_ok_ts",
+        "whep_probe_ttff_ms",
+        "whep_probe_consec_fails",
+        "whep_probe_rung",
+        "whep_probe_result",
+        "whep_probe_fail_reason",
+        "stream_stale_restarts",
         "power_sensor_status",
         "power_volts",
         "power_amps",
@@ -148,6 +155,9 @@ _NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {
     "gear",
     "face_recog_names",
     "watchdog_last_action",
+    "whep_probe_rung",
+    "whep_probe_result",
+    "whep_probe_fail_reason",
 }
 
 # Bounds for the `gear` string. Today's documented values are
@@ -158,6 +168,7 @@ _NUMERIC_METRIC_FIELDS = _ALLOWED_METRIC_FIELDS - {
 # as a blank pill in the UI.
 _GEAR_MAX = 32
 _WATCHDOG_ACTION_MAX = 24
+_WHEP_PROBE_TEXT_MAX = 64
 
 # Bounds for the `face_recog_names` list. Realistic encodings.pkl
 # files have 1-10 entries with names like "israel" / "sheenal"
@@ -438,6 +449,10 @@ def _coerce_metric(key: str, value):
         if len(stripped) > _WATCHDOG_ACTION_MAX:
             stripped = stripped[:_WATCHDOG_ACTION_MAX]
         return stripped
+    if key in {"whep_probe_rung", "whep_probe_result", "whep_probe_fail_reason"}:
+        if not isinstance(value, str):
+            return None
+        return value.strip()[:_WHEP_PROBE_TEXT_MAX]
     if key == "face_recog_names":
         if not isinstance(value, list):
             return None
@@ -677,6 +692,26 @@ class LiveDetectionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     boxes: list[Box] = Field(default_factory=list, max_length=32)
     camera_id: str = Field(default="front_door", pattern=r"^[a-z0-9_]{1,32}$")
+
+
+class WhepProbeGrantPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    path: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@router.post("/whep_probe/grant")
+async def whep_probe_grant(
+    body: WhepProbeGrantPayload, response: Response,
+) -> dict[str, object]:
+    """Issue the host probe one exact-path, one-use WHEP read grant."""
+    if body.path not in mediamtx_auth.video_paths():
+        raise HTTPException(status_code=422, detail="unsupported probe path")
+    try:
+        token, expires_ts = media_tokens.issue("read", body.path)
+    except media_tokens.MediaTokenUnavailable:
+        raise HTTPException(status_code=503, detail="media grant capacity reached")
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"token": token, "expires_ts": expires_ts}
 
 
 @router.get("/detection/config")

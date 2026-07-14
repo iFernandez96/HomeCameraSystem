@@ -60,7 +60,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections import namedtuple
+from collections import deque, namedtuple
 
 import jetson_inference
 import jetson_utils
@@ -83,6 +83,7 @@ from audio_events import sanitize_audio_labels  # noqa: E402
 from scene_guard import SceneGuard  # noqa: E402
 from doorbell import DebouncedButton  # noqa: E402
 from power_monitor import start_power_sampler  # noqa: E402
+from whep_probe import GstWhepRunner, WhepProbeScheduler, start_scheduler  # noqa: E402
 
 # Leaf-style logger for the worker. `applog.configure()` (called first
 # thing in main()) installs the root handler so these records reach
@@ -2527,6 +2528,51 @@ def reopen_camera_after_watchdog_action(uri, camera, action, attempts=15, retry_
     return open_camera(uri, attempts=attempts, retry_s=retry_s)
 
 
+def _execute_watchdog_action(
+    action, now, failures, metrics, mediamtx_watchdog, source="capture",
+    prev_level=None,
+):
+    """Persist, diagnose, and execute one action from the canonical ladder."""
+    if prev_level is None:
+        prev_level = max(0, mediamtx_watchdog.level - 1)
+    _ledger_append("watchdog", {
+        "transition": "ladder-climb",
+        "action": action,
+        "level_from": prev_level,
+        "level_to": mediamtx_watchdog.level,
+        "failures": failures,
+        "watchdog_fail_threshold": mediamtx_watchdog.fail_threshold,
+        "source": source,
+    })
+    _WATCHDOG_STATE["last_action"] = action
+    _persist_watchdog_level(mediamtx_watchdog)
+    _capture_wedge_diagnostics(action)
+    if _VISIT_RUNNER is not None:
+        try:
+            _VISIT_RUNNER.finalize_open_visits_for_escalation(now)
+        except Exception as e:
+            print(
+                "[detect] WATCHDOG: visit finalize-on-escalation failed: "
+                "{}: {}".format(type(e).__name__, e), flush=True,
+            )
+    with _RECOVERY_LOCK:
+        if _PLANNED_CAMERA_RESET.is_set():
+            print(
+                "[detect] watchdog action suppressed during planned camera reset",
+                flush=True,
+            )
+            return False
+        if action == ACTION_RESTART_MEDIAMTX:
+            if restart_mediamtx():
+                metrics.mediamtx_restarts += 1
+        elif action == ACTION_RESTART_NVARGUS:
+            if escalate_argus_recovery():
+                metrics.argus_restarts += 1
+        elif action == ACTION_REBOOT:
+            _do_reboot()
+        return True
+
+
 def _handle_capture_failure(
     reason, consecutive_failures, metrics, mediamtx_watchdog, liveness,
 ):
@@ -2573,55 +2619,12 @@ def _handle_capture_failure(
     prev_level = mediamtx_watchdog.level
     action = mediamtx_watchdog.next_action(now)
     if action is not None:
-        _ledger_append("watchdog", {
-            "transition": "ladder-climb",
-            "action": action,
-            "level_from": prev_level,
-            "level_to": mediamtx_watchdog.level,
-            "failures": consecutive_failures,
-            "watchdog_fail_threshold": mediamtx_watchdog.fail_threshold,
-        })
-        # Persist the new escalation level BEFORE anything disruptive
-        # (2026-07-09 root-cause fix). `next_action` already bumped the
-        # in-memory level; restarting mediamtx can get THIS worker stopped by
-        # systemd (dependency propagation) or the process can die at the
-        # SystemExit(100) floor mid-action. Persisting AFTER the action (the
-        # old order) meant the level was never written when the worker died
-        # during that window, so every restart reset to level 0 and the ladder
-        # never reached the nvargus rung that clears the libargus wedge
-        # (observed live 2026-07-09). Write it first; a systemd/SystemExit
-        # restart then RESUMES the climb instead of flapping on mediamtx.
-        _WATCHDOG_STATE["last_action"] = action
-        _persist_watchdog_level(mediamtx_watchdog)
-        # Diagnostics next (the wedge's root cause is still unknown), then act.
-        _capture_wedge_diagnostics(action)
-        # plan R5: finalize any open continuous-capture visit at last_seen and
-        # persist .open_visits.json BEFORE the recovery action (esp. reboot) —
-        # a short valid clip, not one spanning the wedge gap. No-op when the
-        # legacy path is active (_VISIT_RUNNER is None).
-        if _VISIT_RUNNER is not None:
-            try:
-                _VISIT_RUNNER.finalize_open_visits_for_escalation(now)
-            except Exception as e:
-                print(
-                    "[detect] WATCHDOG: visit finalize-on-escalation failed: "
-                    "{}: {}".format(type(e).__name__, e), flush=True,
-                )
-        with _RECOVERY_LOCK:
-            if _PLANNED_CAMERA_RESET.is_set():
-                consecutive_failures = 0
-                print(
-                    "[detect] watchdog action suppressed during planned camera reset",
-                    flush=True,
-                )
-            elif action == ACTION_RESTART_MEDIAMTX:
-                if restart_mediamtx():
-                    metrics.mediamtx_restarts += 1
-            elif action == ACTION_RESTART_NVARGUS:
-                if escalate_argus_recovery():
-                    metrics.argus_restarts += 1
-            elif action == ACTION_REBOOT:
-                _do_reboot()
+        executed = _execute_watchdog_action(
+            action, now, consecutive_failures, metrics, mediamtx_watchdog,
+            prev_level=prev_level,
+        )
+        if not executed:
+            consecutive_failures = 0
     _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
     if consecutive_failures > 100:
         print(
@@ -3296,6 +3299,19 @@ def main():
         _WATCHDOG_STATE.get("last_action_at"),
         now=time.time(),
     )
+    # PR-204: one serialized, low-duty recv-only WHEP probe. Its scheduler
+    # only debounces typed failures; the main loop below is the sole place
+    # allowed to enter the existing persisted recovery ladder.
+    whep_recovery_requests = deque(maxlen=1)
+    whep_base = _env("DETECT_WHEP_BASE", "http://127.0.0.1:8889")
+    whep_grant_url = event_url.rsplit("/event", 1)[0] + "/whep_probe/grant"
+    whep_probe = WhepProbeScheduler(
+        GstWhepRunner(whep_base, whep_grant_url, _WORKER_AUTH_SECRET),
+        metrics,
+        whep_recovery_requests.append,
+    )
+    start_scheduler(whep_probe)
+    log.info("synthetic WHEP probe enabled for cam/cam_lq/cam_uq")
     start_host_action_poll(
         event_url.rsplit("/", 1)[0],
         _HostActionDeps(
@@ -3337,6 +3353,38 @@ def main():
     scene_last_sample_at = 0.0
     scene_reference = None
     while True:
+        if whep_recovery_requests:
+            probe_failure = whep_recovery_requests.popleft()
+            if whep_probe.recovery_needed() and not _PLANNED_CAMERA_RESET.is_set():
+                now = time.time()
+                prev_level = mediamtx_watchdog.level
+                action = mediamtx_watchdog.request_action(
+                    now, failures=metrics.whep_probe_consec_fails,
+                )
+                if action is not None:
+                    executed = _execute_watchdog_action(
+                        action,
+                        now,
+                        metrics.whep_probe_consec_fails,
+                        metrics,
+                        mediamtx_watchdog,
+                        source="whep-probe:{}".format(probe_failure.reason),
+                        prev_level=prev_level,
+                    )
+                    if executed:
+                        metrics.stream_stale_restarts += 1
+                        if action != ACTION_REBOOT:
+                            camera = reopen_camera_after_watchdog_action(
+                                source_uri, camera, action,
+                            )
+                else:
+                    # The canonical ladder may still be dwelling after a
+                    # previous action. Keep this single debounced incident
+                    # queued until its cooldown expires or probes recover.
+                    whep_recovery_requests.append(probe_failure)
+                _mirror_watchdog_metrics(metrics, mediamtx_watchdog)
+            elif whep_probe.recovery_needed():
+                whep_recovery_requests.append(probe_failure)
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
         # 2000 ms timeout in jetson-utils handles transient RTSP hiccups

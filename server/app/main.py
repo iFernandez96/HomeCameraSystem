@@ -62,7 +62,7 @@ class _SuppressNoisyAccess(logging.Filter):
     _internal_route = re.compile(
         r'"\S+\s+/api/_internal/(?:detection/config|heartbeat|live_detection|'
         r'event(?:/finalized)?|signal|host_action(?:/(?:claim|result))?|'
-        r'mediamtx-auth)(?:\?[^\s"]*)?\s+HTTP/'
+        r'mediamtx-auth|whep_probe/grant)(?:\?[^\s"]*)?\s+HTTP/'
     )
 
     def filter(self, record: logging.LogRecord) -> bool:

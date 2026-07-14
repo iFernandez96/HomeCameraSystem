@@ -210,6 +210,15 @@ def _reset_worker_health():
 
 
 @pytest.fixture(autouse=True)
+def _reset_whep_probe_status():
+    from app.services import whep_probe_status
+
+    whep_probe_status.reset_for_tests()
+    yield
+    whep_probe_status.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _reset_event_bus():
     """Avoid event-history bleeding between tests. Older tests use
     before/after length deltas which work in isolation but break

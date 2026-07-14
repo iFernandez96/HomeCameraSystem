@@ -40,6 +40,30 @@ def test_internal_event_publishes_to_bus(client: TestClient):
     assert after == before + 1
 
 
+def test_whep_probe_grant_is_worker_authenticated_exact_path_and_one_use(
+    client: TestClient, client_anon: TestClient,
+):
+    from app.services import mediamtx_auth
+
+    denied = client_anon.post("/api/_internal/whep_probe/grant", json={"path": "cam"})
+    assert denied.status_code == 401
+    unknown = client.post(
+        "/api/_internal/whep_probe/grant", json={"path": "not_a_camera"}
+    )
+    assert unknown.status_code == 422
+
+    issued = client.post("/api/_internal/whep_probe/grant", json={"path": "cam_lq"})
+    assert issued.status_code == 200
+    assert issued.headers["cache-control"] == "private, no-store"
+    token = issued.json()["token"]
+    payload = {
+        "action": "read", "path": "cam_lq", "protocol": "webrtc",
+        "ip": "100.64.0.5", "token": token,
+    }
+    assert mediamtx_auth.authorize(payload) is True
+    assert mediamtx_auth.authorize(payload) is False
+
+
 def test_internal_event_appears_in_history(client: TestClient):
     client.post("/api/_internal/event", json=_payload(label="car", score=0.77))
     r = client.get("/api/events?limit=5")
@@ -1586,6 +1610,13 @@ def test_every_whitelisted_metric_round_trips_to_status(client: TestClient):
         "wedge_diag_gpu_temp_c": 67.5,
         "wedge_diag_mem_avail_mb": 384.0,
         "wedge_diag_argus_pending": 2.0,
+        "whep_probe_last_ok_ts": 1700000103.0,
+        "whep_probe_ttff_ms": 812.0,
+        "whep_probe_consec_fails": 0,
+        "whep_probe_rung": "cam_lq",
+        "whep_probe_result": "success",
+        "whep_probe_fail_reason": "",
+        "stream_stale_restarts": 1,
         "power_sensor_status": 1,
         "power_volts": 5.03,
         "power_amps": 1.25,

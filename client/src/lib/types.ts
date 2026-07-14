@@ -418,6 +418,14 @@ export type WorkerMetrics = {
    * etc.) and detect.py is recovering by restarting mediamtx.
    */
   mediamtx_restarts?: number
+  /** PR-204 serialized host-side WHEP probe result. */
+  whep_probe_last_ok_ts?: number
+  whep_probe_ttff_ms?: number
+  whep_probe_consec_fails?: number
+  whep_probe_rung?: string
+  whep_probe_result?: string
+  whep_probe_fail_reason?: string
+  stream_stale_restarts?: number
   /**
    * iter-302: nvargus-daemon escalation count. Non-zero means the
    * mediamtx-only restart path didn't recover the stream and the

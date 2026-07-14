@@ -151,6 +151,32 @@ def test_metrics_endpoint_includes_thumb_ms_when_set(client: TestClient):
     assert "homecam_worker_thumb_ms_recent 78.9" in body
 
 
+def test_metrics_endpoint_exposes_local_probe_and_external_cellular_state(
+    client: TestClient,
+):
+    from app.services import whep_probe_status
+
+    client.post(
+        "/api/_internal/heartbeat",
+        json={
+            "whep_probe_result": "success",
+            "whep_probe_ttff_ms": 812.0,
+            "whep_probe_last_ok_ts": 1714000000.0,
+            "whep_probe_consec_fails": 0,
+            "stream_stale_restarts": 2,
+        },
+    )
+    for _ in range(3):
+        whep_probe_status.record("cam", "no_media", 1714000000.0)
+
+    body = client.get("/metrics").text
+    assert "homecam_whep_probe_success 1" in body
+    assert "homecam_whep_probe_ttff_ms 812.0" in body
+    assert "homecam_whep_probe_consecutive_failures 0" in body
+    assert "homecam_stream_stale_restarts_total 2" in body
+    assert "homecam_whep_external_cellular_consecutive_failures 3" in body
+
+
 def test_metrics_endpoint_exposes_only_fresh_real_power_samples(client: TestClient):
     """Power history is scrapeable, but a stale value must disappear rather
     than continuing to look like the Jetson's current draw."""

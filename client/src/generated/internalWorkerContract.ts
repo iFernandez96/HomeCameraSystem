@@ -54,6 +54,13 @@ export interface WorkerHeartbeat {
   wedge_diag_gpu_temp_c?: number;
   wedge_diag_mem_avail_mb?: number;
   wedge_diag_argus_pending?: number;
+  whep_probe_last_ok_ts?: number;
+  whep_probe_ttff_ms?: number;
+  whep_probe_consec_fails?: number;
+  whep_probe_rung?: string;
+  whep_probe_result?: string;
+  whep_probe_fail_reason?: string;
+  stream_stale_restarts?: number;
   power_sensor_status?: number;
   power_volts?: number;
   power_amps?: number;

@@ -131,6 +131,7 @@ async def metrics_prom(request: Request) -> str:
     from ..services.detection import detection_service
     from ..services.health import worker_health
     from ..services.push_service import push_service
+    from ..services import whep_probe_status
 
     used_mb, total_mb = _meminfo()
     worker_alive, _last_seen_s, worker_metrics = worker_health.snapshot()
@@ -233,6 +234,26 @@ async def metrics_prom(request: Request) -> str:
                 "homecam_worker_uptime_seconds", wm.get("uptime_s"),
                 "Worker process uptime in seconds",
             ))
+            result = wm.get("whep_probe_result")
+            parts.append(_line(
+                "homecam_whep_probe_success",
+                1 if result == "success" else 0,
+                "Whether the latest Jetson-local WHEP probe received RTP",
+            ))
+            parts.append(_line(
+                "homecam_whep_probe_ttff_ms", wm.get("whep_probe_ttff_ms"),
+                "Latest Jetson-local WHEP time to first RTP in milliseconds",
+            ))
+            parts.append(_line(
+                "homecam_whep_probe_last_ok_timestamp_seconds",
+                wm.get("whep_probe_last_ok_ts"),
+                "Unix timestamp of the latest successful local WHEP probe",
+            ))
+            parts.append(_line(
+                "homecam_whep_probe_consecutive_failures",
+                wm.get("whep_probe_consec_fails"),
+                "Maximum consecutive local WHEP failures across probe rungs",
+            ))
             power_sample_ts = wm.get("power_sample_ts", 0.0)
             power_age_s = (
                 max(0.0, time.time() - power_sample_ts)
@@ -282,6 +303,12 @@ async def metrics_prom(request: Request) -> str:
             "Cumulative input-power sensor read failures since worker start",
             "counter",
         ))
+        parts.append(_line(
+            "homecam_stream_stale_restarts_total",
+            wm.get("stream_stale_restarts"),
+            "Existing watchdog ladder actions requested by local WHEP failures",
+            "counter",
+        ))
         # iter-302: stream-stale signal. seconds since the worker's
         # most recent successful Capture(). Distinct from
         # `homecam_worker_alive`: the iter-300 outage had this
@@ -295,5 +322,17 @@ async def metrics_prom(request: Request) -> str:
                 round(time.time() - last_frame_ts, 1),
                 "Wall-clock seconds since the worker's last successful Capture (iter-302)",
             ))
+
+    external = whep_probe_status.snapshot()
+    parts.append(_line(
+        "homecam_whep_external_cellular_consecutive_failures",
+        external["consecutive_failures"],
+        "Consecutive authenticated cellular-client WHEP failures",
+    ))
+    parts.append(_line(
+        "homecam_whep_external_cellular_last_ok_timestamp_seconds",
+        external["last_ok_ts"],
+        "Unix timestamp of the latest cellular-client first frame",
+    ))
 
     return "".join(parts)

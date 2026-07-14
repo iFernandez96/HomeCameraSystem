@@ -36,3 +36,17 @@ groups:
         annotations:
           summary: Camera pipeline is repeatedly recovering
           description: MediaMTX restarted repeatedly or the heavier Argus recovery was required.
+      - alert: HomecamWhepProbeFailed
+        expr: homecam_whep_probe_consecutive_failures >= 3
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Local live-view probe is failing
+          description: The Jetson-local WHEP probe has failed repeatedly without receiving RTP.
+      - alert: HomecamWhepExternalCellularOnlyFailure
+        expr: homecam_whep_probe_success == 1 and homecam_whep_external_cellular_consecutive_failures >= 3
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: Cellular live view is failing externally
+          description: Cellular clients report repeated failure while the Jetson-local WHEP probe remains healthy; camera recovery is intentionally not triggered.

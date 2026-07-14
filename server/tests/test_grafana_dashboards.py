@@ -144,5 +144,11 @@ def test_prometheus_loads_camera_health_alert_rules():
         "HomecamJetsonHot",
         "HomecamDiskLow",
         "HomecamCameraRecoveryLoop",
+        "HomecamWhepProbeFailed",
+        "HomecamWhepExternalCellularOnlyFailure",
     ):
         assert "alert: {}".format(alert) in alerts
+    assert (
+        "homecam_whep_probe_success == 1 and "
+        "homecam_whep_external_cellular_consecutive_failures >= 3"
+    ) in alerts

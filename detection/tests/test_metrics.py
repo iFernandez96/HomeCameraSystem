@@ -56,6 +56,14 @@ def test_snapshot_returns_all_documented_fields():
         "wedge_diag_gpu_temp_c",
         "wedge_diag_mem_avail_mb",
         "wedge_diag_nvargus_rss_kb",
+        # PR-204: synthetic end-to-end WHEP health and recovery count.
+        "whep_probe_last_ok_ts",
+        "whep_probe_ttff_ms",
+        "whep_probe_consec_fails",
+        "whep_probe_rung",
+        "whep_probe_result",
+        "whep_probe_fail_reason",
+        "stream_stale_restarts",
         # Real input-power telemetry (0=unavailable on a bare Nano 2GB).
         "power_sensor_status",
         "power_volts",
@@ -92,6 +100,9 @@ def test_snapshot_defaults_are_safe_to_serialize():
     assert snap["face_recog_names"] == []
     assert snap["power_sensor_status"] == 0
     assert snap["power_watts"] == 0.0
+    assert snap["whep_probe_result"] == "not_run"
+    assert snap["whep_probe_consec_fails"] == 0
+    assert snap["stream_stale_restarts"] == 0
 
 
 def test_record_thumb_ms_updates_field_and_snapshot():

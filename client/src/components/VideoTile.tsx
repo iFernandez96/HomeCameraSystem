@@ -13,6 +13,7 @@ import {
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
+import { reportCellularWhepProbe } from '../lib/telemetry'
 import { OfflineState } from './states/OfflineState'
 import { QualityMenu } from './QualityMenu'
 
@@ -340,6 +341,19 @@ export function VideoTile({
     if (!video) return
     let conn: WhepConnection | null = null
     let cancelled = false
+    const attemptStartedAt = performance.now()
+    let attemptReported = false
+    const reportAttempt = (
+      result: 'first_frame' | 'signaling_failure' | 'no_media' | 'transport_failure',
+    ) => {
+      if (attemptReported) return
+      attemptReported = true
+      reportCellularWhepProbe(
+        effectiveSrc,
+        result,
+        result === 'first_frame' ? performance.now() - attemptStartedAt : 0,
+      )
+    }
     // Defect-1 fix (WebRTC lifecycle audit): a per-attempt AbortController
     // so cleanup can actually close an in-flight connectWhep — the old
     // `cancelled` flag alone left a hung WHEP POST's RTCPeerConnection open
@@ -448,6 +462,7 @@ export function VideoTile({
       // Frames are flowing again — re-arm the one-shot silent reconnect
       // for the next mid-stream drop (see pcStateChange below).
       silentRetryUsedRef.current = false
+      reportAttempt('first_frame')
       setStatus('live')
     }
     const onPlaying = () => {
@@ -488,6 +503,7 @@ export function VideoTile({
           // ICE produced no usable path (the documented cellular /
           // unreachable-candidate failure). The ice state is the tell.
           midStreamFail('media-timeout-8s')
+          reportAttempt('no_media')
           if (!cancelled) setStatus('error')
         }, 8000)
         // Mid-stream connection observability (iter-162). Without this, a
@@ -549,6 +565,7 @@ export function VideoTile({
           online: typeof navigator !== 'undefined' ? navigator.onLine : null,
           ...errFields(e),
         })
+        reportAttempt('signaling_failure')
         setStatus('error')
       })
     return () => {

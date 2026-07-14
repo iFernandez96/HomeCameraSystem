@@ -150,6 +150,18 @@ class MediaMtxWatchdog:
         action and then persists `level`/`last_action_at`."""
         if self.failures < self.fail_threshold:
             return None
+        return self._fire_action(now, self.failures)
+
+    def request_action(self, now, failures=0):
+        """Request one rung for an independently debounced local detector.
+
+        PR-204's WHEP scheduler owns only its consecutive-failure debounce.
+        This method deliberately reuses this ladder's persisted level and
+        cooldown instead of creating a competing recovery state machine.
+        """
+        return self._fire_action(now, failures)
+
+    def _fire_action(self, now, triggered_failures):
         elapsed = now - self.last_action_at
         required = self._required_cooldown()
         if elapsed < 0:
@@ -159,7 +171,6 @@ class MediaMtxWatchdog:
             return None
         action = self._resolve_action(self.level)
         prev_level = self.level
-        triggered_failures = self.failures
         self.last_action_at = now
         # Give the action a cooldown window to take effect before re-counting.
         self.failures = 0

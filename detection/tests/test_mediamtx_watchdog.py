@@ -182,6 +182,15 @@ def test_given_never_acted_when_snapshot_then_last_action_at_is_none():
     assert snap == {"level": 0, "last_action_at": None}
 
 
+def test_whep_request_uses_same_persistable_ladder_and_cooldown():
+    w = MediaMtxWatchdog(fail_threshold=30, cooldown_s=60.0)
+
+    assert w.request_action(now=100.0, failures=3) == ACTION_RESTART_MEDIAMTX
+    assert w.snapshot() == {"level": 1, "last_action_at": 100.0}
+    assert w.request_action(now=110.0, failures=4) is None
+    assert w.level == 1
+
+
 def test_given_garbage_restore_values_then_safe_defaults():
     # arrange + act — corrupt persisted state must never crash the worker.
     w = MediaMtxWatchdog()

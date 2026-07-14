@@ -137,6 +137,16 @@ class Metrics:
         self.wedge_diag_gpu_temp_c = 0.0
         self.wedge_diag_mem_avail_mb = 0.0
         self.wedge_diag_argus_pending = 0.0
+        # PR-204: serialized synthetic WHEP probe. Strings are bounded again
+        # by the server heartbeat coercion; all values start explicit so the
+        # contract does not depend on a first probe firing.
+        self.whep_probe_last_ok_ts = 0.0
+        self.whep_probe_ttff_ms = 0.0
+        self.whep_probe_consec_fails = 0
+        self.whep_probe_rung = ""
+        self.whep_probe_result = "not_run"
+        self.whep_probe_fail_reason = ""
+        self.stream_stale_restarts = 0
         # Real input-power telemetry from an approved INA2xx sensor. Nano 2GB
         # has no onboard monitor, so status starts unavailable (0) and the
         # values remain zero until power_monitor.py obtains a real sample.
@@ -236,6 +246,13 @@ class Metrics:
             "wedge_diag_gpu_temp_c": round(self.wedge_diag_gpu_temp_c, 1),
             "wedge_diag_mem_avail_mb": round(self.wedge_diag_mem_avail_mb, 1),
             "wedge_diag_argus_pending": round(self.wedge_diag_argus_pending, 1),
+            "whep_probe_last_ok_ts": round(self.whep_probe_last_ok_ts, 1),
+            "whep_probe_ttff_ms": round(self.whep_probe_ttff_ms, 1),
+            "whep_probe_consec_fails": self.whep_probe_consec_fails,
+            "whep_probe_rung": self.whep_probe_rung,
+            "whep_probe_result": self.whep_probe_result,
+            "whep_probe_fail_reason": self.whep_probe_fail_reason,
+            "stream_stale_restarts": self.stream_stale_restarts,
             "power_sensor_status": self.power_sensor_status,
             "power_volts": round(self.power_volts, 3),
             "power_amps": round(self.power_amps, 3),

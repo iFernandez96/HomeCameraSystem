@@ -62,6 +62,10 @@
         "wedge_diag_at": {"type": "number"}, "wedge_diag_nvargus_rss_kb": {"type": "number"},
         "wedge_diag_gpu_temp_c": {"type": "number"}, "wedge_diag_mem_avail_mb": {"type": "number"},
         "wedge_diag_argus_pending": {"type": "number"},
+        "whep_probe_last_ok_ts": {"type": "number"}, "whep_probe_ttff_ms": {"type": "number"},
+        "whep_probe_consec_fails": {"type": "number"}, "whep_probe_rung": {"type": "string"},
+        "whep_probe_result": {"type": "string"}, "whep_probe_fail_reason": {"type": "string"},
+        "stream_stale_restarts": {"type": "number"},
         "power_sensor_status": {"type": "number"}, "power_volts": {"type": "number"},
         "power_amps": {"type": "number"}, "power_watts": {"type": "number"},
         "power_sample_ts": {"type": "number"}, "power_read_failures": {"type": "number"}

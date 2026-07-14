@@ -19,6 +19,43 @@ type Span = {
 const ENDPOINT = '/api/telemetry/view'
 const MAX_NAME = 128
 
+export type WhepProbeResult =
+  | 'first_frame'
+  | 'signaling_failure'
+  | 'no_media'
+  | 'transport_failure'
+
+export function reportCellularWhepProbe(
+  whepUrl: string,
+  result: WhepProbeResult,
+  ttffMs = 0,
+): void {
+  try {
+    const nav = navigator as Navigator & { connection?: { type?: string } }
+    if (nav.connection?.type !== 'cellular') return
+    const match = new URL(whepUrl, window.location.origin).pathname.match(
+      /\/whep\/([A-Za-z0-9_-]+)\/whep$/,
+    )
+    if (!match) return
+    void fetch('/api/telemetry/whep-probe', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({
+        v: 1,
+        rung: match[1],
+        result,
+        network_type: 'cellular',
+        ttff_ms: Math.max(0, Math.min(60_000, Math.round(ttffMs))),
+        ts: Math.floor(Date.now() / 1000),
+      }),
+    }).catch(() => {})
+  } catch {
+    // Advisory telemetry must never affect playback.
+  }
+}
+
 function nowMs(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()

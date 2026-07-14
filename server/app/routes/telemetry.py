@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..auth import tokens
 from ..auth.dependencies import COOKIE_ACCESS, get_current_user, require_role
 from ..config import settings
-from ..services import audit_db
+from ..services import audit_db, mediamtx_auth, whep_probe_status
 from ..sessions import sessions_db
 
 
@@ -32,6 +32,16 @@ class ViewIn(BaseModel):
     kind: Literal["page", "event", "action"]
     name: str = Field(min_length=1, max_length=128)
     dwell_ms: int = Field(ge=0, le=86_400_000)
+    ts: float
+
+
+class WhepProbeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    v: Literal[1]
+    rung: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    result: Literal["first_frame", "signaling_failure", "no_media", "transport_failure"]
+    network_type: Literal["cellular", "wifi", "ethernet", "unknown"]
+    ttff_ms: float = Field(default=0.0, ge=0.0, le=60_000.0)
     ts: float
 
 
@@ -140,6 +150,22 @@ async def view(
             name=body.name,
             dwell_ms=body.dwell_ms,
         )
+    return {"ok": True}
+
+
+@router.post("/telemetry/whep-probe")
+async def whep_probe(
+    body: WhepProbeIn,
+    _username: str = Depends(get_current_user),
+) -> dict:
+    if _rate_limited():
+        return {"ok": False, "dropped": "rate"}
+    if body.rung not in mediamtx_auth.video_paths():
+        raise HTTPException(status_code=422, detail="unsupported probe rung")
+    # Only a browser that can positively identify a cellular interface is an
+    # external cellular observer. Unknown/Wi-Fi reports never affect alerts.
+    if body.network_type == "cellular":
+        whep_probe_status.record(body.rung, body.result, body.ts, body.ttff_ms)
     return {"ok": True}
 
 

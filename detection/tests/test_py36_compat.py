@@ -64,6 +64,7 @@ _GUARDED_MODULES = (
     "detection/schedule.py",
     "detection/metrics.py",
     "detection/mediamtx_watchdog.py",
+    "detection/whep_probe.py",
     "detection/host_action.py",
     "detection/generated_wire_contract.py",
     "detection/zones.py",

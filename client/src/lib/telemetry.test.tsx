@@ -1,6 +1,10 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { usePageViewTelemetry, useEventViewTelemetry } from './telemetry'
+import {
+  reportCellularWhepProbe,
+  usePageViewTelemetry,
+  useEventViewTelemetry,
+} from './telemetry'
 
 const sendBeacon = vi.fn()
 const fetchMock = vi.fn()
@@ -132,6 +136,57 @@ describe('view telemetry', () => {
 
     // assert
     expect(sendBeacon).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('cellular WHEP telemetry', () => {
+  beforeEach(() => {
+    fetchMock.mockReset().mockResolvedValue(new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(Date, 'now').mockReturnValue(1714000000000)
+  })
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'connection', {
+      configurable: true,
+      value: undefined,
+    })
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('ships a bounded authenticated report only from a cellular interface', () => {
+    Object.defineProperty(navigator, 'connection', {
+      configurable: true,
+      value: { type: 'cellular' },
+    })
+
+    reportCellularWhepProbe('/whep/cam_lq/whep', 'first_frame', 1234.4)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/telemetry/whep-probe',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({
+          v: 1,
+          rung: 'cam_lq',
+          result: 'first_frame',
+          network_type: 'cellular',
+          ttff_ms: 1234,
+          ts: 1714000000,
+        }),
+      }),
+    )
+  })
+
+  it('does not classify Wi-Fi or unknown clients as cellular observers', () => {
+    Object.defineProperty(navigator, 'connection', {
+      configurable: true,
+      value: { type: 'wifi' },
+    })
+    reportCellularWhepProbe('/whep/cam/whep', 'no_media')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
