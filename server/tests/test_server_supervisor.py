@@ -218,6 +218,7 @@ def test_given_server_drill_when_inspected_then_it_kills_server_and_pins_camera_
 
     # act / assert
     assert "docker kill homecam-server" in server_block
+    assert "server supervision drill failed: rc=" in server_block
     assert 'server_id=$(docker inspect -f "{{.Id}}" homecam-server)' in server_block
     assert '"$new_id" != "$server_id"' in server_block
     assert '"$health" == "healthy"' in server_block

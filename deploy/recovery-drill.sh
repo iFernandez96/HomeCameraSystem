@@ -27,6 +27,7 @@ server() {
   show "[server supervision] kill only the API container; require bounded recovery while camera services stay up"
   run env BASE_URL="$BASE_URL" bash -lc 'set -euo pipefail
     fail() { echo "server supervision drill failed: $*" >&2; exit 1; }
+    trap '\''rc=$?; echo "server supervision drill failed: rc=$rc line=$LINENO" >&2'\'' ERR
     mediamtx_pid=$(systemctl show -p MainPID --value mediamtx.service)
     detect_pid=$(systemctl show -p MainPID --value homecam-detect.service)
     server_id=$(docker inspect -f "{{.Id}}" homecam-server)
