@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from metrics import Metrics  # noqa: E402
-from whep_probe import ProbeResult, WhepProbeScheduler  # noqa: E402
+from whep_probe import H264_RTP_CAPS, ProbeResult, WhepProbeScheduler  # noqa: E402
 
 
 class FakeRunner(object):
@@ -31,6 +31,10 @@ def result(kind="success", reason="", recoverable=False, checked_at=100.0):
         media_received=kind == "success",
         recoverable=recoverable,
     )
+
+
+def test_offer_caps_pin_a_valid_dynamic_rtp_payload_type_for_gstreamer_114():
+    assert "payload=96" in H264_RTP_CAPS
 
 
 def test_every_rung_is_serialized_and_repeats_at_its_bounded_cadence():
