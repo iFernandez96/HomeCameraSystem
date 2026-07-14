@@ -119,6 +119,7 @@ log "Installing systemd units"
 chmod +x "$REPO/detection/run-detect.sh"
 sudo cp "$REPO/deploy/systemd/mediamtx.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-server.service" /etc/systemd/system/
+sudo cp "$REPO/deploy/systemd/homecam-server-supervisor.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-detect.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-backup.service" /etc/systemd/system/
 sudo cp "$REPO/deploy/systemd/homecam-backup.timer" /etc/systemd/system/
@@ -175,6 +176,7 @@ log "Enabling and starting services"
 sudo systemctl enable --now homecam-jetson-perf.service || true
 sudo systemctl enable --now mediamtx.service
 sudo systemctl enable --now homecam-server.service
+sudo systemctl enable --now homecam-server-supervisor.service
 sudo systemctl enable --now homecam-detect.service
 sudo systemctl enable --now homecam-backup.timer
 

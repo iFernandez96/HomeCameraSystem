@@ -30,7 +30,7 @@ The installer:
 2. Adds the current user to the `docker` group, ensures the daemon is running.
 3. Installs the Docker Compose v2 plugin to `~/.docker/cli-plugins/`.
 4. Downloads MediaMTX (current pin: `v1.18.0` arm64).
-5. Installs systemd units for `mediamtx`, `homecam-server`, `homecam-detect`, `homecam-backup.timer`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
+5. Installs systemd units for `mediamtx`, `homecam-server`, the bounded `homecam-server-supervisor`, `homecam-detect`, `homecam-backup.timer`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
 6. Idempotently provisions the shared worker credential at `/etc/homecam/worker-auth.secret` without displaying it.
 7. Requires the off-Jetson-generated backup recipient public key at `/etc/homecam/backup-recipient.pem`; only the public half is allowed on the Jetson.
 8. Requires the prebuilt ARM64 server image.
@@ -67,7 +67,7 @@ curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/medi
     | tar -xz mediamtx
 
 # 5. systemd
-sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
+sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-server-supervisor,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
 sudo cp deploy/systemd/homecam-backup.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 
@@ -84,7 +84,47 @@ deploy/cross-deploy-server.sh jetson
 
 # Back on the Jetson, start services without any native image build
 cd ~/HomeCameraSystem
-sudo systemctl enable --now mediamtx homecam-server homecam-detect homecam-backup.timer homecam-jetson-perf
+sudo systemctl enable --now mediamtx homecam-server homecam-server-supervisor homecam-detect homecam-backup.timer homecam-jetson-perf
+```
+
+## Server supervision
+
+`homecam-server-supervisor.service` is the single ongoing recovery owner for
+the FastAPI container. It checks the host-local `/healthz` every 10 seconds,
+requires three consecutive failures, and recreates only the Compose `server`
+service. The camera publisher, MediaMTX, detection worker, and Argus recovery
+ladder are outside its command surface.
+
+The restart budget is persisted privately at
+`/srv/homecam-media/recordings/.server-supervisor-state.json`. Three recovery actions in
+ten minutes exhaust the budget; another debounced failure latches the unit with
+exit 78 and emits `alert=structural_loop action=stop` to journald. Docker's own
+restart policy is disabled so it cannot bypass this circuit breaker. PR-206 is
+responsible for delivering this local alert off-box.
+
+Inspect the separate server-recovery reason and action without camera logs:
+
+```bash
+systemctl status homecam-server-supervisor
+journalctl -u homecam-server-supervisor --since today
+sudo cat /srv/homecam-media/recordings/.server-supervisor-state.json
+```
+
+After correcting a structural failure, explicitly clear the latch and restart
+the supervisor. This resets only server-supervision state:
+
+```bash
+sudo -u israel python3 deploy/server_supervisor.py --reset-latch
+sudo systemctl reset-failed homecam-server-supervisor
+sudo systemctl start homecam-server-supervisor
+```
+
+The guarded acceptance drill kills the server container, waits at most two
+minutes for recovery, and proves that the MediaMTX and detection PIDs plus the
+RTSP publisher remained available:
+
+```bash
+HOMECAM_DRILL_CONFIRM=YES bash deploy/recovery-drill.sh --execute server
 ```
 
 ## Encrypted backups

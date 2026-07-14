@@ -24,9 +24,24 @@ run() {
 }
 
 server() {
-  show "[server restart] interrupt API, restart it, then require health recovery"
-  run sudo systemctl restart homecam-server.service
-  run curl --fail --retry 12 --retry-delay 1 "$BASE_URL/healthz"
+  show "[server supervision] kill only the API container; require bounded recovery while camera services stay up"
+  run env BASE_URL="$BASE_URL" bash -lc 'set -euo pipefail
+    mediamtx_pid=$(systemctl show -p MainPID --value mediamtx.service)
+    detect_pid=$(systemctl show -p MainPID --value homecam-detect.service)
+    timeout 8 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+      -show_entries stream=codec_name -of csv=p=0 rtsp://127.0.0.1:8554/cam >/dev/null
+    docker kill homecam-server >/dev/null
+    deadline=$((SECONDS + 120))
+    until curl --fail --silent --max-time 2 "$BASE_URL/healthz" >/dev/null; do
+      (( SECONDS < deadline )) || { echo "server did not recover within 120 seconds" >&2; exit 1; }
+      sleep 2
+    done
+    test "$(systemctl show -p MainPID --value mediamtx.service)" = "$mediamtx_pid"
+    test "$(systemctl show -p MainPID --value homecam-detect.service)" = "$detect_pid"
+    systemctl is-active --quiet mediamtx.service homecam-detect.service
+    timeout 8 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+      -show_entries stream=codec_name -of csv=p=0 rtsp://127.0.0.1:8554/cam >/dev/null
+    echo "server recovered; camera publisher and worker PIDs remained unchanged"'
 }
 
 disk() {

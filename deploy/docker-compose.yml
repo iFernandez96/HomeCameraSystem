@@ -18,7 +18,10 @@ services:
       dockerfile: deploy/Dockerfile.server
     image: homecam-server:latest
     container_name: homecam-server
-    restart: unless-stopped
+    # PR-205: the host supervisor is the single owner of ongoing server
+    # recovery. An unbounded Docker restart policy would bypass its persisted
+    # circuit breaker and could spin forever on a structural failure.
+    restart: "no"
     logging:
       driver: json-file
       options:

@@ -1,0 +1,28 @@
+[Unit]
+Description=Bounded Home Camera server health supervisor
+Requires=homecam-server.service
+After=homecam-server.service network-online.target
+PartOf=homecam-server.service
+RequiresMountsFor=/srv/homecam-media
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=israel
+Group=israel
+WorkingDirectory=/home/israel/HomeCameraSystem
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /home/israel/HomeCameraSystem/deploy/server_supervisor.py
+Restart=on-failure
+RestartSec=10
+# Exit 78 is the intentional structural-loop circuit breaker. Leave the unit
+# failed and visible instead of silently starting another recovery loop.
+RestartPreventExitStatus=78
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
