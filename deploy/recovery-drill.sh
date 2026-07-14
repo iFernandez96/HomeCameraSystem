@@ -38,7 +38,10 @@ server() {
     while true; do
       new_id=$(docker inspect -f "{{.Id}}" homecam-server 2>/dev/null || true)
       running=$(docker inspect -f "{{.State.Running}}" homecam-server 2>/dev/null || true)
-      if [[ -n "$new_id" && "$new_id" != "$server_id" && "$running" == "true" ]] \
+      health=$(docker inspect -f "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" \
+        homecam-server 2>/dev/null || true)
+      if [[ -n "$new_id" && "$new_id" != "$server_id" && "$running" == "true" \
+          && "$health" == "healthy" ]] \
           && curl --fail --silent --max-time 2 "$BASE_URL/healthz" >/dev/null; then
         break
       fi
