@@ -56,6 +56,7 @@ def test_sdp_shape_keeps_negotiation_evidence_without_ips_or_credentials():
     assert shape == {
         "media": [{"kind": "video", "port": "9", "payloads": ["96"]}],
         "directions": ["recvonly"],
+        "codecs": [],
         "candidate_count": 1,
     }
     assert "192.0.2.4" not in str(shape)

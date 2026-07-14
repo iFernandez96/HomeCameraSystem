@@ -215,6 +215,7 @@ def _sdp_shape(sdp_text):
     """Return negotiation structure without retaining addresses or secrets."""
     media = []
     directions = []
+    codecs = []
     candidate_count = 0
     for raw in sdp_text.splitlines():
         line = raw.strip()
@@ -228,11 +229,14 @@ def _sdp_shape(sdp_text):
                 })
         elif line in ("a=sendonly", "a=recvonly", "a=sendrecv", "a=inactive"):
             directions.append(line[2:])
+        elif line.startswith("a=rtpmap:") or line.startswith("a=fmtp:"):
+            codecs.append(line[2:][:200])
         elif line.startswith("a=candidate:"):
             candidate_count += 1
     return {
         "media": media[:4],
         "directions": directions[:4],
+        "codecs": codecs[:16],
         "candidate_count": candidate_count,
     }
 
