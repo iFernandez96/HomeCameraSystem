@@ -235,9 +235,13 @@ class _GstWhepSession(object):
         self.webrtc = Gst.ElementFactory.make("webrtcbin", "probe")
         if self.webrtc is None:
             raise RuntimeError("webrtcbin unavailable")
+        self.webrtc.set_property(
+            "bundle-policy", GstWebRTC.WebRTCBundlePolicy.MAX_BUNDLE
+        )
         self.pipeline.add(self.webrtc)
         self.webrtc.connect("on-negotiation-needed", self._on_negotiate)
         self.webrtc.connect("notify::ice-gathering-state", self._on_ice_state)
+        self.webrtc.connect("notify::ice-connection-state", self._on_ice_connection)
         self.webrtc.connect("pad-added", self._on_pad_added)
         # GStreamer 1.14 does not assign a valid dynamic payload type when the
         # recv caps omit `payload`; it can serialize a random 32-bit value into
@@ -296,6 +300,13 @@ class _GstWhepSession(object):
 
     def _on_ice_state(self, _element, _param):
         self._maybe_post_offer()
+
+    def _on_ice_connection(self, element, _param):
+        state = element.get_property("ice-connection-state")
+        name = getattr(state, "value_nick", str(state))
+        log.info("whep_probe ice_connection_state=%s", name)
+        if state == self.GstWebRTC.WebRTCICEConnectionState.FAILED:
+            self._finish_failure("transport_failure", "ice_failed", True)
 
     def _maybe_post_offer(self):
         if self._post_started:
