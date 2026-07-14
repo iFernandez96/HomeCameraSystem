@@ -235,9 +235,6 @@ class _GstWhepSession(object):
         self.webrtc = Gst.ElementFactory.make("webrtcbin", "probe")
         if self.webrtc is None:
             raise RuntimeError("webrtcbin unavailable")
-        self.webrtc.set_property(
-            "bundle-policy", GstWebRTC.WebRTCBundlePolicy.MAX_BUNDLE
-        )
         self.pipeline.add(self.webrtc)
         self.webrtc.connect("on-negotiation-needed", self._on_negotiate)
         self.webrtc.connect("notify::ice-gathering-state", self._on_ice_state)
