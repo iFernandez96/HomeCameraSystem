@@ -63,10 +63,13 @@ class WhepProbeScheduler(object):
         self.failure_threshold = max(1, int(failure_threshold))
         self._now = now or time.time
         started = self._now()
-        # Stagger the first adaptive probes while still checking every rung
-        # promptly after boot.  Subsequent deadlines use their full cadence.
+        # Give the 2 GB Nano one minute between first-run probes.  Starting an
+        # on-demand adaptive transcode while TensorRT, NVDEC, recording, and
+        # the server are all warming up causes false signaling timeouts.  All
+        # rungs are still checked within the documented five-minute bound;
+        # subsequent deadlines use their full cadence.
         self._next_due = dict(
-            (name, started + (index * 10.0))
+            (name, started + min(index * 75.0, float(_cadence)))
             for index, (name, _cadence) in enumerate(self.rungs)
         )
         self._cadence = dict(self.rungs)
@@ -217,6 +220,12 @@ def _sdp_shape(sdp_text):
     directions = []
     codecs = []
     candidate_count = 0
+    candidate_kinds = []
+    mids = []
+    groups = []
+    ice_credentials = 0
+    fingerprints = 0
+    rtcp_mux = False
     for raw in sdp_text.splitlines():
         line = raw.strip()
         if line.startswith("m="):
@@ -233,12 +242,98 @@ def _sdp_shape(sdp_text):
             codecs.append(line[2:][:200])
         elif line.startswith("a=candidate:"):
             candidate_count += 1
+            parts = line.split()
+            if len(parts) >= 8:
+                address = parts[4]
+                family = "ipv6" if ":" in address else "ipv4"
+                if ":" not in address and any(
+                    char.isalpha() for char in address.replace(".", "")
+                ):
+                    family = "hostname"
+                candidate_kinds.append({
+                    "transport": parts[2].lower()[:8],
+                    "family": family,
+                    "type": parts[7].lower()[:12],
+                })
+        elif line.startswith("a=mid:"):
+            mids.append(line[6:][:16])
+        elif line.startswith("a=group:"):
+            groups.append(line[8:][:80])
+        elif line.startswith("a=ice-ufrag:") or line.startswith("a=ice-pwd:"):
+            ice_credentials += 1
+        elif line.startswith("a=fingerprint:"):
+            fingerprints += 1
+        elif line == "a=rtcp-mux":
+            rtcp_mux = True
     return {
         "media": media[:4],
         "directions": directions[:4],
         "codecs": codecs[:16],
         "candidate_count": candidate_count,
+        "candidate_kinds": candidate_kinds[:8],
+        "mids": mids[:4],
+        "groups": groups[:4],
+        "ice_credentials": ice_credentials,
+        "fingerprints": fingerprints,
+        "rtcp_mux": rtcp_mux,
     }
+
+
+def _with_gathered_candidates(sdp_text, candidates, mline_index=0):
+    """Return a non-trickle SDP offer without exposing candidate values.
+
+    GStreamer 1.14 emits gathered candidates through ``on-ice-candidate`` but
+    does not add them to the readable local-description.  WHEP needs those
+    candidates in the initial POST when the client does not implement PATCH.
+    """
+    newline = "\r\n" if "\r\n" in sdp_text else "\n"
+    lines = sdp_text.replace("\r\n", "\n").split("\n")
+    normalized = []
+    for candidate in candidates:
+        value = candidate.strip()
+        if not value:
+            continue
+        if not value.startswith("a="):
+            value = "a=" + value
+        if value.startswith("a=candidate:") and value not in normalized:
+            normalized.append(value)
+    if not normalized:
+        return sdp_text
+
+    media_starts = [i for i, line in enumerate(lines) if line.startswith("m=")]
+    if mline_index >= len(media_starts):
+        return sdp_text
+    start = media_starts[mline_index]
+    mids = [
+        line[6:] for line in lines[start:] if line.startswith("a=mid:")
+    ]
+    if mids and not any(line.startswith("a=group:BUNDLE ") for line in lines):
+        lines.insert(start, "a=group:BUNDLE " + " ".join(mids))
+        media_starts = [i for i, line in enumerate(lines) if line.startswith("m=")]
+        start = media_starts[mline_index]
+    end = media_starts[mline_index + 1] if mline_index + 1 < len(media_starts) else len(lines)
+    existing = set(lines[start:end])
+    additions = [candidate for candidate in normalized if candidate not in existing]
+    if not additions:
+        return sdp_text
+    insert_at = end
+    while insert_at > start and lines[insert_at - 1] == "":
+        insert_at -= 1
+    lines[insert_at:insert_at] = additions + ["a=end-of-candidates"]
+    return newline.join(lines)
+
+
+def _ice_candidates_by_mline(sdp_text):
+    """Extract remote candidates for old webrtcbin without logging values."""
+    candidates = []
+    mline_index = -1
+    for raw in sdp_text.splitlines():
+        line = raw.strip()
+        if line.startswith("m="):
+            mline_index += 1
+        elif mline_index >= 0 and line.startswith("a=candidate:"):
+            candidates.append((mline_index, line[2:]))
+    return candidates
 
 
 class _GstWhepSession(object):
@@ -273,6 +368,7 @@ class _GstWhepSession(object):
         self.webrtc.connect("on-negotiation-needed", self._on_negotiate)
         self.webrtc.connect("notify::ice-gathering-state", self._on_ice_state)
         self.webrtc.connect("notify::ice-connection-state", self._on_ice_connection)
+        self.webrtc.connect("on-ice-candidate", self._on_ice_candidate)
         self.webrtc.connect("pad-added", self._on_pad_added)
         # GStreamer 1.14 needs both a valid dynamic payload and explicit H.264
         # packetization/profile parameters. Without payload it serializes an
@@ -289,6 +385,10 @@ class _GstWhepSession(object):
         self.result = None
         self.resource_url = None
         self._post_started = False
+        self._local_candidates = []
+        self._remote_candidates = []
+        self._local_description_ready = False
+        self._candidate_grace_started = False
 
     def run(self, rung, checked_at):
         self.started = self.monotonic()
@@ -326,23 +426,53 @@ class _GstWhepSession(object):
         if offer is None:
             self._finish_failure("signaling_failure", "offer_failed", False)
             return
-        self.webrtc.emit(
-            "set-local-description", offer, self.Gst.Promise.new()
+        promise = self.Gst.Promise.new_with_change_func(
+            self._on_local_description_set, None
         )
+        self.webrtc.emit("set-local-description", offer, promise)
+
+    def _on_local_description_set(self, promise, _unused):
+        reply = promise.get_reply()
+        if reply is not None and reply.has_field("error"):
+            self.GLib.idle_add(
+                self._finish_failure,
+                "signaling_failure",
+                "local_description_rejected",
+                False,
+            )
+            return
+        self.GLib.idle_add(self._local_description_applied)
+
+    def _local_description_applied(self):
+        self._local_description_ready = True
         self._maybe_post_offer()
+        return False
 
     def _on_ice_state(self, _element, _param):
         self._maybe_post_offer()
+
+    def _on_ice_candidate(self, _element, mline_index, candidate):
+        if int(mline_index) == 0 and candidate:
+            self._local_candidates.append(candidate)
+            self._maybe_post_offer()
 
     def _on_ice_connection(self, element, _param):
         state = element.get_property("ice-connection-state")
         name = getattr(state, "value_nick", str(state))
         log.info("whep_probe ice_connection_state=%s", name)
-        if state == self.GstWebRTC.WebRTCICEConnectionState.FAILED:
+        # GStreamer 1.14 can emit FAILED while applying a WHEP answer, before
+        # the answer candidates have been passed to its old libnice bridge.
+        # Once signaling is ready, FAILED is a real terminal transport result.
+        if (
+            self.signaling_ok
+            and state == self.GstWebRTC.WebRTCICEConnectionState.FAILED
+        ):
             self._finish_failure("transport_failure", "ice_failed", True)
 
     def _maybe_post_offer(self):
         if self._post_started:
+            return
+        if not self._local_description_ready:
             return
         description = self.webrtc.get_property("local-description")
         state = self.webrtc.get_property("ice-gathering-state")
@@ -350,8 +480,15 @@ class _GstWhepSession(object):
             return
         if state != self.GstWebRTC.WebRTCICEGatheringState.COMPLETE:
             return
+        if not self._local_candidates:
+            if not self._candidate_grace_started:
+                self._candidate_grace_started = True
+                self.GLib.timeout_add(250, self._candidate_grace_expired)
+            return
         self._post_started = True
-        sdp_text = description.sdp.as_text()
+        sdp_text = _with_gathered_candidates(
+            description.sdp.as_text(), self._local_candidates
+        )
         thread = threading.Thread(
             target=self._post_offer,
             args=(sdp_text,),
@@ -359,6 +496,15 @@ class _GstWhepSession(object):
             daemon=True,
         )
         thread.start()
+
+    def _candidate_grace_expired(self):
+        if not self._local_candidates:
+            self._finish_failure(
+                "probe_unavailable", "no_local_candidate", False
+            )
+        else:
+            self._maybe_post_offer()
+        return False
 
     def _post_offer(self, sdp_text):
         log.info("whep_probe offer_shape=%s", _sdp_shape(sdp_text))
@@ -395,6 +541,7 @@ class _GstWhepSession(object):
 
     def _apply_answer(self, answer):
         log.info("whep_probe answer_shape=%s", _sdp_shape(answer))
+        self._remote_candidates = _ice_candidates_by_mline(answer)
         _result, message = self.GstSdp.SDPMessage.new()
         parsed = self.GstSdp.sdp_message_parse_buffer(
             answer.encode("utf-8"), message
@@ -425,6 +572,8 @@ class _GstWhepSession(object):
         self.GLib.idle_add(self._remote_description_ready)
 
     def _remote_description_ready(self):
+        for mline_index, candidate in self._remote_candidates:
+            self.webrtc.emit("add-ice-candidate", mline_index, candidate)
         self.signaling_ok = True
         state = self.webrtc.get_property("ice-connection-state")
         log.info(

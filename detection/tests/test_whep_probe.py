@@ -9,7 +9,9 @@ from whep_probe import (  # noqa: E402
     H264_RTP_CAPS,
     ProbeResult,
     WhepProbeScheduler,
+    _ice_candidates_by_mline,
     _sdp_shape,
+    _with_gathered_candidates,
 )
 
 
@@ -58,14 +60,61 @@ def test_sdp_shape_keeps_negotiation_evidence_without_ips_or_credentials():
         "directions": ["recvonly"],
         "codecs": [],
         "candidate_count": 1,
+        "candidate_kinds": [
+            {"transport": "udp", "family": "ipv4", "type": "host"},
+        ],
+        "mids": [],
+        "groups": [],
+        "ice_credentials": 2,
+        "fingerprints": 0,
+        "rtcp_mux": False,
     }
     assert "192.0.2.4" not in str(shape)
     assert "secret" not in str(shape)
 
 
+def test_gstreamer_114_candidates_are_added_to_non_trickle_offer_once():
+    offer = "\r\n".join((
+        "v=0",
+        "m=video 9 UDP/TLS/RTP/SAVPF 96",
+        "a=recvonly",
+        "a=mid:video0",
+        "",
+    ))
+    candidate = "candidate:1 1 UDP 1 192.0.2.4 12345 typ host"
+
+    complete = _with_gathered_candidates(offer, (candidate, candidate))
+
+    assert complete.count("a=" + candidate) == 1
+    assert complete.count("a=end-of-candidates") == 1
+    assert complete.count("a=group:BUNDLE video0") == 1
+    assert complete.endswith("\r\n")
+    assert _sdp_shape(complete)["candidate_count"] == 1
+
+
+def test_candidate_assembly_preserves_offer_when_no_candidate_is_available():
+    offer = "v=0\nm=video 9 UDP/TLS/RTP/SAVPF 96\na=recvonly\n"
+
+    assert _with_gathered_candidates(offer, ()) == offer
+
+
+def test_remote_candidates_are_extracted_with_their_media_index():
+    answer = "\r\n".join((
+        "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+        "a=candidate:audio-private-value",
+        "m=video 9 UDP/TLS/RTP/SAVPF 96",
+        "a=candidate:video-private-value",
+    ))
+
+    assert _ice_candidates_by_mline(answer) == [
+        (0, "candidate:audio-private-value"),
+        (1, "candidate:video-private-value"),
+    ]
+
+
 def test_every_rung_is_serialized_and_repeats_at_its_bounded_cadence():
     now = [0.0]
-    runner = FakeRunner([result(), result(), result(), result()])
+    runner = FakeRunner([result(), result(), result(), result(), result()])
     scheduler = WhepProbeScheduler(
         runner,
         Metrics(),
@@ -75,16 +124,20 @@ def test_every_rung_is_serialized_and_repeats_at_its_bounded_cadence():
     )
 
     assert scheduler.run_due_once(now=0.0).rung == "cam"
-    assert scheduler.run_due_once(now=9.9) is None
-    assert scheduler.run_due_once(now=10.0).rung == "cam_lq"
-    assert scheduler.run_due_once(now=20.0).rung == "cam_uq"
     assert scheduler.run_due_once(now=59.9) is None
     assert scheduler.run_due_once(now=60.0).rung == "cam"
+    assert scheduler.run_due_once(now=74.9) is None
+    assert scheduler.run_due_once(now=75.0).rung == "cam_lq"
+    assert scheduler.run_due_once(now=119.9) is None
+    assert scheduler.run_due_once(now=120.0).rung == "cam"
+    assert scheduler.run_due_once(now=149.9) is None
+    assert scheduler.run_due_once(now=150.0).rung == "cam_uq"
     assert runner.calls == [
         ("cam", 8.0),
-        ("cam_lq", 8.0),
-        ("cam_uq", 8.0),
         ("cam", 8.0),
+        ("cam_lq", 8.0),
+        ("cam", 8.0),
+        ("cam_uq", 8.0),
     ]
 
 
