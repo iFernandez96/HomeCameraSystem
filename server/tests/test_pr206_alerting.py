@@ -96,3 +96,5 @@ def test_alert_drill_includes_all_critical_rules_and_server_restart():
     assert "status=resolved" in script
     assert "wait_for_delivery firing" in script
     assert "wait_for_delivery resolved" in script
+    assert "DRILL_ID" in script
+    assert "drill=$DRILL_ID" in script

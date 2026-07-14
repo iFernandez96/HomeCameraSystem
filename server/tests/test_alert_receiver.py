@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 
 from app import alert_receiver
@@ -116,3 +118,21 @@ def test_alert_receiver_health_discloses_no_operational_state():
     response = TestClient(alert_receiver.app).get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+def test_drill_receipt_logs_only_a_strict_safe_identifier(monkeypatch, caplog):
+    _Sender.sent = 1
+    _Sender.payloads = []
+    monkeypatch.setattr(alert_receiver, "PushService", _Sender)
+    payload = webhook()
+    payload["alerts"][0]["labels"]["drill"] = "pr206-1784000000"
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        TestClient(alert_receiver.app).post("/alerts", json=payload)
+    assert "drill=pr206-1784000000" in caplog.text
+
+    caplog.clear()
+    payload["alerts"][0]["labels"]["drill"] = "unsafe\nvalue"
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        TestClient(alert_receiver.app).post("/alerts", json=payload)
+    assert "drill=none" in caplog.text
+    assert "unsafe" not in caplog.text

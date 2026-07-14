@@ -6,6 +6,7 @@ set -euo pipefail
 MODE="${1:---dry-run}"
 ALERTMANAGER_URL="${HOMECAM_ALERTMANAGER_URL:-http://127.0.0.1:9093}"
 RULES_FILE="${HOMECAM_ALERT_RULES:-$(dirname "$0")/prometheus/alerts.yml}"
+DRILL_ID="${HOMECAM_DRILL_ID:-pr206-$(date +%s)}"
 
 if [[ "$MODE" != "--dry-run" && "$MODE" != "--execute" ]]; then
   echo "usage: $0 [--dry-run|--execute]" >&2
@@ -13,6 +14,10 @@ if [[ "$MODE" != "--dry-run" && "$MODE" != "--execute" ]]; then
 fi
 if [[ "$MODE" == "--execute" && "${HOMECAM_DRILL_CONFIRM:-}" != "YES" ]]; then
   echo "refusing notification drill: export HOMECAM_DRILL_CONFIRM=YES" >&2
+  exit 2
+fi
+if [[ ! "$DRILL_ID" =~ ^pr206-[0-9]{10}$ ]]; then
+  echo "refusing invalid drill id" >&2
   exit 2
 fi
 
@@ -37,7 +42,7 @@ build_payload() {
   printf '['
   for name in "${ALERT_NAMES[@]}"; do
     if (( first )); then first=0; else printf ','; fi
-    printf '{"labels":{"alertname":"%s","severity":"critical","drill":"pr206"},' "$name"
+    printf '{"labels":{"alertname":"%s","severity":"critical","drill":"%s"},' "$name" "$DRILL_ID"
     printf '"annotations":{"summary":"PR-206 alert delivery drill","description":"Synthetic operational alert; no production data is included."},'
     printf '"startsAt":"%s","endsAt":"%s","generatorURL":""}' "$STARTED_AT" "$ends_at"
   done
@@ -60,7 +65,7 @@ wait_for_delivery() {
     logs=$(docker logs --since "$LOG_SINCE" homecam-alert-receiver 2>&1 || true)
     ready=1
     for name in "${ALERT_NAMES[@]}"; do
-      count=$(grep -c "operational alert delivered status=$status alertname=$name " <<<"$logs" || true)
+      count=$(grep -c "operational alert delivered status=$status alertname=$name drill=$DRILL_ID " <<<"$logs" || true)
       if [[ "$count" != "1" ]]; then
         ready=0
         break
@@ -92,8 +97,8 @@ fi
 LOGS=$(docker logs --since "$LOG_SINCE" homecam-alert-receiver 2>&1 || true)
 failed=0
 for name in "${ALERT_NAMES[@]}"; do
-  firing=$(grep -c "operational alert delivered status=firing alertname=$name " <<<"$LOGS" || true)
-  resolved=$(grep -c "operational alert delivered status=resolved alertname=$name " <<<"$LOGS" || true)
+  firing=$(grep -c "operational alert delivered status=firing alertname=$name drill=$DRILL_ID " <<<"$LOGS" || true)
+  resolved=$(grep -c "operational alert delivered status=resolved alertname=$name drill=$DRILL_ID " <<<"$LOGS" || true)
   if [[ "$firing" != "1" || "$resolved" != "1" ]]; then
     echo "FAIL $name: delivered firing=$firing resolved=$resolved" >&2
     failed=1

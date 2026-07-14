@@ -25,6 +25,7 @@ log = logging.getLogger("uvicorn.error")
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _MAX_BODY_BYTES = 64 * 1024
 _ALERT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,95}$")
+_DRILL_ID = re.compile(r"^pr206-[0-9]{10}$")
 
 
 class _Alert(BaseModel):
@@ -95,6 +96,8 @@ async def receive_alert(request: Request) -> dict[str, object]:
     alert_name = alert.labels.get("alertname", "")
     if not _ALERT_NAME.fullmatch(alert_name):
         raise HTTPException(status_code=422, detail="invalid alert name")
+    raw_drill_id = alert.labels.get("drill", "")
+    drill_id = raw_drill_id if _DRILL_ID.fullmatch(raw_drill_id) else "none"
     summary = alert.annotations.get("summary", "Camera system condition")[:160]
     description = alert.annotations.get("description", "")[:320]
     resolved = webhook.status == "resolved"
@@ -117,15 +120,17 @@ async def receive_alert(request: Request) -> dict[str, object]:
     sent = await sender.send_all_readonly(payload)
     if sent < 1:
         log.warning(
-            "operational alert delivery deferred status=%s alertname=%s sent=0",
+            "operational alert delivery deferred status=%s alertname=%s drill=%s sent=0",
             webhook.status,
             alert_name,
+            drill_id,
         )
         raise HTTPException(status_code=503, detail="no off-box delivery")
     log.info(
-        "operational alert delivered status=%s alertname=%s recipients=%d",
+        "operational alert delivered status=%s alertname=%s drill=%s recipients=%d",
         webhook.status,
         alert_name,
+        drill_id,
         sent,
     )
     return {"ok": True, "sent": sent, "status": webhook.status}
