@@ -131,10 +131,12 @@ async def metrics_prom(request: Request) -> str:
     from ..services.detection import detection_service
     from ..services.health import worker_health
     from ..services.push_service import push_service
-    from ..services import whep_probe_status
+    from ..services import operational_metrics, whep_probe_status
 
     used_mb, total_mb = _meminfo()
     worker_alive, _last_seen_s, worker_metrics = worker_health.snapshot()
+    recording_free_gb = _disk_free_gb(str(settings.recordings_dir))
+    system_free_gb = _disk_free_gb("/")
 
     parts: list[str] = []
 
@@ -177,13 +179,84 @@ async def metrics_prom(request: Request) -> str:
     ))
     parts.append(_line(
         "homecam_disk_free_gb",
-        _disk_free_gb(str(settings.recordings_dir)),
+        recording_free_gb,
         "Free disk space on the recording filesystem in GB",
     ))
     parts.append(_line(
         "homecam_system_disk_free_gb",
-        _disk_free_gb("/"),
+        system_free_gb,
         "Free disk space on the Jetson root filesystem in GB",
+    ))
+    parts.append(_line(
+        "homecam_recording_storage_probe_success",
+        1 if recording_free_gb is not None else 0,
+        "Whether the server can inspect the configured recording storage",
+    ))
+    parts.append(_line(
+        "homecam_system_storage_probe_success",
+        1 if system_free_gb is not None else 0,
+        "Whether the server can inspect the Jetson root storage",
+    ))
+
+    # Persisted operations. Export numeric outcomes only: ledgers and backup
+    # state contain filenames, digests, and reasons that must not become labels.
+    backup = operational_metrics.backup_metrics(settings.backup_status_path)
+    parts.append(_line(
+        "homecam_backup_status_present",
+        backup["status_present"],
+        "Whether a valid encrypted-backup status record exists",
+    ))
+    parts.append(_line(
+        "homecam_backup_last_attempt_success",
+        backup.get("last_attempt_success"),
+        "Whether the latest encrypted-backup attempt succeeded",
+    ))
+    parts.append(_line(
+        "homecam_backup_last_success_timestamp_seconds",
+        backup.get("last_success_timestamp"),
+        "Unix timestamp of the latest successful encrypted backup",
+    ))
+    restore_success = operational_metrics.latest_restore_success(
+        settings.backup_ledger_path
+    )
+    parts.append(_line(
+        "homecam_restore_last_attempt_success",
+        restore_success,
+        "Whether the latest restore attempt succeeded",
+    ))
+    update_success = operational_metrics.latest_update_success(settings.ota_ledger_path)
+    parts.append(_line(
+        "homecam_update_last_attempt_success",
+        update_success,
+        "Whether the latest terminal update attempt applied successfully",
+    ))
+    supervisor = operational_metrics.supervisor_metrics(
+        settings.recordings_dir / ".server-supervisor-state.json"
+    )
+    parts.append(_line(
+        "homecam_server_supervisor_state_present",
+        supervisor["state_present"],
+        "Whether the host server-supervisor state file exists",
+    ))
+    parts.append(_line(
+        "homecam_server_supervisor_state_valid",
+        supervisor.get("state_valid"),
+        "Whether the host server-supervisor state file is valid",
+    ))
+    parts.append(_line(
+        "homecam_server_supervisor_latched",
+        supervisor.get("latched"),
+        "Whether server recovery stopped after exhausting its restart budget",
+    ))
+    parts.append(_line(
+        "homecam_server_supervisor_restarts_in_window",
+        supervisor.get("restarts_in_window"),
+        "Server-only recovery actions during the supervisor ten-minute window",
+    ))
+    parts.append(_line(
+        "homecam_server_supervisor_last_action_timestamp_seconds",
+        supervisor.get("last_action_timestamp"),
+        "Unix timestamp of the latest server-supervisor action",
     ))
 
     # Camera + push.

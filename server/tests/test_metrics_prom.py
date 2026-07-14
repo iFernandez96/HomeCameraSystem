@@ -229,3 +229,16 @@ def test_metrics_endpoint_skips_none_probes_silently(client_anon: TestClient):
             raise AssertionError(
                 "metric value isn't numeric: {!r}".format(line)
             )
+
+
+def test_metrics_endpoint_exposes_secret_free_operational_alert_inputs(
+    client_anon: TestClient,
+):
+    body = client_anon.get("/metrics").text
+    assert "homecam_recording_storage_probe_success 1" in body
+    assert "homecam_system_storage_probe_success 1" in body
+    assert "homecam_backup_status_present 0.0" in body
+    assert "homecam_backup_last_attempt_success" not in body
+    assert "homecam_server_supervisor_state_present 0.0" in body
+    assert "archive_digest" not in body
+    assert "recipient_fingerprint" not in body

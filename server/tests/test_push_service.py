@@ -160,6 +160,26 @@ async def test_send_all_drops_410_subscriptions(service: PushService):
     assert service.subs[0]["endpoint"] == "ok"
 
 
+async def test_readonly_sender_never_prunes_shared_subscriptions(service: PushService):
+    from pywebpush import WebPushException
+
+    service.private_pem = b"fake-pem"
+    service.add({"endpoint": "gone", "keys": {"p256dh": "a", "auth": "b"}})
+    before = service.persist_path.read_bytes()
+    response = MagicMock()
+    response.status_code = 410
+
+    with patch(
+        "app.services.push_service.webpush",
+        side_effect=WebPushException("expired", response=response),
+    ):
+        sent = await service.send_all_readonly({"title": "operational alert"})
+
+    assert sent == 0
+    assert [sub["endpoint"] for sub in service.subs] == ["gone"]
+    assert service.persist_path.read_bytes() == before
+
+
 async def test_send_all_keeps_404_subscriptions(service: PushService):
     """404 also indicates a dead subscription per the WebPush spec; ensure both
     404 and 410 are pruned."""

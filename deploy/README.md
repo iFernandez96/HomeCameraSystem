@@ -100,7 +100,10 @@ The restart budget is persisted privately at
 ten minutes exhaust the budget; another debounced failure latches the unit with
 exit 78 and emits `alert=structural_loop action=stop` to journald. Docker's own
 restart policy is disabled so it cannot bypass this circuit breaker. PR-206 is
-responsible for delivering this local alert off-box.
+implemented by the separate Prometheus/Alertmanager extension below: server
+recovery state is exported as numeric metrics, and the receiver delivers the
+alert through registered Web Push subscriptions without depending on the
+FastAPI process.
 
 Inspect the separate server-recovery reason and action without camera logs:
 
@@ -311,21 +314,36 @@ async def system_reboot():
 - **WebRTC video** (`client/src/lib/webrtc.ts`): receive-only video with STUN/TURN fallback.
 - **WebRTC audio** (`client/src/lib/twoWayAudio.ts`): separate WHIP talk and WHEP listen sessions using one-time FastAPI media grants.
 
-## Observability stack (opt-in, iter-199)
+## Observability and off-box alerting stack
 
-A pre-provisioned Prometheus + Grafana setup ships in `deploy/`. The
+A pre-provisioned Prometheus + Alertmanager + Grafana setup ships in `deploy/`.
+The independent `homecam-alert-receiver` process reloads the existing VAPID
+keys and registered Web Push destinations from the shared secrets volume on
+every delivery attempt. It mounts that volume read-only and is not exposed on
+a host port. A failed/no-recipient delivery returns 503 so Alertmanager retries;
+resolved alerts are sent through the same path.
+
+The
 `homecam-server` container exposes `/metrics` at root, but PR-105 source-gates
 it to loopback and the fixed `172.30.0.0/24` HomeCam Compose network. Remote
 LAN/tailnet requests receive the same 404 as an unknown route; `/healthz`
 remains the intentionally public liveness probe. The opt-in Compose extension
-scrapes metrics internally every 15 s and renders two dashboards.
+scrapes metrics internally every 15 s, evaluates operational alert rules, and
+renders two dashboards. It covers backup age/outcomes, recording-storage and
+root-disk probes, local/external WHEP health, update/restore outcomes, and
+server supervision. Physical mount identity and fallback-write prevention
+remain PR-207 appliance work; this PR alerts when the existing recording probe
+goes unavailable.
 
 ```bash
 # Bring up the observability stack alongside the camera stack:
 docker compose -f deploy/docker-compose.yml \
                -f deploy/docker-compose.grafana.yml up -d
 
-# Grafana is loopback-only and requires its own login. If it is enabled, reach
+# Grafana and Alertmanager are loopback-only. Grafana requires its own login.
+# Alertmanager's loopback port exists only for the confirmed delivery drill;
+# do not forward or expose it remotely.
+# If Grafana is enabled, reach
 # it with an authenticated operator tunnel such as an SSH local forward:
 #   ssh -L 3000:127.0.0.1:3000 jetson
 # Then open http://127.0.0.1:3000.
@@ -340,7 +358,10 @@ docker compose -f deploy/docker-compose.yml \
 docker compose -f deploy/docker-compose.grafana.yml down
 ```
 
-**RAM cost on the Nano 2GB:** ~30 MB Prometheus + ~50 MB Grafana ≈ 4% of the 2 GB total. The mediamtx + detection worker + server already eat 1.4-1.7 GB; observability is a small additional load. Run only if you want the dashboards — the rest of the stack has zero functional dependency on these two containers.
+The extension adds four bounded processes (Prometheus, Alertmanager, the
+receiver, and Grafana) on a 2 GB Nano. Measure the deployed steady-state memory
+before treating Grafana as always-on; Alertmanager and the receiver are the
+required PR-206 delivery path, while Grafana is only the dashboard surface.
 
 **Auth:** Anonymous viewing and sign-up are disabled. Grafana is published on
 Jetson loopback only. Provision its admin credential through the operator's
@@ -360,7 +381,16 @@ curl -o /dev/null -w '%{http_code}\n' \
 # If the optional stack is running, target health must be 1.
 docker exec homecam-prometheus wget -qO- \
   'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22homecam%22%7D'
+
+# Confirm the Alertmanager and independent receiver are ready.
+curl -f http://127.0.0.1:9093/-/ready
+docker exec homecam-alert-receiver curl -fsS http://127.0.0.1:9095/healthz
 ```
+
+Run `bash deploy/alert-drill.sh --dry-run` first. The executing form sends one
+real firing notification and one recovery notification for every critical rule
+plus the bounded server-restart warning, and therefore requires
+`HOMECAM_DRILL_CONFIRM=YES`. See `RECOVERY_DRILLS.md`.
 
 ## Troubleshooting
 

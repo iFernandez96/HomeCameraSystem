@@ -50,3 +50,87 @@ groups:
         annotations:
           summary: Cellular live view is failing externally
           description: Cellular clients report repeated failure while the Jetson-local WHEP probe remains healthy; camera recovery is intentionally not triggered.
+      - alert: HomecamBackupStatusMissing
+        expr: homecam_backup_status_present == 0
+        for: 30m
+        labels: { severity: critical }
+        annotations:
+          summary: Encrypted backup status is missing
+          description: No valid encrypted-backup status record is available after the startup grace period.
+      - alert: HomecamBackupStale
+        expr: time() - homecam_backup_last_success_timestamp_seconds > 129600
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: Encrypted backup is stale
+          description: The most recent successful encrypted backup is more than 36 hours old.
+      - alert: HomecamBackupFailed
+        expr: homecam_backup_last_attempt_success == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Encrypted backup failed
+          description: The latest encrypted-backup attempt failed; inspect the private backup ledger and service journal locally.
+      - alert: HomecamRecordingStorageUnavailable
+        expr: homecam_recording_storage_probe_success == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Recording storage is unavailable
+          description: The server cannot inspect its configured recording storage; recording and retention may be unavailable.
+      - alert: HomecamRootStorageProbeFailed
+        expr: homecam_system_storage_probe_success == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Jetson root storage probe failed
+          description: The server cannot inspect free space on the Jetson root filesystem.
+      - alert: HomecamRootDiskLow
+        expr: homecam_system_disk_free_gb < 2
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: Jetson root disk space is critically low
+          description: Less than 2 GB remains on the Jetson root filesystem.
+      - alert: HomecamUpdateFailed
+        expr: homecam_update_last_attempt_success == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: HomeCam update did not apply
+          description: The latest terminal update attempt was rejected or rolled back; inspect the private update ledger locally.
+      - alert: HomecamRestoreFailed
+        expr: homecam_restore_last_attempt_success == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: HomeCam restore failed
+          description: The latest restore attempt failed or was blocked; inspect the private recovery ledger locally.
+      - alert: HomecamServerUnavailable
+        expr: up{job="homecam"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: HomeCam server is unavailable
+          description: Prometheus cannot scrape the FastAPI server; the independent server supervisor owns bounded recovery.
+      - alert: HomecamServerRecoveryLoop
+        expr: homecam_server_supervisor_latched == 1
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: HomeCam server recovery stopped
+          description: The host supervisor exhausted its bounded restart budget and latched to prevent a structural loop.
+      - alert: HomecamServerSupervisorStateInvalid
+        expr: homecam_server_supervisor_state_present == 1 and homecam_server_supervisor_state_valid == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Server supervisor state is invalid
+          description: The persisted server-recovery state could not be validated; the supervisor fails closed in this condition.
+      - alert: HomecamServerRestarted
+        expr: homecam_server_supervisor_restarts_in_window > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: HomeCam server was restarted by supervision
+          description: The server-only supervisor performed at least one bounded recovery action in its ten-minute window.

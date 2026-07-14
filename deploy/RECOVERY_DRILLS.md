@@ -22,6 +22,41 @@ the recording filesystem. The session drill uses the test fixtures and never
 revokes a production session. Server and media execution are disruptive and
 therefore require the explicit confirmation variable.
 
+## Off-box alert delivery drill
+
+The PR-206 drill injects synthetic alerts directly into loopback-only
+Alertmanager. It includes every critical rule plus the successful
+server-restart warning, waits for grouped Web Push delivery, resolves the same
+alerts, and requires exactly one successful receiver log for each firing and
+recovery transition. Synthetic annotations contain no production identifiers,
+paths, credentials, or data.
+
+First confirm at least one off-box browser/phone has a working HomeCam Web Push
+subscription with `Settings -> Send`, then preview the alert names:
+
+```sh
+bash deploy/alert-drill.sh --dry-run
+```
+
+Execute only when the operator is ready for the notification burst:
+
+```sh
+export HOMECAM_DRILL_CONFIRM=YES
+bash deploy/alert-drill.sh --execute
+```
+
+A passing script proves Alertmanager deduplication, receiver acceptance, and
+Web Push gateway submission. The operator must separately confirm that each
+notification displayed once on the off-box device and that recovery notices
+were visible; a Jetson-local log cannot prove OS notification display.
+
+Total Jetson power-off is deliberately outside this on-box stack. The Android
+wrapper's persisted `JetsonHealthJobService` probes `/healthz` independently,
+notifies after two failed checks, and sends a recovery notification when the
+Jetson returns. Verify that criterion on a connected phone by powering the
+Jetson off long enough for two job runs, without stopping or force-closing the
+Android wrapper.
+
 ## Encrypted backup key setup
 
 Generate the recovery pair on the recovery machine, never on the Jetson. Keep

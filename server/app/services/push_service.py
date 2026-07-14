@@ -457,6 +457,8 @@ class PushService:
         self,
         subs: list[dict[str, Any]],
         payload: dict[str, Any],
+        *,
+        persist_prunes: bool = True,
     ) -> int:
         """Common send mechanics shared by send_all and send_matching
         (iter-206 refactor). Sends `payload` to each sub in `subs`,
@@ -605,7 +607,7 @@ class PushService:
                 len(subs),
                 transient_exc_types[0],
             )
-        if dead:
+        if dead and persist_prunes:
             for d in dead:
                 # Mutating self.subs (not the local `subs` list) is
                 # intentional — `dead` are real subscriptions to prune
@@ -622,6 +624,15 @@ class PushService:
                 ", ".join(_endpoint_host(d.get("endpoint")) for d in dead),
             )
             self._save_subs()
+        elif dead:
+            # The independent operational-alert receiver mounts the shared
+            # subscription registry read-only. It must never race the primary
+            # server's add/remove writes; the primary process will perform any
+            # durable dead-endpoint cleanup on its next normal fanout.
+            log.info(
+                "push: observed %d dead subscription(s) from read-only sender",
+                len(dead),
+            )
         return sent
 
     async def send_all(self, payload: dict[str, Any]) -> int:
@@ -629,6 +640,18 @@ class PushService:
         push button (`/api/push/test`). For event-driven push, use
         `send_matching` so per-user filters apply."""
         return await self._fanout_to(self.subs, payload)
+
+    async def send_all_readonly(self, payload: dict[str, Any]) -> int:
+        """Fan out without mutating the shared subscription registry.
+
+        Used by the PR-206 receiver, which runs outside the FastAPI container
+        so server restarts cannot suppress operational alerts.
+        """
+        return await self._fanout_to(
+            list(self.subs),
+            payload,
+            persist_prunes=False,
+        )
 
     async def send_matching(
         self,

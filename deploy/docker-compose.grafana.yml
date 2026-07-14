@@ -5,9 +5,9 @@
 #   docker compose -f deploy/docker-compose.yml \
 #                  -f deploy/docker-compose.grafana.yml up -d
 #
-# Adds Prometheus (scrapes the homecam-server's internal-only /metrics every 15 s)
-# and Grafana (auto-loads two provisioned dashboards: Overview +
-# Detection worker). PR-001 keeps Grafana on Jetson loopback and disables
+# Adds Prometheus, Alertmanager, an independent Web Push alert receiver, and
+# Grafana. Prometheus scrapes the homecam-server's internal-only /metrics every
+# 15 s. PR-001 keeps Grafana and Alertmanager on Jetson loopback and disables
 # anonymous access. Operators must use an authenticated tunnel or a local SSH
 # forward; no dashboard port is exposed directly to LAN or tailnet peers.
 #
@@ -42,6 +42,55 @@ services:
     expose:
       - "9090"
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: homecam-alertmanager
+    restart: unless-stopped
+    depends_on:
+      - alert-receiver
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - homecam-alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=http://127.0.0.1:9093
+    # Loopback is for the bounded operator alert drill. Normal notification
+    # traffic stays on the Compose network.
+    ports:
+      - "127.0.0.1:9093:9093"
+
+  alert-receiver:
+    image: homecam-server:latest
+    container_name: homecam-alert-receiver
+    restart: unless-stopped
+    entrypoint:
+      - uvicorn
+      - app.alert_receiver:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9095"
+      - --no-access-log
+    volumes:
+      # Read-only by design: the FastAPI server remains the sole writer of
+      # push subscriptions and VAPID material. The receiver reloads both on
+      # every Alertmanager retry.
+      - homecam-secrets:/app/secrets:ro
+    environment:
+      - VAPID_PRIVATE_KEY_PATH=/app/secrets/vapid_private.pem
+      - VAPID_PUBLIC_KEY_PATH=/app/secrets/vapid_public.pem
+      - PUSH_SUBS_PATH=/app/secrets/push_subs.json
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
+    expose:
+      - "9095"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9095/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   grafana:
     image: grafana/grafana:11.2.0
     container_name: homecam-grafana
@@ -65,3 +114,7 @@ services:
 volumes:
   homecam-prom-data:
   homecam-grafana-data:
+  homecam-alertmanager-data:
+  # Same project-scoped volume declared by docker-compose.yml. Declaring it
+  # here preserves the existing standalone observability-stack workflow.
+  homecam-secrets:
