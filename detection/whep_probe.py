@@ -210,6 +210,32 @@ def _safe_reason(stage, exc):
     return "{}_{}".format(stage, type(exc).__name__.lower())[:64]
 
 
+def _sdp_shape(sdp_text):
+    """Return negotiation structure without retaining addresses or secrets."""
+    media = []
+    directions = []
+    candidate_count = 0
+    for raw in sdp_text.splitlines():
+        line = raw.strip()
+        if line.startswith("m="):
+            parts = line.split()
+            if len(parts) >= 4:
+                media.append({
+                    "kind": parts[0][2:][:16],
+                    "port": parts[1][:8],
+                    "payloads": parts[3:11],
+                })
+        elif line in ("a=sendonly", "a=recvonly", "a=sendrecv", "a=inactive"):
+            directions.append(line[2:])
+        elif line.startswith("a=candidate:"):
+            candidate_count += 1
+    return {
+        "media": media[:4],
+        "directions": directions[:4],
+        "candidate_count": candidate_count,
+    }
+
+
 class _GstWhepSession(object):
     """Lazy GI adapter.  Kept private so tests use fake runners."""
 
@@ -329,6 +355,7 @@ class _GstWhepSession(object):
         thread.start()
 
     def _post_offer(self, sdp_text):
+        log.info("whep_probe offer_shape=%s", _sdp_shape(sdp_text))
         request = urllib.request.Request(
             self.url,
             data=sdp_text.encode("utf-8"),
@@ -361,6 +388,7 @@ class _GstWhepSession(object):
         self.GLib.idle_add(self._apply_answer, answer)
 
     def _apply_answer(self, answer):
+        log.info("whep_probe answer_shape=%s", _sdp_shape(answer))
         _result, message = self.GstSdp.SDPMessage.new()
         parsed = self.GstSdp.sdp_message_parse_buffer(
             answer.encode("utf-8"), message

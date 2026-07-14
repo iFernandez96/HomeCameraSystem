@@ -5,7 +5,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from metrics import Metrics  # noqa: E402
-from whep_probe import H264_RTP_CAPS, ProbeResult, WhepProbeScheduler  # noqa: E402
+from whep_probe import (  # noqa: E402
+    H264_RTP_CAPS,
+    ProbeResult,
+    WhepProbeScheduler,
+    _sdp_shape,
+)
 
 
 class FakeRunner(object):
@@ -35,6 +40,24 @@ def result(kind="success", reason="", recoverable=False, checked_at=100.0):
 
 def test_offer_caps_pin_a_valid_dynamic_rtp_payload_type_for_gstreamer_114():
     assert "payload=96" in H264_RTP_CAPS
+
+
+def test_sdp_shape_keeps_negotiation_evidence_without_ips_or_credentials():
+    raw = "\r\n".join((
+        "m=video 9 UDP/TLS/RTP/SAVPF 96",
+        "a=recvonly",
+        "a=ice-ufrag:secret",
+        "a=ice-pwd:more-secret",
+        "a=candidate:1 1 UDP 1 192.0.2.4 12345 typ host",
+    ))
+    shape = _sdp_shape(raw)
+    assert shape == {
+        "media": [{"kind": "video", "port": "9", "payloads": ["96"]}],
+        "directions": ["recvonly"],
+        "candidate_count": 1,
+    }
+    assert "192.0.2.4" not in str(shape)
+    assert "secret" not in str(shape)
 
 
 def test_every_rung_is_serialized_and_repeats_at_its_bounded_cadence():
