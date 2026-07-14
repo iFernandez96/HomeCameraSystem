@@ -285,7 +285,8 @@ PIDs unchanged, and allowed the live camera snapshot to advance by 29 seconds.
 The drill cleanup restored `/healthz`, cleared only the test latch, and left the
 server, supervisor, MediaMTX, and detection units active and healthy.
 
-PR-206 implementation note (2026-07-13): commits `14af87e` and `807bd1d`
+PR-206 implementation note (2026-07-13): commits `14af87e`, `807bd1d`, and
+`815109c`
 added an independently running Alertmanager Web Push receiver, numeric-only
 backup/storage/update/restore/supervisor metrics, 12 new operational alert
 rules, and a bounded firing/recovery drill. Alertmanager groups and deduplicates
@@ -297,8 +298,9 @@ off-box handoff succeeds. Client lint/typecheck/build and 1,622 tests, 1,444
 server tests, 688 detection tests including the Python 3.6 guard, Android debug
 assembly, Compose rendering, Prometheus's 19-rule validation, Alertmanager
 validation, and the focused receiver/config checks passed. On the Jetson, all
-15 critical/required alert paths each recorded exactly one successful firing
-handoff and one successful recovery handoff; the server, Alertmanager,
+15 critical/required alert paths in isolated drill `pr206-1784013646` each
+recorded exactly one successful firing handoff and one successful recovery
+handoff, with no active synthetic alerts remaining; the server, Alertmanager,
 Prometheus, receiver, MediaMTX, detection worker, and host supervisor remained
 healthy. The connected S24 wrapper smoke passed. The final acceptance step
 remains operator-required: physically power the Jetson off, observe the Android
@@ -468,4 +470,4 @@ recordings.
 | 2026-07-13 | PR-101 | `release/pr-101-media-grants`; `24a7a0d` | Missing, wrong-scope, expired, replayed, unknown-path, and anonymous grant checks passed; full server (1,326 passed) and client (1,618 passed) suites, lint, typecheck, production build, mobile/desktop journeys, and WHEP reconnect harness passed. MediaMTX v1.18 loaded the finite-origin configuration. The deployed Jetson accepted authenticated WHEP and denied ungranted reads; the live harness decoded every rung and reconnect/resume scenario; the physical phone presented frames on UHQ, HQ, Data-saver, and Ultra-low while quality switches closed the prior session and established the exact new path. Raw grants were absent from URLs, logs, state, telemetry, and retained evidence; temporary verification accounts were removed; server, MediaMTX, detection, RTSP, and HTTPS health were green after activation. | Done |
 | 2026-07-13 | PR-204 | `release/pr-204-whep-probe`; `330f51f`–`4be8e7b` | Full normal suites passed (client 1,622; server 1,415; detection 688; Android assembly), Prometheus validated seven rules, and focused tests proved no-media classification, one-action debounce through the persisted ladder, alert-only cellular telemetry, one-use exact-path grants, synchronized metrics, Python 3.6 compatibility, and secret-safe diagnostics. The deployed scheduler repeatedly received RTP from all three rungs below the 8-second bound; live metrics ended success/zero failures/zero restarts and all three Jetson services were healthy. | Done |
 | 2026-07-13 | PR-205 | `release/pr-205-server-supervision`; `2c35f0f`–`45bc93a` | Release-source/contracts, Compose/shell validation, 12 focused tests, and 1,427 server tests passed. The deployed Python 3.6 supervisor recovered a killed API container inside the 120-second gate while MediaMTX/detection PIDs and RTSP remained intact. An exhausted-budget drill latched/alerted in 32 seconds with no fourth restart while camera output continued; cleanup restored healthy server and supervisor state. Deployed host-file hashes matched the committed files. | Done |
-| 2026-07-13 | PR-206 | `release/pr-206-offbox-alerts`; `14af87e`, `807bd1d` | All local suites and both alerting config validators passed. The deployed drill recorded exactly one off-box Web Push handoff and one recovery handoff for each of 15 required alert paths; all camera/server/alert services remained healthy, and the connected S24 wrapper smoke passed. Physical Jetson power-off, Android offline-notification display, power restoration, and recovery display remain an operator drill because power cannot be restored remotely. | Implemented; power-off drill pending |
+| 2026-07-13 | PR-206 | `release/pr-206-offbox-alerts`; `14af87e`, `807bd1d`, `815109c` | All local suites and both alerting config validators passed. Isolated live drill `pr206-1784013646` recorded exactly one off-box Web Push handoff and one recovery handoff for each of 15 required alert paths, then left no active synthetic alerts; all camera/server/alert services remained healthy, and the connected S24 wrapper smoke passed. Physical Jetson power-off, Android offline-notification display, power restoration, and recovery display remain an operator drill because power cannot be restored remotely. | Implemented; power-off drill pending |
