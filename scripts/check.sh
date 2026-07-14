@@ -15,6 +15,7 @@ fi
 run_contracts() {
   "$PYTHON" scripts/generate-contracts.py --check
   PYTHON="$PYTHON" bash scripts/test-release-source.sh
+  bash scripts/test-supply-chain.sh
 }
 run_client() { (cd client && npm run lint && npm run typecheck && npm test -- --run && npm run build); }
 run_server() { PYTHONPATH="$ROOT:$ROOT/server" "$PYTHON" -m pytest -q server/tests; }

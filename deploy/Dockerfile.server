@@ -3,7 +3,7 @@
 #
 # Build from the repo root:
 #   docker compose -f deploy/docker-compose.yml build
-FROM python:3.11-slim-bookworm
+FROM python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -46,7 +46,8 @@ WORKDIR /app
 
 # Install deps first for layer caching.
 COPY server/requirements.txt ./
-RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+RUN pip install --no-cache-dir --prefer-binary --require-hashes -r requirements.txt \
+    && pip uninstall -y pip setuptools wheel jaraco.context
 
 COPY server/ ./
 

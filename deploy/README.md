@@ -28,8 +28,8 @@ The installer:
 
 1. Installs `gstreamer1.0-rtsp` (needed for `rtspclientsink`).
 2. Adds the current user to the `docker` group, ensures the daemon is running.
-3. Installs the Docker Compose v2 plugin to `~/.docker/cli-plugins/`.
-4. Downloads MediaMTX (current pin: `v1.18.0` arm64).
+3. Installs the SHA-256-verified Docker Compose `v5.1.3` plugin to `~/.docker/cli-plugins/`.
+4. Downloads SHA-256-verified MediaMTX (current pin: `v1.18.0` arm64).
 5. Installs systemd units for `mediamtx`, `homecam-server`, the bounded `homecam-server-supervisor`, `homecam-detect`, `homecam-backup.timer`, and `homecam-jetson-perf` (selects the MAXN power envelope at boot while retaining dynamic CPU/GPU clocks; the camera encoder has its own low-latency max-performance setting).
 6. Idempotently provisions the shared worker credential at `/etc/homecam/worker-auth.secret` without displaying it.
 7. Requires the off-Jetson-generated backup recipient public key at `/etc/homecam/backup-recipient.pem`; only the public half is allowed on the Jetson.
@@ -55,16 +55,27 @@ sudo apt-get install -y --no-install-recommends gstreamer1.0-rtsp curl
 sudo usermod -aG docker "$USER"
 sudo systemctl enable --now docker
 
-# 3. Docker Compose v2 plugin
-mkdir -p ~/.docker/cli-plugins
-curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64" \
-    -o ~/.docker/cli-plugins/docker-compose
+# 3. Docker Compose v2 plugin (the helper leaves an existing destination
+# untouched if the download does not match the committed checksum)
+bash deploy/download-verified.sh \
+    https://github.com/docker/compose/releases/download/v5.1.3/docker-compose-linux-aarch64 \
+    e8105a3e687ea7e0b0f81abe4bf9269c8a2801fb72c2b498b5ff2472bc54145f \
+    ~/.docker/cli-plugins/docker-compose
 chmod +x ~/.docker/cli-plugins/docker-compose
 
 # 4. MediaMTX (note: `linux_arm64`, NOT `linux_arm64v8` — the v8 suffix was dropped)
 cd ~/HomeCameraSystem
-curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/mediamtx_v1.18.0_linux_arm64.tar.gz \
-    | tar -xz mediamtx
+tmp_dir=$(mktemp -d)
+bash deploy/download-verified.sh \
+    https://github.com/bluenviron/mediamtx/releases/download/v1.18.0/mediamtx_v1.18.0_linux_arm64.tar.gz \
+    b57017e77a49ab003926e105589a4804cb14691df279227b0955474d45265b52 \
+    "$tmp_dir/mediamtx.tar.gz"
+tar -xzf "$tmp_dir/mediamtx.tar.gz" -C "$tmp_dir" mediamtx
+printf '%s  %s\n' \
+    31fa9b11e020e62b7204ddac7ace809a079f593ac74510ab3f21227dcf6af0fe \
+    "$tmp_dir/mediamtx" | sha256sum -c -
+install -m 0755 "$tmp_dir/mediamtx" ./mediamtx
+rm -rf "$tmp_dir"
 
 # 5. systemd
 sudo cp deploy/systemd/{mediamtx,homecam-server,homecam-server-supervisor,homecam-detect,homecam-jetson-perf}.service /etc/systemd/system/
@@ -86,6 +97,37 @@ deploy/cross-deploy-server.sh jetson
 cd ~/HomeCameraSystem
 sudo systemctl enable --now mediamtx homecam-server homecam-server-supervisor homecam-detect homecam-backup.timer homecam-jetson-perf
 ```
+
+## Reproducible server inputs and security evidence
+
+The production server image uses a digest-pinned Python base and installs only
+the fully pinned, SHA-256-hashed dependency locks in `server/requirements.txt`
+and `server/requirements-dev.txt`. Change direct constraints in the matching
+`.in` files, then regenerate both locks with the committed compiler version:
+
+```bash
+# Requires uv 0.11.7 exactly.
+bash scripts/compile-python-locks.sh
+bash scripts/check.sh contracts
+```
+
+GitHub Actions are pinned to full commit SHAs. Dependabot may propose updates,
+but each update must retain a full SHA and its human-readable version comment.
+
+The security workflow cross-builds the real `linux/arm64` server image artifact,
+creates a CycloneDX SBOM, scans the image plus tracked source for high/critical
+vulnerabilities and secrets, and uploads the reports for 30 days. Each evidence
+set includes an identity JSON containing the source SHA/fingerprint, target
+platform, image-archive checksum, and container digest. Run the same gate locally:
+
+```bash
+./scripts/generate-security-artifacts.sh
+```
+
+Reports are written to the ignored `security-artifacts/` directory. The large
+image archive is deleted after scanning unless `KEEP_IMAGE_TAR=1` is set. PR-302
+owns attaching this evidence to a signed release; PR-301 makes the evidence
+artifact-identifiable and retained by CI without claiming release signing.
 
 ## Server supervision
 

@@ -32,6 +32,7 @@ Thumbs.db
 client/dist/
 client/dev-dist/
 client/.lighthouseci/
+security-artifacts/
 dist-ota/
 server/static/
 .gradle/

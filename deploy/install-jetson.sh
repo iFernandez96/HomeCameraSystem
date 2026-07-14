@@ -10,7 +10,11 @@
 set -euo pipefail
 
 REPO="${REPO:-$HOME/HomeCameraSystem}"
-MEDIAMTX_VERSION="${MEDIAMTX_VERSION:-v1.18.0}"
+readonly COMPOSE_VERSION="v5.1.3"
+readonly COMPOSE_SHA256="e8105a3e687ea7e0b0f81abe4bf9269c8a2801fb72c2b498b5ff2472bc54145f"
+readonly MEDIAMTX_VERSION="v1.18.0"
+readonly MEDIAMTX_ARCHIVE_SHA256="b57017e77a49ab003926e105589a4804cb14691df279227b0955474d45265b52"
+readonly MEDIAMTX_BINARY_SHA256="31fa9b11e020e62b7204ddac7ace809a079f593ac74510ab3f21227dcf6af0fe"
 
 # Honour the standard NO_COLOR convention and skip ANSI codes when
 # stdout isn't a TTY (e.g. `bash install-jetson.sh > install.log`).
@@ -76,25 +80,51 @@ ok "docker up"
 
 # 3. Docker Compose v2 plugin --------------------------------------------------
 
-if ! docker compose version >/dev/null 2>&1; then
-    log "Installing docker compose v2 plugin"
-    mkdir -p ~/.docker/cli-plugins
-    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64" \
-        -o ~/.docker/cli-plugins/docker-compose
-    chmod +x ~/.docker/cli-plugins/docker-compose
+compose_path="$HOME/.docker/cli-plugins/docker-compose"
+compose_sha256=""
+if [ -f "$compose_path" ]; then
+    compose_sha256=$(sha256sum "$compose_path" | awk '{print $1}')
 fi
-ok "docker compose $(docker compose version --short 2>/dev/null || echo 'installed')"
+if [ "$compose_sha256" != "$COMPOSE_SHA256" ]; then
+    log "Installing verified Docker Compose $COMPOSE_VERSION"
+    bash "$REPO/deploy/download-verified.sh" \
+        "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-aarch64" \
+        "$COMPOSE_SHA256" "$compose_path"
+    chmod +x "$compose_path"
+fi
+compose_version=$("$compose_path" version --short 2>/dev/null || true)
+if [ "$compose_version" != "${COMPOSE_VERSION#v}" ]; then
+    warn "Verified Docker Compose binary reported '$compose_version', expected '${COMPOSE_VERSION#v}'."
+    exit 1
+fi
+ok "docker compose $compose_version (SHA-256 verified)"
 
 # 4. MediaMTX binary -----------------------------------------------------------
 
+if [ -f "$REPO/mediamtx" ]; then
+    current_mediamtx_sha256=$(sha256sum "$REPO/mediamtx" | awk '{print $1}')
+    if [ "$current_mediamtx_sha256" != "$MEDIAMTX_BINARY_SHA256" ]; then
+        warn "Existing MediaMTX binary failed SHA-256 verification; refusing to execute it."
+        warn "    Remove $REPO/mediamtx and rerun this installer to fetch the pinned artifact."
+        exit 1
+    fi
+fi
 if [ ! -x "$REPO/mediamtx" ]; then
     log "Downloading MediaMTX $MEDIAMTX_VERSION"
     url="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_arm64.tar.gz"
-    tmp=$(mktemp)
-    curl -fsSL "$url" -o "$tmp"
-    tar -xzf "$tmp" -C "$REPO" mediamtx
-    rm -f "$tmp"
-    chmod +x "$REPO/mediamtx"
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+    bash "$REPO/deploy/download-verified.sh" "$url" "$MEDIAMTX_ARCHIVE_SHA256" "$tmp_dir/mediamtx.tar.gz"
+    tar -xzf "$tmp_dir/mediamtx.tar.gz" -C "$tmp_dir" mediamtx
+    extracted_sha256=$(sha256sum "$tmp_dir/mediamtx" | awk '{print $1}')
+    if [ "$extracted_sha256" != "$MEDIAMTX_BINARY_SHA256" ]; then
+        warn "Extracted MediaMTX binary failed SHA-256 verification."
+        exit 1
+    fi
+    chmod +x "$tmp_dir/mediamtx"
+    mv "$tmp_dir/mediamtx" "$REPO/mediamtx"
+    rm -rf "$tmp_dir"
+    trap - EXIT HUP INT TERM
 fi
 current_mediamtx_version=$("$REPO/mediamtx" --version 2>&1 | head -1)
 if [ "$current_mediamtx_version" != "$MEDIAMTX_VERSION" ]; then
@@ -106,7 +136,7 @@ if [ "$current_mediamtx_version" != "$MEDIAMTX_VERSION" ]; then
     warn "MediaMTX is $current_mediamtx_version; install-jetson.sh pins $MEDIAMTX_VERSION."
     warn "    To upgrade: rm $REPO/mediamtx && bash $0   (then check mediamtx.yml against release notes)"
 fi
-ok "MediaMTX $current_mediamtx_version"
+ok "MediaMTX $current_mediamtx_version (SHA-256 verified)"
 
 # 5. systemd units -------------------------------------------------------------
 

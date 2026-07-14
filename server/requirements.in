@@ -1,0 +1,18 @@
+# Direct runtime requirements for the FastAPI server image.
+#
+# Regenerate the reviewed, hash-locked requirements.txt with:
+#   ./scripts/compile-python-locks.sh
+# Never install this input file in production or CI.
+fastapi>=0.115.0,<1
+uvicorn[standard]>=0.32.0,<1
+pydantic>=2.7.0,<3
+pywebpush>=2.3.0,<3
+# 48.0.1 is the first release fixing both CVE-2026-26007 and
+# GHSA-537c-gmf6-5ccf; keep the next major upgrade review explicit.
+cryptography>=48.0.1,<49
+python-dotenv>=1.0.0,<2
+argon2-cffi>=23.1.0
+pyjwt>=2.8.0
+python-multipart>=0.0.20,<1
+Pillow>=10.0.0,<13
+paho-mqtt>=2,<3
