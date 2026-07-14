@@ -27,7 +27,8 @@ DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_FAILURE_THRESHOLD = 3
 H264_RTP_CAPS = (
     "application/x-rtp,media=video,encoding-name=H264,"
-    "clock-rate=90000,payload=96"
+    "clock-rate=90000,payload=96,packetization-mode=(string)1,"
+    "profile-level-id=(string)42e01f,level-asymmetry-allowed=(string)1"
 )
 
 
@@ -269,9 +270,10 @@ class _GstWhepSession(object):
         self.webrtc.connect("notify::ice-gathering-state", self._on_ice_state)
         self.webrtc.connect("notify::ice-connection-state", self._on_ice_connection)
         self.webrtc.connect("pad-added", self._on_pad_added)
-        # GStreamer 1.14 does not assign a valid dynamic payload type when the
-        # recv caps omit `payload`; it can serialize a random 32-bit value into
-        # `a=rtpmap`, which MediaMTX correctly rejects as outside 0..127.
+        # GStreamer 1.14 needs both a valid dynamic payload and explicit H.264
+        # packetization/profile parameters. Without payload it serializes an
+        # invalid 32-bit rtpmap id; without fmtp MediaMTX rejects the codec and
+        # answers with a disabled (port 0) media section.
         caps = Gst.Caps.from_string(H264_RTP_CAPS)
         self.webrtc.emit(
             "add-transceiver",

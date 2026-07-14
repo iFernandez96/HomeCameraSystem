@@ -40,6 +40,8 @@ def result(kind="success", reason="", recoverable=False, checked_at=100.0):
 
 def test_offer_caps_pin_a_valid_dynamic_rtp_payload_type_for_gstreamer_114():
     assert "payload=96" in H264_RTP_CAPS
+    assert "packetization-mode=(string)1" in H264_RTP_CAPS
+    assert "profile-level-id=(string)42e01f" in H264_RTP_CAPS
 
 
 def test_sdp_shape_keeps_negotiation_evidence_without_ips_or_credentials():
