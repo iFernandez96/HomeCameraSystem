@@ -17,6 +17,7 @@ from ..auth.dependencies import get_current_user, require_role
 from ..config import settings
 from ..services.camera import camera_service
 from ..services.detection import detection_service
+from ..services import operations
 from ..services.detection_config import (
     ABSENCE_FINALIZE_MAX,
     ABSENCE_FINALIZE_MIN,
@@ -387,7 +388,10 @@ async def get_detection_config() -> dict[str, object]:
     "/detection/config",
     dependencies=[Depends(require_role("owner"))],
 )
-async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, object]:
+async def patch_detection_config(
+    payload: DetectionConfigPatch,
+    actor: str = Depends(get_current_user),
+) -> dict[str, object]:
     # iter-197 (Feature #3 slice 3): owner-only. Detection settings
     # (threshold / cooldown / classes / zones / schedule) affect the
     # whole household — family/viewer users see the feed but don't
@@ -404,8 +408,11 @@ async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, obj
     # never the values (zones carry coordinate geometry, classes/labels
     # are operator PII-adjacent). Sorted for stable grep.
     log.info("detection config patch: keys=%s", sorted(patch.keys()))
+    previous_mode = detection_config.get().operating_mode
     try:
         new = detection_config.update(**patch)
+        if "operating_mode" in patch:
+            operations.note_external_mode(new.operating_mode, actor)
     except Exception:
         # The store may warn-and-return internally on a persist failure,
         # but a hard exception here means the patch was rejected/lost.
@@ -413,6 +420,8 @@ async def patch_detection_config(payload: DetectionConfigPatch) -> dict[str, obj
         log.exception(
             "detection config update failed: keys=%s", sorted(patch.keys())
         )
+        if "operating_mode" in patch:
+            detection_config.update(operating_mode=previous_mode)
         raise
     return asdict(new)
 
@@ -483,9 +492,14 @@ async def camera_focus_mode(
     body: _FocusModeBody,
     user: str = Depends(get_current_user),
 ) -> dict[str, object]:
-    """Queue a temporary 1080p mode or restore the normal 720p pipeline."""
+    """Confirm or end a session on the shared 1440p precision stream."""
     kind = "focus_start" if body.enabled else "focus_stop"
     rec = host_bridge.enqueue(kind, {}, requested_by=user, now=time.time())
+    if rec.get("kind") != kind:
+        raise HTTPException(
+            status_code=409,
+            detail="another camera operation is still running; try again shortly",
+        )
     # The audit schema intentionally has a closed action vocabulary. Record
     # this as its underlying mediamtx lifecycle action and keep the mode in
     # detail rather than weakening that constraint.
@@ -498,7 +512,7 @@ async def camera_focus_mode(
             request_id=rec["id"],
             phase="requested",
             status=None,
-            detail="camera_focus_mode={}".format("1080p" if body.enabled else "720p"),
+            detail="camera_focus_mode={}".format("1440p" if body.enabled else "shared"),
         )
     except Exception:
         log.warning("focus mode request audit failed id=%s", rec["id"], exc_info=True)
@@ -1224,8 +1238,15 @@ async def list_backups() -> dict[str, object]:
 @router.get("/system/version")
 async def system_version(
     _user: str = Depends(get_current_user),
-) -> dict[str, str]:
-    return {"version": settings.version}
+) -> dict[str, object]:
+    return {
+        "v": 1,
+        "version": settings.version,
+        "source_fingerprint": settings.source_fingerprint,
+        "build_epoch": settings.build_epoch or None,
+        "api_compat": settings.api_compat,
+        "minimum_client_compat": settings.minimum_client_compat,
+    }
 
 
 @router.get(

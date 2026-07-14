@@ -33,7 +33,7 @@ export type AuthState = 'loading' | 'authed' | 'anon'
 type AuthContextValue = {
   state: AuthState
   user: User | null
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string, otpCode?: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -209,8 +209,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('homecam:session-expired', onSessionExpired)
   }, [showToast])
 
-  const login = useCallback(async (username: string, password: string) => {
-    const res = await apiLogin({ username, password })
+  const login = useCallback(async (username: string, password: string, otpCode?: string) => {
+    const res = await apiLogin({
+      username,
+      password,
+      ...(otpCode ? { otp_code: otpCode } : {}),
+    })
     setUser(res.user)
     setState('authed')
     // iter-356.65: a successful sign-in clears the expired flag so

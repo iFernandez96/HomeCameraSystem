@@ -16,7 +16,9 @@ from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
 from ..config import settings
+from ..auth import users_db
 from ..log import RateLimitedLog
+from . import operations, push_assurance
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ log = logging.getLogger(__name__)
 # detection event when keys aren't loaded. INFO (so it's visible at the
 # default level) but gated to once/5min so a busy day doesn't flood.
 _no_key_skip_gate = RateLimitedLog(300.0)
+_user_lookup_failure_gate = RateLimitedLog(300.0)
 
 # Security-camera events should survive brief phone/network offline windows.
 _PUSH_TTL_S = 3600
@@ -453,16 +456,35 @@ class PushService:
             self._save_subs()
         return updated
 
+    async def _known_usernames(self) -> list[str]:
+        try:
+            rows = await asyncio.to_thread(users_db.list_users, settings.users_db_path)
+        except Exception as exc:
+            # Push delivery remains useful if the user registry is temporarily
+            # unavailable. We lose only inbox rows for accounts with no
+            # subscription; owned subscriptions still identify their user.
+            if _user_lookup_failure_gate.should_log():
+                log.warning(
+                    "push inbox user lookup failed (%s); continuing with subscription owners",
+                    type(exc).__name__,
+                )
+            return []
+        return [str(row["username"]) for row in rows]
+
     async def _fanout_to(
         self,
         subs: list[dict[str, Any]],
         payload: dict[str, Any],
+        intended_users: list[str] | None = None,
     ) -> int:
         """Common send mechanics shared by send_all and send_matching
         (iter-206 refactor). Sends `payload` to each sub in `subs`,
         prunes 404/410 dead subs from `self.subs`, returns the count
         successfully delivered. Transient errors (ConnectionError,
         SSL, etc.) leave subs in the registry."""
+        notification_id, subs = operations.prepare_notification(
+            payload, subs, self.private_pem is not None, intended_users
+        )
         if self.private_pem is None:
             # `load_keys()` already warned once on startup if keys were
             # missing — but a DEBUG line here is invisible at the INFO
@@ -478,7 +500,6 @@ class PushService:
             return 0
         if not subs:
             return 0
-        body = json.dumps(payload)
         importance = str(payload.get("importance") or "normal")
         urgency = {
             "critical": "high",
@@ -508,6 +529,13 @@ class PushService:
         def send_one(sub: dict[str, Any]) -> tuple[bool, int | None, str | None]:
             # Host-only — NEVER the full endpoint (carries device secret).
             host = _endpoint_host(sub.get("endpoint"))
+            receipt_id = push_assurance.issue(
+                sub, notification_id=notification_id
+            )
+            delivery_payload = dict(payload)
+            delivery_payload["receipt_id"] = receipt_id
+            delivery_payload["notification_id"] = notification_id
+            body = json.dumps(delivery_payload)
             try:
                 webpush(
                     subscription_info=sub,
@@ -519,6 +547,7 @@ class PushService:
                 )
                 return True, None, None
             except WebPushException as e:
+                push_assurance.cancel(receipt_id)
                 code = e.response.status_code if e.response is not None else None
                 # Classify the gateway response so the operator knows
                 # whether this is "device went away" (prune, benign) vs
@@ -552,6 +581,7 @@ class PushService:
                     log.warning("push to %s: %s: %s", host, code, str(e)[:200])
                 return False, code, None
             except Exception as e:
+                push_assurance.cancel(receipt_id)
                 # iter-165: any non-WebPushException (ConnectionError,
                 # ssl.SSLError, OSError, a buggy pywebpush release raising
                 # a TypeError, etc.) used to escape `send_one`, propagate
@@ -579,6 +609,11 @@ class PushService:
         sent = 0
         dead: list[dict[str, Any]] = []
         for sub, (ok, code, exc_type) in zip(subs, results):
+            operations.mark_gateway(
+                notification_id,
+                sub.get("user_id") if isinstance(sub.get("user_id"), str) else None,
+                ok,
+            )
             if ok:
                 sent += 1
             elif code in (404, 410):
@@ -628,7 +663,8 @@ class PushService:
         """Fan out `payload` to every subscription. Used by the test-
         push button (`/api/push/test`). For event-driven push, use
         `send_matching` so per-user filters apply."""
-        return await self._fanout_to(self.subs, payload)
+        users = await self._known_usernames()
+        return await self._fanout_to(self.subs, payload, users)
 
     async def send_matching(
         self,
@@ -645,7 +681,19 @@ class PushService:
         matching = [
             s for s in self.subs if _sub_matches_event(s, event)
         ]
-        sent = await self._fanout_to(matching, payload)
+        registered = {
+            str(sub.get("user_id")) for sub in self.subs
+            if isinstance(sub.get("user_id"), str) and sub.get("user_id")
+        }
+        intended = {
+            str(sub.get("user_id")) for sub in matching
+            if isinstance(sub.get("user_id"), str) and sub.get("user_id")
+        }
+        users = await self._known_usernames()
+        intended.update(
+            username for username in users if username not in registered
+        )
+        sent = await self._fanout_to(matching, payload, sorted(intended))
         pruned = max(0, total - len(self.subs))
         filtered = total - len(matching)
         failed = max(0, len(matching) - sent - pruned)
@@ -670,7 +718,7 @@ class PushService:
         if not user_id:
             return 0
         owned = [s for s in self.subs if s.get("user_id") == user_id]
-        return await self._fanout_to(owned, payload)
+        return await self._fanout_to(owned, payload, [user_id])
 
 
 push_service = PushService()

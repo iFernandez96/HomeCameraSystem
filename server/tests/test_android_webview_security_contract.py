@@ -52,3 +52,5 @@ def test_android_webview_rejects_untrusted_origins_and_privileged_access():
     assert "setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW)" in activity
     assert "setAllowContentAccess(false)" in activity
     assert "setAllowFileAccess(false)" in activity
+    assert "addJavascriptInterface" not in activity
+    assert "injectNativeStatus(view);" in activity

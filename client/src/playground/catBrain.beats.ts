@@ -1,15 +1,20 @@
 import { rollWeighted, rollWithoutImmediateRepeat } from '../components/catEngineCore'
 import type { PlaygroundCatId } from './playgroundAssets'
 import {
+  PERCH_NO_REPEAT_MS,
+  perchDwellDeadlineFor,
+  playTransitionDurationMs,
   setPlayActivity,
   setPlayMood,
   type PlayActivity,
   type PlayCat,
 } from './playgroundState'
 import {
+  anchorById,
   anchorsForLayout,
   clampCatX,
   isAnchorFree,
+  isElevatedAnchor,
   laneFloorY,
   routeTo,
 } from './sceneModel'
@@ -28,6 +33,8 @@ export type BeatContext = {
   sceneW: number
   sceneH: number
   compact: boolean
+  /** Tick clock — availability gates (perch no-repeat window) need it. */
+  now: number
   /** Injected random source for duration jitter / target scatter. */
   random: () => number
 }
@@ -58,16 +65,25 @@ export function travelToAnchor(
   const atIndex = cat.anchorId ? fullRoute.indexOf(cat.anchorId) : -1
   const route = fullRoute.slice(atIndex + 1)
   if (route.length === 0) {
-    // Already there — start the arrival beat in place.
+    // Already there — start the arrival beat in place. The continuous-
+    // stay clock only restarts when the anchor actually changes.
+    const sameAnchor = cat.anchorId === anchorId
     return {
       ...setPlayActivity(cat, arrivalActivity, arrivalDurationMs, now, ctx.random),
       anchorId,
+      anchorSince: sameAnchor ? cat.anchorSince : now,
+      perchDwellDeadline: sameAnchor
+        ? cat.perchDwellDeadline
+        : perchDwellDeadlineFor(now, ctx.random),
       focus: { type: 'anchor', anchorId },
     }
   }
   const next = setPlayActivity(cat, 'walk', 60000, now, ctx.random)
   return {
     ...next,
+    // A mount or dismount leg plays the climb loop while it still has
+    // vertical distance; pure floor-to-floor travel keeps the walk gait.
+    climbTravel: isElevatedAnchor(anchorId) || isElevatedAnchor(cat.anchorId),
     // Travel cap, not a beat length — arrival restarts the clock.
     activityUntil: now + 60000,
     targetAnchor: route[0],
@@ -77,6 +93,10 @@ export function travelToAnchor(
     focus: { type: 'anchor', anchorId },
     targetX: null,
     targetY: null,
+    // Look before you go: the stand-up transition plays out, then a
+    // small jittered regard-the-destination hold, THEN paws move.
+    moveRampAt:
+      now + playTransitionDurationMs(cat.id, cat.activity, 'walk') + 150 + ctx.random() * 250,
   }
 }
 
@@ -97,9 +117,15 @@ function inPlace(
   }
 }
 
+/** RESIDUAL B: a just-dismounted anchor stays off this cat's own menu
+    for a short window, so she does something else before re-perching. */
+const anchorCoolingDown = (cat: PlayCat, anchorId: string, now: number): boolean =>
+  cat.anchorCooldownId === anchorId && now < cat.anchorCooldownUntil
+
 const anchorFreeFor = (anchorId: string) => (cat: PlayCat, ctx: BeatContext) =>
   isAnchorFree(ctx.cats, anchorId, cat.id) &&
-  anchorsForLayout(ctx.compact).some((a) => a.id === anchorId)
+  !anchorCoolingDown(cat, anchorId, ctx.now) &&
+  anchorsForLayout(ctx.sceneW, ctx.compact).some((a) => a.id === anchorId)
 
 // === The beat pool ===========================================================
 // Weights follow the design doc's dweller taxonomy: Panther = Tree
@@ -130,7 +156,11 @@ export const PLAY_BEATS: readonly Beat[] = [
     available: anchorFreeFor('tree_top'),
     apply: (cat, now, ctx) => {
       const next = travelToAnchor(cat, now, ctx, 'tree_top', 'perch', 16000)
-      return cat.id === 'panther' ? setPlayMood(next, '😼', 2200, now) : next
+      // Moods punctuate, they don't persist: the judging look is an
+      // occasional commentary, not a HUD element.
+      return cat.id === 'panther' && ctx.random() < 0.55
+        ? setPlayMood(next, '😼', 2200, now)
+        : next
     },
   },
   {
@@ -175,11 +205,26 @@ export const PLAY_BEATS: readonly Beat[] = [
     id: 'litter_visit',
     weights: { panther: 1, mushu: 1, coco: 1 },
     available: anchorFreeFor('litter_box'),
-    apply: (cat, now, ctx) => {
-      // Reuses the existing 'pooped' beat + poop_squat sequence.
-      const next = travelToAnchor(cat, now, ctx, 'litter_box', 'pooped', 4500)
-      return setPlayMood(next, '💩', 2600, now)
-    },
+    // Reuses the existing 'pooped' squat + poop_squat sequence. No
+    // mood bubble (2026-07-11 "poop shouldn't be an emoji that flys
+    // upward") — and no ground poop either: a litter squat's product
+    // stays hidden inside the box (stepPlayground skips the spawn when
+    // the cat is anchored at litter_box).
+    apply: (cat, now, ctx) =>
+      travelToAnchor(cat, now, ctx, 'litter_box', 'pooped', 4500),
+  },
+  {
+    // The rare floor accident — a squat wherever the cat happens to
+    // stand. When it completes, stepPlayground drops a visible ground
+    // poop with stink fumes at the trailing edge (the litter beat's
+    // product stays masked by the box; this one is the payoff the user
+    // asked for: "what happened to having the cats poop?").
+    id: 'floor_poop',
+    weights: { panther: 1, mushu: 1, coco: 1 },
+    // Grounded cats only — a squat on a perch would leave a poop
+    // floating on a platform.
+    available: (cat) => cat.anchorId === null || anchorById(cat.anchorId).tier === 'floor',
+    apply: (cat, now, ctx) => inPlace(cat, now, ctx, 'pooped', 4500),
   },
   {
     id: 'bowl_snack',
@@ -188,10 +233,12 @@ export const PLAY_BEATS: readonly Beat[] = [
       isAnchorFree(ctx.cats, 'food_bowl', cat.id) ||
       isAnchorFree(ctx.cats, 'water_bowl', cat.id),
     apply: (cat, now, ctx) => {
+      // The two bowls read differently: chewing at the food bowl,
+      // lapping at the water bowl (drink_bout).
       const bowl = isAnchorFree(ctx.cats, 'food_bowl', cat.id)
         ? 'food_bowl'
         : 'water_bowl'
-      return travelToAnchor(cat, now, ctx, bowl, 'eat', 3600)
+      return travelToAnchor(cat, now, ctx, bowl, bowl === 'water_bowl' ? 'drink' : 'eat', 3600)
     },
   },
   {
@@ -207,12 +254,16 @@ export const PLAY_BEATS: readonly Beat[] = [
         targetAnchor: null,
         route: [],
         anchorId: null,
+        // A perched pursuer descends with the climb loop first.
+        climbTravel: isElevatedAnchor(cat.anchorId),
         // Track it on the floor under the critter; the pounce on
         // arrival ALWAYS misses (design doc emotional contract).
         targetX: clampCatX(target.x, ctx.sceneW),
         targetY: laneFloorY('front', ctx.sceneH),
         arrival: { activity: 'pounce', durationMs: 900 },
         focus: { type: 'ambient', ambientId: target.id },
+        // Crouched anticipation: the get-up chain plays before the sprint.
+        moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, 'run') + 100 + ctx.random() * 200,
       }
     },
   },
@@ -230,29 +281,70 @@ export const PLAY_BEATS: readonly Beat[] = [
     id: 'wander',
     weights: { panther: 2, mushu: 3, coco: 1 },
     apply: (cat, now, ctx) => {
+      // An aimless moment: stroll a SHORT random distance from here,
+      // pause briefly as if sniffing something, then re-roll. Bounded
+      // strolls (not scene-wide marches) read as purposeless life.
       const next = setPlayActivity(cat, 'walk', 60000, now, ctx.random)
-      const x = clampCatX(ctx.random() * ctx.sceneW, ctx.sceneW)
+      const stride = 60 + ctx.random() * 180
+      const sign = ctx.random() < 0.5 ? -1 : 1
+      const x = clampCatX(cat.x + sign * stride, ctx.sceneW)
       return {
         ...next,
         activityUntil: now + 60000,
         targetAnchor: null,
         route: [],
         anchorId: null,
+        climbTravel: isElevatedAnchor(cat.anchorId),
         targetX: x,
         targetY: laneFloorY('front', ctx.sceneH),
-        arrival: { activity: 'sit', durationMs: 5000 },
+        arrival: { activity: 'sit', durationMs: 1400 },
         focus: null,
+        moveRampAt:
+          now + playTransitionDurationMs(cat.id, cat.activity, 'walk') + 150 + ctx.random() * 250,
       }
     },
   },
 ]
 
 function pickFreeShelf(cat: PlayCat, ctx: BeatContext): string | null {
-  const shelves = anchorsForLayout(ctx.compact).filter((a) =>
+  const shelves = anchorsForLayout(ctx.sceneW, ctx.compact).filter((a) =>
     a.id.startsWith('shelf_'),
   )
-  const free = shelves.filter((a) => isAnchorFree(ctx.cats, a.id, cat.id))
+  const free = shelves.filter(
+    (a) => isAnchorFree(ctx.cats, a.id, cat.id) && !anchorCoolingDown(cat, a.id, ctx.now),
+  )
   return free.length > 0 ? free[Math.floor(ctx.random() * free.length)].id : null
+}
+
+// === Forced dismount (RESIDUAL B: Panther glued to the tree) =================
+
+/** A perch stay past its dwell deadline ends HERE, not with another
+    roll that might keep the cat in place: stroll to a nearby floor
+    spot (guaranteed movement), and put the vacated anchor behind a
+    no-repeat window so the next rolls pick something else. */
+export function forceDismountStroll(cat: PlayCat, now: number, ctx: BeatContext): PlayCat {
+  const vacated = cat.anchorId
+  const next = setPlayActivity(cat, 'walk', 60000, now, ctx.random)
+  const stride = 80 + ctx.random() * 200
+  const sign = ctx.random() < 0.5 ? -1 : 1
+  return {
+    ...next,
+    activityUntil: now + 60000,
+    targetAnchor: null,
+    route: [],
+    anchorId: null,
+    anchorCooldownId: vacated,
+    anchorCooldownUntil: now + PERCH_NO_REPEAT_MS,
+    // Descending off the mount: the climb loop covers the vertical leg.
+    climbTravel: isElevatedAnchor(vacated),
+    targetX: clampCatX(cat.x + sign * stride, ctx.sceneW),
+    targetY: laneFloorY('front', ctx.sceneH),
+    lane: 'front',
+    arrival: { activity: 'sit', durationMs: 1400 },
+    focus: null,
+    moveRampAt:
+      now + playTransitionDurationMs(cat.id, cat.activity, 'walk') + 150 + ctx.random() * 250,
+  }
 }
 
 // === Rolling =================================================================
@@ -291,7 +383,18 @@ export function rollNextBeat(cat: PlayCat, now: number, ctx: BeatContext): PlayC
   )
   if (!rolled.beat) return cat
   const next = rolled.beat.apply(cat, now, ctx)
-  return next === cat ? cat : { ...next, lastBeatId: rolled.beat.id }
+  if (next === cat) return cat
+  // Natural dismount off an elevated anchor (the new beat leaves it):
+  // arm the same no-repeat window the forced dismount uses, so the cat
+  // does something else before re-perching there (RESIDUAL B).
+  const dismounted = isElevatedAnchor(cat.anchorId) && next.anchorId !== cat.anchorId
+  return {
+    ...next,
+    lastBeatId: rolled.beat.id,
+    ...(dismounted
+      ? { anchorCooldownId: cat.anchorId, anchorCooldownUntil: now + PERCH_NO_REPEAT_MS }
+      : {}),
+  }
 }
 
 // === Cat-cat interaction pools (ported from CatLayer — same outcomes) ========
@@ -311,6 +414,8 @@ const grounded = (cat: PlayCat, now: number, ctx: { random: () => number }, acti
   arrival: null,
   targetX: null,
   targetY: null,
+  // Chase/flee outcomes sprint — but only after the get-up chain.
+  moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, activity),
 })
 
 // Mushu + Coco — the love story

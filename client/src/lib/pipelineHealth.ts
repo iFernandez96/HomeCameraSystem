@@ -27,24 +27,25 @@ export function derivePipeline(status: ServerStatus | null): PipelineStageHealth
 
   const camera: PipelineStageHealth =
     status.camera === 'ok'
-      ? { stage: 'camera', verdict: 'up', reason: 'camera ok' }
+      ? { stage: 'camera', verdict: 'unknown', reason: 'no direct camera probe' }
       : {
           stage: 'camera',
           verdict: 'down',
           reason: status.camera === 'missing' ? 'camera missing' : 'camera error',
         }
 
-  // MediaMTX has no direct status field; the worker's frame freshness is
-  // the liveness proxy for the camera -> MediaMTX -> worker stream path.
-  const mediamtx: PipelineStageHealth =
-    status.seconds_since_last_frame == null
-      ? { stage: 'mediamtx', verdict: 'unknown', reason: 'no frames reported yet' }
-      : status.seconds_since_last_frame > 60
-        ? { stage: 'mediamtx', verdict: 'down', reason: 'STREAM STALE' }
-        : { stage: 'mediamtx', verdict: 'up', reason: 'frames fresh' }
+  // The status payload has no direct MediaMTX probe. Detector frame age
+  // cannot prove that browser video is down, so stay explicitly unknown.
+  const mediamtx: PipelineStageHealth = {
+    stage: 'mediamtx',
+    verdict: 'unknown',
+    reason: 'no direct media probe',
+  }
 
   const detect: PipelineStageHealth = !status.worker_alive
     ? { stage: 'detect', verdict: 'down', reason: 'worker silent' }
+    : status.seconds_since_last_frame != null && status.seconds_since_last_frame > 60
+      ? { stage: 'detect', verdict: 'down', reason: 'frame intake stalled' }
     : status.detection_active
       ? { stage: 'detect', verdict: 'up', reason: 'detection active' }
       : { stage: 'detect', verdict: 'warn', reason: 'detection off' }

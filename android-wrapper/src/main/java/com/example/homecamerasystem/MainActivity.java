@@ -29,6 +29,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.window.OnBackInvokedDispatcher;
+import org.json.JSONObject;
 
 @SuppressWarnings("deprecation") // Legacy back/system-bar APIs support minSdk 24.
 public final class MainActivity extends Activity {
@@ -91,7 +92,6 @@ public final class MainActivity extends Activity {
         settings.setUserAgentString(
             settings.getUserAgentString() + " HomeCamNative/" + BuildConfig.VERSION_NAME
         );
-
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
@@ -144,6 +144,7 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 refreshWebAppCaches(view);
+                injectNativeStatus(view);
             }
 
             @Override
@@ -182,6 +183,12 @@ public final class MainActivity extends Activity {
         super.onResume();
         activityResumed = true;
         ensureVpnConnected();
+        if (webView != null) {
+            String url = webView.getUrl();
+            if (url != null && isTrustedHomeCamUri(Uri.parse(url))) {
+                injectNativeStatus(webView);
+            }
+        }
     }
 
     @Override
@@ -287,6 +294,18 @@ public final class MainActivity extends Activity {
                 + "location.reload();"
                 + "}catch(e){}"
                 + "})();";
+        view.evaluateJavascript(js, null);
+    }
+
+    private void injectNativeStatus(WebView view) {
+        String url = view.getUrl();
+        if (url == null || !isTrustedHomeCamUri(Uri.parse(url))) return;
+        String status = JetsonHealthMonitor.statusJson(getApplicationContext());
+        String quoted = JSONObject.quote(status);
+        String js =
+            "window.HomeCamNative=Object.freeze({"
+                + "getHealthMonitorStatus:function(){return " + quoted + ";}"
+                + "});";
         view.evaluateJavascript(js, null);
     }
 

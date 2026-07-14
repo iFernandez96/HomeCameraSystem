@@ -3,6 +3,7 @@ package com.example.homecamerasystem;
 import android.Manifest;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
@@ -12,6 +13,9 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.PowerManager;
+
+import org.json.JSONObject;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -21,8 +25,11 @@ import java.util.concurrent.TimeUnit;
 final class JetsonHealthMonitor {
     static final int JOB_ID = 36655;
     private static final String PREFS = "homecam_health_monitor";
-    private static final String KEY_FAILURES = "consecutive_failures";
-    private static final String KEY_OFFLINE = "offline_notified";
+    static final String KEY_FAILURES = "consecutive_failures";
+    static final String KEY_OFFLINE = "offline_notified";
+    static final String KEY_LAST_CHECK_MS = "last_check_ms";
+    static final String KEY_NEXT_CHECK_MS = "next_check_ms";
+    static final String KEY_LAST_REACHABLE = "last_reachable";
     private static final String CHANNEL_ID = "homecam_system_health";
     private static final long HEALTHY_DELAY_MS = TimeUnit.MINUTES.toMillis(15);
     private static final long RETRY_DELAY_MS = TimeUnit.MINUTES.toMillis(1);
@@ -44,14 +51,28 @@ final class JetsonHealthMonitor {
         )
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
             .setMinimumLatency(Math.max(0L, delayMs))
+            // One-off persisted jobs avoid JobScheduler's 15-minute periodic
+            // floor. The deadline bounds ordinary scheduler deferral while
+            // still letting Android batch work under Doze.
+            .setOverrideDeadline(Math.max(TimeUnit.MINUTES.toMillis(2), delayMs + TimeUnit.MINUTES.toMillis(5)))
             .setPersisted(true)
             .build();
-        scheduler.schedule(job);
+        int result = scheduler.schedule(job);
+        if (result == JobScheduler.RESULT_SUCCESS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_NEXT_CHECK_MS, System.currentTimeMillis() + Math.max(0L, delayMs))
+                .apply();
+        }
     }
 
     static long check(Context context) {
         boolean reachable = probe(BuildConfig.HOMECAM_URL);
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit()
+            .putLong(KEY_LAST_CHECK_MS, System.currentTimeMillis())
+            .putBoolean(KEY_LAST_REACHABLE, reachable)
+            .apply();
         int failures = prefs.getInt(KEY_FAILURES, 0);
         boolean wasOffline = prefs.getBoolean(KEY_OFFLINE, false);
         JetsonHealthState.Transition transition =
@@ -73,10 +94,40 @@ final class JetsonHealthMonitor {
                 context,
                 400,
                 "Jetson offline or unreachable",
-                "HomeCam could not reach the Jetson in two consecutive checks."
+                "The phone could not reach HomeCam through either Tailscale or the local network in two consecutive checks."
             );
         }
         return offline ? OFFLINE_DELAY_MS : RETRY_DELAY_MS;
+    }
+
+    static String statusJson(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        boolean notificationsAllowed = Build.VERSION.SDK_INT < 33
+            || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
+        ActivityManager activity = context.getSystemService(ActivityManager.class);
+        boolean backgroundRestricted = Build.VERSION.SDK_INT >= 28
+            && activity != null
+            && activity.isBackgroundRestricted();
+        PowerManager power = context.getSystemService(PowerManager.class);
+        boolean batteryOptimizationExempt = power != null
+            && power.isIgnoringBatteryOptimizations(context.getPackageName());
+        try {
+            return new JSONObject()
+                .put("v", 1)
+                .put("native_version", BuildConfig.VERSION_NAME)
+                .put("last_check_ms", prefs.getLong(KEY_LAST_CHECK_MS, 0L))
+                .put("next_check_ms", prefs.getLong(KEY_NEXT_CHECK_MS, 0L))
+                .put("last_reachable", prefs.getBoolean(KEY_LAST_REACHABLE, false))
+                .put("consecutive_failures", prefs.getInt(KEY_FAILURES, 0))
+                .put("offline_notified", prefs.getBoolean(KEY_OFFLINE, false))
+                .put("background_restricted", backgroundRestricted)
+                .put("battery_optimization_exempt", batteryOptimizationExempt)
+                .put("notifications_allowed", notificationsAllowed)
+                .toString();
+        } catch (Exception ignored) {
+            return "{\"v\":1}";
+        }
     }
 
     private static boolean probe(String baseUrl) {

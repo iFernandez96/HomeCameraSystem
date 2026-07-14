@@ -401,6 +401,22 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     )
   })
 
+  it('Given recording storage is unsafe, Then Home shows the exact durable warning', async () => {
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      recording_assurance: {
+        state: 'failed',
+        reason: 'USB recordings mount is read-only',
+        storage: { writable: false, read_only: true, mountpoint: '/srv/homecam-media' },
+      },
+    })
+
+    renderWatch()
+
+    expect(await screen.findByRole('button', { name: /recording safety needs attention/i }))
+      .toHaveTextContent('USB recordings mount is read-only')
+  })
+
   it('Given no events yet today, When the timeline loads, Then the cat empty state explains the quiet', async () => {
     // arrange / act
     renderWatch()
@@ -429,9 +445,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     })
   })
 
-  it('Given the docked live tile, When rendered, Then camera actions remain available below video and Expand is the only over-video corner button', () => {
+  it('Given the docked live tile, When camera controls are expanded, Then actions appear below video and Expand remains the only over-video corner button', async () => {
     // arrange / act
+    const user = userEvent.setup()
     renderWatch()
+    expect(screen.queryByRole('button', { name: 'Snapshot' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Camera controls' }))
 
     // assert — Snapshot and expand are children of the row VideoTile
     // renders `actions` into (single owner of the docked corner), not
@@ -537,7 +556,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     await waitFor(() => expect(viewport.className).toMatch(/relative/))
   })
 
-  it('Given the worker is offline, When the page renders, Then the verdict says the camera is offline via the live bottom card (whimsy never masks danger) — fuzz F3/F9/F13: the danger-styled live card is now the SOLE prominent armed/offline surface docked, since the redundant on-video state pill was consolidated away', async () => {
+  it('Given detection is offline and video has not resolved, When the page renders, Then the glance card says detection unavailable without inventing a camera outage', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -550,11 +569,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
     })
     expect(
-      screen.getByText('Check its power, then see Settings.'),
+      screen.getByText(/events and alerts are paused.*checking live video/i),
     ).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   // Status-truth fix (server-restart contradiction, 2026-07-07): a
@@ -586,7 +606,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
-  it('Given /api/status confirms the worker is dead, When the video tile ALSO confirms frames are playing, Then the Offline danger state still shows (status-confirmed-down wins regardless of video)', async () => {
+  it('Given the detector is dead and the video tile confirms frames, When rendered, Then it says detection unavailable and confirms live video', async () => {
     // arrange
     getStatusM.mockResolvedValue({
       ...HEALTHY,
@@ -601,11 +621,12 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
     })
     expect(
-      screen.getByText('Check its power, then see Settings.'),
+      screen.getByText('Live video is on. Events and alerts are paused.'),
     ).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   it('Given the status fetch fails AND the video tile confirms frames are NOT playing, When the page renders, Then the danger state shows (both channels dark)', async () => {
@@ -641,7 +662,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
-  it('Given the worker is offline, When the page renders, Then the glance headline reads "Camera offline" (not an off-duty synonym) — final review fix batch #8 + overhaul W1 item 2', async () => {
+  it('Given the detector is offline, When the page renders, Then the glance headline reads Detection unavailable rather than Off duty or Camera offline', async () => {
     // arrange — pre-fix the glance card said "Paused" for offline,
     // which reads as "detection is paused" rather than "the camera
     // itself is unreachable." Danger styling + the existing detail
@@ -657,12 +678,31 @@ describe('Watch — Home screen (Playroom Modern)', () => {
 
     // assert
     await waitFor(() => {
-      expect(screen.getByText('Camera offline')).toBeInTheDocument()
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
     })
     expect(screen.queryByText('Off duty')).not.toBeInTheDocument()
-    expect(
-      screen.getByText('Check its power, then see Settings.'),
-    ).toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
+  })
+
+  it('Given detector intake is stale while the worker is alive, When the page renders, Then it reports detection unavailable without calling the live stream stalled', async () => {
+    // arrange
+    getStatusM.mockResolvedValue({
+      ...HEALTHY,
+      worker_alive: true,
+      detection_active: true,
+      seconds_since_last_frame: 120,
+    })
+
+    // act
+    renderWatch()
+
+    // assert
+    await waitFor(() => {
+      expect(screen.getByText('Detection unavailable')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/detection is not receiving frames/i)).toBeInTheDocument()
+    expect(screen.queryByText(/stream stalled/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Camera offline')).not.toBeInTheDocument()
   })
 
   // Fuzz F4: landscape fullscreen wasted ~45% of the width because
@@ -762,6 +802,7 @@ describe('Watch — Home screen (Playroom Modern)', () => {
     const user = userEvent.setup()
     renderWatch()
     const scene = screen.getByTestId('live-scene')
+    await user.click(screen.getByRole('button', { name: 'Camera controls' }))
 
     expect(screen.getByRole('button', { name: 'Full screen live view' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Snapshot' })).toBeInTheDocument()
@@ -1275,5 +1316,16 @@ describe('Watch — Home screen (Playroom Modern)', () => {
       screen.queryByRole('button', { name: 'Start talk' }),
     ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+  })
+
+  it('Given a phone with no playground nav tab, When Home renders, Then the brand cats link to the playground (mobile entry, 2026-07-11)', async () => {
+    // arrange / act
+    renderWatch()
+
+    // assert — BottomNav cannot fit a 6th tab at 360px and the SideRail
+    // is desktop-only, so the header's brand-cat row IS the mobile way
+    // into /playground. Losing this link strands phones on URL entry.
+    const link = await screen.findByRole('link', { name: 'Open the cat playground' })
+    expect(link).toHaveAttribute('href', '/playground')
   })
 })

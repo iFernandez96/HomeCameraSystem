@@ -47,6 +47,13 @@ import {
   usePrefersReducedData,
   usePrefersReducedMotion,
 } from './catPerfGates'
+import {
+  GroundPoop,
+  POOP_SIZE_FRAC,
+  groundPoopExpired,
+  spawnGroundPoop,
+  type GroundPoopSpawn,
+} from './GroundPoop'
 
 /**
  * iter-356.4-cats — ambient cat layer with full Animal-Crossing-style
@@ -138,6 +145,11 @@ type CatState = {
   idleSequenceStartedAt: number
   nextIdleLifeAt: number
   lastIdleLifeWasSpecial: boolean
+  // Ground poop lifecycle (2026-07-11): spawned when a 'pooped' bout
+  // COMPLETES, anchored in scene coordinates (the cat walks away, the
+  // poop stays), fades after 6–8 s. One per cat — the anti-repeat roll
+  // means a cat can never squat twice inside one lifecycle window.
+  poop: (GroundPoopSpawn & { y: number }) | null
 }
 
 const WALK_FRAME_COUNT = 12
@@ -555,11 +567,7 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
       // Bathroom break — rare, silly, and even the dignified judge
       // isn't above it. Weight 1 keeps it a surprise, not a habit.
       weight: 1,
-      apply: (c, now) => {
-        let n = setActivity(c, 'pooped', 4500, now)
-        n = setMood(n, '💩', 2600, now)
-        return n
-      },
+      apply: (c, now) => setActivity(c, 'pooped', 4500, now),
     },
   ],
   mushu: [
@@ -618,11 +626,7 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
     {
       // Bathroom break — zoomies fuel has to come out somewhere.
       weight: 1,
-      apply: (c, now) => {
-        let n = setActivity(c, 'pooped', 4500, now)
-        n = setMood(n, '💩', 2600, now)
-        return n
-      },
+      apply: (c, now) => setActivity(c, 'pooped', 4500, now),
     },
   ],
   coco: [
@@ -678,11 +682,7 @@ const SOLO_EVENTS: Record<CatId, SoloEvent[]> = {
     {
       // Bathroom break — she does everything sleepily, even this.
       weight: 1,
-      apply: (c, now) => {
-        let n = setActivity(c, 'pooped', 4500, now)
-        n = setMood(n, '💩', 2600, now)
-        return n
-      },
+      apply: (c, now) => setActivity(c, 'pooped', 4500, now),
     },
   ],
 }
@@ -971,17 +971,6 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
           0%, 100% { transform: scale(1, 1); }
           50%      { transform: scale(1.04, 0.92); }
         }
-        /* 'pooped' prop reveal — the kawaii poop fades in ~1.5s into
-           the squat (the strain has to pay off). OPACITY ONLY: a
-           filled CSS animation permanently overrides inline transform
-           on its element (the Panther mirror bug, 2026-07-11), so no
-           transform keyframes here. prefers-reduced-motion collapses
-           this via the global index.css rule — and the rAF loop is
-           paused under reduced motion anyway, so 'pooped' never rolls. */
-        @keyframes cat-poop-appear {
-          0%   { opacity: 0; }
-          100% { opacity: 1; }
-        }
       `}</style>
       {/* iter-356.30 (Pet Habitat slice 1): static habitat objects
           rendered BEHIND the cats so the cats walk on/over them.
@@ -997,6 +986,23 @@ export function CatLayer({ placement = 'app' }: CatLayerProps) {
         yarnActive={cats.some((cat) => cat.activity === 'pounce')}
         boxActive={cats.some((cat) => cat.activity === 'in_box')}
       />
+      {/* Ground poops (2026-07-11): spawned by stepCats when a squat
+          bout COMPLETES, anchored in scene coordinates so they stay
+          put while the cat walks away, then fade. Rendered before the
+          cats (DOM order = z-order in this layer) so a cat can walk
+          over its own handiwork. */}
+      {cats.map(
+        (cat) =>
+          cat.poop && (
+            <GroundPoop
+              key={`${cat.id}-poop-${cat.poop.spawnedAt}`}
+              x={cat.poop.x}
+              bottom={cat.poop.y}
+              size={Math.round(SPRITE_WIDTH * POOP_SIZE_FRAC)}
+              visibleMs={cat.poop.fadeAt - cat.poop.spawnedAt}
+            />
+          ),
+      )}
       {cats.map((cat) => (
         <CatRender
           key={cat.id}
@@ -1295,33 +1301,11 @@ function CatRenderImpl({
           transformOrigin: 'center',
         }}
       />
-      {/* 'pooped' prop — the silly centerpiece. Rendered BEFORE the
-          entrance wrapper so the cat paints over it (poop sits on the
-          ground BEHIND the squat). Positioned at the cat's trailing
-          edge — opposite its facing — and OUTSIDE the direction-flip
-          div so the scaleX(-1) never mirrors the prop art. Fades in
-          ~1.5s into the squat via cat-poop-appear (opacity-only,
-          `both` fill is safe without transform keyframes). */}
-      {cat.activity === 'pooped' && (
-        <img
-          src="/cats/props/poop.png"
-          alt=""
-          data-testid="cat-poop-prop"
-          width={Math.round(SPRITE_WIDTH * 0.42)}
-          height={Math.round(SPRITE_WIDTH * 0.42)}
-          decoding="async"
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left:
-              cat.direction === 'L'
-                ? SPRITE_WIDTH - Math.round(SPRITE_WIDTH * 0.42) * 0.45
-                : -Math.round(SPRITE_WIDTH * 0.42) * 0.55,
-            animation: 'cat-poop-appear 400ms ease-out 1500ms both',
-            pointerEvents: 'none',
-          }}
-        />
-      )}
+      {/* The poop prop no longer renders here (2026-07-11): it became
+          a GROUND OBJECT with its own lifecycle — spawned by stepCats
+          when the squat COMPLETES and rendered by CatLayer itself in
+          scene coordinates (components/GroundPoop.tsx), so it stays
+          put after the cat walks away. */}
       {/* Entrance wrapper — MUST stay a separate element from the
           direction-flip div below. `cat-arrive-*` animations use
           `fill: both`, and a filled CSS animation overrides inline
@@ -1545,7 +1529,7 @@ function activityToSprite(
 }
 
 // Per-activity phase cadence, driven exclusively by the existing rAF
-// timestamp. Normal walks use ~10fps; chase/flee run at ~15fps. Static
+// timestamp. Normal walks use ~10fps; chase/flee run at ~27fps. Static
 // poses stay at zero and sitting keeps its 600ms two-frame tail flick.
 function phaseFor(activity: Activity, now: number): number {
   switch (activity) {
@@ -1553,7 +1537,8 @@ function phaseFor(activity: Activity, now: number): number {
       return Math.floor(now / (CYCLE_DURATION_MS.walk / WALK_FRAME_COUNT)) % WALK_FRAME_COUNT
     case 'chase':
     case 'flee':
-      return Math.floor(now / (CYCLE_DURATION_MS.run / 2)) % 2
+      // Tween wave 2: the gallop is 4 frames per 150ms cycle now.
+      return Math.floor(now / (CYCLE_DURATION_MS.run / 4)) % 4
     case 'sit':
     case 'judge':
     case 'loaf':
@@ -1635,6 +1620,7 @@ function initialCats(placement: 'app' | 'login'): CatState[] {
     idleSequenceStartedAt: 0,
     nextIdleLifeAt: now + rand(3000, 7000),
     lastIdleLifeWasSpecial: false,
+    poop: null,
   }))
 }
 
@@ -1723,6 +1709,14 @@ function stepCats(
       moodSecondary = null
       catChanged = true
     }
+    // Ground poop lifecycle: leaves state once visible window + fade
+    // have fully played out (the fade itself is CSS — no re-renders
+    // between spawn and removal).
+    let poop = cat.poop
+    if (poop && groundPoopExpired(poop, now)) {
+      poop = null
+      catChanged = true
+    }
     const oldX = x
     const oldDir = direction
     if (activity === 'walk' && locomotionReady) {
@@ -1754,7 +1748,7 @@ function stepCats(
     // Per-activity sprite-frame phase. Only counts as a change when the
     // value flips, so a sleeping cat (always phase=0) stays ref-stable;
     // sitting updates every 600ms, walking every 100ms, and a chase or
-    // flee every ~67ms (moving cats already update because x changes).
+    // flee every ~38ms (moving cats already update because x changes).
     const newPhase = phaseFor(activity, now)
     if (newPhase !== cat.phase) catChanged = true
     const timelineActive =
@@ -1791,7 +1785,14 @@ function stepCats(
     // Activity expiry → roll a solo event for the next state. This
     // ALWAYS counts as a change because rollSolo returns a new state.
     if (now > activityUntil) {
-      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial }
+      // A completed squat pays off: the poop lands ON THE GROUND at the
+      // cat's trailing edge as the bout ends (NOT at bout start), and
+      // outlives the activity — the next beat walks away from it.
+      const poopAfter =
+        activity === 'pooped'
+          ? { ...spawnGroundPoop(x, direction, SPRITE_WIDTH, now), y }
+          : poop
+      const base = { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX: null, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop: poopAfter }
       const next = _rollWithoutImmediateRepeatForTests(
         placement === 'login' ? rollLoginSolo : rollSolo,
         base,
@@ -1803,7 +1804,7 @@ function stepCats(
     }
     if (catChanged) {
       anyChanged = true
-      return { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial }
+      return { ...cat, x, y, direction, activity, activityUntil, mood, moodSecondary, moodUntil, targetX, phase: newPhase, phaseTime, idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial, poop }
     }
     // No change — return original ref so React.memo bails out.
     return cat

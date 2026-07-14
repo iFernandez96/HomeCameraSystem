@@ -1,0 +1,17 @@
+# Optional override for a genuinely independent archive mount.
+#
+# Copy this file outside the repository, replace the host source with a NAS or
+# second-host mount, create `.homecam-external-archive` at its root, then add:
+#   -f deploy/docker-compose.yml -f /path/to/archive.override.yml
+# to the existing compose invocation. Do not point this at /srv/homecam-media;
+# that is the primary recordings disk and is not an independent copy.
+services:
+  server:
+    volumes:
+      - type: bind
+        source: /mnt/homecam-independent-archive
+        target: /app/external-archive
+        bind:
+          create_host_path: false
+    environment:
+      - EXTERNAL_ARCHIVE_DIR=/app/external-archive

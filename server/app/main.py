@@ -14,7 +14,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .auth.dependencies import get_current_user
 from .config import settings
-from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, push, security, sessions, shares, telemetry, training, training_admin
+from .routes import _internal, auth, cameras, clips, control, events, face, healthz, metrics_prom, operations, push, security, sessions, shares, telemetry, training, training_admin
 from .services.camera import camera_service
 from .services.detection import detection_service
 from .services.detection_config import detection_config
@@ -78,6 +78,7 @@ async def lifespan(_app: FastAPI):
     digest_stop = asyncio.Event()
     digest_task = None
     resilience_task = None
+    operations_task = None
     # Each boot step is wrapped with a NAMED error before re-raising so
     # the journal says WHICH step aborted the boot (pre-this-iter a
     # failing step surfaced only as a bare traceback with no operation
@@ -129,6 +130,16 @@ async def lifespan(_app: FastAPI):
             "lifespan: init events_db failed at %s (events store "
             "unusable) — aborting boot",
             settings.events_db_path, exc_info=True,
+        )
+        raise
+    from .services.recording_jobs import init_db as _recording_jobs_init_db
+    try:
+        _recording_jobs_init_db(settings.recording_jobs_db_path)
+    except Exception:
+        log.error(
+            "lifespan: init recording_jobs db failed at %s — aborting boot",
+            settings.recording_jobs_db_path,
+            exc_info=True,
         )
         raise
     # Resume durable timelapse jobs that were interrupted by a container or
@@ -244,9 +255,11 @@ async def lifespan(_app: FastAPI):
         len(push_service.subs),
     )
     from .services import daily_digest
+    from .services import operations as operations_service
     from .services import security_resilience
     digest_task = asyncio.create_task(daily_digest.run(digest_stop))
     resilience_task = asyncio.create_task(security_resilience.run(digest_stop))
+    operations_task = asyncio.create_task(operations_service.run(digest_stop))
     try:
         yield
     finally:
@@ -255,6 +268,8 @@ async def lifespan(_app: FastAPI):
             await digest_task
         if resilience_task is not None:
             await resilience_task
+        if operations_task is not None:
+            await operations_task
         # THE single most important boot/shutdown diagnostic — pairs
         # with the "server up" line so a journal grep shows the full
         # lifecycle (and an UNCLEAN exit = "server up" with no matching
@@ -515,6 +530,8 @@ def _build_status() -> dict[str, object]:
         _status_probe_failed = False
         log.info("/api/status probe aggregation recovered")
     from .services.recording_service import storage_forecast
+    from .services.recording_assurance import status as recording_assurance_status
+    from .services.push_assurance import status as push_assurance_status
     recording_forecast = storage_forecast()
     return {
         "ok": True,
@@ -537,6 +554,8 @@ def _build_status() -> dict[str, object]:
         "disk_free_gb": _disk_free_gb(str(settings.recordings_dir)),
         "system_disk_free_gb": _disk_free_gb("/"),
         **recording_forecast,
+        "recording_assurance": recording_assurance_status(),
+        "push_assurance": push_assurance_status(push_service.subs),
         # iter-246: top-level fps mirrors worker_metrics["fps"] when
         # available. Pre-iter-246 this read `camera_service.fps`, a
         # field that's initialised to 0.0 and never updated (the
@@ -587,6 +606,7 @@ app.include_router(events.router, prefix="/api")
 app.include_router(shares.router, prefix="/api")
 app.include_router(security.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 app.include_router(security.identity_router, prefix="/api", dependencies=_PROTECTED_DEPS)
+app.include_router(operations.router, prefix="/api", dependencies=_PROTECTED_DEPS)
 # docs/multicam_contract.md: camera registry for the client. The auth
 # gate also lives per-route inside cameras.py (mirrors events.py
 # style); the router-wide dep here is belt-and-braces consistency with

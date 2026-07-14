@@ -50,17 +50,55 @@ export const PLAYGROUND_AMBIENT_NAMES = [
 ] as const
 export type PlaygroundAmbientName = (typeof PLAYGROUND_AMBIENT_NAMES)[number]
 
-/** Playground-only cat frames (per cat, under /{catId}/). The shared
-    ambient frames (seated, walk_*, …) stay in catAnimSequences'
-    CAT_ANIM_MANIFEST under /cats/anim/. */
-export const PLAYGROUND_CAT_FRAME_NAMES = [
+/** Playground-only cat frames EVERY cat has on disk (per cat, under
+    /{catId}/). The shared ambient frames (seated, walk_*, …) stay in
+    catAnimSequences' CAT_ANIM_MANIFEST under /cats/anim/. */
+const SHARED_PLAYGROUND_CAT_FRAMES = [
   'bat_a',
   'bat_b',
   'eat_a',
   'eat_b',
   'purr',
+  // Interaction wave 2026-07-11: scratch/climb ride 160-tall canvases
+  // (standing stretch / vertical cling); the rest stay 128-tall.
+  'scratch_a',
+  'scratch_b',
+  'climb_a',
+  'climb_b',
+  'drink_a',
+  'drink_b',
+  'hammock_lie',
+  'window_watch',
+  // Tween wave 2 2026-07-11: generated a↔b midpoints for the sparse
+  // playground pairs. scratch_ab inherits its pair's 160-tall canvas;
+  // the rest are 128-tall.
+  'scratch_ab',
+  'eat_ab',
+  'bat_ab',
+] as const
+
+/** Full frame-name union (URL routing + typing). Two tween midpoints
+    are per-cat — same pattern as blink/sleep_b2 in CAT_ANIM_MANIFEST:
+    the re-rolls for coco/drink_ab, mushu/climb_ab and panther/climb_ab
+    came out deformed twice and were permanently dropped (2026-07-11),
+    so climb_ab is Coco-only and drink_ab is Panther+Mushu-only. */
+export const PLAYGROUND_CAT_FRAME_NAMES = [
+  ...SHARED_PLAYGROUND_CAT_FRAMES,
+  'climb_ab',
+  'drink_ab',
 ] as const
 export type PlaygroundCatFrameName = (typeof PLAYGROUND_CAT_FRAME_NAMES)[number]
+
+/** What is actually on disk per cat. Sequences must only use frames
+    from their cat's manifest (pinned by playgroundSequences.test). */
+export const PLAYGROUND_CAT_FRAME_MANIFEST: Record<
+  PlaygroundCatId,
+  readonly PlaygroundCatFrameName[]
+> = {
+  panther: [...SHARED_PLAYGROUND_CAT_FRAMES, 'drink_ab'],
+  mushu: [...SHARED_PLAYGROUND_CAT_FRAMES, 'drink_ab'],
+  coco: [...SHARED_PLAYGROUND_CAT_FRAMES, 'climb_ab'],
+}
 
 function urlMap<N extends string>(dir: string, names: readonly N[]): Record<N, string> {
   return Object.fromEntries(
@@ -77,20 +115,25 @@ export const PLAYGROUND_TOY_URLS: Record<PlaygroundToyName, string> =
 export const PLAYGROUND_AMBIENT_URLS: Record<PlaygroundAmbientName, string> =
   urlMap('ambient', PLAYGROUND_AMBIENT_NAMES)
 
+/** Per-cat URL map, manifest-driven — a cat only lists URLs for
+    frames it actually has (hence Partial for the per-cat midpoints). */
 export const PLAYGROUND_CAT_FRAME_URLS: Record<
   PlaygroundCatId,
-  Record<PlaygroundCatFrameName, string>
+  Readonly<Partial<Record<PlaygroundCatFrameName, string>>>
 > = {
-  panther: urlMap('panther', PLAYGROUND_CAT_FRAME_NAMES),
-  mushu: urlMap('mushu', PLAYGROUND_CAT_FRAME_NAMES),
-  coco: urlMap('coco', PLAYGROUND_CAT_FRAME_NAMES),
+  panther: urlMap('panther', PLAYGROUND_CAT_FRAME_MANIFEST.panther),
+  mushu: urlMap('mushu', PLAYGROUND_CAT_FRAME_MANIFEST.mushu),
+  coco: urlMap('coco', PLAYGROUND_CAT_FRAME_MANIFEST.coco),
 }
 
 export function playgroundCatFrameUrl(
   catId: PlaygroundCatId,
   frame: PlaygroundCatFrameName,
 ): string {
-  return PLAYGROUND_CAT_FRAME_URLS[catId][frame]
+  // Constructed (not manifest-indexed) so the signature stays total;
+  // sequences are pinned to only use frames in their cat's manifest,
+  // and PlaygroundCat has a 404 fallback besides.
+  return `${BASE}/${catId}/${frame}.png`
 }
 
 // === Preload waves ===========================================================
@@ -106,6 +149,6 @@ export const PLAYGROUND_PRELOAD_WAVE_2: readonly string[] = [
   ...PLAYGROUND_TOY_NAMES.map((name) => PLAYGROUND_TOY_URLS[name]),
   ...PLAYGROUND_AMBIENT_NAMES.map((name) => PLAYGROUND_AMBIENT_URLS[name]),
   ...PLAYGROUND_CAT_IDS.flatMap((catId) =>
-    PLAYGROUND_CAT_FRAME_NAMES.map((frame) => PLAYGROUND_CAT_FRAME_URLS[catId][frame]),
+    PLAYGROUND_CAT_FRAME_MANIFEST[catId].map((frame) => playgroundCatFrameUrl(catId, frame)),
   ),
 ]

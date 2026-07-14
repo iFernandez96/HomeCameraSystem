@@ -18,6 +18,12 @@ Self-hosted, Ring-style camera viewer + controller for an Nvidia Jetson Nano 2GB
 - Software-ready two-way Opus audio, physical doorbell input, and optional acoustic-event watcher
 - Guarded deterrence adapter with foreground confirmation, arming, cooldown, and audit history
 - Recovery-derived outage history with an explicit external-monitor limitation
+- Scheduled RTSP-to-MP4 recording assurance with full decode, strict cleanup,
+  USB write/fsync proof, SMART health when available, and transition alerts
+- Owner Control Center with persisted recording jobs, playback-latency
+  objectives, manual end-to-end camera testing, and USB mount/device proof
+- Visit-first Activity, with Find and Saved entry points plus an advanced raw
+  detection timeline
 - Push notifications to phone when something is detected
 - Remote control of the Jetson: capture photo, reboot, toggle detection, view stats
 - One codebase, two surfaces: Android home screen + any browser
@@ -172,6 +178,12 @@ CLAUDE.md           Architectural notes — read first when editing
 ## Status
 
 Working end-to-end on the Jetson Nano 2GB. Live video (WebRTC, ~200 ms LAN), detection events (SSD-MobileNet-v2 at FP16 with idle-gear thermal management), per-person face recognition (when `encodings.pkl` is present and dlib is unblocked), Web Push with VAPID, persisted detection config, and a Settings page surfacing per-component health (CPU/GPU temp, dropped frames, p95 inference latency, mediamtx-watchdog restart count, etc).
+
+Reliability checks include a scheduled RTSP recording/full-decode canary, a
+full decode of a recent real event clip, correlated service-worker push
+receipts, adaptive blur/frozen-frame monitoring, and conservative 24-hour vs
+seven-day storage runway. Privileged accounts can enable encrypted-at-rest
+TOTP two-step verification with one-use recovery codes.
 
 Privileged camera recovery and reboot commands are handed to the host-side worker instead of granting the FastAPI container host control.
 

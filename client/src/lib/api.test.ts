@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   captureSnapshot,
+  beginMfaSetup,
+  confirmMfaSetup,
+  disableMfa,
   createCameraExposurePreset,
   deleteCameraExposurePreset,
   fetchEvents,
@@ -12,6 +15,7 @@ import {
   fetchLogs,
   getLogsResult,
   getMe,
+  getMfaStatus,
   getRecoverStatus,
   getCameraExposure,
   getStatus,
@@ -1056,6 +1060,29 @@ describe('lib/api', () => {
     expect(asMock().mock.calls[0][1].credentials).toBe('include')
   })
 
+  it('MFA wrappers keep setup secrets server-bound and send only the entered step-up fields', async () => {
+    mockJson({ enabled: false })
+    expect(await getMfaStatus()).toEqual({ enabled: false })
+    expect(asMock().mock.calls[0][0]).toBe('/api/auth/mfa')
+
+    mockJson({
+      secret: 'BASE32', provisioning_uri: 'otpauth://totp/x',
+      recovery_codes: ['AAAA-BBBB'], expires_in_s: 600,
+    })
+    await beginMfaSetup('current-password')
+    expect(JSON.parse(asMock().mock.calls[1][1].body as string)).toEqual({ password: 'current-password' })
+
+    mockJson({ ok: true, enabled: true })
+    await confirmMfaSetup('123456')
+    expect(JSON.parse(asMock().mock.calls[2][1].body as string)).toEqual({ code: '123456' })
+
+    mockJson({ ok: true, enabled: false })
+    await disableMfa('current-password', 'AAAA-BBBB')
+    expect(JSON.parse(asMock().mock.calls[3][1].body as string)).toEqual({
+      password: 'current-password', code: 'AAAA-BBBB',
+    })
+  })
+
   it('logout POSTs /api/auth/logout and returns ok', async () => {
     mockJson({ ok: true })
     const r = await logout()
@@ -2009,6 +2036,31 @@ describe('lib/api', () => {
     expect(DETECTION_LIMITS.maxVisitMax).toBe(600)
     expect(DETECTION_LIMITS.absenceFinalizeMin).toBe(3)
     expect(DETECTION_LIMITS.absenceFinalizeMax).toBe(60)
+  })
+})
+
+describe('operations integrity wire contract', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('Given Control Center loads integrity, When requested, Then it uses the owner operations endpoint', async () => {
+    asMock().mockResolvedValueOnce(new Response(JSON.stringify({ v: 1, objectives: [], recent_failures: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const { getRecordingIntegrity } = await import('./api')
+    await getRecordingIntegrity()
+    expect(asMock()).toHaveBeenCalledWith(
+      '/api/security/operations/recording-integrity',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('Given an owner starts a camera test, When requested, Then it is a bodyless POST', async () => {
+    asMock().mockResolvedValueOnce(new Response(JSON.stringify({ v: 1, request_id: 'canary-1', status: 'pending', worker_online: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const { runRecordingTest } = await import('./api')
+    await runRecordingTest()
+    const [path, init] = asMock().mock.calls[0]
+    expect(path).toBe('/api/security/operations/recording-test')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBeUndefined()
   })
 })
 

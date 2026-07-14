@@ -60,4 +60,8 @@ export interface WorkerHeartbeat {
   power_watts?: number;
   power_sample_ts?: number;
   power_read_failures?: number;
+  camera_quality_status?: number;
+  camera_luma?: number;
+  camera_sharpness?: number;
+  camera_frame_delta?: number;
 }

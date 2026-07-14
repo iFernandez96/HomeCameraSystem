@@ -35,6 +35,7 @@ class BackupInventoryEntry:
 _PERSISTED_FILE_SPECS: tuple[tuple[str, str, bool], ...] = (
     ("users_db_path", "users_db", True),
     ("jwt_secret_path", "jwt_secret", True),
+    ("mfa_key_path", "mfa_key", False),
     ("vapid_private_key_path", "vapid_private_key", True),
     ("vapid_public_key_path", "vapid_public_key", True),
     ("push_subs_path", "push_subs", False),

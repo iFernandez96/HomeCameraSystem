@@ -9,6 +9,7 @@ import { DailyDigestCard } from '../components/DailyDigestCard'
 // lg+ right rail). Deferring it cuts the Events route's first paint.
 const EventHeatmap = lazy(() => import('../components/EventHeatmap.lazy'))
 import { EventList, type EventListViewMode } from '../components/EventList'
+import { EventsViewSwitcher, readEventsViewMode, rememberEventsViewMode } from '../components/EventsViewSwitcher'
 import { HourBand } from '../components/HourBand'
 import { EventListSkeleton, HeatmapSkeleton } from '../components/Skeleton'
 import { ErrorState } from '../components/states/ErrorState'
@@ -56,70 +57,6 @@ const _LOAD_MORE_PAGE = 50
 // the natural browse window and well before the React render cliff.
 const _LOAD_MORE_CAP = 500
 
-const _EVENTS_VIEW_MODE_KEY = 'homecam:eventsViewMode'
-const _EVENTS_VIEW_MODES: Array<{ id: EventListViewMode; label: string }> = [
-  { id: 'timeline', label: 'Timeline' },
-  { id: 'thumbs', label: 'Thumbs' },
-  { id: 'compact', label: 'Compact' },
-]
-
-function isEventsViewMode(value: string | null): value is EventListViewMode {
-  return value === 'timeline' || value === 'thumbs' || value === 'compact'
-}
-
-function readEventsViewMode(): EventListViewMode {
-  if (typeof window === 'undefined') return 'timeline'
-  try {
-    const stored = window.localStorage.getItem(_EVENTS_VIEW_MODE_KEY)
-    return isEventsViewMode(stored) ? stored : 'timeline'
-  } catch {
-    return 'timeline'
-  }
-}
-
-function rememberEventsViewMode(mode: EventListViewMode) {
-  try {
-    window.localStorage.setItem(_EVENTS_VIEW_MODE_KEY, mode)
-  } catch {
-    // Best-effort; mode selection still works for the current tab.
-  }
-}
-
-function EventsViewSwitcher({
-  mode,
-  onChange,
-}: {
-  mode: EventListViewMode
-  onChange: (mode: EventListViewMode) => void
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="Event list view"
-      className="flex rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-0.5"
-    >
-      {_EVENTS_VIEW_MODES.map((option) => {
-        const active = mode === option.id
-        return (
-          <button
-            key={option.id}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(option.id)}
-            className={`min-h-9 rounded-[var(--radius-sm)] px-2.5 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 sm:px-3 ${
-              active
-                ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-            }`}
-          >
-            {option.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 /** Filter token: 'all' = no filter, '__unknown__' = events without a face
  * match, any other string = exact person_name match. */
 type PersonFilter = 'all' | '__unknown__' | string
@@ -134,7 +71,7 @@ export function Events() {
   const reportError = useReportError()
   // iter-356.24 (Frank carryover): pull worker_alive + detection_active
   // so the EventList empty state can branch between "all is calm" and
-  // "camera is offline" instead of showing the same sleeping cat for
+  // "detection unavailable" instead of showing the same sleeping cat for
   // both. 5s poll cadence (the useStatus default) is right — the
   // empty-state-vs-offline distinction is a setup-time call, not a
   // millisecond-real-time one. Existing useStatus visibility-pause
@@ -682,7 +619,7 @@ export function Events() {
     return `No ${typeWord} events for ${whoWord}${whenWord}. Try clearing one filter.`
   }, [loading, error, filtered, filter, labelFilter, selectedDay])
 
-  // Playroom Modern (Task 6): the "Today, hour by hour" band reuses
+  // The exact-time activity ruler reuses
   // the already-fetched `events` state (no extra fetch) — it just
   // narrows to today's local-midnight window. `todayStartTs` is
   // computed once via useMemo (same lazy-init pattern EventHeatmap
@@ -1620,8 +1557,7 @@ export function Events() {
             />
           ) : (
             <>
-              {/* Playroom Modern (Task 6): "Today, hour by hour" card
-                  — 24-cell identity timeline above the list. Skipped
+              {/* Exact-time activity ruler above the list. Skipped
                   while a day filter is active (selectedDay browses a
                   different day than "today", so the band would be
                   misleading) and while there are zero events overall
@@ -1630,9 +1566,13 @@ export function Events() {
               {!selectedDay && events.length > 0 && (
                 <div className="card-paper px-2.5 py-3 mx-4 lg:mx-0 landscape-phone:mx-0 mb-3">
                   <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-                    Today, hour by hour
+                    Today&apos;s activity
                   </h2>
-                  <HourBand events={todaysEvents} dayStartTs={todayStartTs} />
+                  <HourBand
+                    events={todaysEvents}
+                    dayStartTs={todayStartTs}
+                    onSelectEvent={onSelectEvent}
+                  />
                 </div>
               )}
               {/* iter-356.x desktop D1: selection-mode action bar.
@@ -1708,12 +1648,18 @@ export function Events() {
                 //   armed  = detection_active && worker_alive
                 //   offline = worker_alive === false        (danger)
                 //   "off duty" = !offline && detection_active===false (calm)
-                cameraOffline={
-                  status !== null && status.worker_alive === false
+                detectionUnavailable={
+                  status !== null &&
+                  (status.worker_alive === false ||
+                    (status.worker_alive === true &&
+                      status.seconds_since_last_frame != null &&
+                      status.seconds_since_last_frame > 60))
                 }
                 detectionOff={
                   status !== null &&
                   status.worker_alive !== false &&
+                  (status.seconds_since_last_frame == null ||
+                    status.seconds_since_last_frame <= 60) &&
                   status.detection_active === false
                 }
                 filterHint={filterComboEmptyHint}

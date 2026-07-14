@@ -76,6 +76,16 @@ export function JetsonSection({
       <HealthVerdict status={status} />
 
       <Section
+        title="Recording assurance"
+        subtitle="A real sample is recorded, fully decoded, and removed every 30 minutes."
+      >
+        <Row label="Playable recording" right={<RecordingProof status={status} />} />
+        <Row label="Recent event video" right={<EventClipProof status={status} />} />
+        <Row label="Capture storage" right={<StorageProof status={status} />} />
+        <Row label="Drive self-test" right={<SmartProof status={status} />} />
+      </Section>
+
+      <Section
         title="Camera box"
         subtitle="Physical reachability of the Jetson hardware."
       >
@@ -141,6 +151,10 @@ export function JetsonSection({
         <Row
           label="Dropped frames"
           right={<DroppedFrames metrics={status?.worker_metrics ?? null} />}
+        />
+        <Row
+          label="Image quality"
+          right={<ImageQuality metrics={status?.worker_metrics ?? null} />}
         />
         <Row
           label="Stream recoveries"
@@ -218,6 +232,68 @@ function PowerRow({ status }: { status: ServerStatus | null }) {
   )
 }
 
+function assuranceReason(reason: string | null | undefined): string {
+  return {
+    storage_unavailable: 'Storage could not be opened',
+    storage_read_only: 'Storage became read-only',
+    storage_not_writable: 'Storage rejected a test write',
+    capture_timeout: 'Camera sample timed out',
+    capture_failed: 'Camera sample could not be recorded',
+    capture_empty: 'Camera sample was empty',
+    decode_timeout: 'Playback check timed out',
+    decode_failed: 'Test recording was not playable',
+    cleanup_failed: 'Test artifact could not be removed',
+    event_decode_timeout: 'Recent event video verification timed out',
+    event_decode_failed: 'Recent event video is not playable',
+  }[reason ?? ''] ?? 'Recording check failed'
+}
+
+function RecordingProof({ status }: { status: ServerStatus | null }) {
+  const proof = status?.recording_assurance
+  if (proof == null || proof.state === 'unknown') {
+    return <Mono>Waiting for first check</Mono>
+  }
+  if (proof.state === 'failed') {
+    return <span className="text-right text-[var(--color-danger)]">{assuranceReason(proof.reason)}</span>
+  }
+  if (proof.state === 'stale') {
+    return <span className="text-right text-[var(--color-warning)]">Check overdue</span>
+  }
+  const age = proof.age_s == null ? 'just now' : `${formatUptime(proof.age_s)} ago`
+  return <span className="text-right text-[var(--color-success)]">Verified playable · {age}</span>
+}
+
+function EventClipProof({ status }: { status: ServerStatus | null }) {
+  const clip = status?.recording_assurance?.event_clip
+  if (clip == null || clip.state === 'none') return <Mono>No event video to sample yet</Mono>
+  if (clip.state === 'failed') {
+    return <span className="text-right text-[var(--color-danger)]">{assuranceReason(clip.reason)}</span>
+  }
+  const elapsed = clip.elapsed_ms == null ? '' : ` · ${(clip.elapsed_ms / 1000).toFixed(1)}s check`
+  return <span className="text-right text-[var(--color-success)]">Verified playable{elapsed}</span>
+}
+
+function StorageProof({ status }: { status: ServerStatus | null }) {
+  const storage = status?.recording_assurance?.storage
+  if (storage == null) return <Mono>Not checked yet</Mono>
+  if (storage.read_only === true) {
+    return <span className="text-[var(--color-danger)]">Read-only</span>
+  }
+  if (!storage.writable) {
+    return <span className="text-[var(--color-danger)]">Write failed</span>
+  }
+  const filesystem = storage.filesystem == null ? '' : ` · ${storage.filesystem}`
+  const latency = storage.write_probe_ms == null ? '' : ` · ${storage.write_probe_ms.toFixed(1)} ms fsync`
+  return <Mono>Writable{filesystem}{latency}</Mono>
+}
+
+function SmartProof({ status }: { status: ServerStatus | null }) {
+  const smart = status?.recording_assurance?.storage?.smart_status
+  if (smart === 'failed') return <span className="text-[var(--color-danger)]">Drive reports failure</span>
+  if (smart === 'healthy') return <span className="text-[var(--color-success)]">Healthy</span>
+  return <Mono>Unavailable through this USB adapter</Mono>
+}
+
 // ───────────────────────────────────────────────────────────
 // Top-line verdict
 // ───────────────────────────────────────────────────────────
@@ -260,6 +336,20 @@ function computeVerdict(status: ServerStatus | null): Verdict {
       subline: `No heartbeat for ${Math.floor(status.worker_last_seen_s)}s — detection auto-restarts; check Settings → System if it persists.`,
     }
   }
+  if (status.recording_assurance?.state === 'failed') {
+    return {
+      kind: 'critical',
+      headline: 'Recording verification failed',
+      subline: `${assuranceReason(status.recording_assurance.reason)} — HomeCam will retry automatically.`,
+    }
+  }
+  if (status.recording_assurance?.storage?.smart_status === 'failed') {
+    return {
+      kind: 'critical',
+      headline: 'Capture drive reports a failure',
+      subline: 'Protect important clips and replace the drive as soon as possible.',
+    }
+  }
 
   // Pull worker metrics into locals so guard expressions stay
   // readable.
@@ -271,6 +361,14 @@ function computeVerdict(status: ServerStatus | null): Verdict {
     m?.infer_ms_p95 != null && m.infer_ms_p95 > 0
       ? m.infer_ms_p95
       : (m?.infer_ms_recent ?? 0)
+
+  if (m?.camera_quality_status === 3) {
+    return {
+      kind: 'critical',
+      headline: 'Camera image appears frozen',
+      subline: 'Repeated identical samples persisted for at least 30 seconds.',
+    }
+  }
 
   // Critical-tier hardware thresholds.
   if (status.cpu_temp_c != null && status.cpu_temp_c >= 85) {
@@ -324,6 +422,30 @@ function computeVerdict(status: ServerStatus | null): Verdict {
   }
 
   // Warning-tier (calm "needs an eye" rather than "act now").
+  if (m?.camera_quality_status === 2) {
+    return {
+      kind: 'attention',
+      headline: 'Camera image looks blurred',
+      subline: 'Detail dropped far below this camera’s learned normal level.',
+    }
+  }
+  if (status.recording_assurance?.state === 'stale') {
+    return {
+      kind: 'attention',
+      headline: 'Recording check is overdue',
+      subline: 'The last end-to-end recording proof is older than 45 minutes.',
+    }
+  }
+  if (
+    (status.recording_assurance == null || status.recording_assurance.state === 'unknown')
+    && status.uptime_s > 3600
+  ) {
+    return {
+      kind: 'attention',
+      headline: 'Recording has not been verified yet',
+      subline: 'The scheduled recording check has not reported a result.',
+    }
+  }
   if (status.cpu_temp_c != null && status.cpu_temp_c >= 75) {
     return {
       kind: 'attention',
@@ -410,10 +532,6 @@ function computeVerdict(status: ServerStatus | null): Verdict {
 
 function HealthVerdict({ status }: { status: ServerStatus | null }) {
   const verdict = computeVerdict(status)
-  const criticalVocabulary =
-    verdict.kind === 'critical'
-      ? 'Elsewhere in the app this shows as Camera offline.'
-      : null
 
   // Calm tinted-surface tokens so the verdict reads as a status
   // anchor, not an alert. The dot color carries severity; the
@@ -469,11 +587,6 @@ function HealthVerdict({ status }: { status: ServerStatus | null }) {
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5 leading-relaxed">
             {verdict.subline}
           </p>
-          {criticalVocabulary ? (
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-              {criticalVocabulary}
-            </p>
-          ) : null}
         </div>
       </div>
     </div>
@@ -527,6 +640,24 @@ function CpuFreqPct({ pct }: { pct: number | null }) {
       {pct.toFixed(1)} %
     </span>
   )
+}
+
+function ImageQuality({ metrics }: { metrics: WorkerMetrics | null }) {
+  const state = metrics?.camera_quality_status
+  if (state == null || state === 0) return <Mono>Warming up</Mono>
+  if (state === 2) {
+    return <span className="text-right text-[var(--color-warning)]">Sustained blur detected</span>
+  }
+  if (state === 3) {
+    return <span className="text-right text-[var(--color-danger)]">Repeated identical frames</span>
+  }
+  const luma = metrics?.camera_luma
+  const sharpness = metrics?.camera_sharpness
+  const detail =
+    luma == null || sharpness == null
+      ? ''
+      : ` · light ${luma.toFixed(0)} · detail ${sharpness.toFixed(1)}`
+  return <span className="text-right text-[var(--color-success)]">Clear{detail}</span>
 }
 
 function StreamRecoveries({ metrics }: { metrics: WorkerMetrics | null }) {

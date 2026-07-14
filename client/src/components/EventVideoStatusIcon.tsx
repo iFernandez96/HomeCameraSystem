@@ -159,7 +159,9 @@ export function EventVideoStatusIcon({
       : `relative shrink-0 items-center ${loading ? 'flex w-16 flex-col gap-1' : 'inline-flex w-6'}`
   const etaClass =
     placement === 'axis'
-      ? 'absolute right-0 top-7 w-16 text-right'
+      ? personPresent
+        ? 'absolute right-0 top-7 w-12 text-center whitespace-normal leading-[1.05]'
+        : 'absolute right-0 top-7 w-16 text-right whitespace-nowrap'
       : 'block text-center'
 
   return (
@@ -218,9 +220,14 @@ export function EventVideoStatusIcon({
       {eta ? (
         <span
           title={etaTitle}
-          className={`${etaClass} whitespace-nowrap text-[9px] font-medium leading-none text-[var(--color-text-tertiary)]`}
+          className={`${etaClass} text-[9px] font-medium text-[var(--color-text-tertiary)]`}
         >
-          {eta}
+          {placement === 'axis' && personPresent ? (
+            <>
+              <span className="block">Person</span>
+              <span className="block">in scene</span>
+            </>
+          ) : eta}
         </span>
       ) : null}
     </span>

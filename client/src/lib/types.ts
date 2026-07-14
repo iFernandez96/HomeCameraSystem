@@ -120,6 +120,8 @@ export type DetectionEvent = {
   clip_url?: string | null
   /** Excluded from automatic age and disk-pressure eviction. */
   protected?: boolean
+  /** Tiered lifecycle used by retention preview and incident evidence. */
+  retention_class?: 'ordinary' | 'important' | 'incident' | 'permanent'
   /** Origin of this activity. Absent on events created before security events. */
   source?: 'vision' | 'audio' | 'doorbell' | 'tamper' | 'system'
   /** Optional automation rule that promoted or described this event. */
@@ -493,6 +495,11 @@ export type WorkerMetrics = {
   watchdog_last_action?: string
   /** Unix-epoch seconds of the last watchdog action. 0 means never. */
   watchdog_last_action_at?: number
+  /** 0 warming, 1 clear, 2 sustained blur, 3 repeated identical frames. */
+  camera_quality_status?: number
+  camera_luma?: number
+  camera_sharpness?: number
+  camera_frame_delta?: number
   /** Unix-epoch seconds of the last guarded reboot attempt. 0 means never. */
   watchdog_last_reboot_at?: number
   /** Total watchdog escalations this worker session. */
@@ -533,6 +540,15 @@ export type User = {
 export type LoginRequest = {
   username: string
   password: string
+  otp_code?: string
+}
+
+export type MfaStatus = { enabled: boolean }
+export type MfaSetup = {
+  secret: string
+  provisioning_uri: string
+  recovery_codes: string[]
+  expires_in_s: number
 }
 
 /**
@@ -547,6 +563,42 @@ export type LoginResponse = {
 /** Server response from GET /api/auth/me. Same shape as LoginResponse. */
 export type MeResponse = {
   user: User
+}
+
+export type RecordingAssuranceStatus = {
+  state: 'unknown' | 'ok' | 'failed' | 'stale'
+  checked_at: number | null
+  age_s: number | null
+  stage: 'storage' | 'capture' | 'decode' | 'cleanup' | 'event_decode' | 'complete' | null
+  reason: string | null
+  sample_bytes: number | null
+  elapsed_ms: number | null
+  storage: {
+    writable: boolean
+    mountpoint?: string | null
+    device?: string | null
+    filesystem: string | null
+    read_only: boolean | null
+    smart_status: 'healthy' | 'failed' | 'unavailable'
+    free_bytes: number | null
+    write_probe_ms: number | null
+  } | null
+  event_clip: {
+    state: 'none' | 'playable' | 'failed'
+    event_id: string | null
+    checked_at: number
+    sample_bytes: number | null
+    elapsed_ms: number | null
+    reason: 'no_event_clip' | 'event_playable' | 'event_decode_timeout' | 'event_decode_failed'
+  } | null
+}
+
+export type PushAssuranceStatus = {
+  state: 'no_subscriptions' | 'waiting' | 'delivered'
+  devices: number
+  received_recent: number
+  latest_received_at: number | null
+  latest_age_s: number | null
 }
 
 export type ServerStatus = {
@@ -598,8 +650,16 @@ export type ServerStatus = {
   system_disk_free_gb?: number | null
   /** Measured bytes created by clips during the previous 24 hours. */
   recording_gb_per_day?: number
+  /** Seven-day rolling average, including quiet days. */
+  recording_gb_per_day_7d?: number
+  /** Highest single rolling day bucket during the last seven days. */
+  recording_peak_gb_per_day_7d?: number
   /** Clip storage currently excluded from automatic eviction. */
   protected_recording_gb?: number
+  /** Scheduled RTSP -> MP4 -> full-decode -> cleanup proof from the Jetson. */
+  recording_assurance?: RecordingAssuranceStatus
+  /** Correlated proof that a service worker displayed a delivered Web Push. */
+  push_assurance?: PushAssuranceStatus
   fps: number
   /**
    * Live count of registered Web Push subscriptions on the server
@@ -614,7 +674,8 @@ export type ServerStatus = {
    * (booting / never received one). Distinct from `worker_last_seen_s`
    * which is heartbeat freshness — the iter-300 outage had heartbeat
    * fine for 14 hours while this counter would have climbed to
-   * 50,000+. UI flips a "STREAM STALE" pill when this exceeds ~60.
+   * 50,000+. This is detection-ingest freshness only; it must never be
+   * presented as proof that the independent MediaMTX/WebRTC video is down.
    */
   seconds_since_last_frame: number | null
   /**

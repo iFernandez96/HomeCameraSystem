@@ -41,7 +41,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import Depends
 
-from ..auth import passwords, tokens, users_db
+from ..auth import mfa, passwords, tokens, users_db
+from ..auth.login_throttle import LoginThrottle
 from ..auth.dependencies import (
     COOKIE_ACCESS,
     COOKIE_REFRESH,
@@ -59,6 +60,7 @@ log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+_login_throttle = LoginThrottle()
 
 
 def _ua(request: Request) -> str:
@@ -97,6 +99,23 @@ class LoginIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+    otp_code: str | None = Field(default=None, min_length=6, max_length=32)
+
+
+class MfaSetupIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(min_length=1, max_length=256)
+
+
+class MfaCodeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaDisableIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(min_length=1, max_length=256)
+    code: str = Field(min_length=6, max_length=32)
 
 
 class UserOut(BaseModel):
@@ -224,6 +243,23 @@ def _clear_session_cookies(response: Response) -> None:
 
 @router.post("/login", response_model=LoginOut)
 async def login(body: LoginIn, response: Response, request: Request) -> LoginOut:
+    remote_addr = _remote_addr(request)
+    retry_after = _login_throttle.retry_after(body.username, remote_addr)
+    if retry_after > 0:
+        auth_rejected(
+            log,
+            "POST",
+            "/api/auth/login",
+            "login throttled",
+            sub=body.username,
+            cookie_present=False,
+        )
+        _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        raise HTTPException(
+            status_code=429,
+            detail="too many login attempts; try again shortly",
+            headers={"Retry-After": str(retry_after)},
+        )
     user = users_db.get_user(settings.users_db_path, body.username)
     if user is None:
         # Timing-oracle defense: spend the same ~120 ms verifying
@@ -239,6 +275,7 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
             sub=body.username, cookie_present=False,
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        _login_throttle.record_failure(body.username, remote_addr)
         raise HTTPException(status_code=401, detail="invalid credentials")
     if not passwords.verify_password(body.password, user["password_hash"]):
         auth_rejected(
@@ -246,7 +283,22 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
             sub=body.username, cookie_present=False,
         )
         _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+        _login_throttle.record_failure(body.username, remote_addr)
         raise HTTPException(status_code=401, detail="invalid credentials")
+    if mfa.enabled(settings.users_db_path, user["username"]):
+        if body.otp_code is None:
+            raise HTTPException(status_code=428, detail="second factor required")
+        if not mfa.verify_login(
+            settings.users_db_path, user["username"], body.otp_code
+        ):
+            auth_rejected(
+                log, "POST", "/api/auth/login", "login failed: bad second factor",
+                sub=body.username, cookie_present=False,
+            )
+            _record_auth_event(username=body.username, action="login_fail", ua=_ua(request))
+            _login_throttle.record_failure(body.username, remote_addr)
+            raise HTTPException(status_code=401, detail="invalid credentials")
+    _login_throttle.record_success(body.username, remote_addr)
     now = time.time()
     access_jti, refresh_jti = _set_session_cookies(
         response, request, user["username"], user["role"]
@@ -264,6 +316,52 @@ async def login(body: LoginIn, response: Response, request: Request) -> LoginOut
         "login ok: user=%r role=%r", user["username"], user["role"],
     )
     return LoginOut(user=UserOut(username=user["username"], role=user["role"]))
+
+
+@router.get("/mfa")
+async def mfa_status(user: str = Depends(get_current_user)) -> dict:
+    return {"enabled": mfa.enabled(settings.users_db_path, user)}
+
+
+@router.post("/mfa/setup", dependencies=[Depends(require_role("owner"))])
+async def mfa_setup(
+    body: MfaSetupIn,
+    user: str = Depends(get_current_user),
+) -> dict:
+    row = users_db.get_user(settings.users_db_path, user)
+    if row is None or not passwords.verify_password(body.password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="current password is incorrect")
+    if mfa.enabled(settings.users_db_path, user):
+        raise HTTPException(status_code=409, detail="two-step verification is already enabled")
+    return mfa.generate_setup(user)
+
+
+@router.post("/mfa/confirm", dependencies=[Depends(require_role("owner"))])
+async def mfa_confirm(
+    body: MfaCodeIn,
+    user: str = Depends(get_current_user),
+) -> dict:
+    if not mfa.confirm_setup(settings.users_db_path, user, body.code):
+        raise HTTPException(status_code=401, detail="verification code is incorrect or expired")
+    log.info("two-step verification enabled for user=%r", user)
+    return {"ok": True, "enabled": True}
+
+
+@router.post("/mfa/disable", dependencies=[Depends(require_role("owner"))])
+async def mfa_disable(
+    body: MfaDisableIn,
+    user: str = Depends(get_current_user),
+) -> dict:
+    row = users_db.get_user(settings.users_db_path, user)
+    if row is None or not passwords.verify_password(body.password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="current password is incorrect")
+    if not mfa.enabled(settings.users_db_path, user):
+        return {"ok": True, "enabled": False}
+    if not mfa.verify_login(settings.users_db_path, user, body.code):
+        raise HTTPException(status_code=401, detail="verification code is incorrect")
+    mfa.disable(settings.users_db_path, user)
+    log.info("two-step verification disabled for user=%r", user)
+    return {"ok": True, "enabled": False}
 
 
 @router.post("/refresh", response_model=RefreshOut)

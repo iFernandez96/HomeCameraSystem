@@ -1,11 +1,12 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ClipModal } from '../components/ClipModal'
 import { CatEmptyState } from '../components/CatEmptyState'
 import { EventRow } from '../components/EventRow'
 import { SnapshotPreview } from '../components/SnapshotPreview'
 import { ErrorState } from '../components/states/ErrorState'
 import { PackageStatusCard } from '../components/PackageStatusCard'
+import { LiveGlanceStrip } from '../components/LiveGlanceStrip'
 import { VideoTile } from '../components/VideoTile'
 import { BrandMarkRow } from '../components/WhoMark'
 import { captureSnapshot, getCameras, searchEvents, setDetectionEnabled, triggerDeterrence, HttpError, type Camera } from '../lib/api'
@@ -258,6 +259,7 @@ export function Watch() {
 
   const [full, setFull] = useState(false)
   const [dockedControlsTarget, setDockedControlsTarget] = useState<HTMLElement | null>(null)
+  const [showCameraControls, setShowCameraControls] = useState(false)
   const [dockedChromeVisible, setDockedChromeVisible] = useState(true)
   const [detectionToggleBusy, setDetectionToggleBusy] = useState(false)
   // Fullscreen chrome auto-hide (fullscreen contract item 4): controls
@@ -326,7 +328,11 @@ export function Watch() {
   const deterrenceDuration = Math.max(1, Math.min(60, Number(actionParams.get('duration')) || 15))
   const intentEventId = actionParams.get('event') ?? undefined
   const workerAlive = status?.worker_alive ?? null
-  const streamStaleSeconds = status?.seconds_since_last_frame ?? null
+  const detectionFrameAgeSeconds = status?.seconds_since_last_frame ?? null
+  const detectionFramesStale =
+    workerAlive === true &&
+    detectionFrameAgeSeconds !== null &&
+    detectionFrameAgeSeconds > 60
   const lowMemory = status?.worker_metrics?.gear === 'low-memory'
   const thermal = status?.worker_metrics?.gear === 'thermal-throttled'
   // Multicam: the registry name for the SELECTED camera wins when
@@ -448,20 +454,20 @@ export function Watch() {
   }, [audioEnabled])
 
   // Overhaul W1 item 2 (one state vocabulary): the three-state truth
-  // model (status-confirmed down / status unknown with video-truth
-  // tiebreak / healthy) moved to lib/watchState.ts::watchStateOf so
+  // model (detector truth / independent video truth / healthy) moved
+  // to lib/watchState.ts::watchStateOf so
   // this page, the WatchRibbon, and the glance card all say the SAME
-  // word for the same state ("On watch" / "Off duty" / "Camera
-  // offline"). VideoTile's own pill deliberately keeps its separate
+  // word for the same state. VideoTile's own pill deliberately keeps its separate
   // stream-truth vocabulary ("Live"/"Connecting"/"Offline").
-  const statusConfirmedDown = status != null && status.worker_alive === false
   const stateKind = watchStateOf({
     statusKnown: status != null,
     workerAlive,
     detectionActive,
+    detectionFramesStale,
     videoPlaying,
   })
   const dangerDown = stateKind === 'offline'
+  const detectionUnavailable = stateKind === 'detection-unavailable'
   const reconnecting = stateKind === 'reconnecting'
   const armed = stateKind === 'armed'
   const unhealthy = dangerDown || lowMemory || thermal
@@ -480,9 +486,15 @@ export function Watch() {
   // not a page-local synonym set ("Watching"/"Paused").
   const watching = armed
   const watchingDetail = dangerDown
-    ? statusConfirmedDown
-      ? 'Check its power, then see Settings.'
-      : "Can't reach the camera. Check its connection."
+    ? "Can't reach the camera. Check its connection."
+    : detectionUnavailable
+      ? detectionFramesStale
+        ? videoPlaying === true
+          ? 'Live video is on. Detection is not receiving frames.'
+          : 'Detection is not receiving frames. Checking live video…'
+        : videoPlaying === true
+          ? 'Live video is on. Events and alerts are paused.'
+          : 'Events and alerts are paused. Checking live video…'
     : reconnecting
       ? 'Status reconnecting'
       : lowMemory
@@ -940,7 +952,17 @@ export function Watch() {
           <h1 className="page-title text-2xl text-[var(--color-text-primary)] landscape-phone:text-base">
             Home
           </h1>
-          <BrandMarkRow size={28} />
+          {/* Mobile entry point to /playground (2026-07-11): the pebble
+              BottomNav can't fit a 6th tab at 360px and the SideRail is
+              desktop-only, so tapping the brand cats takes you to the
+              cats. Discoverable, on-brand, zero nav clutter. */}
+          <Link
+            to="/playground"
+            aria-label="Open the cat playground"
+            className="rounded-full focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2"
+          >
+            <BrandMarkRow size={28} />
+          </Link>
         </div>
         {/* Multicam contract (2026-07-07): camera switcher — renders
             ONLY when a second camera is configured. Same pill/
@@ -1028,7 +1050,7 @@ export function Watch() {
             workerAlive={workerAlive}
             lowMemory={lowMemory}
             thermal={thermal}
-            streamStaleSeconds={streamStaleSeconds}
+            detectionFrameAgeSeconds={detectionFrameAgeSeconds}
             // Fuzz F4: landscape fullscreen switches to `cover` so the
             // stream fills the wide viewport instead of leaving ~45%
             // dead black bars (see useIsLandscape comment above).
@@ -1062,8 +1084,8 @@ export function Watch() {
             // element and carries the hour scrubber; the native
             // Fullscreen API button would be a second, competing one).
             showFullscreenButton={false}
-            showQualityMenu
-            showBoxToggle
+            showQualityMenu={full || showCameraControls}
+            showBoxToggle={full || showCameraControls}
             controlsTarget={full ? null : dockedControlsTarget}
             safeAreaBottom={full}
             // Fullscreen: the scrubber now OVERLAYS the bottom of the
@@ -1074,7 +1096,7 @@ export function Watch() {
             }
             dimControls={chromeHidden}
             actions={
-              full ? undefined : (
+              full || !showCameraControls ? undefined : (
                 <>
                   <button
                     type="button"
@@ -1210,11 +1232,12 @@ export function Watch() {
         </div>
 
         {!full && (
-          <div
-            ref={setDockedControlsTarget}
-            aria-label="Camera controls"
-            className="flex min-h-16 items-center bg-black px-4 py-2"
-          />
+          <div className="bg-black px-4 py-2">
+            <button type="button" aria-expanded={showCameraControls} onClick={() => setShowCameraControls((visible) => !visible)} className="flex min-h-11 w-full items-center justify-center rounded-full text-sm font-semibold text-white/80 focus-visible:outline-2 focus-visible:outline-white">
+              {showCameraControls ? 'Hide camera controls' : 'Camera controls'}
+            </button>
+            {showCameraControls ? <div ref={setDockedControlsTarget} aria-label="Camera controls" className="flex min-h-14 items-center" /> : null}
+          </div>
         )}
 
         {!full && (
@@ -1322,6 +1345,18 @@ export function Watch() {
           </button>
         )}
 
+        {status?.recording_assurance && (
+          status.recording_assurance.state !== 'ok' ||
+          status.recording_assurance.storage?.writable === false ||
+          status.recording_assurance.storage?.read_only === true ||
+          status.recording_assurance.storage?.mountpoint === '/'
+        ) ? (
+          <button type="button" onClick={() => navigate(canTalk ? '/control' : '/settings')} className="mx-4 mt-3 rounded-[var(--radius-xl)] border-[1.5px] border-[var(--color-danger)] bg-[var(--color-danger-bg)] p-3 text-left lg:mx-0">
+            <span className="block font-bold text-[var(--color-danger)]">Recording safety needs attention</span>
+            <span className="mt-1 block text-xs text-[var(--color-text-secondary)]">{status.recording_assurance.reason ?? 'USB recording storage is not currently verified. Tap for the exact reason and recovery status.'}</span>
+          </button>
+        ) : null}
+
         <PackageStatusCard />
 
         {/* ============ TODAY'S STORY ============ */}
@@ -1351,114 +1386,6 @@ export function Watch() {
 }
 
 /* ================= Today timeline ================= */
-
-function LiveGlanceStrip({
-  unhealthy,
-  stateLabel,
-  watchingDetail,
-  sentryName,
-  detectionActive,
-  canManageDetection,
-  detectionToggleBusy,
-  onToggleDetection,
-  power,
-}: {
-  unhealthy: boolean
-  stateLabel: string
-  watchingDetail: string
-  sentryName: string
-  detectionActive: boolean | null
-  canManageDetection: boolean
-  detectionToggleBusy: boolean
-  onToggleDetection: () => void
-  power: ReturnType<typeof powerDisplay>
-}) {
-  const watchState = (
-    <div className="flex min-w-0 items-center justify-between gap-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-extrabold leading-tight landscape-phone:text-xs tablet-landscape:text-sm">
-          {stateLabel.replace(/…/g, '')}
-        </p>
-        <p className="text-xs font-medium leading-tight text-white/78">
-          {detectionToggleBusy ? 'Updating watch status' : watchingDetail}
-        </p>
-      </div>
-      <div className="flex flex-none items-center gap-1.5">
-        <span
-          aria-label={power.detail}
-          title={power.detail}
-          className={`whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold tabular-nums ${
-            power.state === 'live'
-              ? 'border-white/25 bg-white/8 text-white/85'
-              : power.state === 'error' || power.state === 'stale'
-                ? 'border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
-                : 'border-white/18 bg-white/5 text-white/60'
-          }`}
-        >
-          {power.compact}
-        </span>
-      {canManageDetection && detectionActive != null ? (
-        <span
-          aria-hidden="true"
-          className="inline-flex flex-none items-center gap-1 rounded-full border border-white/35 bg-white/10 px-2 py-1 text-[11px] font-bold text-white shadow-sm transition-colors group-hover:bg-white/16 group-active:bg-white/22"
-        >
-          {detectionToggleBusy ? (
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/35 border-t-white" />
-          ) : detectionActive ? (
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <rect x="3" y="3" width="3.5" height="10" rx="1" />
-              <rect x="9.5" y="3" width="3.5" height="10" rx="1" />
-            </svg>
-          ) : (
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4 2.8v10.4L13 8 4 2.8Z" />
-            </svg>
-          )}
-          {detectionToggleBusy ? 'Saving' : detectionActive ? 'Pause' : 'Resume'}
-        </span>
-      ) : null}
-      </div>
-    </div>
-  )
-  return (
-    <div
-      data-testid="live-glance-strip"
-      className="shrink-0 border-t border-white/10 bg-black/88 px-3 py-2 text-white backdrop-blur-md landscape-phone:px-2.5 landscape-phone:py-1.5 tablet-landscape:px-3 tablet-landscape:py-2 lg:px-4"
-    >
-      <div className="flex items-center">
-        {canManageDetection && detectionActive != null ? (
-          <button
-            type="button"
-            disabled={detectionToggleBusy}
-            onClick={onToggleDetection}
-            aria-label={
-              detectionActive
-                ? `Pause detection and classification — ${sentryName} is on watch`
-                : `Resume detection and classification — bring ${sentryName} back on watch`
-            }
-            className={`group min-h-11 w-full min-w-0 cursor-pointer rounded-xl border px-3 py-2 text-left shadow-sm transition-colors hover:bg-white/8 active:bg-white/12 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-bright)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-70 ${
-              unhealthy
-                ? 'border-[var(--color-danger)] bg-white/5 text-[var(--color-danger)]'
-                : 'border-white/18 bg-white/5 text-white'
-            }`}
-          >
-            {watchState}
-          </button>
-        ) : (
-          <div
-            className={`min-h-11 w-full min-w-0 rounded-xl border px-3 py-2 ${
-            unhealthy
-              ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
-              : 'border-white/18 bg-white/5 text-white'
-            }`}
-          >
-            {watchState}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 function sightingBreakdown(events: DetectionEvent[]): string {
   const persons = events.filter((event) => event.label === 'person').length

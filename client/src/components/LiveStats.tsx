@@ -22,7 +22,7 @@ import type { ServerStatus } from '../lib/types'
  * disclosure that surfaces the existing stat grid for power users.
  *
  * Health rules — strongest signal wins:
- *   1. Worker offline → red, "Camera offline" + reconnect hint
+ *   1. Worker offline → amber, "Detection unavailable"; video is separate
  *   2. Worker paused (low memory / thermal) → red, explanatory copy
  *   3. CPU/GPU temp ≥ 85°C OR clock throttled → amber, "Camera running warm"
  *   4. Worker manually paused / scheduled-off → amber, "Detection paused"
@@ -48,16 +48,27 @@ function computeHealth(status: ServerStatus, sentryCat: SentryCat): HealthSummar
   const isLowMemory = gear === 'low-memory'
   const isThermal = gear === 'thermal-throttled'
 
-  // 1. Worker offline takes precedence.
+  // A silent detection worker does not prove that MediaMTX/WebRTC is down.
   if (!status.worker_alive) {
     const seenAge =
       status.worker_last_seen_s != null
-        ? `Last seen ${formatAge(status.worker_last_seen_s)} ago.`
-        : "We haven't heard from the camera since this app loaded."
+        ? `Last detection heartbeat ${formatAge(status.worker_last_seen_s)} ago.`
+        : "The detection service hasn't reported in yet."
     return {
-      level: 'error',
-      label: 'Camera offline',
-      hint: `${seenAge} It usually comes back on its own — wait a moment.`,
+      level: 'warn',
+      label: 'Detection unavailable',
+      hint: `${seenAge} Live video is checked separately; events and alerts are paused.`,
+    }
+  }
+
+  if (
+    status.seconds_since_last_frame != null &&
+    status.seconds_since_last_frame > 60
+  ) {
+    return {
+      level: 'warn',
+      label: 'Detection feed stalled',
+      hint: `No detection frame for ${formatAge(status.seconds_since_last_frame)}. Live video is checked separately; events and alerts are paused.`,
     }
   }
 
@@ -263,7 +274,7 @@ export function LiveStats({ status, compact }: { status: ServerStatus | null; co
  * ServerStatus fields (no new backend route required).
  *
  * Row 1: FPS · Inference · Dropped frames (only if nonzero)
- * Row 2: Last frame age · Disk free
+ * Row 2: Last detection-frame age · Disk free
  *
  * When `worker_alive=false`, every stat falls to em-dash so the
  * layout doesn't collapse and the offline state reads consistent.
@@ -297,7 +308,7 @@ function StatStrip({ status }: { status: ServerStatus }) {
     <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs border-t border-[var(--color-border-subtle)] pt-3">
       <StatCell label="Frame rate" value={fps} />
       <StatCell label="Inference" value={inferMs} />
-      <StatCell label="Last frame" value={lastFrame} />
+      <StatCell label="Detection frame" value={lastFrame} />
       <StatCell label="Disk free" value={diskFree} />
       {dropped && (
         <div className="col-span-2 text-[var(--color-warning)]">
@@ -343,7 +354,7 @@ function CompactStatStrip({ status }: { status: ServerStatus }) {
         <dd className="font-semibold tabular-nums">{inferMs}</dd>
       </div>
       <div>
-        <dt className="uppercase tracking-wider text-[9px] text-white/55">Last frame</dt>
+        <dt className="uppercase tracking-wider text-[9px] text-white/55">Detection frame</dt>
         <dd className="font-semibold tabular-nums">{lastFrame}</dd>
       </div>
       <div>
@@ -467,9 +478,13 @@ function SystemDetails({
 function workerStateLabel(status: ServerStatus): string {
   if (!status.worker_alive) {
     return status.worker_last_seen_s != null
-      ? `Camera offline (last seen ${formatAge(status.worker_last_seen_s)} ago)`
-      : 'Camera offline'
+      ? `Detection unavailable (last heartbeat ${formatAge(status.worker_last_seen_s)} ago)`
+      : 'Detection unavailable'
   }
+  if (
+    status.seconds_since_last_frame != null &&
+    status.seconds_since_last_frame > 60
+  ) return `Detection feed stalled (${formatAge(status.seconds_since_last_frame)})`
   const m = status.worker_metrics
   if (m?.gear === 'off') return 'Watching: paused'
   if (m?.gear === 'scheduled-off') return 'Watching: paused on schedule'

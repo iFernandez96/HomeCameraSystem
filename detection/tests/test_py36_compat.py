@@ -68,6 +68,8 @@ _GUARDED_MODULES = (
     "detection/generated_wire_contract.py",
     "detection/zones.py",
     "detection/recording.py",
+    "detection/recording_canary.py",
+    "detection/camera_quality.py",
     "detection/preroll.py",
     "detection/tracks.py",
     "detection/presence.py",

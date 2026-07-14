@@ -117,7 +117,7 @@ echo "==> creating $ARTIFACT_PATH"
 tar --dereference -C "$PAYLOAD_DIR" -czf "$ARTIFACT_PATH" client detection
 
 SHA256="$(sha256sum "$ARTIFACT_PATH" | awk '{print $1}')"
-SOURCE_FINGERPRINT="$("$ROOT/scripts/source-fingerprint.sh")"
+SOURCE_FINGERPRINT="$(bash "$ROOT/scripts/source-fingerprint.sh")"
 SOURCE_DIRTY=false
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]]; then
   SOURCE_DIRTY=true

@@ -181,7 +181,11 @@ def test_status_response_has_exact_documented_field_set(client: TestClient):
             "camera_label",
             "audio_enabled",
             "recording_gb_per_day",
+            "recording_gb_per_day_7d",
+            "recording_peak_gb_per_day_7d",
             "protected_recording_gb",
+            "recording_assurance",
+            "push_assurance",
         }
 
 

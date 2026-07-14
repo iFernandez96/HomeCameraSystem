@@ -34,6 +34,7 @@ Run from `detection/`:
 The test mocks `jetson_inference` + `jetson_utils` in sys.modules so
 detect.py imports cleanly on the dev host (which has neither).
 """
+import os
 import sys
 import threading
 from pathlib import Path
@@ -374,6 +375,7 @@ def test_given_watchdog_action_when_reopening_camera_then_old_source_is_closed(
         return new_camera
 
     monkeypatch.setattr(detect.jetson_utils, "videoSource", _fake_video_source)
+    monkeypatch.setattr(detect, "_rtsp_stream_ready", lambda _uri: True)
 
     reopened = detect.reopen_camera_after_watchdog_action(
         "rtsp://127.0.0.1:8554/cam",
@@ -390,11 +392,204 @@ def test_given_watchdog_action_when_reopening_camera_then_old_source_is_closed(
     ]
 
 
+def test_given_rtsp_is_not_published_when_opening_then_reader_waits_for_probe(
+    monkeypatch,
+):
+    # arrange
+    camera = object()
+    ready = iter([False, False, True])
+    sleeps = []
+    source_calls = []
+
+    def _video_source(uri, argv=None):
+        source_calls.append((uri, argv))
+        return camera
+
+    monkeypatch.setattr(detect.jetson_utils, "videoSource", _video_source)
+    monkeypatch.setattr(detect.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    # act
+    opened = detect.open_camera(
+        "rtsp://127.0.0.1:8554/cam",
+        attempts=3,
+        retry_s=0.25,
+        ready_probe=lambda _uri: next(ready),
+    )
+
+    # assert
+    assert opened is camera
+    assert sleeps == [0.25, 0.25]
+    assert source_calls == [
+        ("rtsp://127.0.0.1:8554/cam", ["--input-codec=h264"]),
+    ]
+
+
+def test_given_rtsp_never_publishes_when_opening_then_no_stale_reader_is_created(
+    monkeypatch,
+):
+    # arrange
+    source = MagicMock()
+    monkeypatch.setattr(detect.jetson_utils, "videoSource", source)
+    monkeypatch.setattr(detect.time, "sleep", lambda _seconds: None)
+
+    # act / assert
+    with pytest.raises(SystemExit, match="upstream video stream is not ready"):
+        detect.open_camera(
+            "rtsp://127.0.0.1:8554/cam",
+            attempts=2,
+            retry_s=0.0,
+            ready_probe=lambda _uri: False,
+        )
+    source.assert_not_called()
+
+
 def test_privacy_polygons_become_conservative_pipeline_rectangles():
     masks = [[[0.1, 0.2], [0.4, 0.2], [0.4, 0.6], [0.1, 0.6]]]
     assert detect.privacy_rectangles(masks, width=100, height=50) == [
         (10, 10, 31, 21),
     ]
+
+
+def test_default_privacy_coordinates_keep_durable_1080p_file_contract():
+    masks = [[[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]]
+    assert detect.privacy_rectangles(masks) == [(0, 0, 961, 541)]
+
+
+def test_exposure_region_coordinates_match_native_4k_sensor(tmp_path, monkeypatch):
+    target = tmp_path / ".camera-exposure.env"
+    monkeypatch.setattr(detect, "_EXPOSURE_CONFIG", str(target))
+
+    region = detect._write_exposure_config(
+        (True, 0.25, 0.25, 0.5, 0.5, 0.0, False)
+    )
+
+    assert region == "960 540 2880 1620 1"
+    assert target.read_text() == (
+        "AE_SENSOR_WIDTH='3840'\n"
+        "AE_SENSOR_HEIGHT='2160'\n"
+        "AE_REGION='960 540 2880 1620 1'\n"
+        "AE_COMPENSATION='0.00'\n"
+        "AE_LOCK='false'\n"
+    )
+
+
+def test_camera_ready_requires_720p_detection_and_1440p_uhq(monkeypatch):
+    resolutions = {"cam": (1280, 720), "cam_uhq": (2560, 1440)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
+    assert detect._both_camera_streams_ready(
+        timeout_s=0.1, precision=True
+    ) is True
+
+
+def test_stable_camera_ready_requires_both_paths_at_720p(monkeypatch):
+    resolutions = {"cam": (1280, 720), "cam_uhq": (1280, 720)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
+    assert detect._both_camera_streams_ready(
+        timeout_s=0.1, precision=False
+    ) is True
+
+
+def test_camera_ready_defaults_to_the_active_marker_mode(tmp_path, monkeypatch):
+    marker = tmp_path / "focus-mode"
+    marker.write_text("2000\n")
+    monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
+    monkeypatch.setattr(detect, "_host_uptime_s", lambda: 600.0)
+    monkeypatch.setattr(detect.time, "time", lambda: 1000.0)
+    resolutions = {"cam": (1280, 720), "cam_uhq": (2560, 1440)}
+    monkeypatch.setattr(
+        detect, "_camera_resolution", lambda path="cam": resolutions.get(path)
+    )
+
+    assert detect._both_camera_streams_ready(timeout_s=0.1) is True
+
+    marker.unlink()
+    resolutions["cam_uhq"] = (1280, 720)
+    assert detect._both_camera_streams_ready(timeout_s=0.1) is True
+
+
+def test_precision_preflight_reports_every_unsafe_condition(monkeypatch):
+    monkeypatch.setattr(detect, "read_mem_available_mb", lambda: 300)
+    monkeypatch.setattr(detect, "read_gpu_temp_c", lambda: 81.5)
+    monkeypatch.setattr(detect, "_host_uptime_s", lambda: 90.0)
+
+    result = detect.precision_preflight()
+
+    assert result["safe"] is False
+    assert result["memory_mb"] == 300
+    assert result["gpu_temp_c"] == 81.5
+    assert result["reasons"] == [
+        "only 300 MB memory available",
+        "GPU temperature is 81.5 C",
+        "Jetson is still settling after boot",
+    ]
+
+
+def test_precision_preflight_accepts_measured_headroom(monkeypatch):
+    monkeypatch.setattr(detect, "read_mem_available_mb", lambda: 800)
+    monkeypatch.setattr(detect, "read_gpu_temp_c", lambda: 55.0)
+    monkeypatch.setattr(detect, "_host_uptime_s", lambda: 600.0)
+
+    assert detect.precision_preflight()["safe"] is True
+
+
+def test_focus_start_does_not_mutate_pipeline_when_preflight_blocks(
+    tmp_path, monkeypatch
+):
+    marker = tmp_path / "focus-mode"
+    monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
+    monkeypatch.setattr(
+        detect,
+        "precision_preflight",
+        lambda: {"safe": False, "reasons": ["only 200 MB memory available"]},
+    )
+    restart = MagicMock()
+    monkeypatch.setattr(detect, "_restart_camera_pipeline_for_focus", restart)
+
+    result = detect.start_focus_mode()
+
+    assert result["blocked"] is True
+    assert marker.exists() is False
+    restart.assert_not_called()
+
+
+def test_focus_start_uses_jetpack_compatible_transient_services(tmp_path, monkeypatch):
+    marker = tmp_path / "focus-mode"
+    monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
+    monkeypatch.setattr(
+        detect,
+        "precision_preflight",
+        lambda: {"safe": True, "reasons": []},
+    )
+    monkeypatch.setattr(detect.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(detect, "_restart_camera_pipeline_for_focus", lambda _size: True)
+    monkeypatch.setattr(detect, "_both_camera_streams_ready", lambda: True)
+    scheduled = MagicMock(return_value=MagicMock(returncode=0, stdout=b"", stderr=b""))
+    monkeypatch.setattr(detect.subprocess, "run", scheduled)
+
+    result = detect.start_focus_mode()
+
+    assert result["expires_at"] == 1000 + detect._FOCUS_MODE_SECONDS
+    assert scheduled.call_count == 2
+    restore_command = scheduled.call_args_list[0].args[0]
+    guard_command = scheduled.call_args_list[1].args[0]
+    assert "--property=Type=oneshot" in restore_command
+    assert "--property=Type=oneshot" in guard_command
+    assert "--property=Type=exec" not in restore_command
+    assert "--property=Type=exec" not in guard_command
+    assert detect._FOCUS_GUARD_SCRIPT in guard_command
+
+
+def test_focus_guard_script_is_executable_in_deployment_checkout():
+    root = Path(__file__).resolve().parents[2]
+    script = root / "deploy" / "guard-focus-mode.sh"
+
+    assert os.access(script, os.X_OK)
 
 
 def test_privacy_pipeline_file_is_atomic_and_restart_only_on_change(tmp_path):

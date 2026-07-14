@@ -1,8 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { EventsIcon, GodViewIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
+import { EventsIcon, LiveIcon, PeopleIcon, SettingsIcon } from './NavIcons'
 import { useRipple } from '../lib/ripple'
-import { useAuth } from '../lib/auth'
-import { isGodModeUser } from '../lib/roles'
 
 // iter-356.x (Frank P3-6): pre-fix Training and Review queue were
 // only reachable via the People page header link, which non-technical
@@ -40,7 +38,7 @@ import { isGodModeUser } from '../lib/roles'
 // deep link until a dedicated mobile entry point is designed.
 const tabs = [
   { to: '/', label: 'Home', icon: LiveIcon },
-  { to: '/events', label: 'Events', icon: EventsIcon },
+  { to: '/events', label: 'Activity', icon: EventsIcon },
   { to: '/people', label: 'Faces', icon: PeopleIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
@@ -48,11 +46,6 @@ const tabs = [
 export function BottomNav() {
   const ripple = useRipple()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const visibleTabs =
-    isGodModeUser(user)
-      ? [...tabs, { to: '/god', label: 'God View', icon: GodViewIcon }]
-      : tabs
   return (
     <nav
       aria-label="Bottom navigation"
@@ -113,7 +106,7 @@ export function BottomNav() {
           targets to the safe inner band. Android (zero insets) is
           unchanged. */}
       <div className="bottomnav-inner flex landscape-phone:flex-col landscape-phone:h-full landscape-phone:justify-center landscape-phone:gap-1.5">
-        {visibleTabs.map((t) => (
+        {tabs.map((t) => (
           <NavLink
             key={t.to}
             to={t.to}

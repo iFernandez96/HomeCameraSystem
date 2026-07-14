@@ -6,7 +6,7 @@ import {
   getMyPushFilters,
   setMyPushFilters,
 } from '../../lib/api'
-import { formatError } from '../../lib/format'
+import { formatError, formatUptime } from '../../lib/format'
 import { log, errFields } from '../../lib/log'
 import {
   disablePushSubscription,
@@ -16,8 +16,9 @@ import {
   sendTestPush,
 } from '../../lib/push'
 import { useReportError, useToast } from '../../lib/toast'
-import type { PushFilters } from '../../lib/types'
+import type { PushAssuranceStatus, PushFilters } from '../../lib/types'
 import { Mono, Row, Section, TimeInput, Toggle } from './parts'
+import { NotificationInbox } from './NotificationInbox'
 
 // iter-289: extracted from Settings.tsx (~165 lines of inline JSX +
 // 7 state hooks + 3 handlers + 2 effects). Pre-iter-289 the
@@ -53,8 +54,12 @@ type FiltersInput = {
 
 export function NotificationsSection({
   pushSubsCount,
+  pushAssurance,
+  canManageRetention = false,
 }: {
   pushSubsCount: number | null | undefined
+  pushAssurance?: PushAssuranceStatus | null
+  canManageRetention?: boolean
 }) {
   const { showToast } = useToast()
   const reportError = useReportError()
@@ -307,9 +312,8 @@ export function NotificationsSection({
   })()
 
   return (
-    // Playroom Modern (Task 8 copy pass): "Notifications" -> "Alerts" —
-    // shorter, matches the plain-English "Alert this device" row label
-    // right below it instead of the more formal/technical noun.
+    <div className="space-y-6">
+    {/* Alerts is the established plain-English label for this section. */}
     <Section title="Alerts">
       {/* iter-296: plain-English intro so the rest of the panel
           reads without prior context. */}
@@ -487,6 +491,24 @@ export function NotificationsSection({
           )}
         </>
       )}
+      {pushAvailable && pushAssurance != null && pushAssurance.devices > 0 && (
+        <Row
+          label="Last confirmed delivery"
+          right={
+            pushAssurance.state === 'delivered' ? (
+              <span className="text-right text-[var(--color-success)]">
+                Shown on {pushAssurance.received_recent}{' '}
+                {pushAssurance.received_recent === 1 ? 'device' : 'devices'}
+                {pushAssurance.latest_age_s == null
+                  ? ''
+                  : ` · ${formatUptime(pushAssurance.latest_age_s)} ago`}
+              </span>
+            ) : (
+              <Mono>Waiting for a phone receipt</Mono>
+            )
+          }
+        />
+      )}
       {/* iter-208 (Feature #4 slice 3b): per-user notification
           filters. iter-303 (user "instead of free-typing… have a
           fuzzy search and a toggle on or off for each option"):
@@ -616,6 +638,8 @@ export function NotificationsSection({
         </div>
       )}
     </Section>
+    <NotificationInbox canRetain={canManageRetention} />
+    </div>
   )
 }
 

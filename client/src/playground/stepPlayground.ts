@@ -5,9 +5,16 @@ import {
   type CatAnimSequenceName,
 } from '../components/catAnimSequences'
 import { rollWeighted } from '../components/catEngineCore'
-import { rollNextBeat, rollPairInteraction, type BeatContext } from './catBrain.beats'
+import {
+  forceDismountStroll,
+  rollNextBeat,
+  rollPairInteraction,
+  type BeatContext,
+} from './catBrain.beats'
 import {
   SEATED_IDLE_PLAY_ACTIVITIES,
+  perchDwellDeadlineFor,
+  playTransitionDurationMs,
   playTransitionNamesFor,
   setPlayActivity,
   setPlayMood,
@@ -21,8 +28,11 @@ import {
   anchorCatY,
   clampCatX,
   feederPerchPoint,
+  isElevatedAnchor,
   laneFloorY,
+  packedSpotFor,
 } from './sceneModel'
+import { groundPoopExpired, spawnGroundPoop } from '../components/GroundPoop'
 import { stepToyLayer } from './toyLayer'
 import type { VerbCatView } from './catBrain.verbs'
 import type {
@@ -54,7 +64,16 @@ export type StepOptions = {
 // constant rate (not an ease) keeps the step deterministic per dt.
 const CLIMB_PX_PER_MS = 0.18
 const ARRIVE_EPSILON_PX = 1.5
+/** Gait ease-in: ~250ms from standstill to full stride. */
+const GAIT_RAMP_MS = 250
+/** Gait ease-out: stride tapers inside this many px of the target. */
+const ARRIVE_EASE_PX = 56
+/** Floor of the ease factors so travel always converges. */
+const GAIT_EASE_MIN = 0.2
+/** Depth cross-fade time for a lane switch (render scale, never a pop). */
+const LANE_FADE_MS = 450
 const INTERACTION_DISTANCE_PX = 50
+export const INTERACTION_MIN_GAP_PX = 24
 const INTERACTION_COOLDOWN_MS = 5000
 const AMBIENT_MIN_GAP_MS = 20000
 const AMBIENT_MAX_GAP_MS = 45000
@@ -62,6 +81,9 @@ const BUTTERFLY_FLAP_MS = 160
 const BIRD_HOP_MS = 420
 const BIRD_VISIT_MS = 9000
 const PET_HOLD_GRACE_MS = 600
+/** Below this much remaining vertical distance a climb leg reads as
+    done — the gait returns to walk frames for the horizontal tail. */
+const CLIMB_ANIM_EPS_PX = 4
 
 const BAT_BOUT_MS = playgroundSequenceDurationMs(PLAYGROUND_SEQUENCES.bat_bout) * 3
 const EAT_BOUT_MS = playgroundSequenceDurationMs(PLAYGROUND_SEQUENCES.eat_bout)
@@ -83,6 +105,7 @@ export function stepPlayground(
     sceneW,
     sceneH,
     compact,
+    now,
     random,
   }
 
@@ -108,7 +131,14 @@ export function stepPlayground(
         ) {
           continue
         }
-        if (Math.abs(a.x - b.x) < INTERACTION_DISTANCE_PX) {
+        // Trigger window [24px, 50px): close enough to interact, far
+        // enough apart that grounding the pair in place reads as two
+        // cats side by side. Cats have no collision and can pass
+        // through each other — without the lower bound a pair could
+        // freeze a 4s snuggle fully SUPERPOSED (10Hz live audit
+        // 2026-07-11 caught Mushu and Coco 2px apart).
+        const pairGap = Math.abs(a.x - b.x)
+        if (pairGap >= INTERACTION_MIN_GAP_PX && pairGap < INTERACTION_DISTANCE_PX) {
           const result = rollPairInteraction(a, b, now, sceneW, random)
           if (result) {
             if (cats === state.cats) cats = [...cats]
@@ -132,6 +162,7 @@ export function stepPlayground(
     now,
     sceneW,
     sceneH,
+    compact,
     random,
   )
 
@@ -220,6 +251,15 @@ function stepCat(
     changed = true
   }
 
+  // Ground poop lifecycle: leaves state once its visible window + fade
+  // have fully played out (the fade itself is CSS — no re-render needed
+  // between spawn and removal).
+  let poop = cat.poop
+  if (poop && groundPoopExpired(poop, now)) {
+    poop = null
+    changed = true
+  }
+
   // Petting hold: while the finger stays down on this cat, the purr
   // never expires (petting preempts everything; release lets the
   // short grace window run out naturally).
@@ -236,36 +276,60 @@ function stepCat(
   const gaitReady = activity === 'walk' || activity === 'run' || activity === 'chase' || activity === 'flee'
   let arrivedFinal = false
   let arrivedWaypoint = false
+  // Climb rendering (interaction wave 2026-07-11): while a mount or
+  // dismount leg still has vertical distance, the render layer swaps
+  // the walk gait for the climb_a/b cling loop.
+  let climbing = false
   if (gaitReady) {
     const dest = travelDestination(cat, ctx)
     if (dest) {
-      const gait = activity === 'walk' ? 'walk' : 'run'
-      const step = gaitVelocityPxPerMs(gait, CAT_WIDTH_PX) * dt
       const dx = dest.x - x
-      if (Math.abs(dx) <= step) {
-        x = dest.x
-      } else {
-        x += Math.sign(dx) * step
-        direction = dx > 0 ? 'R' : 'L'
+      // Look before you go: face the destination immediately; paws wait
+      // for moveRampAt (the get-up chain + a jittered regard hold).
+      if (Math.abs(dx) > ARRIVE_EPSILON_PX) {
+        const facing: 'L' | 'R' = dx > 0 ? 'R' : 'L'
+        if (facing !== direction) {
+          direction = facing
+          changed = true
+        }
       }
-      // Lane cross-fade / tier climb: y moves at a constant rate.
-      const climb = CLIMB_PX_PER_MS * dt
-      const dy = dest.y - y
-      if (Math.abs(dy) <= climb) {
-        y = dest.y
-      } else {
-        y += Math.sign(dy) * climb
+      if (now >= cat.moveRampAt) {
+        const gait = activity === 'walk' ? 'walk' : 'run'
+        // Ease in from standstill over ~250ms; ease out inside the
+        // arrival zone. Never 0-to-full-stride in one frame.
+        const easeIn = Math.min(1, (now - cat.moveRampAt) / GAIT_RAMP_MS)
+        const arrive = Math.min(1, Math.abs(dx) / ARRIVE_EASE_PX)
+        const ease = Math.max(GAIT_EASE_MIN, Math.min(easeIn, arrive))
+        const step = gaitVelocityPxPerMs(gait, CAT_WIDTH_PX) * dt * ease
+        if (Math.abs(dx) <= step) {
+          x = dest.x
+        } else {
+          x += Math.sign(dx) * step
+        }
+        // Lane cross-fade / tier climb: y moves at a constant rate.
+        const climb = CLIMB_PX_PER_MS * dt
+        const dy = dest.y - y
+        if (Math.abs(dy) <= climb) {
+          y = dest.y
+        } else {
+          y += Math.sign(dy) * climb
+        }
+        climbing = cat.climbTravel && Math.abs(dest.y - y) > CLIMB_ANIM_EPS_PX
+        if (Math.abs(dest.x - x) < ARRIVE_EPSILON_PX && Math.abs(dest.y - y) < ARRIVE_EPSILON_PX) {
+          if (cat.targetAnchor && cat.route.length > 1) arrivedWaypoint = true
+          else arrivedFinal = true
+        }
+        changed = true
       }
-      if (Math.abs(dest.x - x) < ARRIVE_EPSILON_PX && Math.abs(dest.y - y) < ARRIVE_EPSILON_PX) {
-        if (cat.targetAnchor && cat.route.length > 1) arrivedWaypoint = true
-        else arrivedFinal = true
-      }
-      changed = true
     } else if (activity === 'flee' || activity === 'chase') {
-      // Un-targeted sprint (ported interaction outcomes): straight run.
-      const step = gaitVelocityPxPerMs('run', CAT_WIDTH_PX) * dt
-      x += direction === 'R' ? step : -step
-      changed = true
+      // Un-targeted sprint (ported interaction outcomes): straight run,
+      // once the get-up chain has played.
+      if (now >= cat.moveRampAt) {
+        const easeIn = Math.max(GAIT_EASE_MIN, Math.min(1, (now - cat.moveRampAt) / GAIT_RAMP_MS))
+        const step = gaitVelocityPxPerMs('run', CAT_WIDTH_PX) * dt * easeIn
+        x += direction === 'R' ? step : -step
+        changed = true
+      }
     }
   } else if (activity === 'play') {
     x += direction === 'R' ? 0.012 * dt : -0.012 * dt
@@ -279,15 +343,30 @@ function stepCat(
     direction = direction === 'L' ? 'R' : 'L'
   }
 
+  // --- Depth cross-fade: rendered scale chases the logical lane ---------------
+  let laneBlend = cat.laneBlend
+  const laneTarget = cat.lane === 'back' ? 1 : 0
+  if (laneBlend !== laneTarget) {
+    const move = dt / LANE_FADE_MS
+    laneBlend =
+      laneTarget > laneBlend
+        ? Math.min(laneTarget, laneBlend + move)
+        : Math.max(laneTarget, laneBlend - move)
+    changed = true
+  }
+
   // --- Mount phase: waypoint hop-through --------------------------------------
   if (arrivedWaypoint) {
     return {
       ...cat,
       x,
       y,
+      laneBlend,
       direction,
       mood,
       moodSecondary,
+      poop,
+      climbing,
       route: cat.route.slice(1),
       targetAnchor: cat.route[1] ?? null,
       phaseTime: now,
@@ -302,11 +381,17 @@ function stepCat(
       ...arrived,
       x,
       y,
+      laneBlend,
       direction,
       mood,
       moodSecondary,
+      poop,
       lane: anchor.lane,
       anchorId: cat.targetAnchor,
+      // Fresh anchor acquisition: restart the continuous-stay clock and
+      // roll this stay's jittered dwell deadline (RESIDUAL B).
+      anchorSince: now,
+      perchDwellDeadline: perchDwellDeadlineFor(now, ctx.random),
       targetAnchor: null,
       route: [],
       arrival: null,
@@ -322,9 +407,11 @@ function stepCat(
       ...arrived,
       x,
       y,
+      laneBlend,
       direction,
       mood,
       moodSecondary,
+      poop,
       targetX: null,
       targetY: null,
       arrival: null,
@@ -345,8 +432,11 @@ function stepCat(
         changed = true
       }
     } else if (now >= nextIdleLifeAt) {
-      if (watchingBird) {
-        // Bird chatter: fast tailflicks, no blink filler.
+      if (watchingBird || activity === 'watch') {
+        // Bird chatter: fast tailflicks, no blink filler. The window
+        // hold is a BACK VIEW, so tailflick is also the ONLY micro-life
+        // that composes with it — a front-view blink would spin the cat
+        // around for a frame.
         idleSequence = 'tailflick'
         lastIdleLifeWasSpecial = true
       } else if (lastIdleLifeWasSpecial) {
@@ -375,8 +465,16 @@ function stepCat(
     now - cat.activityStartedAt < transitionDuration ||
     hasOngoingSequence(activity) ||
     idleSequence !== null
-  const phaseTime = timelineActive ? now : cat.phaseTime
+  let phaseTime = timelineActive ? now : cat.phaseTime
+  // The statue bug (FINDING 9): freezing phaseTime a tick BEFORE the
+  // transition chain ends pins the plan on the LAST transition frame
+  // (a perched cat held jump_post for seconds instead of its seated
+  // hold). A frozen clock must always rest AT or past the chain's end.
+  if (!timelineActive && phaseTime - cat.activityStartedAt < transitionDuration) {
+    phaseTime = cat.activityStartedAt + transitionDuration
+  }
   if (phaseTime !== cat.phaseTime) changed = true
+  if (climbing !== cat.climbing) changed = true
 
   // --- Beat expiry -------------------------------------------------------------
   if (now > activityUntil && !gaitReady) {
@@ -384,9 +482,12 @@ function stepCat(
       ...cat,
       x,
       y,
+      laneBlend,
       direction,
       mood,
       moodSecondary,
+      poop,
+      climbing,
       activityUntil,
       phaseTime,
       idleSequence,
@@ -399,7 +500,8 @@ function stepCat(
   // Travel cap: a cat stuck walking too long re-rolls (self-heal).
   if (now > activityUntil && gaitReady) {
     const base: PlayCat = {
-      ...cat, x, y, direction, mood, moodSecondary, activityUntil, phaseTime,
+      ...cat, x, y, laneBlend, direction, mood, moodSecondary, poop, activityUntil, phaseTime,
+      climbTravel: false, climbing: false,
       targetAnchor: null, route: [], arrival: null, targetX: null, targetY: null, focus: null,
       idleSequence, idleSequenceStartedAt, nextIdleLifeAt, lastIdleLifeWasSpecial,
     }
@@ -411,9 +513,12 @@ function stepCat(
     ...cat,
     x,
     y,
+    laneBlend,
     direction,
     mood,
     moodSecondary,
+    poop,
+    climbing,
     activityUntil,
     phaseTime,
     idleSequence,
@@ -429,8 +534,8 @@ function travelDestination(
 ): { x: number; y: number } | null {
   if (cat.targetAnchor) {
     return {
-      x: anchorCatX(cat.targetAnchor, ctx.sceneW),
-      y: anchorCatY(cat.targetAnchor, ctx.sceneH),
+      x: anchorCatX(cat.targetAnchor, ctx.sceneW, ctx.compact),
+      y: anchorCatY(cat.targetAnchor, ctx.sceneW, ctx.sceneH, ctx.compact),
     }
   }
   if (cat.targetX !== null) {
@@ -452,6 +557,7 @@ function hasOngoingSequence(activity: PlayCat['activity']): boolean {
     case 'scratch':
     case 'bat':
     case 'eat':
+    case 'drink':
       return true
     default:
       return false
@@ -489,10 +595,47 @@ function pickSeatedIdle(catId: PlayCat['id']): CatAnimSequenceName {
 }
 
 function expireBeat(cat: PlayCat, now: number, ctx: BeatContext): PlayCat {
-  // Tunnel dive re-emerges: pop out of the mouth with a stretch, THEN
-  // the next beat rolls (discovery beat — the rustle pays off).
+  // RESIDUAL B (Panther glued to the tree): a continuous stay on an
+  // elevated anchor past its jittered dwell deadline ends in a FORCED
+  // dismount stroll — another roll could keep her in place (sit_spot /
+  // re-perch apply in place), so the cap does not go through the pool.
+  // Petting and toy commitments still preempt (checked further down
+  // only for focus types this branch does not carry).
+  if (
+    isElevatedAnchor(cat.anchorId) &&
+    now >= cat.perchDwellDeadline &&
+    cat.focus?.type !== 'pet' &&
+    cat.focus?.type !== 'toy'
+  ) {
+    return forceDismountStroll(cat, now, ctx)
+  }
+  // A completed squat pays off (2026-07-11): the poop lands ON THE
+  // GROUND at the cat's trailing edge as the bout ends, and outlives
+  // the activity — the next beat walks away from it. The litter-box
+  // squat's product stays hidden inside the box (the front-lip z-trick
+  // masks the cat's lower half there anyway), so only floor squats
+  // spawn a visible poop.
+  if (cat.activity === 'pooped' && cat.anchorId !== 'litter_box') {
+    cat = {
+      ...cat,
+      poop: {
+        ...spawnGroundPoop(cat.x, cat.direction, CAT_WIDTH_PX, now, ctx.random),
+        y: cat.y,
+        lane: cat.lane,
+      },
+    }
+  }
+  // Tunnel dive re-emerges: pop out of the FAR mouth with a stretch,
+  // THEN the next beat rolls (discovery beat — the rustle pays off).
+  // This is the ONLY sanctioned teleport in the playground: the cat is
+  // hidden for the whole hop and the prop visually covers both mouths.
   if (cat.activity === 'tunnel') {
-    const emerged = setPlayActivity(cat, 'stretch', 1100, now, ctx.random)
+    const rect = packedSpotFor('tunnel', ctx.sceneW, ctx.compact)
+    const exitFrac = cat.direction === 'R' ? 0.85 : 0.15
+    const exitX = rect
+      ? clampCatX(rect.left + rect.width * exitFrac - CAT_WIDTH_PX / 2, ctx.sceneW)
+      : cat.x
+    const emerged = setPlayActivity({ ...cat, x: exitX }, 'stretch', 1100, now, ctx.random)
     return setPlayMood(emerged, '✨', 1600, now)
   }
   // Ambient pursuit always misses — shake it off, then move on.
@@ -536,6 +679,7 @@ function stepAmbient(
   now: number,
   sceneW: number,
   sceneH: number,
+  compact: boolean,
   random: () => number,
 ): AmbientStep {
   if (ambient.length > 0) {
@@ -556,7 +700,9 @@ function stepAmbient(
       }
     }
     // Bird: sits on the feeder hopping occasionally, then flies off.
-    if (t > BIRD_VISIT_MS) {
+    // Visit length varies per bird (id-hashed jitter — no metronome).
+    const visitMs = BIRD_VISIT_MS - 2500 + (((critter.id * 2654435761) >>> 0) % 5000)
+    if (t > visitMs) {
       return { ambient: [], nextAt, nextId }
     }
     const frame: 'a' | 'b' = Math.floor(t / BIRD_HOP_MS) % 2 === 0 ? 'a' : 'b'
@@ -568,7 +714,7 @@ function stepAmbient(
   // Spawn window: every 20–45 s, max 1 live critter.
   if (now >= nextAt) {
     const isBird = random() < 0.5
-    const perch = feederPerchPoint(sceneW, sceneH)
+    const perch = feederPerchPoint(sceneW, sceneH, compact)
     const spawned: AmbientEntity = isBird
       ? { kind: 'bird', id: nextId, x: perch.x, y: perch.y, t: 0, frame: 'a' }
       : {
@@ -617,6 +763,27 @@ export function applyVerbStimuli(
   return out
 }
 
+function sameFocus(a: PlayCat['focus'], b: PlayCat['focus']): boolean {
+  if (a === null || b === null) return a === b
+  if (a.type === 'toy' && b.type === 'toy') return a.toy === b.toy
+  if (a.type === 'treat' && b.type === 'treat') return a.treatId === b.treatId
+  return a.type === b.type
+}
+
+function nearestOpenTreatFocus(
+  toys: PlaygroundState['toys'],
+  targetX: number,
+  targetY: number,
+): PlayCat['focus'] {
+  let best: { id: number; d: number } | null = null
+  for (const t of toys.treats) {
+    if (t.state === 'claimed') continue
+    const d = Math.hypot(t.x - targetX, t.y - targetY)
+    if (best === null || d < best.d) best = { id: t.id, d }
+  }
+  return best ? { type: 'treat', treatId: best.id } : null
+}
+
 function applyOneStimulus(
   cat: PlayCat,
   stim: VerbStimulus,
@@ -628,26 +795,55 @@ function applyOneStimulus(
   switch (req.type) {
     case 'chase': {
       const gaitActivity = req.gait === 'run' ? 'run' : 'walk'
+      // Toy targets arrive in toy space (center x / top-origin y);
+      // ground the cat on the target lane's floor under the toy —
+      // cats run along floors, never levitate to a mid-air dot.
+      const targetX = clampCatX(req.targetX - CAT_WIDTH_PX / 2, ctx.sceneW)
+      const targetY = laneFloorY(req.lane, ctx.sceneH)
+      // CONTRACT FRICTION: the chase request carries no toy identity,
+      // so infer it from the live toy state (laser wins, then wand,
+      // then yarn, then the nearest open treat for treat pursuits).
+      const focus: PlayCat['focus'] = toys.laser.on
+        ? { type: 'toy', toy: 'laser' }
+        : toys.wand.held
+          ? { type: 'toy', toy: 'wand' }
+          : toys.yarn !== null
+            ? { type: 'toy', toy: 'yarn' }
+            : nearestOpenTreatFocus(toys, req.targetX, req.targetY)
+      // A RE-STEER of an ongoing chase (the dot moved) only updates the
+      // target: re-running setPlayActivity every retarget would reset
+      // the ease-in ramp each frame and freeze the cat at launch speed.
+      const continuing =
+        cat.activity === gaitActivity && sameFocus(cat.focus, focus)
+      if (continuing) {
+        const clockLow = cat.activityUntil - now < 3000
+        if (!clockLow && cat.targetX === targetX && cat.targetY === targetY && cat.lane === req.lane) {
+          return cat
+        }
+        return {
+          ...cat,
+          targetX,
+          targetY,
+          lane: req.lane,
+          activityUntil: Math.max(cat.activityUntil, now + 6000),
+        }
+      }
       const next = setPlayActivity(cat, gaitActivity, 6000, now, ctx.random)
       return {
         ...next,
         targetAnchor: null,
         route: [],
         anchorId: null,
-        // Toy targets arrive in toy space (center x / top-origin y);
-        // ground the cat on the target lane's floor under the toy —
-        // cats run along floors, never levitate to a mid-air dot.
-        targetX: clampCatX(req.targetX - CAT_WIDTH_PX / 2, ctx.sceneW),
-        targetY: laneFloorY(req.lane, ctx.sceneH),
+        // A perched cat answering a toy descends with the climb loop.
+        climbTravel: isElevatedAnchor(cat.anchorId),
+        targetX,
+        targetY,
         lane: req.lane,
         arrival: null,
-        // CONTRACT FRICTION: the chase request carries no toy identity,
-        // so infer it from the live toy state (laser wins, then wand,
-        // then yarn).
-        focus: {
-          type: 'toy',
-          toy: toys.laser.on ? 'laser' : toys.wand.held ? 'wand' : 'yarn',
-        },
+        focus,
+        // Sticky sleep / anticipation: the wake-up + get-up chain plays
+        // before the paws move (reaction delays are the brain's job).
+        moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, gaitActivity),
       }
     }
     case 'bat': {
@@ -664,11 +860,13 @@ function applyOneStimulus(
         targetAnchor: null,
         route: [],
         anchorId: null,
+        climbTravel: isElevatedAnchor(cat.anchorId),
         targetX: clampCatX(treat.x - CAT_WIDTH_PX / 2, ctx.sceneW),
         targetY: laneFloorY(treat.lane, ctx.sceneH),
         lane: treat.lane,
         arrival: { activity: 'eat', durationMs: EAT_BOUT_MS },
         focus: { type: 'treat', treatId: req.treatId },
+        moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, 'walk'),
       }
     }
     case 'purr': {
@@ -706,6 +904,7 @@ function applyOneStimulus(
           targetX: clampCatX(away, ctx.sceneW),
           targetY: laneFloorY(cat.lane, ctx.sceneH),
           arrival: { activity: 'sit', durationMs: 5000 },
+          moveRampAt: now + playTransitionDurationMs(cat.id, cat.activity, 'walk'),
         },
         '😾',
         2200,

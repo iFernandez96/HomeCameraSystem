@@ -81,6 +81,7 @@ import clip_state  # noqa: E402
 from activity_rules import ActivityRuleEngine, sanitize_rules  # noqa: E402
 from audio_events import sanitize_audio_labels  # noqa: E402
 from scene_guard import SceneGuard  # noqa: E402
+from camera_quality import CameraQualityGuard  # noqa: E402
 from doorbell import DebouncedButton  # noqa: E402
 from power_monitor import start_power_sampler  # noqa: E402
 
@@ -1678,6 +1679,10 @@ def metadata_signal_allowed(runtime):
 _FOCUS_MODE_SECONDS = 300
 _FOCUS_MARKER = "/home/israel/HomeCameraSystem/.focus-mode-expires"
 _FOCUS_RESTORE_SCRIPT = "/home/israel/HomeCameraSystem/deploy/restore-focus-mode.sh"
+_FOCUS_GUARD_SCRIPT = "/home/israel/HomeCameraSystem/deploy/guard-focus-mode.sh"
+_PRECISION_MIN_MEM_MB = 450
+_PRECISION_MAX_GPU_TEMP_C = 75.0
+_PRECISION_MIN_UPTIME_S = 180.0
 
 
 def _camera_resolution(path="cam"):
@@ -1739,12 +1744,15 @@ def _write_exposure_config(values):
     enabled, x, y, width, height, compensation, locked = values
     region = ""
     if enabled:
-        left = int(round(x * 1920))
-        top = int(round(y * 1080))
-        right = int(round((x + width) * 1920))
-        bottom = int(round((y + height) * 1080))
+        left = int(round(x * 3840))
+        top = int(round(y * 2160))
+        right = int(round((x + width) * 3840))
+        bottom = int(round((y + height) * 2160))
         region = "{} {} {} {} 1".format(left, top, right, bottom)
-    content = "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n".format(
+    content = (
+        "AE_SENSOR_WIDTH='3840'\nAE_SENSOR_HEIGHT='2160'\n"
+        "AE_REGION='{}'\nAE_COMPENSATION='{:.2f}'\nAE_LOCK='{}'\n"
+    ).format(
         region, compensation, "true" if locked else "false"
     )
     tmp = _EXPOSURE_CONFIG + ".tmp"
@@ -1755,14 +1763,65 @@ def _write_exposure_config(values):
     return region
 
 
-def _both_camera_streams_ready(timeout_s=25.0):
+def _precision_marker_active(now=None):
+    now = time.time() if now is None else now
+    try:
+        with open(_FOCUS_MARKER) as handle:
+            expires = int(handle.read().strip())
+    except (OSError, ValueError):
+        return False
+    uptime_s = _host_uptime_s()
+    return expires > now and uptime_s is not None and uptime_s >= 120.0
+
+
+def _both_camera_streams_ready(timeout_s=25.0, precision=None):
+    if precision is None:
+        precision = _precision_marker_active()
+    expected_uhq = (2560, 1440) if precision else (1280, 720)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if (_camera_resolution("cam") == (1280, 720) and
-                _camera_resolution("cam_uhq") == (1920, 1080)):
+                _camera_resolution("cam_uhq") == expected_uhq):
             return True
         time.sleep(1.0)
     return False
+
+
+def _host_uptime_s(path="/proc/uptime"):
+    try:
+        with open(path) as handle:
+            return float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def precision_preflight():
+    """Fail closed unless the Nano has measurable precision headroom."""
+    memory_mb = read_mem_available_mb()
+    gpu_temp_c = read_gpu_temp_c()
+    uptime_s = _host_uptime_s()
+    reasons = []
+    if memory_mb is None:
+        reasons.append("memory headroom unavailable")
+    elif memory_mb < _PRECISION_MIN_MEM_MB:
+        reasons.append("only {} MB memory available".format(memory_mb))
+    if gpu_temp_c is None:
+        reasons.append("GPU temperature unavailable")
+    elif gpu_temp_c >= _PRECISION_MAX_GPU_TEMP_C:
+        reasons.append("GPU temperature is {:.1f} C".format(gpu_temp_c))
+    if uptime_s is None:
+        reasons.append("host uptime unavailable")
+    elif uptime_s < _PRECISION_MIN_UPTIME_S:
+        reasons.append("Jetson is still settling after boot")
+    return {
+        "safe": not reasons,
+        "reasons": reasons,
+        "memory_mb": memory_mb,
+        "gpu_temp_c": gpu_temp_c,
+        "uptime_s": uptime_s,
+        "minimum_memory_mb": _PRECISION_MIN_MEM_MB,
+        "maximum_gpu_temp_c": _PRECISION_MAX_GPU_TEMP_C,
+    }
 
 
 def apply_exposure(args):
@@ -1784,7 +1843,7 @@ def apply_exposure(args):
         # schedules this worker to reconnect its decoder.
         if (not _restart_camera_pipeline_for_focus((1280, 720)) or
                 not _both_camera_streams_ready()):
-            raise RuntimeError("720p and 1080p streams did not recover")
+            raise RuntimeError("the active camera publications did not recover")
         return {"region": region, "compensation": values[5], "locked": values[6]}
     except Exception as e:
         log.error("exposure apply failed; restoring prior config: %s: %s", type(e).__name__, e)
@@ -1859,8 +1918,46 @@ def _restart_camera_pipeline_for_focus(expected_resolution):
     return False
 
 
+def run_recording_canary():
+    """Start the existing bounded end-to-end canary through systemd.
+
+    The unit owns its timeout, resource limits and result POST. This host
+    action only requests one run and never opens a second camera source.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "sudo", "-n", "systemctl", "start", "--no-block",
+                "homecam-recording-canary.service",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10.0,
+        )
+    except Exception as e:
+        log.error(
+            "recording canary start failed: %s: %s", type(e).__name__, e,
+        )
+        return False
+    if result.returncode != 0:
+        log.error(
+            "recording canary start returned %s: %s",
+            result.returncode,
+            result.stderr.decode("utf-8", "replace")[-300:],
+        )
+        return False
+    return True
+
+
 def start_focus_mode():
-    """Atomically select 1080p and arm an independent systemd timeout."""
+    """Confirm the shared 1440p precision stream and arm its UI timeout."""
+    preflight = precision_preflight()
+    if not preflight["safe"]:
+        log.warning(
+            "focus mode blocked by precision preflight: %s",
+            "; ".join(preflight["reasons"]),
+        )
+        return {"blocked": True, "preflight": preflight}
     expires = int(time.time()) + _FOCUS_MODE_SECONDS
     tmp = _FOCUS_MARKER + ".tmp"
     try:
@@ -1871,6 +1968,10 @@ def start_focus_mode():
         scheduled = subprocess.run(
             [
                 "sudo", "-n", "systemd-run", "--unit", unit,
+                # JetPack 4.x ships systemd 237, which predates Type=exec.
+                # oneshot preserves the bounded transient-service lifecycle
+                # without making Focus Assistant impossible to start.
+                "--property=Type=oneshot",
                 "--on-active={}s".format(_FOCUS_MODE_SECONDS),
                 _FOCUS_RESTORE_SCRIPT, str(expires),
             ],
@@ -1882,9 +1983,29 @@ def start_focus_mode():
             raise RuntimeError(
                 scheduled.stderr.decode("utf-8", "replace")[-300:]
             )
-        if not _restart_camera_pipeline_for_focus((1920, 1080)):
-            raise RuntimeError("camera reset failed")
-        return {"expires_at": expires, "width": 1920, "height": 1080}
+        guard_unit = "homecam-focus-guard-{}".format(expires)
+        guarded = subprocess.run(
+            [
+                "sudo", "-n", "systemd-run", "--unit", guard_unit,
+                "--property=Type=oneshot",
+                _FOCUS_GUARD_SCRIPT, str(expires),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        if guarded.returncode != 0:
+            raise RuntimeError(guarded.stderr.decode("utf-8", "replace")[-300:])
+        if not _restart_camera_pipeline_for_focus((1280, 720)):
+            raise RuntimeError("camera did not restart into precision mode")
+        if not _both_camera_streams_ready():
+            raise RuntimeError("720p and 1440p streams are not ready")
+        return {
+            "expires_at": expires,
+            "width": 2560,
+            "height": 1440,
+            "preflight": preflight,
+        }
     except Exception as e:
         try:
             os.remove(_FOCUS_MARKER)
@@ -1896,7 +2017,7 @@ def start_focus_mode():
 
 
 def stop_focus_mode():
-    """Restore the normal pipeline; old tokenized timers become harmless."""
+    """End the precision session and restore the bounded stable graph."""
     try:
         os.remove(_FOCUS_MARKER)
     except FileNotFoundError:
@@ -1904,7 +2025,9 @@ def stop_focus_mode():
     except OSError as e:
         log.error("focus mode marker removal failed: %s", e)
         return False
-    return _restart_camera_pipeline_for_focus((1280, 720))
+    if not _restart_camera_pipeline_for_focus((1280, 720)):
+        return False
+    return _both_camera_streams_ready(precision=False)
 
 
 def escalate_argus_recovery():
@@ -1991,7 +2114,7 @@ _HOST_ACTION_RESULTS = {}
 _HOST_ACTION_SEEN_PATH = None
 _HostActionDeps = namedtuple(
     "_HostActionDeps",
-    "restart_mediamtx restart_nvargus do_reboot tail_journal start_focus_mode stop_focus_mode apply_exposure allow_reboot now",
+    "restart_mediamtx restart_nvargus do_reboot tail_journal start_focus_mode stop_focus_mode apply_exposure run_recording_canary allow_reboot now",
 )
 # Active continuous-capture runner (plan S4/R5). Set in main() ONLY when the
 # continuous_capture flag is on; None otherwise (legacy start_clip path). The
@@ -2449,10 +2572,50 @@ def _recover_open_visits(recordings_dir, clip_recorder, runner,
     )
 
 
-def open_camera(uri, attempts=30, retry_s=2.0):
-    """Wait for the upstream RTSP to come up (mediamtx may still be starting)."""
+def _rtsp_stream_ready(uri, timeout_s=5.0):
+    """Return true only after ffprobe can see a real video stream.
+
+    ``jetson_utils.videoSource`` can return an object before MediaMTX has a
+    publisher.  That object remains stuck even after ``/cam`` appears, which
+    turns an ordinary service restart into a watchdog escalation storm.  Use
+    the same lightweight metadata probe already required by the camera-control
+    path, without opening another camera owner or decoding frames.
+    """
+    if not str(uri).lower().startswith("rtsp://"):
+        return True
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-rtsp_transport", "tcp",
+                "-select_streams", "v:0", "-show_entries",
+                "stream=codec_type", "-of", "default=nw=1:nk=1", str(uri),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_s,
+        )
+        return (
+            result.returncode == 0
+            and result.stdout.decode("utf-8", "replace").strip() == "video"
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def open_camera(uri, attempts=30, retry_s=2.0, ready_probe=None):
+    """Open a reader only after the upstream RTSP publication is real."""
     last_err = None
+    probe = ready_probe or _rtsp_stream_ready
     for i in range(attempts):
+        if not probe(uri):
+            last_err = RuntimeError("upstream video stream is not ready")
+            print(
+                "[detect] RTSP stream not ready (attempt {}/{}); retrying in {:.1f}s"
+                .format(i + 1, attempts, retry_s),
+                flush=True,
+            )
+            time.sleep(retry_s)
+            continue
         try:
             cam = jetson_utils.videoSource(uri, argv=["--input-codec=h264"])
             return cam
@@ -3280,6 +3443,7 @@ def main():
             start_focus_mode=start_focus_mode,
             stop_focus_mode=stop_focus_mode,
             apply_exposure=apply_exposure,
+            run_recording_canary=run_recording_canary,
             allow_reboot=_allow_reboot,
             now=time.time,
         ),
@@ -3308,8 +3472,10 @@ def main():
     # `_read_thermal_zone_by_name` syscall per ~10 s — negligible.
     thermal_check_every_n_frames = 10
     scene_guard = SceneGuard()
+    camera_quality_guard = CameraQualityGuard()
     scene_last_sample_at = 0.0
     scene_reference = None
+    scene_previous = None
     while True:
         # Capture returns a cudaImage allocated on the GPU; pass it directly
         # into detectNet without round-tripping through CPU memory. The
@@ -3542,20 +3708,24 @@ def main():
         if not runtime.enabled or runtime.operating_mode == "privacy":
             activity_engine.suspend()
             scene_guard.suspend()
+            camera_quality_guard.suspend()
             scene_reference = None
+            scene_previous = None
             _set_gear("off")
             del img
             continue
         if runtime.schedule_says_off():
             activity_engine.suspend()
             scene_guard.suspend()
+            camera_quality_guard.suspend()
             scene_reference = None
+            scene_previous = None
             _set_gear("scheduled-off")
             del img
             continue
 
         # Low-cadence tamper guard. Downsampling before the CPU copy keeps the
-        # comparison tiny; three consecutive five-second samples are required
+        # comparison tiny; six consecutive five-second samples are required
         # so exposure transitions and a hand passing the lens do not alert.
         if now - scene_last_sample_at >= 5.0:
             scene_last_sample_at = now
@@ -3580,6 +3750,27 @@ def main():
                     scene_reference = sample.copy()
                 if tamper_kind:
                     signal_emitter.emit("tamper", tamper_kind, now=now)
+                frame_delta = None
+                if scene_previous is not None and scene_previous.shape == sample.shape:
+                    frame_delta = float(np.abs(sample - scene_previous).mean())
+                sharpness = float(
+                    np.abs(sample[:, 1:] - sample[:, :-1]).mean()
+                    + np.abs(sample[1:, :] - sample[:-1, :]).mean()
+                )
+                quality_transition = camera_quality_guard.observe(
+                    sharpness, frame_delta,
+                )
+                metrics.camera_quality_status = camera_quality_guard.state
+                metrics.camera_luma = float(sample.mean())
+                metrics.camera_sharpness = sharpness
+                metrics.camera_frame_delta = (
+                    0.0 if frame_delta is None else frame_delta
+                )
+                scene_previous = sample.copy()
+                if quality_transition in ("camera_blurred", "camera_frozen"):
+                    signal_emitter.emit(
+                        "tamper", quality_transition, now=now,
+                    )
             except Exception as e:
                 log.warning("scene guard sample failed: %s: %s", type(e).__name__, e)
 

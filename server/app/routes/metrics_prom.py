@@ -75,6 +75,9 @@ async def metrics_prom() -> str:
     from ..services.detection import detection_service
     from ..services.health import worker_health
     from ..services.push_service import push_service
+    from ..services.recording_assurance import status as recording_assurance_status
+    from ..services.recording_jobs import metrics_summary as recording_jobs_summary
+    from ..services.operations import storage_guardian
 
     used_mb, total_mb = _meminfo()
     worker_alive, _last_seen_s, worker_metrics = worker_health.snapshot()
@@ -146,6 +149,73 @@ async def metrics_prom() -> str:
         "Server process uptime in seconds",
     ))
 
+    assurance = recording_assurance_status()
+    if assurance["checked_at"] is not None:
+        parts.append(_line(
+            "homecam_recording_canary_ok",
+            1 if assurance["state"] == "ok" else 0,
+            "Whether the latest RTSP recording sample fully decoded and cleaned",
+        ))
+        parts.append(_line(
+            "homecam_recording_canary_checked_age_seconds",
+            assurance["age_s"],
+            "Seconds since the most recent end-to-end recording check",
+        ))
+    storage = assurance.get("storage")
+    if isinstance(storage, dict):
+        parts.append(_line(
+            "homecam_recording_storage_writable",
+            1 if storage.get("writable") and storage.get("read_only") is not True else 0,
+            "Whether the recording filesystem accepted and fsynced a test write",
+        ))
+        parts.append(_line(
+            "homecam_recording_storage_write_probe_ms",
+            storage.get("write_probe_ms"),
+            "Fsync latency of the recording filesystem test write in milliseconds",
+        ))
+        smart = storage.get("smart_status")
+        if smart in ("healthy", "failed"):
+            parts.append(_line(
+                "homecam_recording_drive_smart_healthy",
+                1 if smart == "healthy" else 0,
+                "SMART overall-health result when exposed by the USB storage bridge",
+            ))
+    event_clip = assurance.get("event_clip")
+    if isinstance(event_clip, dict) and event_clip.get("state") != "none":
+        parts.append(_line(
+            "homecam_recent_event_clip_playable",
+            1 if event_clip.get("state") == "playable" else 0,
+            "Whether the most recently sampled real event clip fully decoded",
+        ))
+        parts.append(_line(
+            "homecam_recent_event_clip_check_ms",
+            event_clip.get("elapsed_ms"),
+            "Wall-clock time spent fully decoding the sampled real event clip",
+        ))
+
+    jobs = recording_jobs_summary()
+    parts.append(_line(
+        "homecam_recording_jobs_stuck",
+        jobs["stuck_jobs"],
+        "Recording jobs with no progress for more than five minutes",
+    ))
+    parts.append(_line(
+        "homecam_recording_ready_seconds_p95",
+        jobs["p95_ready_s"],
+        "95th-percentile seconds from capture end to playable video",
+    ))
+    parts.append(_line(
+        "homecam_recording_invalid_videos",
+        jobs["invalid_videos"],
+        "Published videos rejected by integrity validation",
+    ))
+    guardian = storage_guardian()
+    parts.append(_line(
+        "homecam_recording_usb_guardian_ok",
+        1 if guardian["state"] == "healthy" else 0,
+        "Whether recording storage is confirmed writable ext4 on a distinct block mount",
+    ))
+
     # Worker — gauges (fps, infer_ms_*) are gated on `worker_alive`
     # because a stale value misrepresents current state. Counters
     # (`*_total`) emit unconditionally with the last-known value
@@ -176,6 +246,18 @@ async def metrics_prom() -> str:
             parts.append(_line(
                 "homecam_worker_uptime_seconds", wm.get("uptime_s"),
                 "Worker process uptime in seconds",
+            ))
+            parts.append(_line(
+                "homecam_camera_quality_status", wm.get("camera_quality_status"),
+                "Image quality state: 0 warming, 1 clear, 2 blurred, 3 frozen",
+            ))
+            parts.append(_line(
+                "homecam_camera_luma", wm.get("camera_luma"),
+                "Mean luma of the low-cadence camera quality sample",
+            ))
+            parts.append(_line(
+                "homecam_camera_sharpness", wm.get("camera_sharpness"),
+                "Relative edge-energy score of the camera quality sample",
             ))
             power_sample_ts = wm.get("power_sample_ts", 0.0)
             power_age_s = (

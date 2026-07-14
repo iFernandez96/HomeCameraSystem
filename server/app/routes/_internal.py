@@ -24,6 +24,7 @@ from ..services.detection_config import detection_config
 from ..services.event_bus import event_bus, make_detection_event
 from ..services.health import worker_health
 from ..services import audit_db, host_bridge
+from ..services import push_assurance, recording_assurance
 from ..config import settings
 from ..services.push_service import push_service
 from ..services.alert_policy import decide_alert
@@ -130,6 +131,10 @@ _ALLOWED_METRIC_FIELDS = frozenset(
         "power_watts",
         "power_sample_ts",
         "power_read_failures",
+        "camera_quality_status",
+        "camera_luma",
+        "camera_sharpness",
+        "camera_frame_delta",
     }
 )
 
@@ -278,6 +283,121 @@ class ClientLog(BaseModel):
             except (TypeError, ValueError):
                 object.__setattr__(self, "fields", {"_unserializable": True})
         return self
+
+
+class RecordingStoragePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    writable: bool
+    mountpoint: str | None = Field(default=None, max_length=256)
+    device: str | None = Field(default=None, pattern=r"^/dev/[A-Za-z0-9._/-]+$", max_length=128)
+    filesystem: str | None = Field(default=None, max_length=32)
+    read_only: bool | None = None
+    smart_status: Literal["healthy", "failed", "unavailable"]
+    free_bytes: int | None = Field(default=None, ge=0)
+    write_probe_ms: float | None = Field(default=None, ge=0, le=60_000)
+
+
+class EventClipAssurancePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["none", "playable", "failed"]
+    event_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$", max_length=128)
+    checked_at: float = Field(gt=0)
+    sample_bytes: int | None = Field(default=None, ge=0, le=10_000_000_000)
+    elapsed_ms: float | None = Field(default=None, ge=0, le=650_000)
+    reason: Literal[
+        "no_event_clip",
+        "event_playable",
+        "event_decode_timeout",
+        "event_decode_failed",
+    ]
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "EventClipAssurancePayload":
+        if not math.isfinite(self.checked_at) or abs(time.time() - self.checked_at) > 300:
+            raise ValueError("event clip checked_at must be within 5 minutes")
+        if self.state == "none":
+            if self.event_id is not None or self.reason != "no_event_clip":
+                raise ValueError("empty event check must not claim an event")
+        elif self.event_id is None or self.sample_bytes is None or self.sample_bytes <= 0:
+            raise ValueError("checked event clip requires an id and non-empty file")
+        if self.state == "playable" and self.reason != "event_playable":
+            raise ValueError("playable event clip requires event_playable reason")
+        if self.state == "failed" and self.reason not in (
+            "event_decode_timeout", "event_decode_failed"
+        ):
+            raise ValueError("failed event clip requires a decode failure reason")
+        return self
+
+
+class RecordingAssurancePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    v: Literal[1]
+    status: Literal["ok", "failed"]
+    checked_at: float = Field(gt=0)
+    stage: Literal["storage", "capture", "decode", "cleanup", "event_decode", "complete"]
+    reason: Literal[
+        "storage_unavailable",
+        "storage_read_only",
+        "storage_not_writable",
+        "capture_timeout",
+        "capture_failed",
+        "capture_empty",
+        "decode_timeout",
+        "decode_failed",
+        "cleanup_failed",
+        "event_decode_timeout",
+        "event_decode_failed",
+        "playable",
+    ]
+    sample_bytes: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    # Includes the bounded synthetic capture/decode plus a full decode of the
+    # newest real event, so the legitimate worst case exceeds two minutes.
+    elapsed_ms: float | None = Field(default=None, ge=0, le=700_000)
+    storage: RecordingStoragePayload | None = None
+    event_clip: EventClipAssurancePayload | None = None
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "RecordingAssurancePayload":
+        if not math.isfinite(self.checked_at) or abs(time.time() - self.checked_at) > 300:
+            raise ValueError("checked_at must be within 5 minutes")
+        if self.status == "ok" and (self.reason != "playable" or self.stage != "complete"):
+            raise ValueError("ok status requires complete playable result")
+        if self.status == "failed" and self.reason == "playable":
+            raise ValueError("failed status cannot be playable")
+        reason_stage = {
+            "storage_unavailable": "storage",
+            "storage_read_only": "storage",
+            "storage_not_writable": "storage",
+            "capture_timeout": "capture",
+            "capture_failed": "capture",
+            "capture_empty": "capture",
+            "decode_timeout": "decode",
+            "decode_failed": "decode",
+            "cleanup_failed": "cleanup",
+            "event_decode_timeout": "event_decode",
+            "event_decode_failed": "event_decode",
+        }
+        if self.status == "failed" and reason_stage.get(self.reason) != self.stage:
+            raise ValueError("failure reason does not match stage")
+        if self.status == "ok":
+            if self.sample_bytes is None or self.sample_bytes < 1024:
+                raise ValueError("playable result requires a non-empty sample")
+            if (
+                self.storage is None
+                or not self.storage.writable
+                or self.storage.read_only is True
+            ):
+                raise ValueError("playable result requires writable storage")
+        if self.stage == "event_decode":
+            if self.event_clip is None or self.event_clip.state != "failed":
+                raise ValueError("event decode failure requires a failed event clip result")
+        return self
+
+
+class PushReceiptPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receipt_id: str = Field(min_length=24, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    shown: bool
 
 
 class _ClaimBody(BaseModel):
@@ -684,7 +804,9 @@ class SignalPayload(BaseModel):
         by_source = {
             "audio": audio,
             "doorbell": {"doorbell"},
-            "tamper": {"camera_covered", "camera_moved"},
+            "tamper": {
+                "camera_covered", "camera_moved", "camera_blurred", "camera_frozen"
+            },
             "system": {"power_loss", "network_outage", "camera_offline", "tamper"},
         }
         allowed = by_source[self.source]
@@ -837,6 +959,82 @@ async def client_log(entry: ClientLog) -> dict:
         (entry.ua or "")[:120],
     )
     return {"ok": True}
+
+
+@router.post("/recording-assurance")
+async def recording_assurance_result(payload: RecordingAssurancePayload) -> dict:
+    """Persist the host canary result and notify only on state transitions."""
+    body = payload.model_dump()
+    try:
+        transition = await asyncio.to_thread(recording_assurance.record, body)
+    except Exception:
+        log.exception("recording assurance result persist failed")
+        raise HTTPException(status_code=503, detail="could not persist recording check")
+
+    if transition is not None:
+        if transition == "failed":
+            notification = {
+                "title": "Recording check failed",
+                "body": _assurance_reason_copy(payload.reason),
+                "tag": "recording-assurance",
+                "url": "/settings?tab=system",
+                "importance": "high",
+            }
+        else:
+            notification = {
+                "title": "Recording recovered",
+                "body": "A fresh camera sample recorded, decoded, and cleaned successfully.",
+                "tag": "recording-assurance",
+                "url": "/settings?tab=system",
+                "silent": True,
+            }
+        task = asyncio.create_task(push_service.send_all(notification))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_make_push_done_callback("recording-assurance"))
+    log_method = log.info if payload.status == "ok" else log.warning
+    log_method(
+        "recording assurance result status=%s stage=%s reason=%s bytes=%s",
+        payload.status,
+        payload.stage,
+        payload.reason,
+        payload.sample_bytes,
+    )
+    return {"ok": True, "transition": transition}
+
+
+@router.post("/push-receipt", status_code=202)
+async def push_receipt(payload: PushReceiptPayload) -> dict:
+    """Accept a one-use capability after the service worker shows a push.
+
+    Always return the same response so this unauthenticated internal endpoint
+    cannot be used as a receipt-token oracle. Invalid, expired, and replayed
+    capabilities make no state change.
+    """
+    try:
+        await asyncio.to_thread(
+            push_assurance.accept,
+            payload.receipt_id,
+            payload.shown,
+        )
+    except Exception:
+        log.exception("push receipt persistence failed")
+    return {"ok": True}
+
+
+def _assurance_reason_copy(reason: str) -> str:
+    return {
+        "storage_unavailable": "Capture storage could not be opened.",
+        "storage_read_only": "Capture storage became read-only.",
+        "storage_not_writable": "Capture storage rejected a verified write.",
+        "capture_timeout": "The camera stream did not produce a sample in time.",
+        "capture_failed": "The camera stream could not be recorded.",
+        "capture_empty": "The camera produced an empty recording.",
+        "decode_timeout": "The test recording could not be decoded in time.",
+        "decode_failed": "The test recording was not playable.",
+        "cleanup_failed": "A test recording artifact could not be removed.",
+        "event_decode_timeout": "A recent event video took too long to verify.",
+        "event_decode_failed": "A recent event video is present but not playable.",
+    }.get(reason, "The recording pipeline check failed.")
 
 
 @router.post("/live_detection")

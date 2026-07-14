@@ -29,6 +29,14 @@ function status(over: Partial<ServerStatus> = {}): ServerStatus {
 }
 
 describe('powerDisplay', () => {
+  it('Given detection is offline, Then power telemetry names its actual dependency without claiming the camera is offline', () => {
+    expect(powerDisplay(status({ worker_alive: false }))).toEqual({
+      state: 'offline',
+      compact: 'Power —',
+      detail: 'Power telemetry unavailable while detection is offline',
+    })
+  })
+
   it('Given the Nano has no sensor, Then it asks for hardware instead of estimating watts', () => {
     expect(powerDisplay(status({ worker_metrics: { power_sensor_status: 0 } }))).toEqual({
       state: 'unavailable',

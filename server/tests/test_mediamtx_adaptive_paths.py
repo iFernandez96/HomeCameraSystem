@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -76,7 +77,14 @@ def _camera_publish_script(paths: dict) -> str:
     return _normalize(script.read_text(encoding="utf-8"))
 
 
-def _run_camera_script_with_privacy(tmp_path: Path, content: str | None) -> str:
+def _run_camera_script_with_privacy(
+    tmp_path: Path,
+    content: str | None,
+    exposure_content: str | None = None,
+    *,
+    precision: bool = True,
+    uptime_s: int = 3600,
+) -> str:
     """Run the shell wrapper against a fake gst-launch and return its argv."""
     # arrange
     fake_bin = tmp_path / "bin"
@@ -90,11 +98,21 @@ def _run_camera_script_with_privacy(tmp_path: Path, content: str | None) -> str:
     privacy = tmp_path / "privacy.env"
     if content is not None:
         privacy.write_text(content, encoding="utf-8")
+    exposure = tmp_path / "exposure.env"
+    if exposure_content is not None:
+        exposure.write_text(exposure_content, encoding="utf-8")
+    focus_marker = tmp_path / "focus-mode-expires"
+    if precision:
+        focus_marker.write_text(str(int(time.time()) + 3600) + "\n", encoding="utf-8")
+    uptime = tmp_path / "uptime"
+    uptime.write_text("{}.00 0.00\n".format(uptime_s), encoding="utf-8")
     env = os.environ.copy()
     env.update({
         "PATH": "{}:{}".format(fake_bin, env.get("PATH", "")),
         "HOMECAM_PRIVACY_CONFIG": str(privacy),
-        "HOMECAM_EXPOSURE_CONFIG": str(tmp_path / "missing-exposure.env"),
+        "HOMECAM_EXPOSURE_CONFIG": str(exposure),
+        "HOMECAM_FOCUS_MARKER": str(focus_marker),
+        "HOMECAM_UPTIME_PATH": str(uptime),
     })
 
     # act
@@ -107,6 +125,34 @@ def _run_camera_script_with_privacy(tmp_path: Path, content: str | None) -> str:
         check=True,
     )
     return result.stdout + result.stderr
+
+
+def test_Given_no_precision_session_When_camera_starts_Then_one_bounded_encode_feeds_both_paths(tmp_path):
+    output = _run_camera_script_with_privacy(
+        tmp_path,
+        "PRIVACY_RECTS=''\n",
+        precision=False,
+    )
+
+    assert "stable 1080p30 sensor -> one 720p30 encode" in output
+    assert "nvarguscamerasrc sensor-mode=1" in output
+    assert "width=1920,height=1080,framerate=30/1" in output
+    assert output.count("nvv4l2h264enc") == 1
+    assert "tee name=encoded" in output
+    assert "rtsp://localhost:8554/cam " in output
+    assert "rtsp://localhost:8554/cam_uhq" in output
+
+
+def test_Given_a_stale_precision_marker_after_boot_When_camera_starts_Then_stable_mode_wins(tmp_path):
+    output = _run_camera_script_with_privacy(
+        tmp_path,
+        "PRIVACY_RECTS=''\n",
+        precision=True,
+        uptime_s=45,
+    )
+
+    assert "stable 1080p30 sensor -> one 720p30 encode" in output
+    assert "temporary 4K-to-1440p precision mode" not in output
 
 
 @pytest.mark.parametrize("rung", ["cam_lq", "cam_uq"])
@@ -257,7 +303,41 @@ def test_Given_explicit_empty_privacy_config_When_camera_starts_Then_unmasked_pa
 
     # assert
     assert "nvcompositor name=privacy" not in output
-    assert "nvarguscamerasrc sensor-mode=1" in output
+    assert "nvarguscamerasrc sensor-mode=0" in output
+
+
+def test_Given_legacy_exposure_file_When_4k_sensor_starts_Then_region_is_scaled(tmp_path):
+    output = _run_camera_script_with_privacy(
+        tmp_path,
+        "PRIVACY_RECTS=''\n",
+        (
+            "AE_REGION='480 270 1440 810 1'\n"
+            "AE_COMPENSATION='0.25'\n"
+            "AE_LOCK='false'\n"
+        ),
+    )
+
+    assert (
+        "nvarguscamerasrc sensor-mode=0 exposurecompensation=0.25 "
+        "aelock=false aeregion=960 540 2880 1620 1"
+    ) in output
+
+
+def test_Given_4k_exposure_file_When_sensor_starts_Then_region_is_not_rescaled(tmp_path):
+    output = _run_camera_script_with_privacy(
+        tmp_path,
+        "PRIVACY_RECTS=''\n",
+        (
+            "AE_SENSOR_WIDTH='3840'\n"
+            "AE_SENSOR_HEIGHT='2160'\n"
+            "AE_REGION='960 540 2880 1620 1'\n"
+            "AE_COMPENSATION='0.25'\n"
+            "AE_LOCK='false'\n"
+        ),
+    )
+
+    assert "aeregion=960 540 2880 1620 1" in output
+    assert "aeregion=1920 1080 5760 3240 1" not in output
 
 
 def test_Given_privacy_compositor_When_publishing_Then_encoder_input_is_nv12(tmp_path):
@@ -275,24 +355,25 @@ def test_Given_privacy_compositor_When_publishing_Then_encoder_input_is_nv12(tmp
     # assert
     compositor_output = (
         "nvcompositor name=privacy background=1 sink_0::zorder=0 "
-        "sink_1::xpos=0 sink_1::ypos=0 sink_1::width=1919 "
-        "sink_1::height=1080 sink_1::zorder=1 ! nvvidconv ! "
-        "video/x-raw(memory:NVMM),format=NV12,width=1920,height=1080,"
-        "framerate=60/1 ! tee name=camera"
+        "sink_1::xpos=0 sink_1::ypos=0 sink_1::width=2559 "
+        "sink_1::height=1440 sink_1::zorder=1 ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=NV12,width=2560,height=1440,"
+        "framerate=30/1 ! tee name=camera"
     )
     assert compositor_output in output
     assert (
-        "nvarguscamerasrc sensor-mode=1 exposurecompensation=0.0 aelock=false ! "
-        "video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1 ! "
-        "queue ! nvvidconv ! "
-        "video/x-raw(memory:NVMM),format=RGBA,width=1920,height=1080,"
-        "framerate=60/1 ! privacy.sink_0"
+        "nvarguscamerasrc sensor-mode=0 exposurecompensation=0.0 aelock=false ! "
+        "video/x-raw(memory:NVMM),width=3840,height=2160,framerate=30/1 ! "
+        "queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 "
+        "leaky=downstream ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=RGBA,width=2560,height=1440,"
+        "framerate=30/1 ! privacy.sink_0"
     ) in output
     assert (
         "videotestsrc pattern=black is-live=true ! "
-        "video/x-raw,width=1919,height=1080,framerate=60/1 ! nvvidconv ! "
-        "video/x-raw(memory:NVMM),format=RGBA,width=1919,height=1080,"
-        "framerate=60/1 ! privacy.sink_1"
+        "video/x-raw,width=2559,height=1440,framerate=30/1 ! nvvidconv ! "
+        "video/x-raw(memory:NVMM),format=RGBA,width=2559,height=1440,"
+        "framerate=30/1 ! privacy.sink_1"
     ) in output
 
 
@@ -312,20 +393,28 @@ def test_Given_event_recording_When_detector_runs_Then_camera_files_are_private(
     assert "UMask=0077" in unit
 
 
-def test_Given_uhq_path_When_inspected_Then_one_capture_publishes_720p_and_1080p(paths):
+def test_Given_uhq_path_When_inspected_Then_stable_mode_is_default_and_precision_is_bounded(paths):
     # arrange / act
     command = _camera_publish_script(paths)
 
-    # assert — one libargus owner fans out to two hardware encoders. Detection
-    # remains on /cam while explicit UHQ viewers consume /cam_uhq.
+    # Each mutually exclusive graph has one libargus owner. Stable mode uses
+    # one 720p encoder for both paths; an explicit focus marker selects the
+    # time-bounded dual-encoder precision graph.
     assert paths["cam_uhq"]["source"] == "publisher"
-    assert command.count("nvarguscamerasrc") == 1
-    # The script contains mutually exclusive full-mask, partial-mask, and
-    # unmasked graphs. Each exec path still owns one tee and two encoders.
+    assert command.count("nvarguscamerasrc") == 2
+    assert "HOMECAM_FOCUS_MARKER" in command
+    assert "stable 1080p30 sensor -> one 720p30 encode" in command
+    assert command.count("tee name=encoded") == 3
+    # Precision mode retains mutually exclusive full-mask, partial-mask, and
+    # unmasked graphs, each with one tee and two encoders.
     assert 'if [[ -n "$PRIVACY_RECTS" ]]' in command
     assert command.count("tee name=camera") == 3
-    assert command.count("nvv4l2h264enc") == 6
+    assert command.count("nvv4l2h264enc") == 9
+    assert "sensor-mode=0" in command
+    assert "width=3840,height=2160,framerate=30/1" in command
     assert "width=1280,height=720" in command
-    assert "width=1920,height=1080" in command
+    assert "width=2560,height=1440" in command
+    assert "max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream" in command
+    assert "bitrate=8000000 vbv-size=8000000 peak-bitrate=9600000" in command
     assert "rtsp://localhost:${RTSP_PORT}/cam\"" in command
     assert "rtsp://localhost:${RTSP_PORT}/cam_uhq\"" in command

@@ -32,6 +32,7 @@ vi.mock('./lib/api', () => {
   return {
     getStatus: vi.fn().mockResolvedValue(null),
     searchEvents: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+    getSavedSearches: vi.fn().mockResolvedValue({ v: 1, items: [] }),
     captureSnapshot: vi.fn(),
     getCameras: vi.fn().mockResolvedValue({
       cameras: [{ id: 'front_door', name: 'Front Door', path: 'cam' }],
@@ -40,6 +41,14 @@ vi.mock('./lib/api', () => {
     triggerDeterrence: vi.fn().mockResolvedValue({ ok: true }),
     listVisitStories: vi.fn().mockResolvedValue({ items: [] }),
     getUnreadCount: vi.fn().mockResolvedValue(0),
+    getServerVersion: vi.fn().mockResolvedValue({
+      v: 1,
+      version: 'test',
+      source_fingerprint: 'test',
+      build_epoch: null,
+      api_compat: 1,
+      minimum_client_compat: 1,
+    }),
     // W2 scroll-reset test navigates to the real Events page, which
     // pulls in the rest of the events API surface at module scope —
     // stub the lot with quiet resolved values.
@@ -122,13 +131,12 @@ describe('App routing', () => {
     main.scrollTop = 480
     expect(main.scrollTop).toBe(480)
 
-    // act — client-side navigate via the Events tab. Scope to the
-    // BottomNav landmark: the SideRail renders a second Events link.
-    fireEvent.click(within(nav).getByRole('link', { name: /events/i }))
+    // act — client-side navigate via the Activity tab.
+    fireEvent.click(within(nav).getByRole('link', { name: /activity/i }))
 
     // assert — the layout effect keyed on pathname zeroes the
     // scroll offset before the new page paints.
-    await screen.findByRole('heading', { level: 1, name: /^events$/i })
+    await screen.findByRole('heading', { level: 1, name: /^activity$/i })
     expect(main.scrollTop).toBe(0)
   })
 

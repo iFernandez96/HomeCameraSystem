@@ -26,7 +26,7 @@ export const QUALITY_OPTIONS: ReadonlyArray<{
   subtitle: string
 }> = [
   { value: 'auto', label: 'Auto', subtitle: 'Adjusts to your connection' },
-  { value: 'uhq', label: 'UHQ', subtitle: '1080p, maximum detail and data' },
+  { value: 'uhq', label: 'Precision', subtitle: '1440p only during a guarded Focus session' },
   { value: 'hq', label: 'HQ', subtitle: '720p, sharp with lower Jetson load' },
   {
     value: 'sd',
@@ -39,9 +39,11 @@ export const QUALITY_OPTIONS: ReadonlyArray<{
 export function QualityMenu({
   quality,
   onSelect,
+  decodedResolution,
 }: {
   quality: StreamQuality
   onSelect: (q: StreamQuality) => void
+  decodedResolution?: { width: number; height: number } | null
 }) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(() =>
@@ -58,8 +60,10 @@ export function QualityMenu({
   const rootRef = useRef<HTMLDivElement | null>(null)
   const ripple = useRipple()
 
-  const currentLabel =
-    QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? 'Auto'
+  const selectedLabel = QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? 'Auto'
+  const currentLabel = decodedResolution?.height
+    ? `${decodedResolution.height}p`
+    : selectedLabel
 
   const close = (returnFocus: boolean) => {
     setOpen(false)
@@ -176,7 +180,7 @@ export function QualityMenu({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="Stream quality"
+        aria-label={`Stream quality${decodedResolution ? `, decoded ${decodedResolution.width} by ${decodedResolution.height}` : ''}`}
         onClick={toggleMenu}
         onKeyDown={onTriggerKeyDown}
         onPointerDown={ripple}

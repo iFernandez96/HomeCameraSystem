@@ -4,19 +4,19 @@ import { CatEmptyState } from '../components/CatEmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { listVisitStories, type VisitStory } from '../lib/api'
 
-function visitDuration(visit: VisitStory): string {
+export function visitDuration(visit: VisitStory): string {
   const seconds = Math.max(0, Math.round(visit.end_ts - visit.start_ts))
   const minutes = Math.floor(seconds / 60)
   return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
 }
 
-function visitTitle(visit: VisitStory): string {
+export function visitTitle(visit: VisitStory): string {
   if (visit.people.length > 0) return visit.people.join(', ')
   if (visit.labels.length > 0) return visit.labels.join(', ').replaceAll('_', ' ')
   return 'Unidentified visit'
 }
 
-export function Visits() {
+export function VisitList({ showHeader = true }: { showHeader?: boolean }) {
   const [visits, setVisits] = useState<VisitStory[] | null>(null)
   const [error, setError] = useState<unknown>(null)
 
@@ -36,7 +36,7 @@ export function Visits() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
-      <header className="flex items-start justify-between gap-3">
+      {showHeader ? <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="page-title text-2xl text-[var(--color-text-primary)]">Visits</h1>
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
@@ -46,7 +46,7 @@ export function Visits() {
         <Link to="/events" className="inline-flex min-h-11 items-center rounded-full px-3 text-sm font-semibold text-[var(--color-accent-deep)]">
           Back
         </Link>
-      </header>
+      </header> : null}
 
       {error ? (
         <ErrorState
@@ -66,7 +66,11 @@ export function Visits() {
         />
       ) : (
         <ol className="space-y-3">
-          {visits.map((visit) => (
+          {visits.map((visit) => {
+            const available = visit.events.filter((event) => event.video_status === 'available').length
+            const processing = visit.events.filter((event) => event.video_status === 'recording' || event.video_status === 'finalizing').length
+            const failed = visit.events.filter((event) => event.video_status === 'failed').length
+            return (
             <li key={visit.id}>
               <Link
                 to={`/events/visits/${encodeURIComponent(visit.id)}`}
@@ -78,15 +82,20 @@ export function Visits() {
                     {visitTitle(visit)}
                   </span>
                   <span className="block text-xs text-[var(--color-text-secondary)]">
-                    {new Date(visit.start_ts * 1000).toLocaleString()} · {visitDuration(visit)} · {visit.events.length} {visit.events.length === 1 ? 'moment' : 'moments'}
+                    {new Date(visit.start_ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}–{new Date(visit.end_ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · {visitDuration(visit)} · {visit.events.length} {visit.events.length === 1 ? 'moment' : 'moments'} · {visit.camera_ids.length} {visit.camera_ids.length === 1 ? 'camera' : 'cameras'}
                   </span>
+                  <span className="mt-1 block text-xs text-[var(--color-text-tertiary)]">Video: {available} ready{processing ? ` · ${processing} processing` : ''}{failed ? ` · ${failed} failed` : ''}</span>
                 </span>
                 <span aria-hidden="true">›</span>
               </Link>
             </li>
-          ))}
+          )})}
         </ol>
       )}
     </div>
   )
+}
+
+export function Visits() {
+  return <VisitList />
 }

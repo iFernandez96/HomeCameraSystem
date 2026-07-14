@@ -1,0 +1,19 @@
+[Unit]
+Description=Independent HomeCam reachability observer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/homecam-observer.env
+ExecStart=/usr/bin/python3 %h/HomeCameraSystem/deploy/observer/homecam-observer.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state
+
+[Install]
+WantedBy=default.target

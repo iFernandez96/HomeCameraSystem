@@ -26,11 +26,23 @@ const getKnownFilterOptions = vi
   .fn()
   .mockResolvedValue({ cameras: [], person_names: [] })
 const setMyPushFilters = vi.fn().mockResolvedValue(undefined)
+const getNotificationInbox = vi.fn().mockResolvedValue({ v: 1, items: [], unread: 0 })
+const createIncident = vi.fn()
+const addIncidentEvents = vi.fn()
+const markNotificationSeen = vi.fn().mockResolvedValue({ seen: true })
+const snoozeNotification = vi.fn().mockResolvedValue({ kind: 'event', snoozed_until: 0 })
+const retainNotificationEvent = vi.fn().mockResolvedValue({ event_id: 'event', retention_class: 'permanent' })
 
 vi.mock('../../lib/api', () => ({
   getMyPushFilters: (...a: unknown[]) => getMyPushFilters(...a),
   getKnownFilterOptions: (...a: unknown[]) => getKnownFilterOptions(...a),
   setMyPushFilters: (...a: unknown[]) => setMyPushFilters(...a),
+  getNotificationInbox: (...a: unknown[]) => getNotificationInbox(...a),
+  createIncident: (...a: unknown[]) => createIncident(...a),
+  addIncidentEvents: (...a: unknown[]) => addIncidentEvents(...a),
+  markNotificationSeen: (...a: unknown[]) => markNotificationSeen(...a),
+  snoozeNotification: (...a: unknown[]) => snoozeNotification(...a),
+  retainNotificationEvent: (...a: unknown[]) => retainNotificationEvent(...a),
 }))
 
 const showToast = vi.fn()

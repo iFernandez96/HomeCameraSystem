@@ -232,4 +232,21 @@ describe('EventVideoStatusIcon', () => {
     expect(eta.className).toMatch(/\bright-0\b/)
     expect(container.firstElementChild?.className).toMatch(/left-\[3\.45rem\]/)
   })
+
+  it('Given axis placement is recording a person, Then the full state uses a compact two-line label instead of clipping', () => {
+    render(
+      <EventVideoStatusIcon
+        status="recording"
+        placement="axis"
+        activityPresent={true}
+      />,
+    )
+
+    const person = screen.getByText('Person')
+    const label = person.parentElement as HTMLElement
+    expect(label).toHaveTextContent('Personin scene')
+    expect(label.className).toMatch(/w-12/)
+    expect(label.className).toMatch(/whitespace-normal/)
+    expect(label.className).not.toMatch(/whitespace-nowrap/)
+  })
 })

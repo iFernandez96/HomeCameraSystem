@@ -54,7 +54,7 @@ describe('WatchRibbon a11y', () => {
     expect(live.textContent).not.toMatch(/front door/i)
   })
 
-  it('given offline status, when the ribbon renders, then the status pill announces "Camera offline" (iter-356.63: scope still works post-state-change)', () => {
+  it('given the detector is offline without video truth, when the ribbon renders, then it announces detection unavailable instead of claiming the camera is offline', () => {
     // arrange
     useStatusMock.mockReturnValue({
       detection_active: false,
@@ -67,7 +67,26 @@ describe('WatchRibbon a11y', () => {
     renderRibbon()
 
     // assert
-    expect(screen.getByRole('status').textContent).toMatch(/camera offline/i)
+    expect(screen.getByRole('status').textContent).toMatch(/detection unavailable/i)
+    expect(screen.queryByText(/camera offline/i)).not.toBeInTheDocument()
+  })
+
+  it('given detector frames are stale, when the ribbon renders, then it says detection unavailable and labels the age as detection delay', () => {
+    // arrange
+    useStatusMock.mockReturnValue({
+      detection_active: true,
+      worker_alive: true,
+      camera_label: 'Front Door',
+      seconds_since_last_frame: 90,
+    })
+
+    // act
+    renderRibbon()
+
+    // assert
+    expect(screen.getByRole('status')).toHaveTextContent('Detection unavailable')
+    expect(screen.getByText('Detection delayed')).toBeInTheDocument()
+    expect(screen.queryByText(/live now/i)).not.toBeInTheDocument()
   })
 
   it('Given a notched landscape iPhone PWA, When the ribbon renders, Then it carries lateral safe-area-inset padding so the armed-state cluster never sits behind the Dynamic Island (premium-launch slice — mobile-view-auditor A1)', () => {

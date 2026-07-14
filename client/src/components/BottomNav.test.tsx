@@ -54,7 +54,7 @@ describe('BottomNav', () => {
     expect(links).toHaveLength(4)
     expect(links.map((el) => el.textContent?.toLowerCase())).toEqual([
       expect.stringContaining('home'),
-      expect.stringContaining('events'),
+      expect.stringContaining('activity'),
       expect.stringContaining('faces'),
       expect.stringContaining('settings'),
     ])
@@ -74,7 +74,7 @@ describe('BottomNav', () => {
     // act
     const hrefs = {
       home: screen.getByRole('link', { name: /home/i }).getAttribute('href'),
-      events: screen.getByRole('link', { name: /events/i }).getAttribute('href'),
+      activity: screen.getByRole('link', { name: /activity/i }).getAttribute('href'),
       faces: screen.getByRole('link', { name: /faces/i }).getAttribute('href'),
       settings: screen.getByRole('link', { name: /settings/i }).getAttribute('href'),
     }
@@ -82,13 +82,13 @@ describe('BottomNav', () => {
     // assert
     expect(hrefs).toEqual({
       home: '/',
-      events: '/events',
+      activity: '/events',
       faces: '/people',
       settings: '/settings',
     })
   })
 
-  it('Given the Israel owner account, When BottomNav renders, Then God View is visible', () => {
+  it('Given the Israel owner account, When BottomNav renders, Then admin tools stay out of the daily phone bar', () => {
     // arrange
     authUser = { username: 'Israel', role: 'owner' }
 
@@ -96,7 +96,8 @@ describe('BottomNav', () => {
     renderAt('/')
 
     // assert
-    expect(screen.getByRole('link', { name: /god view/i })).toHaveAttribute('href', '/god')
+    expect(screen.queryByRole('link', { name: /god view/i })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('link')).toHaveLength(4)
   })
 
   it('Given another owner account, When BottomNav renders, Then God View is undiscoverable', () => {
@@ -121,7 +122,7 @@ describe('BottomNav', () => {
     )
   })
 
-  it('given the route matches /events, when BottomNav renders, then the Events link carries aria-current="page" (iter-338: pin via ARIA, not Tailwind class — same fix as iter-290 SideNav)', () => {
+  it('given the route matches /events, when BottomNav renders, then the Activity link carries aria-current="page" (iter-338: pin via ARIA, not Tailwind class — same fix as iter-290 SideNav)', () => {
     // arrange
     renderAt('/events')
 
@@ -132,7 +133,7 @@ describe('BottomNav', () => {
     // aria-current="page" on the matching route; assistive tech
     // consumes that.
     expect(
-      screen.getByRole('link', { name: /events/i }),
+      screen.getByRole('link', { name: /activity/i }),
     ).toHaveAttribute('aria-current', 'page')
   })
 
@@ -145,7 +146,7 @@ describe('BottomNav', () => {
       screen.getByRole('link', { name: /settings/i }),
     ).not.toHaveAttribute('aria-current', 'page')
     expect(
-      screen.getByRole('link', { name: /events/i }),
+      screen.getByRole('link', { name: /activity/i }),
     ).not.toHaveAttribute('aria-current', 'page')
     expect(
       screen.getByRole('link', { name: /home/i }),

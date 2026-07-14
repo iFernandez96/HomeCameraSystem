@@ -32,6 +32,8 @@ export type PushPayload = {
   /** Optional server-selected notification action codes. */
   actions?: unknown
   deterrence_duration_s?: unknown
+  /** One-use server capability proving this specific push reached display. */
+  receipt_id?: unknown
 }
 
 export type PushActionCode =
@@ -78,17 +80,21 @@ type PushReceiptFields = {
 }
 
 type PushReceiptBaseFields = Omit<PushReceiptFields, 'shown' | 'err'>
+type PendingPushReceipt = PushReceiptBaseFields & { receiptId?: string }
 
-const pendingPushReceipts: PushReceiptBaseFields[] = []
+const pendingPushReceipts: PendingPushReceipt[] = []
 let showNotificationHookInstalled = false
 
-function pushReceiptBaseFields(data: PushPayload): PushReceiptBaseFields {
+function pushReceiptBaseFields(data: PushPayload): PendingPushReceipt {
   return {
     hasImage: Object.prototype.hasOwnProperty.call(data, 'image'),
     imageIsString: typeof data.image === 'string',
     hasEventId:
       (typeof data.event_id === 'string' && data.event_id.length > 0) ||
       (typeof data.id === 'string' && data.id.length > 0),
+    ...(typeof data.receipt_id === 'string' && data.receipt_id.length >= 24
+      ? { receiptId: data.receipt_id }
+      : {}),
   }
 }
 
@@ -101,11 +107,35 @@ export function reportPushReceived(
   shown: boolean,
   err?: unknown,
 ): void {
+  publishPushReceipt(pushReceiptBaseFields(data), shown, err)
+}
+
+function sendCorrelatedReceipt(receiptId: string | undefined, shown: boolean): void {
+  if (!receiptId) return
+  try {
+    const sw = globalThis as unknown as { fetch?: typeof fetch }
+    if (!sw.fetch) return
+    void sw.fetch('/api/_internal/push-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({ receipt_id: receiptId, shown }),
+    }).catch(() => {
+      // A receipt is observability only; it must never delay notification UI.
+    })
+  } catch {
+    // Constrained service-worker contexts may reject fetch synchronously.
+  }
+}
+
+function publishPushReceipt(receipt: PendingPushReceipt, shown: boolean, err?: unknown): void {
+  const { receiptId, ...safeFields } = receipt
   sendPushReceivedLog({
-    ...pushReceiptBaseFields(data),
+    ...safeFields,
     shown,
     ...(err ? { err: errorName(err) } : {}),
   })
+  sendCorrelatedReceipt(receiptId, shown)
 }
 
 function sendPushReceivedLog(fields: PushReceiptFields): void {
@@ -161,23 +191,14 @@ function installShowNotificationReceiptHook(): void {
         const op = showNotification.call(registration, title, options)
         if (receipt) {
           op.then(
-            () => sendPushReceivedLog({ ...receipt, shown: true }),
-            (error: unknown) =>
-              sendPushReceivedLog({
-                ...receipt,
-                shown: false,
-                err: errorName(error),
-              }),
+            () => publishPushReceipt(receipt, true),
+            (error: unknown) => publishPushReceipt(receipt, false, error),
           )
         }
         return op
       } catch (error) {
         if (receipt) {
-          sendPushReceivedLog({
-            ...receipt,
-            shown: false,
-            err: errorName(error),
-          })
+          publishPushReceipt(receipt, false, error)
         }
         throw error
       }

@@ -14,7 +14,10 @@ PLAN_SKIP_STALE = "skip_stale"
 PLAN_SKIP_SEEN = "skip_seen"
 PLAN_SKIP_UNKNOWN = "skip_unknown"
 
-VALID_KINDS = ("mediamtx", "nvargus", "reboot", "logs", "focus_start", "focus_stop", "exposure_apply")
+VALID_KINDS = (
+    "mediamtx", "nvargus", "reboot", "logs", "focus_start", "focus_stop",
+    "exposure_apply", "recording_canary",
+)
 LOG_UNITS = ("homecam-detect", "mediamtx", "nvargus-daemon", "homecam-server")
 
 _SINCE_RELATIVE_RE = re.compile(
@@ -102,19 +105,25 @@ def execute_action(record, deps):
 
     if kind == "focus_start":
         result = deps.start_focus_mode()
+        if result and result.get("blocked"):
+            return ("failed", "precision mode blocked by safety preflight", result)
         if result:
-            return ("done", "1080p focus mode started", result)
-        return ("failed", "1080p focus mode failed to start", None)
+            return ("done", "1440p precision mode ready", result)
+        return ("failed", "1440p precision mode unavailable", None)
 
     if kind == "focus_stop":
         ok = deps.stop_focus_mode()
-        return _status_from_bool(ok, "720p camera restore")
+        return _status_from_bool(ok, "shared camera mode confirmation")
 
     if kind == "exposure_apply":
         result = deps.apply_exposure(record.get("args") or {})
         if result:
             return ("done", "camera exposure applied", result)
         return ("failed", "camera exposure failed; previous settings restored", None)
+
+    if kind == "recording_canary":
+        ok = deps.run_recording_canary()
+        return _status_from_bool(ok, "recording integrity test")
 
     return ("failed", "unknown host action", None)
 

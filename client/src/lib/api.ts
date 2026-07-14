@@ -7,6 +7,7 @@ import type {
   LoginResponse,
   MeResponse,
   PushFilters,
+  RecordingAssuranceStatus,
   Session,
   ServerStatus,
 } from './types'
@@ -348,7 +349,7 @@ export const markAllEventsSeen = () =>
 export const captureSnapshot = () =>
   req<{ url: string }>('/api/capture', { method: 'POST' })
 
-export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot' | 'focus_start' | 'focus_stop' | 'exposure_apply'
+export type RecoverAction = 'mediamtx' | 'nvargus' | 'reboot' | 'focus_start' | 'focus_stop' | 'exposure_apply' | 'recording_canary'
 export type LogUnit =
   | 'homecam-detect'
   | 'mediamtx'
@@ -374,7 +375,13 @@ export type RecoverStatus =
       requested_by: string
       requested_at: number
       result_at: number | null
-      result?: { expires_at?: number; width?: number; height?: number } | null
+      result?: {
+        expires_at?: number
+        width?: number
+        height?: number
+        blocked?: boolean
+        preflight?: { safe: boolean; reasons: string[] }
+      } | null
       worker_online: boolean
     }
 
@@ -544,8 +551,17 @@ export const triggerUpdate = () =>
 // informational, not destructive. Used by the Settings UI to show
 // "Server version: X" + slice 3c will compare to a registry tag
 // for "update available?" checks.
+export type SystemVersion = {
+  v: 1
+  version: string
+  source_fingerprint: string
+  build_epoch: number | null
+  api_compat: number
+  minimum_client_compat: number
+}
+
 export const getServerVersion = () =>
-  req<{ version: string }>('/api/system/version')
+  req<SystemVersion>('/api/system/version')
 
 // iter-214 (Feature #8 slice 3): daily-timelapse client wrappers.
 // `date` is YYYY-MM-DD (server-side regex `^[0-9]{4}-[01][0-9]-[0-3]
@@ -1034,6 +1050,26 @@ export const login = (body: LoginRequest) =>
     body: JSON.stringify(body),
   })
 
+export const getMfaStatus = () => req<{ enabled: boolean }>('/api/auth/mfa')
+
+export const beginMfaSetup = (password: string) =>
+  req<import('./types').MfaSetup>('/api/auth/mfa/setup', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+
+export const confirmMfaSetup = (code: string) =>
+  req<{ ok: boolean; enabled: boolean }>('/api/auth/mfa/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+
+export const disableMfa = (password: string, code: string) =>
+  req<{ ok: boolean; enabled: boolean }>('/api/auth/mfa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ password, code }),
+  })
+
 export const logout = () =>
   req<{ ok: boolean }>('/api/auth/logout', {
     method: 'POST',
@@ -1346,7 +1382,7 @@ export type SemanticSearchResult = {
   event: DetectionEvent
   description: string
   match_reason: string
-  score: number
+  score: number | null
 }
 
 export type SecuritySearchResponse = {
@@ -1397,6 +1433,13 @@ export type IncidentSummary = {
 
 export type IncidentDetail = IncidentSummary & {
   events: DetectionEvent[]
+  audit: Array<{
+    ts: number
+    action: string
+    username: string
+    event_id?: string
+    fields?: string[]
+  }>
 }
 
 export const listIncidents = () =>
@@ -1407,10 +1450,10 @@ export const getIncident = (incidentId: string) =>
     `/api/security/incidents/${encodeURIComponent(incidentId)}`,
   )
 
-export const createIncident = (title: string, notes = '') =>
+export const createIncident = (title: string, notes = '', eventId?: string) =>
   req<IncidentDetail>('/api/security/incidents', {
     method: 'POST',
-    body: JSON.stringify({ title, notes }),
+    body: JSON.stringify({ title, notes, ...(eventId ? { event_id: eventId } : {}) }),
   })
 
 export const updateIncident = (
@@ -1653,3 +1696,243 @@ export const setFacePreference = (name: string, alertsEnabled: boolean) =>
       body: JSON.stringify({ alerts_enabled: alertsEnabled }),
     },
   )
+
+export type HomeProfile = 'home' | 'away' | 'sleep' | 'vacation' | 'privacy'
+export type ModeSchedule = {
+  id: string
+  profile: HomeProfile
+  time: string
+  days: number[]
+  enabled: boolean
+}
+export type SavedSearch = {
+  id: string
+  username: string
+  name: string
+  query: string
+  semantic: boolean
+  created_ts: number
+}
+export type RetentionClass = 'ordinary' | 'important' | 'incident' | 'permanent'
+export type RetentionPreview = {
+  classes: Record<RetentionClass, number>
+  class_bytes: Record<RetentionClass, number>
+  protected_total: number
+  ordinary_days: number
+  important_days: number
+  next_deletions: Array<{
+    event_id: string
+    retention_class: RetentionClass
+    bytes: number
+    delete_after_ts: number
+    overdue: boolean
+  }>
+}
+export type ArchiveStatus = {
+  enabled: boolean
+  available: boolean
+  target: string
+  marker_required: string
+  unavailable_reason?: string | null
+  last_sync_ts: number | null
+  last_status: string
+  last_error: string | null
+  files_verified: number
+  bytes_verified: number
+}
+export type SemanticCompanionStatus = {
+  enabled: boolean
+  base_url: string
+  token_set: boolean
+  last_check_ts: number | null
+  last_status: string
+}
+export type OperationsState = {
+  v: 1
+  active_profile: HomeProfile
+  effective_mode: 'home' | 'away' | 'night' | 'privacy'
+  mode_schedules: ModeSchedule[]
+  archive: ArchiveStatus
+  semantic_companion: SemanticCompanionStatus
+  saved_searches: SavedSearch[]
+  retention: RetentionPreview
+}
+export type NotificationInboxItem = {
+  id: string
+  created_ts: number
+  title: string
+  body: string
+  kind: string
+  event_id: string | null
+  url: string
+  importance: string
+  seen: boolean
+  delivery_state:
+    | 'queued'
+    | 'gateway_accepted'
+    | 'gateway_failed'
+    | 'gateway_unavailable'
+    | 'displayed'
+    | 'display_failed'
+    | 'snoozed'
+  displayed_ts: number | null
+}
+export type DailyBriefing = {
+  day: string
+  total: number
+  by_label: Record<string, number>
+  unknown_people: number
+  known_people: string[]
+  headline: string
+  recording_state: string
+  video_counts: {
+    available: number
+    processing: number
+    failed: number
+    unknown: number
+  }
+  camera_interruptions: number
+  protected_events: number
+  generated_ts: number
+}
+export type HealthHistorySample = {
+  ts: number
+  worker_alive: boolean
+  worker_last_seen_s: number | null
+  fps: number | null
+  camera_quality_status: number | null
+  camera_luma: number | null
+  camera_sharpness: number | null
+  power_watts: number | null
+  disk_free_bytes: number | null
+  recording_state: string
+}
+export type RecordingIntegrityWindow = {
+  total: number
+  counts: Record<'recording' | 'finalizing' | 'available' | 'failed' | 'unknown' | 'expired', number>
+  processing: number
+  oldest_processing_age_s: number | null
+  stuck_jobs: number
+  invalid_videos: number
+  median_ready_s: number | null
+  p95_ready_s: number | null
+  latency_samples?: number
+  objectives: Array<{ id: string; label: string; met: boolean | null; value: number | null; target: number }>
+}
+export type RecordingIntegrity = RecordingIntegrityWindow & {
+  v: 2
+  default_window: '24h'
+  release_since: number | null
+  windows?: Record<'24h' | '7d' | 'release' | 'all', RecordingIntegrityWindow>
+  recent_failures: Array<{
+    event_id: string
+    event_ts: number
+    state: 'failed'
+    failure_code: string | null
+    failure_summary: string | null
+    updated_ts: number
+  }>
+  storage: {
+    state: 'healthy' | 'degraded'
+    recordings_path: string
+    filesystem: string | null
+    mountpoint: string | null
+    device: string | null
+    writable: boolean | null
+    read_only: boolean | null
+    smart_status: string | null
+    write_probe_ms: number | null
+    free_bytes: number | null
+    total_bytes: number | null
+    reasons: string[]
+    checked_at: number | null
+  }
+  assurance: RecordingAssuranceStatus
+  alerts?: Array<{ id: string; severity: 'warning' | 'critical'; title: string; detail: string }>
+  generated_ts: number
+}
+
+export const getOperationsState = () =>
+  req<OperationsState>('/api/security/operations')
+
+export const setHomeProfile = (profile: HomeProfile) =>
+  req<{ active_profile: HomeProfile; effective_mode: string; changed_at: number }>(
+    '/api/security/operations/profile',
+    { method: 'PUT', body: JSON.stringify({ profile }) },
+  )
+
+export const setModeSchedules = (items: ModeSchedule[]) =>
+  req<{ v: 1; items: ModeSchedule[] }>('/api/security/operations/mode-schedules', {
+    method: 'PUT', body: JSON.stringify({ items }),
+  })
+
+export const getNotificationInbox = (limit = 100) =>
+  req<{ v: 1; items: NotificationInboxItem[]; unread: number }>(
+    `/api/security/notifications?limit=${limit}`,
+  )
+
+export const markNotificationSeen = (id: string) =>
+  req<{ seen: true }>(`/api/security/notifications/${encodeURIComponent(id)}/seen`, { method: 'POST' })
+
+export const snoozeNotification = (id: string, durationS: number) =>
+  req<{ kind: string; snoozed_until: number }>(
+    `/api/security/notifications/${encodeURIComponent(id)}/snooze`,
+    { method: 'POST', body: JSON.stringify({ duration_s: durationS }) },
+  )
+
+export const retainNotificationEvent = (id: string, retentionClass: RetentionClass) =>
+  req<{ event_id: string; retention_class: RetentionClass }>(
+    `/api/security/notifications/${encodeURIComponent(id)}/retention`,
+    { method: 'PUT', body: JSON.stringify({ retention_class: retentionClass }) },
+  )
+
+export const getSavedSearches = () =>
+  req<{ v: 1; items: SavedSearch[] }>('/api/security/saved-searches')
+
+export const createSavedSearch = (name: string, query: string, semantic = false) =>
+  req<SavedSearch>('/api/security/saved-searches', {
+    method: 'POST', body: JSON.stringify({ name, query, semantic }),
+  })
+
+export const deleteSavedSearch = (id: string) =>
+  req<{ deleted: true }>(`/api/security/saved-searches/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+export const getDailyBriefing = (day?: string) =>
+  req<DailyBriefing>(`/api/security/briefing${day ? `?day=${encodeURIComponent(day)}` : ''}`)
+
+export const getHealthHistory = (hours = 24) =>
+  req<{ v: 1; items: HealthHistorySample[] }>(`/api/security/health-history?hours=${hours}`)
+
+export const getRecordingIntegrity = () =>
+  req<RecordingIntegrity>('/api/security/operations/recording-integrity')
+
+export const runRecordingTest = () =>
+  req<{ v: 1; request_id: string; status: string; worker_online: boolean }>(
+    '/api/security/operations/recording-test',
+    { method: 'POST' },
+  )
+
+export const setEventRetention = (eventId: string, retentionClass: RetentionClass) =>
+  req<{ event_id: string; retention_class: RetentionClass }>(
+    `/api/security/events/${encodeURIComponent(eventId)}/retention`,
+    { method: 'PUT', body: JSON.stringify({ retention_class: retentionClass }) },
+  )
+
+export const configureExternalArchive = (enabled: boolean) =>
+  req<ArchiveStatus>('/api/security/operations/archive', {
+    method: 'PUT', body: JSON.stringify({ enabled }),
+  })
+
+export const syncExternalArchive = () =>
+  req<ArchiveStatus>('/api/security/operations/archive/sync', { method: 'POST' })
+
+export const configureSemanticCompanion = (
+  enabled: boolean, baseUrl: string, apiToken?: string,
+) => req<SemanticCompanionStatus>('/api/security/operations/semantic-companion', {
+  method: 'PUT', body: JSON.stringify({ enabled, base_url: baseUrl, ...(apiToken ? { api_token: apiToken } : {}) }),
+})
+
+export const semanticSearch = (query: string, limit = 20) =>
+  req<{ v: 1; items: DetectionEvent[]; mode: 'companion' }>('/api/security/semantic/search', {
+    method: 'POST', body: JSON.stringify({ query, limit }),
+  })

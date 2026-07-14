@@ -132,20 +132,14 @@ paths:
     #
     # IMX477 native sensor modes (per `gst-launch nvarguscamerasrc num-buffers=1`
     # GST_ARGUS dump on this Jetson):
-    #   mode 0: 3840 x 2160 @ 30 fps — full sensor area (full FOV)
-    #   mode 1: 1920 x 1080 @ 60 fps — center crop (~60 % horizontal FOV)
+    #   mode 0: 3840 x 2160 @ 30 fps — full sensor area (selected)
+    #   mode 1: 1920 x 1080 @ 60 fps — legacy high-frame-rate mode
     #
-    # IMPORTANT — image-circle / sensor-size mismatch with the current lens:
-    # The 3MP-rated M12 lens projects an image circle sized for ~1/3" sensors;
-    # the IMX477 is 1/2.3", noticeably larger. In mode 0 the corners are pure
-    # black (geometric vignette — light never reaches those pixels). Mode 1's
-    # 1080p center-crop neatly excludes the unusable corners, so it's the
-    # correct choice for THIS lens. If a true 1/2.3"-rated wide-angle (e.g.
-    # Arducam's "12MP / IMX477 compatible" M12) is fitted later, switch to
-    # `sensor-mode=0` to recover the full ~96° FOV. Pre-iter-356.31 the auto-
-    # pick happened to land on mode 1; pinning makes it explicit so a libargus
-    # firmware bump can't silently switch us to mode 0 and start showing the
-    # vignetted corners.
+    # A controlled capture with the installed 3.6 mm F2.0 96° M12 lens
+    # confirmed that mode 0 covers the complete frame without hard black
+    # corners. The lens is 3MP-rated, so native 4K is an oversampled source:
+    # VIC scales once to 2560x1440, improving focus detail without claiming
+    # 8MP of optical resolving power.
     #
     # Single producer (`nvarguscamerasrc`) -> hardware H.264 (`nvv4l2h264enc`)
     # -> RTSP push to localhost. The detection worker reads back from the
@@ -186,31 +180,22 @@ paths:
     #     3000000 = 20 % CBR headroom for legitimate motion bursts. No
     #     measurable bandwidth uplift on idle scenes (CBR average stays
     #     at 2.5 Mbps).
-    # iter-356.52 (camera-library-usage-auditor freeze fix):
-    #   - nvvidconv between nvarguscamerasrc and the encoder. Sensor-
-    #     mode 1 on the IMX477 is locked to 1920x1080 @ 60 fps by the
-    #     hardware; the bare `caps-filter,width=1280,height=720,
-    #     framerate=30/1` was silently widened during caps negotiation
-    #     so nvv4l2h264enc was actually encoding 1080p60 into a
-    #     2.5 Mbps CBR target — VBV drain on motion → encoder stalls →
-    #     visible WebRTC freezes + 200+ RTP packets lost in first 60 s
-    #     (mediamtx publisher session log). nvvidconv is the Tegra
-    #     hardware scaler (VIC); keeps everything in NVMM, near-zero
-    #     CPU cost.
+    # Resolution/load contract (1440p30 precision mode):
+    #   - native 4K30 is scaled by Tegra VIC in NVMM before publication.
+    #   - `/cam_uhq`: 2560x1440@30 (~111 MP/s), 8 Mbps.
+    #   - `/cam`: 1280x720@30 (~28 MP/s), 2.5 Mbps for detection/recording.
+    #   - Aggregate H.264 input is ~138 MP/s, below Nano's 250 MP/s budget.
+    #   - Encoded branches are leaky/bounded to three frames; the 4K input
+    #     queue used by the privacy compositor is bounded to two. Do not
+    #     restore unbounded queues on the Nano 2GB.
     #   - rtspclientsink protocols=tcp. Default is UDP even on the
     #     loopback publisher leg; the same encoder back-pressure that
     #     overflows the VBV also overflows the UDP send buffer,
     #     dropping RTP packets that downstream NVDEC + WebRTC must
     #     conceal or stall on. TCP loopback is sub-ms RTT — no
     #     latency cost, eliminates the loss path.
-    # iter-356.52a: nvvidconv on Tegra L4T 32.x cannot do framerate
-    # conversion — only color/size. We resize to 720p in NVMM and
-    # accept the sensor-native 60 fps into the encoder. At 720p60
-    # the pixel-rate is ~55 Mpx/s (vs 1080p30 ≈ 62 Mpx/s) so the
-    # encoder is actually less loaded than the original 1080p input
-    # path, and 2.5 Mbps CBR is achievable. Smaller GOP-time
-    # (iframeinterval=8 / 60 fps = 133 ms) gives crisper recovery on
-    # any packet loss — beneficial side-effect.
+    # nvvidconv on Tegra L4T 32.x changes color/size, not frame rate. Both
+    # publications therefore deliberately retain sensor-native 30 fps.
     #
     # iter (camera-recovery 2026-06-20, deep-research-backed): the `watchdog`
     # element (gst-plugins-bad) after h264parse posts an ERROR to the bus if no
@@ -218,16 +203,16 @@ paths:
     # MID-STREAM (the pipeline was running but stopped producing). That exits
     # the gst-launch, and `runOnInitRestart: yes` respawns it. Placed on the
     # post-encoder (regular-memory) boundary, not on the NVMM sensor caps, so
-    # it can't perturb the zero-copy path. timeout=5000 = 5 s ≈ 300 dropped
-    # frames at 60 fps (clearly a stall, not a hiccup). The deeper "Failed to
+    # it can't perturb the zero-copy path. timeout=5000 = 5 s ≈ 150 dropped
+    # frames at 30 fps (clearly a stall, not a hiccup). The deeper "Failed to
     # create CaptureSession" startup wedge is handled by the systemd BindsTo +
     # the escalating detection watchdog (restart nvargus-daemon).
-    # The wrapper owns one camera capture and tees its NVMM frames into a 720p
-    # publication for detection/default viewing plus a 1080p UHQ publication.
+    # The wrapper owns one camera capture and tees its scaled NVMM frames into
+    # a 720p publication for detection/default viewing plus 1440p UHQ.
     runOnInit: /home/israel/HomeCameraSystem/deploy/run-camera-pipeline.sh
     runOnInitRestart: yes
 
-  # 1920x1080 viewer-only path. It is published by the same single-camera
+  # 2560x1440 viewer-only path. It is published by the same single-camera
   # pipeline as `cam`; detection deliberately continues reading `cam`.
   cam_uhq:
     source: publisher
@@ -254,7 +239,7 @@ paths:
   #   downloads NVMM -> system memory), and re-encodes to a smaller rung. This
   #   is a TRANSCODE of the published stream, NOT a second capture path. The
   #   capture-side tee in run-camera-pipeline.sh is intentional: it preserves
-  #   one libargus owner while publishing separate 720p and 1080p encodes.
+  #   one libargus owner while publishing separate 720p and 1440p encodes.
   #
   # CRITICAL — WHY x264enc (SOFTWARE) AND NOT nvv4l2h264enc HERE:
   #   The hardware encoder `nvv4l2h264enc` emits output buffers with
@@ -272,7 +257,8 @@ paths:
   #   the low rungs were broken. `x264enc tune=zerolatency` produces strictly
   #   monotonic, B-frame-free, WebRTC-safe output. Decode stays on hardware
   #   NVDEC; only the (small, low-bitrate) encode is software. Cost measured at
-  #   ~0.75 core for 480p60 / less for 360p30 — acceptable for an on-demand rung
+  #   below one core for the old 480p60 source; the current 30 fps source costs
+  #   less — acceptable for an on-demand rung
   #   on the Nano's 4 cores. tune=zerolatency implies bframes=0; do not add
   #   B-frames back. The `cam` HQ path MUST stay nvv4l2h264enc (full res/bitrate
   #   would be far too costly in software).
@@ -294,16 +280,16 @@ paths:
       nvv4l2decoder !
       nvvidconv !
       'video/x-raw,width=854,height=480,format=I420' !
-      x264enc tune=zerolatency bitrate=700 speed-preset=ultrafast key-int-max=48 !
+      x264enc tune=zerolatency bitrate=700 speed-preset=ultrafast key-int-max=30 !
       h264parse !
       rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_lq
     runOnDemandRestart: yes
     runOnDemandCloseAfter: 10s
 
-  # UQ rung — 640x360 at ~half source fps, ~400 kbps. Congested / metered cell.
+  # UQ rung — 640x360 at ~15 fps, ~400 kbps. Congested / metered cell.
   # Framerate cap is done at the DECODER via `nvv4l2decoder drop-frame-interval=2`
   # (drops every other frame in hardware) before the software encode, so x264enc
-  # only has to chew ~30 fps. videorate on the NVMM path negotiates but produces a
+  # only has to chew ~15 fps. videorate on the NVMM path negotiates but produces a
   # stream rtspclientsink/mediamtx rejects on read (400 Bad Request) — verified
   # on-device 2026-06-16 — so the decoder drop is the right fps lever.
   cam_uq:
@@ -316,7 +302,7 @@ paths:
       nvv4l2decoder drop-frame-interval=2 !
       nvvidconv !
       'video/x-raw,width=640,height=360,format=I420' !
-      x264enc tune=zerolatency bitrate=400 speed-preset=ultrafast key-int-max=30 !
+      x264enc tune=zerolatency bitrate=400 speed-preset=ultrafast key-int-max=15 !
       h264parse !
       rtspclientsink protocols=tcp location=rtsp://localhost:$RTSP_PORT/cam_uq
     runOnDemandRestart: yes

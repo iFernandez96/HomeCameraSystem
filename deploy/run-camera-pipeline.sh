@@ -2,16 +2,39 @@
 set -euo pipefail
 
 RTSP_PORT="${RTSP_PORT:-8554}"
+FOCUS_MARKER="${HOMECAM_FOCUS_MARKER:-/home/israel/HomeCameraSystem/.focus-mode-expires}"
 EXPOSURE_CONFIG="${HOMECAM_EXPOSURE_CONFIG:-/home/israel/HomeCameraSystem/.camera-exposure.env}"
 PRIVACY_CONFIG="${HOMECAM_PRIVACY_CONFIG:-/home/israel/HomeCameraSystem/.privacy-masks.env}"
 AE_REGION=""
 AE_COMPENSATION="0.0"
 AE_LOCK="false"
+AE_SENSOR_WIDTH="1920"
+AE_SENSOR_HEIGHT="1080"
 if [[ -r "$EXPOSURE_CONFIG" ]]; then
     # This file is written by the detection worker from strictly bounded
     # numeric/boolean API fields; it never contains arbitrary shell input.
     # shellcheck disable=SC1090
     source "$EXPOSURE_CONFIG"
+fi
+# Exposure files written before the 1440p30 migration store their Argus region
+# in the old 1920x1080 sensor space. Scale that trusted, bounded shape in
+# memory so the first boot after an upgrade meters the same normalized area.
+if [[ -n "$AE_REGION" ]]; then
+    read -r ae_left ae_top ae_right ae_bottom ae_weight <<< "$AE_REGION"
+    if [[ "$AE_REGION" =~ ^[0-9]{1,4}\ [0-9]{1,4}\ [0-9]{1,4}\ [0-9]{1,4}\ 1$ ]] \
+        && (( ae_left < ae_right && ae_top < ae_bottom )); then
+        if [[ "$AE_SENSOR_WIDTH,$AE_SENSOR_HEIGHT" == "1920,1080" ]] \
+            && (( ae_right <= 1920 && ae_bottom <= 1080 )); then
+            AE_REGION="$((ae_left * 2)) $((ae_top * 2)) $((ae_right * 2)) $((ae_bottom * 2)) 1"
+        elif [[ "$AE_SENSOR_WIDTH,$AE_SENSOR_HEIGHT" != "3840,2160" ]] \
+            || (( ae_right > 3840 || ae_bottom > 2160 )); then
+            echo "[camera] invalid exposure coordinate basis; using whole-frame metering" >&2
+            AE_REGION=""
+        fi
+    else
+        echo "[camera] invalid exposure region; using whole-frame metering" >&2
+        AE_REGION=""
+    fi
 fi
 # Fail closed until the detection worker has explicitly reconciled the live
 # configuration.  On a first boot MediaMTX starts before homecam-detect, so a
@@ -58,16 +81,97 @@ if [[ -r "$PRIVACY_CONFIG" ]]; then
 else
     echo "[camera] privacy config unavailable; applying full-frame mask" >&2
 fi
-SOURCE_ARGS=(sensor-mode=1 exposurecompensation="$AE_COMPENSATION" aelock="$AE_LOCK")
+SOURCE_ARGS=(sensor-mode=0 exposurecompensation="$AE_COMPENSATION" aelock="$AE_LOCK")
 if [[ -n "$AE_REGION" ]]; then
     SOURCE_ARGS+=(aeregion="$AE_REGION")
 fi
 CAMERA_SOURCE=(nvarguscamerasrc "${SOURCE_ARGS[@]}")
 
-# One libargus camera owner, two hardware-encoded publications. Detection reads
-# only /cam (720p); viewers explicitly selecting UHQ and Focus Assistant read
-# /cam_uhq (1080p). Queues isolate encoder back-pressure across the tee.
-echo "[camera] 720p detection/HQ + 1080p UHQ"
+# Keep the everyday pipeline inside the Nano 2GB's proven envelope. Precision
+# mode is explicitly time-bounded by Focus/Exposure Assistant; merely having
+# a 1440p-capable client must not leave the camera running 4K plus two encoders
+# around the clock. Both stable paths are fed by one encoded 720p bitstream, so
+# /cam_uhq remains truthful and available as a graceful fallback.
+now=$(date +%s)
+UPTIME_PATH="${HOMECAM_UPTIME_PATH:-/proc/uptime}"
+host_uptime_s=$(cut -d. -f1 "$UPTIME_PATH" 2>/dev/null || echo 0)
+precision_expires=0
+if [[ -r "$FOCUS_MARKER" ]]; then
+    read -r precision_expires < "$FOCUS_MARKER" || precision_expires=0
+fi
+if ! [[ "$precision_expires" =~ ^[0-9]+$ ]] \
+    || ! [[ "$host_uptime_s" =~ ^[0-9]+$ ]] \
+    || (( precision_expires <= now || host_uptime_s < 120 )); then
+    rm -f "$FOCUS_MARKER"
+
+    # AE_REGION has been normalized above into the precision pipeline's
+    # 3840x2160 basis. Convert it back to the stable sensor's 1920x1080 basis,
+    # rounding the far edge up so the requested metering area never shrinks.
+    if [[ -n "$AE_REGION" ]]; then
+        read -r ae_left ae_top ae_right ae_bottom ae_weight <<< "$AE_REGION"
+        AE_REGION="$((ae_left / 2)) $((ae_top / 2)) $(((ae_right + 1) / 2)) $(((ae_bottom + 1) / 2)) 1"
+    fi
+    SOURCE_ARGS=(sensor-mode=1 exposurecompensation="$AE_COMPENSATION" aelock="$AE_LOCK")
+    if [[ -n "$AE_REGION" ]]; then
+        SOURCE_ARGS+=(aeregion="$AE_REGION")
+    fi
+    CAMERA_SOURCE=(nvarguscamerasrc "${SOURCE_ARGS[@]}")
+    echo "[camera] stable 1080p30 sensor -> one 720p30 encode for cam + cam_uhq"
+
+    if [[ "$PRIVACY_RECTS" == "0,0,1920,1080" ]]; then
+        echo "[camera] applying full-frame privacy mask without opening camera"
+        exec gst-launch-1.0 -e \
+            videotestsrc pattern=black is-live=true ! \
+            'video/x-raw,width=1280,height=720,framerate=30/1' ! nvvidconv ! \
+            'video/x-raw(memory:NVMM),format=NV12,width=1280,height=720,framerate=30/1' ! \
+            nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true ! \
+            h264parse ! tee name=encoded \
+            encoded. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam" \
+            encoded. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam_uhq"
+    fi
+    if [[ -n "$PRIVACY_RECTS" ]]; then
+        compositor_props=(background=1 sink_0::zorder=0)
+        overlay_inputs=()
+        pad=1
+        IFS=';' read -ra rects <<< "$PRIVACY_RECTS"
+        for rect in "${rects[@]}"; do
+            IFS=',' read -r x y width height <<< "$rect"
+            compositor_props+=("sink_${pad}::xpos=$x" "sink_${pad}::ypos=$y" "sink_${pad}::width=$width" "sink_${pad}::height=$height" "sink_${pad}::zorder=$pad")
+            overlay_inputs+=(videotestsrc pattern=black is-live=true ! "video/x-raw,width=$width,height=$height,framerate=30/1" ! nvvidconv ! "video/x-raw(memory:NVMM),format=RGBA,width=$width,height=$height,framerate=30/1" ! "privacy.sink_${pad}")
+            pad=$((pad + 1))
+        done
+        echo "[camera] applying $((pad - 1)) recording-time privacy rectangle(s) in stable mode"
+        exec gst-launch-1.0 -e \
+            nvcompositor name=privacy "${compositor_props[@]}" ! nvvidconv ! \
+            'video/x-raw(memory:NVMM),format=NV12,width=1280,height=720,framerate=30/1' ! \
+            nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true ! \
+            h264parse ! tee name=encoded \
+            encoded. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam" \
+            encoded. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam_uhq" \
+            "${CAMERA_SOURCE[@]}" ! \
+            'video/x-raw(memory:NVMM),width=1920,height=1080,framerate=30/1' ! \
+            queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! nvvidconv ! \
+            'video/x-raw(memory:NVMM),format=RGBA,width=1920,height=1080,framerate=30/1' ! privacy.sink_0 \
+            "${overlay_inputs[@]}"
+    fi
+    exec gst-launch-1.0 -e \
+        "${CAMERA_SOURCE[@]}" ! \
+        'video/x-raw(memory:NVMM),width=1920,height=1080,framerate=30/1' ! nvvidconv ! \
+        'video/x-raw(memory:NVMM),format=NV12,width=1280,height=720,framerate=30/1' ! \
+        nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true ! \
+        h264parse ! tee name=encoded \
+        encoded. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam" \
+        encoded. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam_uhq"
+fi
+
+echo "[camera] temporary 4K-to-1440p precision mode active until $precision_expires"
+
+# One libargus camera owner at the sensor-native 4K30 mode, scaled in NVMM to
+# one shared 1440p30 surface. Detection reads only /cam (720p30); viewers
+# explicitly selecting UHQ plus Focus/Exposure Assistant read /cam_uhq
+# (1440p30). Three-buffer leaky queues bound each encoded branch to about
+# 16 MiB of 1440p NV12 references instead of allowing latency/memory growth.
+echo "[camera] 4K30 sensor -> 720p30 detection/HQ + 1440p30 UHQ"
 # A complete mask does not need a camera frame at all.  Publishing a generated
 # black NV12 surface is both the strongest fail-closed behavior and avoids
 # acquiring the fragile JetPack 4.x Argus session while Privacy mode is active.
@@ -76,14 +180,14 @@ if [[ "$PRIVACY_RECTS" == "0,0,1920,1080" ]]; then
     echo "[camera] applying full-frame privacy mask without opening camera"
     exec gst-launch-1.0 -e \
         videotestsrc pattern=black is-live=true ! \
-        'video/x-raw,width=1920,height=1080,framerate=60/1' ! nvvidconv ! \
-        'video/x-raw(memory:NVMM),format=NV12,width=1920,height=1080,framerate=60/1' ! tee name=camera \
-        camera. ! queue max-size-buffers=8 leaky=downstream ! nvvidconv ! \
-        'video/x-raw(memory:NVMM),width=1280,height=720' ! \
+        'video/x-raw,width=2560,height=1440,framerate=30/1' ! nvvidconv ! \
+        'video/x-raw(memory:NVMM),format=NV12,width=2560,height=1440,framerate=30/1' ! tee name=camera \
+        camera. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! nvvidconv ! \
+        'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' ! \
         nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true ! \
         h264parse ! watchdog timeout=5000 ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam" \
-        camera. ! queue max-size-buffers=8 leaky=downstream ! \
-        nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=5000000 vbv-size=5000000 peak-bitrate=6000000 EnableTwopassCBR=false maxperf-enable=true ! \
+        camera. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+        nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=8000000 vbv-size=8000000 peak-bitrate=9600000 EnableTwopassCBR=false maxperf-enable=true ! \
         h264parse ! watchdog timeout=5000 ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam_uhq"
 fi
 if [[ -n "$PRIVACY_RECTS" ]]; then
@@ -93,38 +197,51 @@ if [[ -n "$PRIVACY_RECTS" ]]; then
     IFS=';' read -ra rects <<< "$PRIVACY_RECTS"
     for rect in "${rects[@]}"; do
         IFS=',' read -r x y width height <<< "$rect"
+        # Privacy files intentionally remain in their durable 1920x1080
+        # coordinate contract. Scale left/top down and right/bottom up so the
+        # 1440p compositor covers at least the same normalized area.
+        source_right=$((10#$x + 10#$width))
+        source_bottom=$((10#$y + 10#$height))
+        x=$((10#$x * 4 / 3))
+        y=$((10#$y * 4 / 3))
+        scaled_right=$(( (source_right * 4 + 2) / 3 ))
+        scaled_bottom=$(( (source_bottom * 4 + 2) / 3 ))
+        width=$((scaled_right - x))
+        height=$((scaled_bottom - y))
         compositor_props+=("sink_${pad}::xpos=$x" "sink_${pad}::ypos=$y" "sink_${pad}::width=$width" "sink_${pad}::height=$height" "sink_${pad}::zorder=$pad")
-        overlay_inputs+=(videotestsrc pattern=black is-live=true ! "video/x-raw,width=$width,height=$height,framerate=60/1" ! nvvidconv ! "video/x-raw(memory:NVMM),format=RGBA,width=$width,height=$height,framerate=60/1" ! "privacy.sink_${pad}")
+        overlay_inputs+=(videotestsrc pattern=black is-live=true ! "video/x-raw,width=$width,height=$height,framerate=30/1" ! nvvidconv ! "video/x-raw(memory:NVMM),format=RGBA,width=$width,height=$height,framerate=30/1" ! "privacy.sink_${pad}")
         pad=$((pad + 1))
     done
     echo "[camera] applying $((pad - 1)) recording-time privacy rectangle(s) in NVMM"
     exec gst-launch-1.0 -e \
         nvcompositor name=privacy "${compositor_props[@]}" ! \
         nvvidconv ! \
-        'video/x-raw(memory:NVMM),format=NV12,width=1920,height=1080,framerate=60/1' ! tee name=camera \
-        camera. ! queue max-size-buffers=8 leaky=downstream ! nvvidconv ! \
-        'video/x-raw(memory:NVMM),width=1280,height=720' ! \
+        'video/x-raw(memory:NVMM),format=NV12,width=2560,height=1440,framerate=30/1' ! tee name=camera \
+        camera. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! nvvidconv ! \
+        'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' ! \
         nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true ! \
         h264parse ! watchdog timeout=5000 ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam" \
-        camera. ! queue max-size-buffers=8 leaky=downstream ! \
-        nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=5000000 vbv-size=5000000 peak-bitrate=6000000 EnableTwopassCBR=false maxperf-enable=true ! \
+        camera. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+        nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=8000000 vbv-size=8000000 peak-bitrate=9600000 EnableTwopassCBR=false maxperf-enable=true ! \
         h264parse ! watchdog timeout=5000 ! rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam_uhq" \
         "${CAMERA_SOURCE[@]}" ! \
-        'video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1' ! \
-        queue ! nvvidconv ! \
-        'video/x-raw(memory:NVMM),format=RGBA,width=1920,height=1080,framerate=60/1' ! privacy.sink_0 \
+        'video/x-raw(memory:NVMM),width=3840,height=2160,framerate=30/1' ! \
+        queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! nvvidconv ! \
+        'video/x-raw(memory:NVMM),format=RGBA,width=2560,height=1440,framerate=30/1' ! privacy.sink_0 \
         "${overlay_inputs[@]}"
 fi
 exec gst-launch-1.0 -e \
     "${CAMERA_SOURCE[@]}" ! \
-    'video/x-raw(memory:NVMM),width=1920,height=1080,framerate=60/1' ! \
+    'video/x-raw(memory:NVMM),width=3840,height=2160,framerate=30/1' ! \
+    nvvidconv ! \
+    'video/x-raw(memory:NVMM),format=NV12,width=2560,height=1440,framerate=30/1' ! \
     tee name=camera \
-    camera. ! queue max-size-buffers=8 leaky=downstream ! nvvidconv ! \
-    'video/x-raw(memory:NVMM),width=1280,height=720' ! \
+    camera. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! nvvidconv ! \
+    'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' ! \
     nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=2500000 vbv-size=2500000 peak-bitrate=3000000 EnableTwopassCBR=false maxperf-enable=true ! \
     h264parse ! watchdog timeout=5000 ! \
     rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam" \
-    camera. ! queue max-size-buffers=8 leaky=downstream ! \
-    nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=5000000 vbv-size=5000000 peak-bitrate=6000000 EnableTwopassCBR=false maxperf-enable=true ! \
+    camera. ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+    nvv4l2h264enc insert-sps-pps=true iframeinterval=8 control-rate=1 bitrate=8000000 vbv-size=8000000 peak-bitrate=9600000 EnableTwopassCBR=false maxperf-enable=true ! \
     h264parse ! watchdog timeout=5000 ! \
     rtspclientsink protocols=tcp location="rtsp://localhost:${RTSP_PORT}/cam_uhq"

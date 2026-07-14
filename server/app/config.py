@@ -20,6 +20,10 @@ class Settings:
     # this value when cutting a new release; CI could automate via
     # sed-on-tag if a release pipeline lands.
     version: str = os.getenv("HOMECAM_VERSION", "0.1.0")
+    source_fingerprint: str = os.getenv("HOMECAM_SOURCE_FINGERPRINT", "unknown")
+    build_epoch: int = int(os.getenv("HOMECAM_BUILD_EPOCH", "0"))
+    api_compat: int = 1
+    minimum_client_compat: int = 1
 
     vapid_private_key_path: Path = Path(
         os.getenv("VAPID_PRIVATE_KEY_PATH", "./vapid_private.pem")
@@ -105,6 +109,9 @@ class Settings:
     jwt_secret_path: Path = Path(
         os.getenv("JWT_SECRET_PATH", "./jwt_secret.bin")
     )
+    mfa_key_path: Path = Path(
+        os.getenv("MFA_KEY_PATH", "/app/secrets/mfa_key.bin")
+    )
     access_token_ttl_s: int = int(os.getenv("ACCESS_TOKEN_TTL_S", "900"))
     refresh_token_ttl_s: int = int(os.getenv("REFRESH_TOKEN_TTL_S", "604800"))
     cookie_secure: bool = (
@@ -134,6 +141,9 @@ class Settings:
     )
     backup_ledger_path: Path = Path(
         os.getenv("BACKUP_LEDGER_PATH", "/app/secrets/backup-ledger.jsonl")
+    )
+    push_assurance_path: Path = Path(
+        os.getenv("PUSH_ASSURANCE_PATH", "/app/secrets/push-assurance.json")
     )
 
     # iter-213 (Feature #8 slice 1): the dir that daily-timelapse
@@ -170,6 +180,18 @@ class Settings:
     host_action_state_path: Path = Path(
         os.getenv("HOST_ACTION_STATE_PATH", "/app/secrets/host_action.json")
     )
+    recording_assurance_path: Path = Path(
+        os.getenv(
+            "RECORDING_ASSURANCE_PATH",
+            "/app/secrets/recording-assurance.json",
+        )
+    )
+    # Durable, queryable mirror of the worker's clip-state ledger. The worker
+    # remains the lifecycle producer; this database preserves transitions,
+    # validation outcomes and playback-latency history across restarts.
+    recording_jobs_db_path: Path = Path(
+        os.getenv("RECORDING_JOBS_DB_PATH", "/app/secrets/recording-jobs.db")
+    )
     camera_exposure_path: Path = Path(
         os.getenv("CAMERA_EXPOSURE_PATH", "/app/secrets/camera_exposure.json")
     )
@@ -181,6 +203,13 @@ class Settings:
     )
     security_exports_dir: Path = Path(
         os.getenv("SECURITY_EXPORTS_DIR", "/app/secrets/security-exports")
+    )
+    # Optional independently-mounted NAS/second-host archive. The service
+    # refuses to write unless this directory already exists and contains the
+    # explicit `.homecam-external-archive` marker, so a missing mount can never
+    # silently fall back onto the Jetson's root filesystem.
+    external_archive_dir: Path = Path(
+        os.getenv("EXTERNAL_ARCHIVE_DIR", "/app/external-archive")
     )
     security_timeline_max_range_s: int = int(
         os.getenv("SECURITY_TIMELINE_MAX_RANGE_S", "86400")

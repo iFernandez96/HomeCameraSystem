@@ -66,6 +66,9 @@ function _readInitialTab(isOwner: boolean): SettingsTab {
     if (stored === 'cameras') return 'notifications'
     return stored
   }
+  // Migrate the former Settings tab to the dedicated Control Center route's
+  // nearest Settings destination.
+  if (stored === 'operations') return isOwner ? 'system' : 'notifications'
   return 'notifications'
 }
 
@@ -198,6 +201,8 @@ export function Settings() {
           >
             <NotificationsSection
               pushSubsCount={status?.push_subs_count ?? null}
+              pushAssurance={status?.push_assurance ?? null}
+              canManageRetention={canManageOwnerSettings}
             />
           </div>
         )}
@@ -222,6 +227,15 @@ export function Settings() {
             tabIndex={0}
             className="space-y-6 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2 rounded-2xl"
           >
+            {canManageOwnerSettings ? (
+              <a href="/control" className="card-paper flex min-h-16 items-center justify-between gap-3 p-4 focus-visible:outline-2 focus-visible:outline-[var(--color-accent-default)] focus-visible:outline-offset-2">
+                <span>
+                  <span className="block font-semibold text-[var(--color-text-primary)]">Open Control Center</span>
+                  <span className="block text-xs text-[var(--color-text-secondary)]">Recording integrity, storage, modes, health and archives</span>
+                </span>
+                <span aria-hidden="true">›</span>
+              </a>
+            ) : null}
             {/* Dual-theme upgrade (2026-07-02): Appearance sits first —
                 it's a personal preference every role owns, not an
                 operator knob, so it leads the tab everyone lands on. */}

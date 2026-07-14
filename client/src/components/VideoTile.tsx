@@ -6,10 +6,17 @@ import {
   DEFAULT_CAMERA_PATH,
   getStreamQuality,
   pathForQuality,
+  resolveAutoQuality,
   setStreamQuality,
   whepUrlForPath,
   type StreamQuality,
 } from '../lib/streamQuality'
+import {
+  advanceAdaptiveQuality,
+  initialAdaptiveState,
+  signalFromSnapshots,
+  type InboundVideoSnapshot,
+} from '../lib/adaptiveQuality'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
 import { subscribeEvents } from '../lib/ws'
 import type { DetectionEvent } from '../lib/types'
@@ -75,7 +82,7 @@ export function VideoTile({
   workerAlive = null,
   lowMemory = null,
   thermal = null,
-  streamStaleSeconds = null,
+  detectionFrameAgeSeconds = null,
   fit = 'cover',
   showStatusPill = true,
   onPlayingChange,
@@ -133,12 +140,11 @@ export function VideoTile({
    * (from `/api/status.seconds_since_last_frame`). null = unknown
    * or worker hasn't reported a frame yet. The iter-300 outage had
    * worker_alive=true while this would have climbed to 50,000 —
-   * so when this exceeds ~60 we show a "STREAM STALE" pill that
-   * takes precedence over OFFLINE/LOW-MEMORY/THERMAL/PAUSED
-   * (because none of those describe the actual failure: video
-   * isn't flowing).
+   * This measures the detector's RTSP intake, not WebRTC playback.
+   * When it exceeds ~60s, warn that detection is stalled while the
+   * independently confirmed live video remains visible.
    */
-  streamStaleSeconds?: number | null
+  detectionFrameAgeSeconds?: number | null
   /**
    * Structural overhaul (Watch): how the <video> fills the tile.
    * 'cover' (default) crops to fill — right when the WRAPPER owns a
@@ -284,6 +290,7 @@ export function VideoTile({
   const [boxes, setBoxes] = useState<DetectionEvent['boxes']>([])
   const [personName, setPersonName] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
+  const [decodedResolution, setDecodedResolution] = useState<{ width: number; height: number } | null>(null)
   // Cellular-adaptive streaming (2026-06-16): the user picks a stream
   // tier (Auto / HQ / Data-saver / Ultra-low). `auto` reads
   // navigator.connection and downshifts on cellular/metered links. The
@@ -292,9 +299,18 @@ export function VideoTile({
   // effect (same dep that manual Retry's `retryNonce` bump relies on),
   // tearing down the old PeerConnection and connecting to the new path.
   const [quality, setQuality] = useState<StreamQuality>(() => getStreamQuality())
+  const initialAutoQuality = resolveAutoQuality(
+    typeof navigator === 'undefined'
+      ? undefined
+      : (navigator as Navigator & { connection?: Parameters<typeof resolveAutoQuality>[0] }).connection,
+  )
+  const [autoQuality, setAutoQuality] = useState(initialAutoQuality)
+  const adaptiveStateRef = useRef(initialAdaptiveState(initialAutoQuality))
+  const activePcRef = useRef<RTCPeerConnection | null>(null)
   // `src` override (tests / future multi-cam wiring) wins; otherwise the
   // tile composes its own URL from the chosen quality.
-  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(quality, undefined, streamPath))
+  const effectiveQuality = quality === 'auto' ? autoQuality : quality
+  const effectiveSrc = src ?? whepUrlForPath(pathForQuality(effectiveQuality, undefined, streamPath))
   // Keep the latest quality in a ref so the connect effect can LOG it
   // without taking it as a reactive dependency. The effect re-runs on
   // `effectiveSrc` (which already changes in lockstep with quality in the
@@ -310,9 +326,30 @@ export function VideoTile({
   const onSelectQuality = (q: StreamQuality) => {
     if (q === qualityRef.current) return
     activeWhepAbortRef.current?.abort()
+    if (q === 'auto') {
+      const base = resolveAutoQuality(
+        (navigator as Navigator & { connection?: Parameters<typeof resolveAutoQuality>[0] }).connection,
+      )
+      adaptiveStateRef.current = initialAdaptiveState(base)
+      setAutoQuality(base)
+    }
     setStreamQuality(q)
     setQuality(q)
   }
+  useEffect(() => {
+    if (quality !== 'auto' || typeof navigator === 'undefined') return
+    const connection = (navigator as Navigator & {
+      connection?: Parameters<typeof resolveAutoQuality>[0] & EventTarget
+    }).connection
+    if (connection == null || typeof connection.addEventListener !== 'function') return
+    const onConnectionChange = () => {
+      const base = resolveAutoQuality(connection)
+      adaptiveStateRef.current = initialAdaptiveState(base)
+      setAutoQuality(base)
+    }
+    connection.addEventListener('change', onConnectionChange)
+    return () => connection.removeEventListener('change', onConnectionChange)
+  }, [quality])
   // Status-truth fix (server-restart contradiction, 2026-07-07):
   // `cameraOffline` and `detectionPausedWorker` used to be TWO pills
   // keyed on whether the server had ever cached a frame counter — but
@@ -326,30 +363,29 @@ export function VideoTile({
   // state with amber, no-action-implied copy. "Camera offline" red
   // copy is reserved for when the VIDEO path itself is confirmed dead
   // (status === 'error', the OfflineState overlay further below).
-  // `streamStale`: worker is heartbeating, but the stream has gone
-  //   silent for >60s — iter-300 outage signature. YELLOW. The
-  //   existing Retry button is the natural recovery (it tears down
-  //   WHEP and reconnects).
+  // A stale detector frame means the worker's intake is stuck. It does
+  // not mean this component's separately observed WebRTC video is stuck.
   const workerDead = workerAlive === false
-  const streamStale =
+  const detectionFeedStalled =
     workerAlive === true &&
-    streamStaleSeconds !== null &&
-    streamStaleSeconds !== undefined &&
-    streamStaleSeconds > 60
-  // Carry the legacy `offline` name for the bbox-clear logic below —
-  // a dead worker means the boxes array is stale regardless of the
-  // video's own state.
-  const offline = workerDead
-  const lowMem = !offline && !streamStale && lowMemory === true
-  const therm = !offline && !streamStale && !lowMem && thermal === true
+    detectionFrameAgeSeconds !== null &&
+    detectionFrameAgeSeconds !== undefined &&
+    detectionFrameAgeSeconds > 60
+  // Clear boxes whenever detection cannot produce fresh results; stale
+  // overlays must never remain painted over an otherwise-live feed.
+  const detectionUnavailable = workerDead || detectionFeedStalled
+  const offline = detectionUnavailable
+  const lowMem = !offline && lowMemory === true
+  const therm = !offline && !lowMem && thermal === true
   const paused =
-    !offline && !streamStale && !lowMem && !therm && detectionActive === false
+    !offline && !lowMem && !therm && detectionActive === false
 
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
     let conn: WhepConnection | null = null
     let cancelled = false
+    setDecodedResolution(null)
     // Defect-1 fix (WebRTC lifecycle audit): a per-attempt AbortController
     // so cleanup can actually close an in-flight connectWhep — the old
     // `cancelled` flag alone left a hung WHEP POST's RTCPeerConnection open
@@ -458,6 +494,13 @@ export function VideoTile({
       // Frames are flowing again — re-arm the one-shot silent reconnect
       // for the next mid-stream drop (see pcStateChange below).
       silentRetryUsedRef.current = false
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setDecodedResolution((current) =>
+          current?.width === video.videoWidth && current.height === video.videoHeight
+            ? current
+            : { width: video.videoWidth, height: video.videoHeight },
+        )
+      }
       setStatus('live')
     }
     const onPlaying = () => {
@@ -488,6 +531,7 @@ export function VideoTile({
           return
         }
         conn = c
+        activePcRef.current = c.pc
         // Stay 'connecting' until media starts. The 8 s media-timeout
         // covers the case where WHEP signaling succeeds but ICE never
         // produces a usable path (typical when the SDP advertises a
@@ -597,8 +641,54 @@ export function VideoTile({
         pcStateChange = null
       }
       conn?.close()
+      if (activePcRef.current === conn?.pc) activePcRef.current = null
     }
   }, [effectiveSrc, retryNonce])
+
+  useEffect(() => {
+    if (quality !== 'auto' || src != null || status !== 'live') return
+    const pc = activePcRef.current
+    if (pc == null || typeof pc.getStats !== 'function') return
+    let cancelled = false
+    let previous: InboundVideoSnapshot | null = null
+
+    const sample = async () => {
+      try {
+        const report = await pc.getStats()
+        if (cancelled) return
+        let current: InboundVideoSnapshot | null = null
+        report.forEach((item) => {
+          if (item.type !== 'inbound-rtp' || item.kind !== 'video') return
+          current = {
+            packetsLost: Number(item.packetsLost ?? 0),
+            packetsReceived: Number(item.packetsReceived ?? 0),
+            jitterSeconds: Number(item.jitter ?? 0),
+            framesDropped: Number(item.framesDropped ?? 0),
+            framesDecoded: Number(item.framesDecoded ?? 0),
+            freezeCount: Number(item.freezeCount ?? 0),
+          }
+        })
+        if (current == null) return
+        if (previous != null) {
+          const signal = signalFromSnapshots(previous, current)
+          if (signal != null) {
+            const next = advanceAdaptiveQuality(adaptiveStateRef.current, signal, Date.now())
+            adaptiveStateRef.current = next
+            setAutoQuality((active) => active === next.quality ? active : next.quality)
+          }
+        }
+        previous = current
+      } catch (error) {
+        log.debug('videoTile:adaptive-stats-unavailable', errFields(error))
+      }
+    }
+    const timer = window.setInterval(() => { void sample() }, 5_000)
+    void sample()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [quality, src, status])
 
   useEffect(() => {
     return subscribeEvents((evt) => {
@@ -876,7 +966,7 @@ export function VideoTile({
       >
         {showQualityMenu && (
           <div className={controlsTarget ? 'flex flex-1 justify-center pointer-events-auto' : 'pointer-events-auto'}>
-            <QualityMenu quality={quality} onSelect={onSelectQuality} />
+            <QualityMenu quality={quality} onSelect={onSelectQuality} decodedResolution={decodedResolution} />
           </div>
         )}
         <div className={`flex items-center gap-2 pointer-events-auto ${controlsTarget ? 'flex-[2] justify-around' : ''}`}>
@@ -1008,22 +1098,6 @@ export function VideoTile({
         aria-live="polite"
         className="absolute top-3 right-3 pointer-events-none"
       >
-        {/* iter-302: stream-stale takes precedence — see comment block
-            on `streamStale` derivation above. The label is plain English
-            so a non-technical user understands what's wrong: "no video
-            from the camera".
-            iter-302b (accessibility-auditor #1): seconds count moved
-            into the visible text and aria-label dropped. Pre-iter-302b
-            the aria-label said "No video for N seconds" while visible
-            text said "No video — stream stalled" — VoiceOver read the
-            label, NVDA read the text, two users got two different
-            messages. One string for both channels. */}
-        {/* iter-356.C: stream-stale = yellow (worker alive, video
-            silent — Reconnect via the existing error-overlay Retry
-            below). Visible text now reads "Stream stalled" with the
-            Reconnect hint; the precise seconds count moves to the
-            aria-label only so SR users still hear how long it's been
-            stale, and the visible UI stays calm. */}
         {/* Premium-launch slice (Dana #2 partial-sight redundancy):
             each precedence-ladder pill carries a distinctive glyph
             in addition to its severity color. Pre-fix all five pills
@@ -1034,37 +1108,25 @@ export function VideoTile({
             Now: glyph distinguishes the kind regardless of color
             perception, and the colored dot is reused at 8 px so the
             pre-existing iter-356.C visual contract is preserved. */}
-        {/* Defect-3 fix (WebRTC lifecycle audit): this pill's "Reconnect"
-            copy was PASSIVE text — the only actual Retry control lives in
-            the status==='error' overlay below, which never renders while
-            status is 'live' (streamStale only shows when status==='live').
-            The suggested recovery was unreachable. Now a real button that
-            bumps retryNonce — the exact same manual-retry path the error
-            overlay's Retry button uses — so pressing it tears down the
-            stalled WHEP session and reconnects. Still manual-only: one
-            press, one attempt, no auto-retry loop. */}
-        {streamStale && status === 'live' && (
-          <button
-            type="button"
-            onClick={() => setRetryNonce((n) => n + 1)}
+        {detectionFeedStalled && status === 'live' && (
+          <div
             className="flex flex-col items-end gap-0.5 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label={`Stream stalled — no video for ${Math.round((streamStaleSeconds ?? 0) / 10) * 10}s. Reconnect.`}
+            aria-label={`Detection feed stalled for ${Math.round((detectionFrameAgeSeconds ?? 0) / 10) * 10} seconds. Live video is still on.`}
           >
             <span className="inline-flex items-center gap-2">
-              <PillSeverityIcon kind="stream-stale" tone="warning" />
+              <PillSeverityIcon kind="detection-stale" tone="warning" />
               <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" />
-              Stream stalled
+              Detection delayed
             </span>
             <span className="text-xs text-white/80 font-normal">
-              Reconnect
+              Live video is on
             </span>
-          </button>
+          </div>
         )}
         {/* Status-truth fix (server-restart contradiction, 2026-07-07):
             single honest pill for "the detection worker isn't
-            heartbeating" — amber, plain text, no operator action
-            implied (the worker auto-recovers within a heartbeat
-            cycle). This ONLY renders while status === 'live', i.e.
+            heartbeating" — amber, plain text, and distinct from an
+            intentional user pause. This ONLY renders while status === 'live', i.e.
             real frames ARE flowing through the separate MediaMTX/
             WebRTC pipeline, so it must never claim the camera itself
             is offline — that copy is reserved for the status==='error'
@@ -1076,11 +1138,11 @@ export function VideoTile({
         {workerDead && status === 'live' && (
           <div
             className="flex items-center gap-2 bg-black/60 backdrop-blur ring-1 ring-white/20 px-2.5 py-1 rounded-full text-xs font-medium text-white pointer-events-auto"
-            aria-label="Detection paused. The watcher is restarting."
+            aria-label="Detection unavailable. Live video is still on."
           >
             <PillSeverityIcon kind="worker-offline" tone="warning" />
             <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
-            Detection paused: the watcher is restarting
+            Detection unavailable · Live video is on
           </div>
         )}
         {lowMem && status === 'live' && (
@@ -1201,7 +1263,7 @@ function StatusPill({ status }: { status: Status }) {
  * the glyph is purely visual reinforcement.
  *
  * Glyph vocabulary, picked to read at 12 px on a glassy dark backdrop:
- *  - stream-stale  → broken-signal (3 ascending bars, last one slashed)
+ *  - detection-stale → broken-signal (3 ascending bars, last one slashed)
  *  - camera-offline → camera body with a diagonal slash through it
  *  - worker-offline → eye with a diagonal slash through it
  *  - low-memory    → memory-chip outline with a center dot
@@ -1209,7 +1271,7 @@ function StatusPill({ status }: { status: Status }) {
  *  - paused        → two parallel pause bars
  */
 type PillKind =
-  | 'stream-stale'
+  | 'detection-stale'
   | 'camera-offline'
   | 'worker-offline'
   | 'low-memory'
@@ -1246,7 +1308,7 @@ function PillSeverityIcon({
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        {kind === 'stream-stale' && (
+        {kind === 'detection-stale' && (
           // Three ascending bars + a slash — "signal interrupted".
           <>
             <line x1="6" y1="20" x2="6" y2="16" />

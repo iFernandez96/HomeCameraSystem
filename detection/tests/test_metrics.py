@@ -62,8 +62,13 @@ def test_snapshot_returns_all_documented_fields():
         "power_amps",
         "power_watts",
         "power_sample_ts",
-        "power_read_failures",
-    }
+            "power_read_failures",
+            # Low-cadence camera image-quality monitoring.
+            "camera_quality_status",
+            "camera_luma",
+            "camera_sharpness",
+            "camera_frame_delta",
+        }
 
 
 def test_uptime_starts_near_zero_and_grows():

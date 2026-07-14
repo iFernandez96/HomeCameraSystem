@@ -67,6 +67,9 @@ export function RulesSection() {
     labels: 'person',
     kind: 'push' as 'push' | 'webhook' | 'mqtt',
     target: '',
+    mode: 'any' as 'any' | 'home' | 'away' | 'night' | 'privacy',
+    person: 'any' as 'any' | 'known' | 'unknown',
+    minScore: '0.55',
   })
   const [deterrenceCapability, setDeterrenceCapability] = useState<DeterrenceCapability | null>(null)
   const [deterrenceCapabilityState, setDeterrenceCapabilityState] = useState<
@@ -283,14 +286,18 @@ export function RulesSection() {
       name,
       enabled: true,
       triggers: { labels, sources: [], camera_ids: [], rule_ids: [] },
-      conditions: { operating_modes: [], person: 'any', min_score: 0 },
+      conditions: {
+        operating_modes: automationDraft.mode === 'any' ? [] : [automationDraft.mode],
+        person: automationDraft.person,
+        min_score: clamp(Number(automationDraft.minScore) || 0, 0, 1),
+      },
       actions: [action],
     }
     setBusy(true)
     try {
       const saved = await createAutomation(body)
       setAutomations((current) => [...(current ?? []), saved])
-      setAutomationDraft({ name: '', labels: 'person', kind: 'push', target: '' })
+      setAutomationDraft({ name: '', labels: 'person', kind: 'push', target: '', mode: 'any', person: 'any', minScore: '0.55' })
       showToast('Automation saved', 'success')
     } catch {
       showToast('Could not save automation', 'error')
@@ -425,6 +432,28 @@ export function RulesSection() {
                 <option value="webhook">Webhook</option>
                 <option value="mqtt">MQTT</option>
               </select>
+            </label>
+            <label className="text-sm text-[var(--color-text-secondary)]">
+              If household mode is
+              <select value={automationDraft.mode} onChange={(event) => setAutomationDraft({ ...automationDraft, mode: event.target.value as typeof automationDraft.mode })} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-base text-[var(--color-text-primary)]">
+                <option value="any">Any mode</option>
+                <option value="home">Home</option>
+                <option value="away">Away or Vacation</option>
+                <option value="night">Sleep</option>
+                <option value="privacy">Privacy</option>
+              </select>
+            </label>
+            <label className="text-sm text-[var(--color-text-secondary)]">
+              If person is
+              <select value={automationDraft.person} onChange={(event) => setAutomationDraft({ ...automationDraft, person: event.target.value as typeof automationDraft.person })} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-base text-[var(--color-text-primary)]">
+                <option value="any">Known or unknown</option>
+                <option value="known">Known</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label className="text-sm text-[var(--color-text-secondary)]">
+              Minimum confidence
+              <input type="number" min="0" max="1" step="0.05" value={automationDraft.minScore} onChange={(event) => setAutomationDraft({ ...automationDraft, minScore: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-base text-[var(--color-text-primary)]" />
             </label>
             {automationDraft.kind === 'webhook' || automationDraft.kind === 'mqtt' ? (
               <label className="text-sm text-[var(--color-text-secondary)]">

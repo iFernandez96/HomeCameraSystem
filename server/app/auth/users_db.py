@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT NOT NULL DEFAULT 'admin',
     created_at    REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_mfa (
+    username        TEXT PRIMARY KEY,
+    secret_cipher   TEXT NOT NULL,
+    recovery_hashes TEXT NOT NULL,
+    enabled_at      REAL NOT NULL
+);
 """
 
 # iter-196 (Feature #3 RBAC vocabulary expansion). The four canonical
@@ -247,6 +253,7 @@ def delete_user(path: Path, username: str) -> bool:
     SQL wrapper. Idempotent (delete-twice returns False the second
     time, not an error)."""
     with _connect(path) as conn:
+        conn.execute("DELETE FROM user_mfa WHERE username = ?", (username,))
         cur = conn.execute("DELETE FROM users WHERE username = ?", (username,))
         conn.commit()
         return cur.rowcount > 0
@@ -324,6 +331,7 @@ def delete_user_atomic(path: Path, username: str) -> bool:
                 raise CannotDeletePrivilegedUser(
                     "cannot delete an owner/admin-tier account"
                 )
+            conn.execute("DELETE FROM user_mfa WHERE username = ?", (username,))
             conn.execute("DELETE FROM users WHERE username = ?", (username,))
             conn.execute("COMMIT")
             return True

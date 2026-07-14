@@ -11,6 +11,7 @@ from pathlib import Path
 from ..config import settings
 from .detection_config import detection_config
 from .events_db import daily_digest
+from .operations import build_briefing
 from .push_service import push_service
 from ..log import RateLimitedLog
 
@@ -47,13 +48,19 @@ async def send_if_due(now: float | None = None) -> bool:
     if _last_sent(settings.digest_state_path) == day:
         return False
     digest = await asyncio.to_thread(daily_digest, settings.events_db_path, day)
+    briefing = await asyncio.to_thread(build_briefing, day)
     labels = " · ".join(
         "{} {}".format(count, label)
         for label, count in sorted(digest["by_label"].items())
     ) or "No activity"
     await push_service.send_all({
         "title": "Today's camera digest",
-        "body": labels,
+        "body": "{}. Recording {} · {} camera interruption{}".format(
+            labels,
+            briefing["recording_state"],
+            briefing["camera_interruptions"],
+            "" if briefing["camera_interruptions"] == 1 else "s",
+        ),
         "tag": "daily-digest:{}".format(day),
         "url": "/events?day={}".format(day),
         "silent": True,

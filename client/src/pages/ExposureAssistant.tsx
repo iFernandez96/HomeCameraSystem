@@ -13,6 +13,7 @@ import {
 import { errFields, log } from '../lib/log'
 import { DEFAULT_CAMERA_PATH, whepUrlForPath } from '../lib/streamQuality'
 import { connectWhep, type WhepConnection } from '../lib/webrtc'
+import { usePrecisionSession } from '../lib/usePrecisionSession'
 
 type Drag = { kind: 'move' | 'resize'; startX: number; startY: number; original: CameraExposure }
 const DEFAULTS: CameraExposure = {
@@ -22,6 +23,7 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 
 export function ExposureAssistant() {
   const navigate = useNavigate()
+  const precision = usePrecisionSession()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -59,6 +61,7 @@ export function ExposureAssistant() {
   }, [])
 
   useEffect(() => {
+    if (precision.state !== 'ready') return
     const video = videoRef.current
     if (!video) return
     const controller = new AbortController()
@@ -83,7 +86,7 @@ export function ExposureAssistant() {
       video.removeEventListener('playing', live)
       video.removeEventListener('loadeddata', live)
     }
-  }, [previewNonce])
+  }, [precision.state, previewNonce])
 
   const refreshPreview = () => {
     setStream('connecting')
@@ -187,13 +190,21 @@ export function ExposureAssistant() {
         <button type="button" aria-label="Back to Settings" onClick={() => navigate('/settings')} className="grid min-h-11 min-w-11 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-2xl">‹</button>
         <div><h1 id="exposure-heading" className="text-2xl font-semibold text-[var(--color-text-primary)]">Adjust exposure</h1><p className="text-sm text-[var(--color-text-secondary)]">Place the box over what should be clearly visible.</p></div>
       </header>
+      <div className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <p className="font-semibold text-[var(--color-text-primary)]">{precision.state === 'ready' ? '1440p30 exposure preview' : 'Precision exposure preview'}</p>
+        <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{precision.detail} Detection stays on its separate 720p stream.</p>
+      </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_320px]">
         <div ref={frameRef} onPointerMove={moveDrag} onPointerUp={() => { dragRef.current = null }} className="relative aspect-video touch-none overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-black">
           <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-contain" />
           {config.enabled && <div role="region" aria-label="Exposure metering area" onPointerDown={(event) => startDrag('move', event)} className="absolute cursor-move border-2 border-[var(--color-accent-default)] bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,.22)]" style={{ left: `${config.x * 100}%`, top: `${config.y * 100}%`, width: `${config.width * 100}%`, height: `${config.height * 100}%` }}><button type="button" aria-label="Resize exposure area" onPointerDown={(event) => { event.stopPropagation(); startDrag('resize', event) }} className="absolute -bottom-3 -right-3 h-7 w-7 rounded-full border-2 border-white bg-[var(--color-accent-default)]" /></div>}
-          {stream !== 'live' && (
+          {(precision.state !== 'ready' || stream !== 'live') && (
             <div className="absolute inset-0 grid place-items-center bg-black/65 text-center text-white">
-              {stream === 'connecting' ? (
+              {precision.state === 'starting' ? (
+                <p>Preparing the guarded precision preview…</p>
+              ) : precision.state === 'blocked' ? (
+                <div className="max-w-sm px-5"><p className="mb-3">{precision.detail}</p><button type="button" onClick={precision.retry} className="min-h-11 rounded-full bg-white px-5 font-semibold text-black">Check again</button></div>
+              ) : stream === 'connecting' ? (
                 <p>Connecting to the camera…</p>
               ) : (
                 <div>

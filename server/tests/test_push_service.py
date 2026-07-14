@@ -878,7 +878,7 @@ async def test_send_matching_skips_non_matching_subs(service):
 
     captured_subs = []
 
-    async def fake_fanout(subs, payload):
+    async def fake_fanout(subs, payload, intended_users=None):
         captured_subs.extend(subs)
         return len(subs)
 
@@ -906,7 +906,7 @@ async def test_send_matching_logs_one_info_fanout_summary(service, caplog):
         "filters": {"cameras": ["cam-other"]},
     })
 
-    async def fake_fanout(subs, payload):
+    async def fake_fanout(subs, payload, intended_users=None):
         return len(subs)
 
     with (
@@ -938,7 +938,7 @@ async def test_send_matching_with_no_matches_returns_zero(service):
         "filters": {"cameras": ["cam-other"]},
     })
 
-    async def fake_fanout(subs, payload):
+    async def fake_fanout(subs, payload, intended_users=None):
         return len(subs)
 
     with patch.object(service, "_fanout_to", side_effect=fake_fanout):
@@ -984,7 +984,7 @@ def test_send_to_user_targets_only_that_users_subscriptions(service, monkeypatch
     ]
     captured = {}
 
-    async def _fake_fanout(subs, payload):
+    async def _fake_fanout(subs, payload, intended_users=None):
         captured["subs"] = subs
         return len(subs)
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render as rtlRender, screen, waitFor, type RenderOptions } from '@testing-library/react'
+import { fireEvent, render as rtlRender, screen, waitFor, within, type RenderOptions } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -159,6 +159,22 @@ describe('ClipModal', () => {
     render(<ClipModal event={makeEvent()} onClose={onClose} />)
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('Given a parent refresh supplies a new onClose callback, Then the modal keeps the user\'s focus and Escape uses the newest callback', () => {
+    const event = makeEvent()
+    const firstClose = vi.fn()
+    const latestClose = vi.fn()
+    const { rerender } = render(<ClipModal event={event} onClose={firstClose} />)
+    const keepButton = screen.getByRole('button', { name: 'Protect clip from cleanup' })
+    keepButton.focus()
+
+    rerender(<ClipModal event={event} onClose={latestClose} />)
+
+    expect(document.activeElement).toBe(keepButton)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(firstClose).not.toHaveBeenCalled()
+    expect(latestClose).toHaveBeenCalledTimes(1)
   })
 
   it('given the backdrop has aria-hidden, when screen-readers query it, then it has no accessible role (iter-270)', () => {
@@ -766,6 +782,38 @@ describe('ClipModal', () => {
     // cleanup
     vi.restoreAllMocks()
   })
+
+  it.each([
+    ['available', 'Video available'],
+    ['finalizing', 'Finalizing video'],
+    ['failed', 'Video unavailable'],
+    ['unknown', 'Video status unknown'],
+  ] as const)(
+    'Given a sibling video is %s, When "More from tonight" renders, Then its leading icon truthfully says %s',
+    async (videoStatus, accessibleLabel) => {
+      const active = makeEvent({ id: 'evt-active', ts: 1700000000 })
+      const sibling = makeEvent({
+        id: `evt-${videoStatus}`,
+        ts: 1700000100,
+        person_name: videoStatus,
+        video_status: videoStatus,
+      })
+      vi.spyOn(await import('../lib/api'), 'searchEvents').mockResolvedValue({
+        items: [sibling],
+        next_cursor: null,
+      })
+
+      render(<ClipModal event={active} onClose={() => {}} />)
+
+      const row = await screen.findByRole('button', { name: new RegExp(videoStatus, 'i') })
+      expect(within(row).getByRole('img', { name: accessibleLabel })).toHaveAttribute(
+        'data-video-status',
+        videoStatus,
+      )
+
+      vi.restoreAllMocks()
+    },
+  )
 
   it('Given no sibling events are found, When "More from tonight" resolves empty, Then the rail is not rendered', async () => {
     // arrange

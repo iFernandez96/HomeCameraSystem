@@ -9,6 +9,7 @@ import {
 
 const ALL_KINDS: WatchStateKind[] = [
   'offline',
+  'detection-unavailable',
   'armed',
   'reconnecting',
   'off-duty',
@@ -16,7 +17,7 @@ const ALL_KINDS: WatchStateKind[] = [
 ]
 
 describe('watchStateOf — shared armed-state vocabulary (overhaul W1 item 2)', () => {
-  it('Given status confirms the worker is dead, When classified, Then it is offline regardless of video', () => {
+  it('Given the detector is silent while video is playing, When classified, Then it reports detection unavailable without calling the camera offline', () => {
     // arrange
     const input = {
       statusKnown: true,
@@ -26,7 +27,19 @@ describe('watchStateOf — shared armed-state vocabulary (overhaul W1 item 2)', 
     }
     // act
     const kind = watchStateOf(input)
-    // assert — status-confirmed-down always wins (status-truth fix).
+    // assert
+    expect(kind).toBe('detection-unavailable')
+  })
+
+  it('Given the detector is silent and video confirms failure, When classified, Then both paths down is camera offline', () => {
+    // arrange / act
+    const kind = watchStateOf({
+      statusKnown: true,
+      workerAlive: false,
+      detectionActive: true,
+      videoPlaying: false,
+    })
+    // assert
     expect(kind).toBe('offline')
   })
 
@@ -39,6 +52,31 @@ describe('watchStateOf — shared armed-state vocabulary (overhaul W1 item 2)', 
     })
     // assert
     expect(kind).toBe('armed')
+  })
+
+  it('Given the worker is alive but detector frames are stale while video plays, Then detection is unavailable and the camera is not called offline', () => {
+    // arrange / act
+    const kind = watchStateOf({
+      statusKnown: true,
+      workerAlive: true,
+      detectionActive: true,
+      detectionFramesStale: true,
+      videoPlaying: true,
+    })
+    // assert
+    expect(kind).toBe('detection-unavailable')
+  })
+
+  it('Given status is healthy but video playback confirms failure, Then the actual media failure is camera offline', () => {
+    // arrange / act
+    const kind = watchStateOf({
+      statusKnown: true,
+      workerAlive: true,
+      detectionActive: true,
+      videoPlaying: false,
+    })
+    // assert
+    expect(kind).toBe('offline')
   })
 
   it('Given the status API is unreachable but video confirms frames, When classified, Then it is the low-alarm reconnecting state', () => {
@@ -104,6 +142,7 @@ describe('watch state maps — one word / one color per state', () => {
     // arrange / act / assert
     expect(WATCH_STATE_LABEL).toEqual({
       offline: 'Camera offline',
+      'detection-unavailable': 'Detection unavailable',
       armed: 'On watch',
       reconnecting: 'Reconnecting…',
       'off-duty': 'Off duty',

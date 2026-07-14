@@ -16,7 +16,7 @@ run_contracts() { "$PYTHON" scripts/generate-contracts.py --check; }
 run_client() { (cd client && npm run lint && npm run typecheck && npm test -- --run && npm run build); }
 run_server() { PYTHONPATH="$ROOT:$ROOT/server" "$PYTHON" -m pytest -q server/tests; }
 run_detection() { PYTHONPATH="$ROOT/detection" "$PYTHON" -m pytest -q detection/tests; }
-run_android() { ./gradlew --no-daemon :android-wrapper:assembleDebug; }
+run_android() { bash ./gradlew --no-daemon :android-wrapper:assembleDebug; }
 
 if [[ $# -eq 0 ]]; then
   set -- contracts client server detection android
