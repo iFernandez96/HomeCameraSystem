@@ -253,5 +253,5 @@ export function sequenceDurationMs(steps: readonly CatAnimStep[]): number {
 }
 
 export function catAnimFrameUrl(catId: CatAnimId, frame: CatAnimFrame): string {
-  return `/cats/anim/${catId}/${frame}.png`
+  return `/cats/anim/${encodeURIComponent(catId)}/${encodeURIComponent(frame)}.png`
 }

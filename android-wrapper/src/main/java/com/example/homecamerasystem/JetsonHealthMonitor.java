@@ -50,8 +50,7 @@ final class JetsonHealthMonitor {
     }
 
     static long check(Context context) {
-        boolean reachable = probe(BuildConfig.HOMECAM_URL)
-            || probe(BuildConfig.HOMECAM_LAN_URL);
+        boolean reachable = probe(BuildConfig.HOMECAM_URL);
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         int failures = prefs.getInt(KEY_FAILURES, 0);
         boolean wasOffline = prefs.getBoolean(KEY_OFFLINE, false);

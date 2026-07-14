@@ -33,14 +33,14 @@ def _payload(
     }
 
 
-async def _callback(monkeypatch, payload, *, peer="172.18.0.1"):
+async def _callback(monkeypatch, payload, *, peer="172.30.0.1"):
     from app.config import settings
     from app.main import app
 
     monkeypatch.setattr(
         settings,
         "mediamtx_auth_trusted_callers",
-        "127.0.0.1,::1,172.18.0.1",
+        "127.0.0.1,::1,172.30.0.1",
     )
     transport = httpx.ASGITransport(app=app, client=(peer, 12345))
     async with httpx.AsyncClient(
@@ -86,12 +86,12 @@ def test_callback_trust_is_exact_and_normalizes_ipv4_mapped_ipv6(monkeypatch):
     monkeypatch.setattr(
         settings,
         "mediamtx_auth_trusted_callers",
-        "127.0.0.1,::1,172.18.0.1",
+        "127.0.0.1,::1,172.30.0.1",
     )
-    assert trusted_callback_host("::ffff:172.18.0.1")
+    assert trusted_callback_host("::ffff:172.30.0.1")
     assert trusted_callback_host("::1")
-    assert not trusted_callback_host("172.18.0.3")
-    assert not trusted_callback_host("172.18.0.1.attacker.invalid")
+    assert not trusted_callback_host("172.30.0.3")
+    assert not trusted_callback_host("172.30.0.1.attacker.invalid")
 
 
 def test_policy_allows_only_exact_video_and_loopback_rtsp_paths():
@@ -171,7 +171,7 @@ async def test_callback_rejects_untrusted_source_and_never_echoes_credentials(
     untrusted = await _callback(
         monkeypatch,
         _payload(token=sentinel),
-        peer="172.18.0.3",
+        peer="172.30.0.3",
     )
     assert untrusted.status_code == 403 and untrusted.content == b""
 
@@ -236,6 +236,29 @@ def test_mediamtx_v118_security_config_is_fail_closed():
     assert config["paths"]["talk"]["runOnReadyRestart"] is False
     service = (root / "deploy" / "systemd" / "mediamtx.service").read_text()
     assert "EnvironmentFile=-/etc/homecam/mediamtx.env" in service
+
+
+def test_mediamtx_trusted_gateway_matches_compose_and_env_example():
+    root = Path(__file__).resolve().parents[2]
+    compose = yaml.safe_load((root / "deploy" / "docker-compose.yml").read_text())
+    gateway = compose["networks"]["default"]["ipam"]["config"][0]["gateway"]
+    example_line = next(
+        line
+        for line in (root / "server" / ".env.example").read_text().splitlines()
+        if line.startswith("MEDIAMTX_AUTH_TRUSTED_CALLERS=")
+    )
+    documented = example_line.split("=", 1)[1].split(",")
+    compose_default = compose["services"]["server"]["environment"]
+    trusted_entry = next(
+        value
+        for value in compose_default
+        if value.startswith("MEDIAMTX_AUTH_TRUSTED_CALLERS=")
+    )
+
+    assert gateway == "172.30.0.1"
+    assert gateway in documented
+    assert gateway in trusted_entry
+    assert "172.18.0.1" not in documented
 
 
 def test_speaker_hook_requires_marker_and_explicit_device(tmp_path):

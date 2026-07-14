@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { drawBoxes } from '../lib/drawBoxes'
 import { log, errFields } from '../lib/log'
@@ -236,6 +236,13 @@ export function VideoTile({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [status, setStatus] = useState<Status>('idle')
+  // Resume listeners are installed once. Keep their decision state in a ref
+  // updated in a layout effect so a visibility event cannot land between the
+  // error UI commit and a status-keyed passive-effect re-registration.
+  const statusRef = useRef<Status>(status)
+  useLayoutEffect(() => {
+    statusRef.current = status
+  }, [status])
   // iter-246: user-toggleable bbox overlay. Default ON (the boxes
   // are the whole point of detection feedback). Persists in
   // localStorage so the user's choice survives reloads + PWA tab
@@ -653,7 +660,7 @@ export function VideoTile({
   }, [status])
   useEffect(() => {
     const requestReconnect = () => {
-      if (status !== 'error') return
+      if (statusRef.current !== 'error') return
       if (resumeInFlightRef.current) return
       resumeInFlightRef.current = true
       setRetryNonce((n) => n + 1)
@@ -670,7 +677,7 @@ export function VideoTile({
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
-  }, [status])
+  }, [])
 
   // When detection is paused or the worker is offline, the server stops
   // broadcasting events but we may still have the last set of boxes in

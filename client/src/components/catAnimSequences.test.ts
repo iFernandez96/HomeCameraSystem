@@ -7,6 +7,7 @@ import {
   CAT_IDS,
   CYCLE_DURATION_MS,
   STRIDE_PX_PER_CYCLE,
+  catAnimFrameUrl,
   gaitVelocityPxPerMs,
   type CatAnimId,
   type CatAnimSequenceName,
@@ -14,6 +15,16 @@ import {
 import { _catSequenceNamesForTransitionForTests } from './CatLayer'
 
 describe('cat animation sequences', () => {
+  it('Given frame URL segments, When a URL is constructed, Then each segment is encoded', () => {
+    // arrange / act
+    const url = catAnimFrameUrl('panther', 'walk_01')
+
+    // assert
+    expect(url).toBe('/cats/anim/panther/walk_01.png')
+    expect(catAnimFrameUrl('panther/../../escape' as never, 'walk_01' as never))
+      .toBe('/cats/anim/panther%2F..%2F..%2Fescape/walk_01.png')
+  })
+
   it('Given the exported manifest, When every sequence step is inspected, Then frames exist and durations are positive', () => {
     // arrange
     const manifestSets = Object.fromEntries(

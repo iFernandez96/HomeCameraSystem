@@ -12,9 +12,8 @@ of ``/api/*`` on the cookies these routes set.
 Cookies (per the plan's Section "Stack picks"):
 
 - HttpOnly: JS can't read them — XSS can't exfiltrate.
-- Secure (toggle via ``COOKIE_SECURE`` env): only sent over HTTPS
-  in prod; flipped to false for the dev vite server at
-  ``http://localhost:5173``.
+- Secure (toggle via ``COOKIE_SECURE`` env): always enabled in production;
+  explicitly flipped to false only in local/test configuration.
 - SameSite=Strict: browser refuses to send these on cross-site
   requests, so a malicious LAN page can't mint authenticated
   requests via the user's session. This is the project's CSRF
@@ -144,18 +143,12 @@ def _set_session_cookies(
     refresh_jti = uuid.uuid4().hex
     access = tokens.issue(username, "access", role=role, jti=access_jti)
     refresh = tokens.issue(username, "refresh", role=role, jti=refresh_jti)
-    # The native wrapper intentionally falls back from the Tailscale HTTPS URL
-    # to the Jetson's LAN HTTP URL when the phone's VPN/MagicDNS is offline.
-    # A Secure cookie is silently discarded on that HTTP fallback (login 200,
-    # immediately followed by an unauthenticated /api/status). Preserve Secure
-    # on real HTTPS while allowing the explicitly-supported LAN transport.
-    cookie_secure = settings.cookie_secure and request.url.scheme == "https"
     response.set_cookie(
         COOKIE_ACCESS,
         access,
         max_age=settings.access_token_ttl_s,
         httponly=True,
-        secure=cookie_secure,
+        secure=settings.cookie_secure,
         samesite="strict",
         path="/api",
     )
@@ -164,7 +157,7 @@ def _set_session_cookies(
         refresh,
         max_age=settings.refresh_token_ttl_s,
         httponly=True,
-        secure=cookie_secure,
+        secure=settings.cookie_secure,
         samesite="strict",
         path="/api",
     )

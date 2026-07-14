@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
+import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -36,8 +37,6 @@ public final class MainActivity extends Activity {
     private FrameLayout rootView;
     private View fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
-    private String activeUrl = BuildConfig.HOMECAM_URL;
-    private boolean triedLanFallback = false;
     private boolean tailscaleLaunchPending = false;
     private boolean showingRecovery = false;
     private final android.os.Handler mainHandler =
@@ -76,14 +75,19 @@ public final class MainActivity extends Activity {
         }
 
         CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
 
         WebSettings settings = webView.getSettings();
+        // HomeCam is a JavaScript PWA, so script execution is required. The
+        // WebView client below confines every top-level navigation to the one
+        // pinned HTTPS origin before any page can execute in this process.
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setAllowContentAccess(false);
+        settings.setAllowFileAccess(false);
         settings.setUserAgentString(
             settings.getUserAgentString() + " HomeCamNative/" + BuildConfig.VERSION_NAME
         );
@@ -120,7 +124,10 @@ public final class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return false;
+                Uri uri = request.getUrl();
+                if (isTrustedHomeCamUri(uri)) return false;
+                openExternalUri(uri);
+                return true;
             }
 
             @Override
@@ -131,7 +138,11 @@ public final class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                activeUrl = url;
+                if (!isTrustedHomeCamUri(Uri.parse(url))) {
+                    view.stopLoading();
+                    loadTailnet();
+                    return;
+                }
                 refreshWebAppCaches(view);
             }
 
@@ -197,27 +208,38 @@ public final class MainActivity extends Activity {
     }
 
     private void loadTailnet() {
-        triedLanFallback = false;
-        activeUrl = BuildConfig.HOMECAM_URL;
         showWebView();
         webView.loadUrl(BuildConfig.HOMECAM_URL);
     }
 
-    private void loadLan() {
-        triedLanFallback = true;
-        activeUrl = BuildConfig.HOMECAM_LAN_URL;
-        showWebView();
-        webView.loadUrl(BuildConfig.HOMECAM_LAN_URL);
-    }
-
     private void handleMainFrameLoadFailure() {
-        String url = activeUrl == null ? "" : activeUrl;
-        if (!triedLanFallback && url.startsWith("https://")) {
-            loadLan();
-            return;
-        }
         showingRecovery = true;
         setContentView(recoveryView);
+    }
+
+    private boolean isTrustedHomeCamUri(Uri uri) {
+        Uri trusted = Uri.parse(BuildConfig.HOMECAM_URL);
+        if (uri == null || trusted == null) return false;
+        return "https".equalsIgnoreCase(uri.getScheme())
+            && trusted.getHost() != null
+            && trusted.getHost().equalsIgnoreCase(uri.getHost())
+            && effectivePort(trusted) == effectivePort(uri);
+    }
+
+    private int effectivePort(Uri uri) {
+        int port = uri.getPort();
+        return port >= 0 ? port : 443;
+    }
+
+    private void openExternalUri(Uri uri) {
+        if (uri == null) return;
+        String scheme = uri.getScheme();
+        if (!("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))) return;
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (ActivityNotFoundException ignored) {
+            // No browser is installed; keep the trusted HomeCam page visible.
+        }
     }
 
     private void showWebView() {
@@ -338,7 +360,7 @@ public final class MainActivity extends Activity {
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
 
         TextView body = new TextView(this);
-        body.setText("I tried Tailscale first, then your home network. Open Tailscale if you're away from home, or try again when you're back on Wi-Fi.");
+        body.setText("HomeCam uses its encrypted Tailscale connection. Open Tailscale, then try again.");
         body.setTextColor(Color.rgb(188, 181, 166));
         body.setTextSize(16);
         body.setGravity(android.view.Gravity.CENTER);
