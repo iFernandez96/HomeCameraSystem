@@ -558,7 +558,7 @@ def test_focus_start_does_not_mutate_pipeline_when_preflight_blocks(
     restart.assert_not_called()
 
 
-def test_focus_start_requires_systemd_to_confirm_guard_exec(tmp_path, monkeypatch):
+def test_focus_start_uses_jetpack_compatible_transient_services(tmp_path, monkeypatch):
     marker = tmp_path / "focus-mode"
     monkeypatch.setattr(detect, "_FOCUS_MARKER", str(marker))
     monkeypatch.setattr(
@@ -578,8 +578,10 @@ def test_focus_start_requires_systemd_to_confirm_guard_exec(tmp_path, monkeypatc
     assert scheduled.call_count == 2
     restore_command = scheduled.call_args_list[0].args[0]
     guard_command = scheduled.call_args_list[1].args[0]
-    assert "--property=Type=exec" in restore_command
-    assert "--property=Type=exec" in guard_command
+    assert "--property=Type=oneshot" in restore_command
+    assert "--property=Type=oneshot" in guard_command
+    assert "--property=Type=exec" not in restore_command
+    assert "--property=Type=exec" not in guard_command
     assert detect._FOCUS_GUARD_SCRIPT in guard_command
 
 
