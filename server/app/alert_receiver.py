@@ -17,7 +17,11 @@ from .config import settings
 from .services.push_service import PushService
 
 
-log = logging.getLogger(__name__)
+# Uvicorn installs handlers only for its own logger hierarchy.  Using that
+# hierarchy keeps the bounded delivery receipt visible in container logs; a
+# module logger otherwise falls through to Python's warning-only last-resort
+# handler and makes the alert drill unable to prove a successful hand-off.
+log = logging.getLogger("uvicorn.error")
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _MAX_BODY_BYTES = 64 * 1024
 _ALERT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,95}$")

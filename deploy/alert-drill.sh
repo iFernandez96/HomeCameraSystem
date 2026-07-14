@@ -54,7 +54,30 @@ build_payload firing "$FIRING_ENDS_AT" |
     --data-binary @- "$ALERTMANAGER_URL/api/v2/alerts" >/dev/null
 
 echo "injected ${#ALERT_NAMES[@]} firing alerts; waiting for grouped delivery"
-sleep 12
+wait_for_delivery() {
+  local status="$1" deadline=$((SECONDS + 180)) logs name count ready
+  while (( SECONDS < deadline )); do
+    logs=$(docker logs --since "$LOG_SINCE" homecam-alert-receiver 2>&1 || true)
+    ready=1
+    for name in "${ALERT_NAMES[@]}"; do
+      count=$(grep -c "operational alert delivered status=$status alertname=$name " <<<"$logs" || true)
+      if [[ "$count" != "1" ]]; then
+        ready=0
+        break
+      fi
+    done
+    if (( ready )); then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+if ! wait_for_delivery firing; then
+  echo "timed out waiting for all firing deliveries; not resolving before the delivery evidence is complete" >&2
+  exit 1
+fi
 RESOLVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 build_payload resolved "$RESOLVED_AT" |
   curl --fail --silent --show-error \
@@ -62,7 +85,10 @@ build_payload resolved "$RESOLVED_AT" |
     --data-binary @- "$ALERTMANAGER_URL/api/v2/alerts" >/dev/null
 
 echo "injected recovery states; waiting for Alertmanager group interval"
-sleep 35
+if ! wait_for_delivery resolved; then
+  echo "timed out waiting for all recovery deliveries" >&2
+  exit 1
+fi
 LOGS=$(docker logs --since "$LOG_SINCE" homecam-alert-receiver 2>&1 || true)
 failed=0
 for name in "${ALERT_NAMES[@]}"; do

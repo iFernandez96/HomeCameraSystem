@@ -14,4 +14,7 @@ receivers:
       - url: http://alert-receiver:9095/alerts
         send_resolved: true
         max_alerts: 1
-        timeout: 20s
+        # A cold Web Push gateway can take more than 20 seconds to answer.
+        # Keep the request below the route retry interval while avoiding a
+        # duplicate send caused only by a client-side webhook timeout.
+        timeout: 60s

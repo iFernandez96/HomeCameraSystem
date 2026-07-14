@@ -74,7 +74,7 @@ def test_given_observability_stack_when_loaded_then_alert_delivery_is_independen
         "url": "http://alert-receiver:9095/alerts",
         "send_resolved": True,
         "max_alerts": 1,
-        "timeout": "20s",
+        "timeout": "60s",
     }
 
 
@@ -94,3 +94,5 @@ def test_alert_drill_includes_all_critical_rules_and_server_restart():
     assert "HomecamServerRestarted" in script
     assert "status=firing" in script
     assert "status=resolved" in script
+    assert "wait_for_delivery firing" in script
+    assert "wait_for_delivery resolved" in script
